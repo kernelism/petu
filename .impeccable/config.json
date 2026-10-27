@@ -1,0 +1,80 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          ".superpowers/brainstorm/11314-1793138853/content/layout.html"
+        ],
+        "createdAt": "2026-10-27T22:13:13.689Z",
+        "reason": "Claude: scaled-down wireframe thumbnails in brainstorm mockup; dimmed text intentionally depicts not-yet-narrated words"
+      },
+      {
+        "rule": "tiny-text",
+        "value": "*",
+        "files": [
+          ".superpowers/brainstorm/11314-1793138853/content/layout.html"
+        ],
+        "createdAt": "2026-10-27T22:13:13.710Z",
+        "reason": "Claude: scaled-down wireframe thumbnails in brainstorm mockup; dimmed text intentionally depicts not-yet-narrated words"
+      },
+      {
+        "rule": "undersized-ui-text",
+        "value": "*",
+        "files": [
+          ".superpowers/brainstorm/11314-1793138853/content/layout.html"
+        ],
+        "createdAt": "2026-10-27T22:13:21.161Z",
+        "reason": "Claude: scaled-down non-interactive wireframe thumbnails in brainstorm mockup"
+      },
+      {
+        "rule": "undersized-ui-text",
+        "value": "*",
+        "files": [
+          ".superpowers/brainstorm/11314-1793138853/content/layout-v2.html"
+        ],
+        "createdAt": "2026-10-27T22:14:06.243Z",
+        "reason": "Claude: same wireframe thumbnails as layout.html"
+      },
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          ".superpowers/brainstorm/11314-1793138853/content/layout-v2.html"
+        ],
+        "createdAt": "2026-10-27T22:14:06.267Z",
+        "reason": "Claude: same wireframe thumbnails as layout.html"
+      },
+      {
+        "rule": "tiny-text",
+        "value": "*",
+        "files": [
+          ".superpowers/brainstorm/11314-1793138853/content/layout-v2.html"
+        ],
+        "createdAt": "2026-10-27T22:14:06.289Z",
+        "reason": "Claude: same wireframe thumbnails as layout.html"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          ".superpowers/brainstorm/11314-1793138853/content/ink-style-v2.html"
+        ],
+        "createdAt": "2026-10-27T22:22:39.667Z",
+        "reason": "Claude: throwaway brainstorm mockup (SVG slide content near page edge); real app styling handled in build"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          ".superpowers/brainstorm/11314-1793138853/content/ink-style-v3.html"
+        ],
+        "createdAt": "2026-10-27T22:22:39.690Z",
+        "reason": "Claude: throwaway brainstorm mockup (SVG slide content near page edge); real app styling handled in build"
+      }
+    ]
+  }
+}

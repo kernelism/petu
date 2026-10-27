@@ -1,0 +1,31 @@
+{
+  "name": "pdf-tutor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "fixture": "node --experimental-strip-types scripts/make-fixture.ts"
+  },
+  "dependencies": {
+    "lucide-react": "^1.62.0",
+    "pdfjs-dist": "^4.10.38",
+    "perfect-freehand": "^1.2.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "jsdom": "^29.1.1",
+    "pdf-lib": "^1.17.1",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.5",
+    "vitest": "^3.2.7"
+  }
+}
