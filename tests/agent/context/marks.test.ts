@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { figureMarks, formatMarks, MAX_MARKS, type PaintedPath, type FigureMark } from '../../../src/agent/context/marks';
+import { figureMarks, glyphCount, formatMarks, MAX_MARKS, type PaintedPath, type FigureMark } from '../../../src/agent/context/marks';
 import type { TextLine } from '../../../src/agent/context/textLines';
 
 const P = (x: number, y: number) => ({ x, y });
@@ -120,6 +120,18 @@ describe('figureMarks', () => {
 
   it('does not make an equation of a lone one-line formula', () => {
     expect(figureMarks([], [], [line('x − xʹ = B', 200, 300, 90, 20, true)], 1)).toEqual([]);
+  });
+
+  it('equations drawn as glyph outlines on a page with text become one #e box per formula, not a flood', () => {
+    const glyph = (x: number, y: number): PaintedPath => ({ paint: 'fill', ops: 'MLCLZ', pts: [P(x, y), P(x + 6, y), P(x + 7, y + 5), P(x, y + 9)] });
+    const paths: PaintedPath[] = [];
+    for (let i = 0; i < 30; i++) paths.push(glyph(200 + i * 8, 300));
+    for (let i = 0; i < 30; i++) paths.push(glyph(200 + i * 8, 500));
+    paths.push(glyph(700, 700)); // an inline symbol: left out
+    const ms = figureMarks(paths, [], [line('Use the limit laws to evaluate', 100, 100, 400)], 1);
+    expect(glyphCount(paths, 1)).toBe(61);
+    expect(ms.map((m) => m.kind)).toEqual(['equation', 'equation']);
+    expect(formatMarks(ms).split('\n')[0]).toBe('#e1 equation 200,300 239×9 (30 paths)');
   });
 
   it('text drawn as outlines does not flood the page with dots or arrowheads', () => {
