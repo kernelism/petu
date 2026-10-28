@@ -55,7 +55,9 @@ export function fmt(v: number, dp?: number): string {
   if (dp != null) s = v.toFixed(dp);
   else {
     const r = Math.round(v * 1e9) / 1e9;
+    const q = fracDen(v);
     if (Number.isInteger(r)) s = String(r);
+    else if (q) s = `${Math.round(v * q)}/${q}`;
     else {
       const a = Math.abs(v);
       s = a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : v.toPrecision(2);
@@ -65,6 +67,17 @@ export function fmt(v: number, dp?: number): string {
   if (/^-0(\.0*)?$/.test(s)) s = s.slice(1);
   return s.replace('-', MINUS);
 }
+/**
+ * Thirds, sixths, ninths, twelfths (1/9, 2/3) for a value that has no short decimal, as a board
+ * would write it; null for values a decimal writes exactly (0.5, 0.25) or anything else.
+ */
+function fracDen(v: number): number | null {
+  if (!(Math.abs(v) < 1000)) return null;
+  if (Math.abs(v * 100 - Math.round(v * 100)) < 1e-9) return null;
+  for (const q of [3, 6, 9, 12]) if (Math.abs(v * q - Math.round(v * q)) < 1e-9) return q;
+  return null;
+}
+
 /** A value inside an expansion: negatives in parentheses, so `9·(−1)` reads right. */
 export const term = (v: number, dp?: number) => (v < 0 && fmt(v, dp) !== '0' ? `(${fmt(v, dp)})` : fmt(v, dp));
 

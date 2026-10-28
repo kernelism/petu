@@ -16,11 +16,18 @@ describe('values', () => {
   it('formats with a true minus, no trailing zeros, ~2 decimals', () => {
     expect(C.fmt(-27)).toBe('−27');
     expect(C.fmt(0.3333)).toBe('0.33');
+    expect(C.fmt(1 / 3)).toBe('1/3');
     expect(C.fmt(12.54)).toBe('12.5');
     expect(C.fmt(2.5)).toBe('2.5');
     expect(C.fmt(-0)).toBe('0');
     expect(C.fmt(1 / 3, 3)).toBe('0.333');
     expect(C.term(-1)).toBe('(−1)');
+    // repeating decimals with a small denominator are written as fractions; exact decimals stay
+    expect(C.fmt(1 / 9)).toBe('1/9');
+    expect(C.fmt(-2 / 3)).toBe('−2/3');
+    expect(C.fmt(0.25)).toBe('0.25');
+    expect(C.fmt(0.123)).toBe('0.12');
+    expect(C.fmt(5 / 7)).toBe('0.71');
   });
 });
 
