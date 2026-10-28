@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { parseScout } from '../../src/agent/scout';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -552,6 +553,30 @@ describe('Lessons v3: two stages', () => {
     expect(pre.text).toEqual(b.text);
     expect(pre.stream).toBe(false);
     expect(pre.prompt_cache_options).toEqual({ mode: 'explicit', prewarm: true });
+  });
+
+  it('scout request, tiered context: map, section, listing, memory each cached (≤ 4 breakpoints); a scan gets a low-detail image; candidates before the question', () => {
+    const bp = { prompt_cache_breakpoint: { mode: 'explicit', ttl: '30m' } };
+    const b = buildScoutRequest({ ...sreq, prior: undefined, digest: 'DOCUMENT d.pdf\nMAP', section: 'SECTION 2', memory: 'SESSION\n1. …', candidates: 'CANDIDATES\np9 · x' }, scfg) as any;
+    expect(b.input[1].content).toEqual([
+      { type: 'input_text', text: 'DOCUMENT d.pdf\nMAP', ...bp },
+      { type: 'input_text', text: 'SECTION 2', ...bp },
+      { type: 'input_text', text: 'PAGE 3 (visible; 16:9 slide; listing only, no image)\nt1 60 40–300: Three', ...bp },
+      { type: 'input_text', text: 'SESSION\n1. …', ...bp },
+    ]);
+    expect(b.input[2].content[0].text).toBe('The student is looking at page 3.\nCANDIDATES\np9 · x\nQUESTION: How does it work?');
+    const scan = buildScoutRequest({ ...sreq, pageText: 'PAGE 3 (visible; page; no extractable text: x; image attached)', image: { b64: 'JPEG', w: 900, h: 1200 } }, scfg) as any;
+    expect(scan.input[1].content.slice(1)).toEqual([
+      { type: 'input_text', text: 'PAGE 3 (visible; page; no extractable text: x; image attached)' },
+      { type: 'input_image', image_url: 'data:image/jpeg;base64,JPEG', detail: 'low', ...bp },
+    ]);
+    const n = (x: any) => x.input[1].content.filter((c: any) => c.prompt_cache_breakpoint).length;
+    expect(n(b)).toBe(4);
+  });
+
+  it('the scout verdict carries an optional find list (≤ 3 short strings)', () => {
+    expect(parseScout('{"opener":"a","pages":[2],"find":["Table 15.5"," appendix  D ","x","y"],"plan":"p"}', 12, 3)).toEqual({ pages: [2], plan: 'p', find: ['Table 15.5', 'appendix D', 'x'] });
+    expect(parseScout('{"pages":[2],"find":[],"plan":"p"}', 12, 3)).toEqual({ pages: [2], plan: 'p' });
   });
 
   const susage = { input_tokens: 3000, output_tokens: 60, input_tokens_details: { cached_tokens: 2800 } };
