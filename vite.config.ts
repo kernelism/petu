@@ -5,6 +5,6 @@ import { petuApi } from './server/plugin';
 
 export default defineConfig({
   plugins: [react(), petuApi()],
-  server: { port: 5180 },
+  server: { port: 5180, watch: { ignored: ['**/.petu/**'] } },
   test: { environment: 'jsdom', setupFiles: ['./vitest.setup.ts'], include: ['tests/**/*.test.ts'] },
 });

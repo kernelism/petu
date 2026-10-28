@@ -33,8 +33,8 @@ import { AskError, askErrorLine, capLine, type AskHandlers } from './agent/clien
 import { useAgent, type MakeContext } from './agent/useAgent';
 import { ContextBuilder } from './agent/context/build';
 import { installEvalHooks, outOfFrameOf, type EvalBackend, type Recorder, type RegistryRow } from './agent/evalHooks';
-import type { ElementEntry } from './desk/registry';
-import type { PageGround } from './agent/context/types';
+import type { Registry } from './desk/registry';
+import { groundingOf, type PageGround } from './agent/context/types';
 
 const params = new URLSearchParams(location.search);
 const DEBUG = params.has('debug');
@@ -43,7 +43,7 @@ const demoParam = import.meta.env.DEV ? params.get('demo') : null;
 const DEMO = demoParam === '1' ? DEMO_QUESTION : demoParam === 'side' || demoParam === 'board' ? DEMO_SIDE_QUESTION : demoParam === 'plane' ? DEMO_PLANE_QUESTION : null;
 // Dev-only: ?src=<pdf url>&script=<name> opens that PDF and plays a named script (src/demo/scripts.ts).
 // ?script=<name> alone uses that script's own PDF.
-const scriptParam = import.meta.env.DEV ? params.get('script') ?? (params.has('scriptfile') ? 'file' : null) : null;
+const scriptParam = import.meta.env.DEV ? params.get('script') : null;
 const DEV_SCRIPT = scriptParam ? SCRIPTS[scriptParam] ?? null : null;
 const DEV_SRC = import.meta.env.DEV ? params.get('src') ?? DEV_SCRIPT?.src ?? null : null;
 if (scriptParam && !DEV_SCRIPT) console.warn('[dev] unknown ?script=; known:', Object.keys(SCRIPTS).join(', '));
@@ -217,11 +217,8 @@ function largestLabelled(g: PageGround | undefined): { x: number; y: number; w: 
 }
 
 /** The current answer's drawn elements, plain, for the eval metrics. */
-function registryRows(reg: unknown): RegistryRow[] {
-  // E1: Registry has no public iterator yet (src/desk/registry.ts); read its map directly (dev-only).
-  const byId = (reg as { byId?: Map<string, ElementEntry> }).byId;
-  if (!byId) return [];
-  return [...byId.values()].map((e) => ({ id: e.id, kind: e.kind, target: e.target, bbox: e.bbox, boxes: e.boxes, strokes: e.strokes ?? [] }));
+function registryRows(reg: Registry): RegistryRow[] {
+  return reg.entries().map((e) => ({ id: e.id, kind: e.kind, target: e.target, bbox: e.bbox, boxes: e.boxes, strokes: e.strokes ?? [] }));
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -513,8 +510,13 @@ export default function App() {
 
     let firstChunk = true;
     let chunks = 0;
-    const inner: (signal: AbortSignal) => AsyncIterable<string> = run.replay
-      ? replaySource(run.replay.chunks, run.replay.events ?? [], handlers)
+    const replay = run.replay;
+    const inner: (signal: AbortSignal) => AsyncIterable<string> = replay
+      ? async function* (signal) {
+        // A replay resolves page marks against the same grounding the recorded question had.
+        groundingRef.current = groundingOf(await ag.grounds(page));
+        yield* replaySource(replay.chunks, replay.events ?? [], handlers)(signal);
+      }
       : toAgent
         ? ag.source({ question: q, page, ink: () => ink.get().strokes, handlers, onGrounding: (g) => { groundingRef.current = g; } })
         : (signal) => streamDemo(signal, (DEV_SCRIPT ?? pickDemo(q)).script); // checkpoint 1: demos play the closest script

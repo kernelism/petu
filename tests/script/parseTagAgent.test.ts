@@ -61,3 +61,14 @@ describe('parseTag: agent v2 grammar', () => {
     }
   });
 });
+
+describe('parseTag agent: connector ends on page marks', () => {
+  it('accepts p<N>:#mark and a line end #s2.a', () => {
+    expect(parseTag('connect from=p4:#d3 to=side:X')).toEqual({ kind: 'connect', from: { page: 4, mark: '#d3' }, to: { region: 'side', ref: 'X' } });
+    expect(parseTag('connect from=side:x to=p4:#s2.b')).toMatchObject({ to: { page: 4, mark: '#s2.b' } });
+  });
+  it('rejects malformed marks', () => {
+    expect(parseTag('connect from=p4:#3 to=side:X')).toBeNull();
+    expect(parseTag('connect from=p4:#d3.c to=side:X')).toBeNull();
+  });
+});

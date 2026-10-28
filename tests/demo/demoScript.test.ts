@@ -164,3 +164,16 @@ describe('pickDemo', () => {
     expect(pickDemo('hello').question).toBe(DEMO_QUESTION);
   });
 });
+
+describe('demos through the resolver', () => {
+  it('every demo and dev script resolves to the very objects it parsed (byte-identical playback)', async () => {
+    const { Figures } = await import('../../src/geometry/resolve');
+    const all = { DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.fromEntries(Object.entries(SCRIPTS).map(([k, v]) => [k, v.script])) };
+    for (const [name, script] of Object.entries(all)) {
+      const raw = parseAll(script);
+      const f = new Figures({ mark: () => undefined });
+      raw.forEach((a) => f.note(a));
+      for (const a of raw) expect(f.resolve(a), `${name}: ${a.kind}`).toBe(a);
+    }
+  });
+});

@@ -99,20 +99,19 @@ describe('locateQuote', () => {
     // width table: 'i' narrow, 'W' wide
     const measure = (_f: string, s: string) => [...s].reduce((a, c) => a + (c === 'i' ? 1 : c === 'W' ? 5 : 3), 0);
     const r = [{ ...run('iiii WW iiii', 0, 0, 100), font: '100px X' }];
-    const NEAR = { x: 50, y: 10 }; // quotes of ≤ 2 characters need `near`
     it('uses measured widths scaled to rect.w', () => {
-      const out = locateQuote(r, 'WW', NEAR, { measure });
+      const out = locateQuote(r, 'WW', undefined, { measure });
       // total = 4+3+10+3+4 = 24 ; prefix 'iiii ' = 7
       expect(out[0].x).toBeCloseTo(29.17, 1);
       expect(out[0].w).toBeCloseTo(41.67, 1);
     });
     it('falls back to proportional without font or measure', () => {
       const noFont = [run('iiii WW iiii', 0, 0, 100)];
-      expect(locateQuote(noFont, 'WW', NEAR, { measure })[0].x).toBeCloseTo(100 * 5 / 12, 5);
-      expect(locateQuote(r, 'WW', NEAR)[0].x).toBeCloseTo(100 * 5 / 12, 5);
+      expect(locateQuote(noFont, 'WW', undefined, { measure })[0].x).toBeCloseTo(100 * 5 / 12, 5);
+      expect(locateQuote(r, 'WW')[0].x).toBeCloseTo(100 * 5 / 12, 5);
     });
     it('falls back when measure returns garbage', () => {
-      expect(locateQuote(r, 'WW', NEAR, { measure: () => 0 })[0].x).toBeCloseTo(100 * 5 / 12, 5);
+      expect(locateQuote(r, 'WW', undefined, { measure: () => 0 })[0].x).toBeCloseTo(100 * 5 / 12, 5);
     });
   });
 
@@ -135,11 +134,19 @@ describe('locateQuote', () => {
       expect(r[0].x).toBe(100);
       expect(r[0].x + r[0].w).toBeCloseTo(128, 5);
     });
-    it('needs `near` for quotes of ≤ 2 characters, and a hit within 100 units of it', () => {
+    it('accepts a quote of ≤ 2 characters without `near` only when its whole-word hit is unique', () => {
       const one = [run('a point x here', 50, 100, 140)];
-      expect(locateQuote(one, 'x')).toEqual([]);
+      expect(locateQuote(one, 'x')).toHaveLength(1);
+      const two = [run('next x here', 50, 100, 110), run('and x there', 50, 400, 110)];
+      expect(locateQuote(two, 'x')).toEqual([]);
+      expect(locateQuote(two, 'x', { x: 100, y: 410 })[0].y).toBe(400);
+    });
+    it('with `near`, a quote of ≤ 2 characters must hit within 100 units of it', () => {
+      const one = [run('a point x here', 50, 100, 140)];
       expect(locateQuote(one, 'x', { x: 400, y: 110 })).toEqual([]);
       expect(locateQuote(one, 'x', { x: 140, y: 110 })).toHaveLength(1);
+      const two = [run('next x here', 50, 100, 110), run('and x there', 50, 400, 110)];
+      expect(locateQuote(two, 'x', { x: 100, y: 700 })).toEqual([]);
     });
   });
 });

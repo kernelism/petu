@@ -56,7 +56,7 @@ describe('system prompt', () => {
   it('teaches every grammar piece the engine has', () => {
     const kinds = new Set([...s.matchAll(/\{\{(\w+)/g)].map((m) => m[1]));
     for (const k of ['scroll', 'highlight', 'underline', 'circle', 'box', 'line', 'arrow', 'point', 'label', 'curve', 'shade', 'angle', 'brace', 'write', 'math', 'axes', 'plot', 'let', 'sketch', 'connect', 'emph', 'fade']) expect(kinds, k).toContain(k);
-    for (const w of ['mark=#', 'through=', 'near=', ' fit', 'mid(', 'along(', 'meet(', 'foot(', '<plan>']) expect(s, w).toContain(w);
+    for (const w of ['mark=#', 'from=p4:#', 'through=', 'near=', ' fit', 'mid(', 'along(', 'meet(', 'foot(', '<plan>']) expect(s, w).toContain(w);
   });
 
   it('covers the answer situations beyond a single question', () => {

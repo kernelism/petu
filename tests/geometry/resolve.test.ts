@@ -10,6 +10,7 @@ const ground: Grounding = {
     : id === '#d1' ? { kind: 'dot', at: { x: 407, y: 600 } }
     : id === '#d3' ? { kind: 'dot', at: { x: 500, y: 219 } }
     : id === '#s3' ? { kind: 'line', from: { x: 407, y: 600 }, to: { x: 500, y: 219 } }
+    : id === '#g1' ? { kind: 'figure', rect: { x: 100, y: 100, w: 200, h: 150 } }
     : id === '#t16' ? { kind: 'text', rect: { x: 602, y: 737, w: 46, h: 30 }, text: 'B ⋅ f' }
     : undefined),
 };
@@ -68,5 +69,46 @@ describe('Figures', () => {
   });
   it('let resolves to nothing to draw', () => {
     expect(new Figures(ground).resolve(script[1])).toBeNull();
+  });
+  it('connector ends on page marks resolve to points, quotes or boxes; others pass through unchanged', () => {
+    const f = new Figures(ground);
+    const side = { region: 's', ref: 'X' };
+    expect(f.resolve({ kind: 'connect', from: { page: 40, mark: '#d1' }, to: side })).toEqual({ kind: 'connect', from: { page: 40, at: { x: 407, y: 600 } }, to: side });
+    expect(f.resolve({ kind: 'connect', from: { page: 40, mark: '#s3.b' }, to: side })).toMatchObject({ from: { page: 40, at: { x: 500, y: 219 } } });
+    expect(f.resolve({ kind: 'connect', from: { page: 40, mark: '#s3' }, to: side })).toMatchObject({ from: { page: 40, at: { x: 453.5, y: 409.5 } } });
+    expect(f.resolve({ kind: 'connect', from: side, to: { page: 40, mark: '#t16' } })).toMatchObject({ to: { page: 40, quote: 'B ⋅ f', near: { x: 625, y: 752 } } });
+    expect(f.resolve({ kind: 'connect', from: { page: 40, mark: '#g1' }, to: side })).toMatchObject({ from: { page: 40, rect: { x: 100, y: 100, w: 200, h: 150 } } });
+    expect(f.resolve({ kind: 'connect', from: { page: 40, mark: '#d9' }, to: side })).toBe('unknown mark #d9');
+    expect(f.resolve({ kind: 'connect', from: { page: 40, mark: '#d1.a' }, to: side })).toBe('#d1 is not a line');
+    const plain: RawAction = { kind: 'connect', from: { page: 40, at: { x: 1, y: 2 } }, to: side };
+    expect(f.resolve(plain)).toBe(plain);
+  });
+  it('a connector end naming a let-only point resolves to that point; an element id stays a ref', () => {
+    const f = new Figures(ground);
+    f.note({ kind: 'sketch', id: 'k', page: 3, size: 'm', place: 'auto' });
+    f.note({ kind: 'let', region: 'k', defs: [['X', P('300,400')]] });
+    f.note({ kind: 'point', region: 'k', at: P('500,500'), id: 'Y' });
+    expect(f.resolve({ kind: 'connect', from: { page: 3, at: { x: 1, y: 2 } }, to: { region: 'k', ref: 'X' } })).toMatchObject({ to: { region: 'k', at: { x: 300, y: 400 } } });
+    const toY: RawAction = { kind: 'connect', from: { page: 3, at: { x: 1, y: 2 } }, to: { region: 'k', ref: 'Y' } };
+    expect(f.resolve(toY)).toBe(toY);
+    const toZ: RawAction = { kind: 'connect', from: { page: 3, at: { x: 1, y: 2 } }, to: { region: 'k', ref: 'Z' } };
+    expect(f.resolve(toZ)).toBe(toZ); // unknown: the toolkit waits for an element Z, then skips
+  });
+  it('a fitted region frames sized elements whole (box corners, circle radii), not just their anchors', () => {
+    const f = new Figures(ground);
+    const acts: RawAction[] = [
+      { kind: 'sketch', id: 'n', page: 15, size: 'm', place: 'auto', fit: true },
+      { kind: 'let', region: 'n', defs: [['X', P('-50,-50')], ['A', P('-50,-150')], ['C', P('-50,50')]] },
+      { kind: 'box', region: 'n', at: P('A'), w: 100, h: 100 },
+      { kind: 'box', region: 'n', at: P('C'), w: 100, h: 100 },
+    ];
+    acts.forEach((a) => f.note(a));
+    const top = f.resolve(acts[2]) as { at: { x: number; y: number }; w: number; h: number };
+    const bottom = f.resolve(acts[3]) as { at: { x: number; y: number }; w: number; h: number };
+    expect(top.w).toBeCloseTo(top.h); expect(bottom.w).toBeCloseTo(bottom.h); // nothing clipped
+    expect(bottom.at.y + bottom.h).toBeLessThanOrEqual(700 - 60);
+    expect(top.at.y).toBeGreaterThanOrEqual(60);
+    expect(bottom.at.y - top.at.y).toBeCloseTo(2 * top.h); // A's box, X's gap, then C's box
+    expect(f.figure({ region: 'n' }).outOfFrame).toBe(0);
   });
 });

@@ -2,7 +2,7 @@
 import { EXAMPLES } from './examples';
 
 /** Bump on any change: the eval records it with every run, and it is part of the cache prefix. */
-export const PROMPT_VERSION = 'p3.0';
+export const PROMPT_VERSION = 'p3.1';
 
 /*
  * The developer prompt: one stable block (no dates, no document names, no per-question selection),
@@ -61,7 +61,7 @@ Right after the sketch tag, declare the figure in ONE {{let on=s O=0,0 L=0,-400 
   {{line on=s from=O through=M}}   a ray from O through M, on to the frame's edge
 Constructions nest, as in meet(O,mid(A,B),C,D); no spaces inside a value. Never work out a crossing, a midpoint or "twice as far" yourself: write the construction, so every point lies exactly on its lines and nothing floats.
 Before a sketch, right after sentence 1, write a short plan inside <plan>…</plan>: the given points, how each other point is constructed, the draw order. It is never shown or spoken.
-Look: main shapes plain; rays and sight lines weight=secondary; construction lines dash; surfaces {{shade on=s pts=O L P outline}}. Label a point as you draw it, {{point on=s at=P "P" dir=s}}; a line by naming it aloud, or {{label id=ray "light" dir=n}} on a line drawn with id=ray. When the sketch redraws something on the page, tie them: {{connect from=p4:"words on the page" to=s:ray}}.`;
+Look: main shapes plain; rays and sight lines weight=secondary; construction lines dash; surfaces {{shade on=s pts=O L P outline}}. Label a point as you draw it, {{point on=s at=P "P" dir=s}}; a line by naming it aloud, or {{label id=ray "light" dir=n}} on a line drawn with id=ray. When the sketch redraws something on the page, tie them: {{connect from=p4:#d3 to=s:X}} from a page mark, or {{connect from=p4:"words on the page" to=s:ray}} from words.`;
 
 const GRAMMAR = `TAGS (key=value, "quoted text", bare flags; A, B, C are x,y, a name, a #mark or a construction)
 {{scroll p=4}}  {{scroll p=4 y=600}}
@@ -74,7 +74,7 @@ const GRAMMAR = `TAGS (key=value, "quoted text", bare flags; A, B, C are x,y, a 
 {{write on=s at=A "text" size=m}}  {{math on=s at=A "a^2 + b^2 = c^2" size=m}} (at = left edge; TeX only inside math)
 {{axes on=s at=A size=600,400 x="time" y="speed" id=ax}}  {{plot on=s fn="x*x" domain=-2,2 axes=ax}}
 {{let on=s A=0,0 B=along(A,C,2)}}  {{sketch id=s near=p4 fit}}  {{sketch id=t near=p4 size=l fit}}
-{{connect from=p4:"quote" to=s:ray}}  {{emph id=ray}}  {{fade id=ray}}
+{{connect from=p4:#d3 to=s:X}}  {{connect from=p4:"quote" to=s:ray}}  {{emph id=ray}}  {{fade id=ray}}
 Any drawing takes em (the one accent) and id=NAME; strokes take dash and weight=primary, secondary or faint. ids are unique; names are case-sensitive (X and x differ), and ' becomes ′. A tag is one line, under 300 characters.
 A tag that can't be resolved is skipped and the narration goes on, so never make a sentence depend on one.`;
 

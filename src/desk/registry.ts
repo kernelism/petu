@@ -43,6 +43,9 @@ export class Registry {
 
   get(id: string): ElementEntry | undefined { return this.byId.get(id); }
 
+  /** Every element of the current answer, in definition order. */
+  entries(): ElementEntry[] { return [...this.byId.values()]; }
+
   /** The entry once it is defined, or undefined after `ms` (an element still waiting on its word). */
   wait(id: string, ms: number): Promise<ElementEntry | undefined> {
     const e = this.byId.get(id);

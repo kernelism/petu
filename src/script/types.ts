@@ -25,7 +25,9 @@ export type End =
   | { page: number; quote: string; near?: Pt }
   | { page: number; at: Pt }
   | { region: string; ref: string }
-  | { region: string; at: Pt };
+  | { region: string; at: Pt }
+  /** A page box (a resolved figure, equation or image mark). */
+  | { page: number; rect: { x: number; y: number; w: number; h: number } };
 
 /** Any drawn element can be named (`id=`) and accented (`em`). */
 export type Mark = { id?: string; em?: boolean };
@@ -121,4 +123,7 @@ export type LetAction = { kind: 'let'; defs: [string, PtArg][] } & Target;
 export type MarkShape = { kind: 'circle' | 'box' | 'highlight' | 'underline' | 'line' | 'arrow'; page: number; region?: never; mark: string } & Ink;
 /** A ray: from A through B, to the frame edge (regions) or `len` × |AB| (pages default 1.5). */
 export type RayShape = { kind: 'line' | 'arrow'; from: PtArg; through: PtArg; len?: number } & Target & Ink;
-export type RawAction = LayoutAction | (DrawAction<PtArg>) | RefAction | ConnectAction | LetAction | MarkShape | RayShape;
+/** A connector end as written: also a page mark (`p4:#d3`, `p4:#s2.a`), resolved by the resolver. */
+export type RawEnd = End | { page: number; mark: string };
+export type RawConnect = { kind: 'connect'; from: RawEnd; to: RawEnd; id?: string };
+export type RawAction = LayoutAction | (DrawAction<PtArg>) | RefAction | RawConnect | LetAction | MarkShape | RayShape;

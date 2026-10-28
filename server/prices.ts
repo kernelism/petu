@@ -15,7 +15,7 @@ export const PRICES: Record<string, Price> = {
 export type Usage = {
   input_tokens: number;
   output_tokens: number;
-  input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+  input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number; cache_write_tokens_details?: { ttl_12h_tokens?: number; ttl_30m_tokens?: number } };
   output_tokens_details?: { reasoning_tokens?: number };
 };
 
@@ -26,9 +26,11 @@ export function costUsd(model: string, u: Usage, writeTtl: '30m' | '12h' = '12h'
   const cached = u.input_tokens_details?.cached_tokens ?? 0;
   const written = u.input_tokens_details?.cache_write_tokens ?? 0;
   const plain = Math.max(0, u.input_tokens - cached - written);
-  // Writes are billed at the TTL's rate; we don't know the split per breakpoint, so the dearer one.
-  const w = writeTtl === '12h' ? p.write12h : p.write30m;
-  const usd = (plain * p.in + cached * p.cached + written * w + u.output_tokens * p.out) / 1e6;
+  // Writes are billed at their TTL's rate: by the reported split when usage has one, else all at `writeTtl`.
+  const split = u.input_tokens_details?.cache_write_tokens_details;
+  const w12 = split ? split.ttl_12h_tokens ?? 0 : writeTtl === '12h' ? written : 0;
+  const w30 = split ? Math.max(0, written - w12) : written - w12;
+  const usd = (plain * p.in + cached * p.cached + w12 * p.write12h + w30 * p.write30m + u.output_tokens * p.out) / 1e6;
   return fast ? usd * 2 : usd;
 }
 

@@ -75,7 +75,7 @@ export class Ledger {
   /** Drops a reservation that sent nothing (refused upstream before any token). */
   release(id: string): void { this.held.delete(id); }
 
-  summary(): SpendSummary & { byPhase: Record<string, number>; byModel: Record<string, number>; n: number } {
+  summary(): SpendSummary & Required<Pick<SpendSummary, 'byPhase' | 'byModel' | 'n'>> {
     this.sync();
     const by = (k: keyof Entry) => this.f.entries.reduce<Record<string, number>>((m, e) => ({ ...m, [String(e[k])]: (m[String(e[k])] ?? 0) + e.usd }), {});
     return { totalUsd: this.spent(), capUsd: this.caps.totalUsd, ...(this.caps.dailyUsd != null ? { dailyCapUsd: this.caps.dailyUsd } : {}), todayUsd: this.spent((e) => e !== PRIOR && this.today(e)), byPhase: by('phase'), byModel: by('model'), n: this.f.entries.length };

@@ -40,4 +40,20 @@ export type AskEvent =
 
 export type AskErrorCode = 'no_key' | 'cap' | 'rate_limited' | 'upstream' | 'network' | 'bad_request' | 'cut_off';
 
-export type SpendSummary = { totalUsd: number; capUsd: number; todayUsd: number; dailyCapUsd?: number; blocked?: string };
+/** GET /api/spend. `phase`/`phaseCapUsd`/`blocked` come from the server route; the breakdowns from the ledger. */
+export type SpendSummary = {
+  totalUsd: number;
+  capUsd: number;
+  todayUsd: number;
+  dailyCapUsd?: number;
+  /** The server's spend phase (dev | bakeoff | iterate | validate | founder). */
+  phase?: string;
+  /** The current phase's budget. */
+  phaseCapUsd?: number;
+  /** Set when the next answer would be refused: the refusal line. */
+  blocked?: string;
+  byPhase?: Record<string, number>;
+  byModel?: Record<string, number>;
+  /** Ledger entries. */
+  n?: number;
+};

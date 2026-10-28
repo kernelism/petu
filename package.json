@@ -8,7 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "fixture": "node --experimental-strip-types scripts/make-fixture.ts"
+    "fixture": "node --experimental-strip-types scripts/make-fixture.ts",
+    "eval": "node --experimental-strip-types scripts/eval/run.ts",
+    "ground": "node --experimental-strip-types scripts/ground.ts"
   },
   "dependencies": {
     "katex": "0.18.11",

@@ -88,7 +88,7 @@ export async function* askStream(req: AskRequest, signal: AbortSignal, h: AskHan
 }
 
 /** The server's spend phase (GET /api/spend reports it); asks carry it so eval spend is tagged right. */
-export const spendPhase = (s: SpendSummary | null): string | undefined => (s as { phase?: unknown } | null)?.phase as string | undefined;
+export const spendPhase = (s: SpendSummary | null): string | undefined => s?.phase;
 
 export async function getSpend(f: typeof fetch = fetch): Promise<SpendSummary | null> {
   try {

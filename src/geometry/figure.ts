@@ -24,6 +24,7 @@ export type Unresolved = { missing: string } | { degenerate: string };
 export class Figure {
   private defs = new Map<string, PtArg>();
   private literals: Pt[] = [];
+  private spans: { at: PtArg; offsets: Pt[] }[] = [];
   private fit: Fit | null;
   /** Points that landed outside the frozen frame and were clamped (eval metric). */
   outOfFrame = 0;
@@ -40,6 +41,8 @@ export class Figure {
   }
   /** Records a literal coordinate used by any element, for the fit's extent. */
   note(p: PtArg): void { if (isLiteral(p)) this.literals.push(p); }
+  /** Records an element's world-size reach from its anchor (a box's far corner, a circle's radii), for the fit's extent. */
+  noteSpan(at: PtArg, offsets: Pt[]): void { this.spans.push({ at, offsets }); }
   has(name: string): boolean { return this.defs.has(name); }
 
   /** World coords of a point argument. */
@@ -77,6 +80,10 @@ export class Figure {
   extent(): { x0: number; y0: number; x1: number; y1: number } | null {
     const pts = [...this.literals];
     for (const name of this.defs.keys()) { const r = this.world({ ref: name }); if ('x' in r) pts.push(r); }
+    for (const sp of this.spans) {
+      const a = this.world(sp.at);
+      if ('x' in a) for (const o of sp.offsets) pts.push({ x: a.x + o.x, y: a.y + o.y });
+    }
     if (!pts.length) return null;
     return {
       x0: Math.min(...pts.map((p) => p.x)), y0: Math.min(...pts.map((p) => p.y)),

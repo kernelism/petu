@@ -152,9 +152,9 @@ const isWordChar = (c: string | undefined) => !!c && /[\p{L}\p{N}]/u.test(c);
 export function locateQuote(pageRuns: TextRun[], quote: string, near?: { x: number; y: number }, opts: LocateOpts = {}): PageRect[] {
   const q = normalizeText(quote).replace(/-/g, '').replace(/ {2,}/g, ' ').trim();
   if (!q || !pageRuns.length) return [];
-  // Quotes of ≤ 2 characters ("x", "C′") are too ambiguous without a position.
+  // Quotes of ≤ 2 characters ("x", "C′") need a position unless the page has exactly one
+  // whole-word hit; with `near`, the hit must sit within NEAR_MAX of it.
   const short = Array.from(normalizeText(quote).replace(/ /g, '')).length <= 2;
-  if (short && !near) return [];
   // Search the same line index the model reads: runs of each line in x order, lines in reading
   // order (equation glyphs and sub/superscripts come out as listed).
   const runs = lineOrder(pageRuns, opts.aspect ?? 1);
@@ -170,6 +170,7 @@ export function locateQuote(pageRuns: TextRun[], quote: string, near?: { x: numb
     if (f) candidates.push(f);
   }
   if (!candidates.length) return [];
+  if (short && !near && candidates.length !== 1) return [];
   const results = candidates.map((range) => rectsFor(runs, map, range, opts.measure ?? defaultMeasure())).filter((r) => r.length);
   if (!results.length) return [];
   if (!near) return results[0];

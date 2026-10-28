@@ -1,5 +1,5 @@
 // src/script/parseTag.ts
-import { REGION_H, type Compass, type End, type Pt, type RawAction, type Target, type Weight } from './types';
+import { REGION_H, type Compass, type RawEnd, type Pt, type RawAction, type Target, type Weight } from './types';
 import { tokenize, unquote } from './tokenize';
 import { NAME, normName, parsePtArg, worldPt, type PtArg } from './pointExpr';
 
@@ -35,8 +35,11 @@ function pair(s?: string): [number, number] | undefined {
 /** `\\frac` → `\frac` (a JSON-escaped backslash before a command); `\\` before a space or end stays (a line break). */
 export const normalizeTex = (s: string) => s.replace(/\\\\(?=[A-Za-z])/g, '\\');
 
-/** One connector end: `p3:"quote"`, `p3:x,y`, `side:elementId` or `side:x,y`. */
-function end(s: string | undefined, near: Pt | undefined): End | undefined {
+/** A connector end's page mark: a mark id, or a line mark's end (`#s2.a`, `#s2.b`). */
+const END_MARK = /^#[a-z]\d{1,3}(\.[ab])?$/;
+
+/** One connector end: `p3:"quote"`, `p3:#d3`, `p3:x,y`, `side:elementId` or `side:x,y`. */
+function end(s: string | undefined, near: Pt | undefined): RawEnd | undefined {
   const m = s?.match(/^([^:]+):(.+)$/);
   if (!m) return undefined;
   const [, head, rest] = m;
@@ -45,6 +48,7 @@ function end(s: string | undefined, near: Pt | undefined): End | undefined {
     const p = Number(page[1]);
     if (p < 1) return undefined;
     if (/^["“]/.test(rest)) { const q = unquote(rest); return q ? { page: p, quote: q, ...(near ? { near } : {}) } : undefined; }
+    if (rest.startsWith('#')) return END_MARK.test(rest) ? { page: p, mark: rest } : undefined;
     const at = pt(rest, 1000);
     return at ? { page: p, at } : undefined;
   }

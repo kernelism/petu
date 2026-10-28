@@ -1,5 +1,5 @@
 // src/geometry/resolve.ts
-import { REGION_H, type Action, type Pt, type RawAction, type Target } from '../script/types';
+import { REGION_H, type Action, type End, type Pt, type RawAction, type RawEnd, type Target } from '../script/types';
 import { isLiteral, type PtArg } from '../script/pointExpr';
 import { Figure, rayEnd } from './figure';
 import type { PageRect } from './space';
@@ -29,9 +29,11 @@ const ptFields = ['at', 'from', 'to', 'near'] as const;
 export class Figures {
   private figs = new Map<string, Figure>();
   private fitted = new Set<string>();
+  /** Element ids per target (`r:s:X`): a connector end naming one waits for that element. */
+  private elements = new Set<string>();
   constructor(private ground: Grounding) {}
 
-  clear(): void { this.figs.clear(); this.fitted.clear(); }
+  clear(): void { this.figs.clear(); this.fitted.clear(); this.elements.clear(); }
 
   figure(t: Target): Figure {
     const k = key(t);
@@ -62,8 +64,17 @@ export class Figures {
     const x = a as Record<string, unknown>;
     for (const k of [...ptFields, 'through'] as const) if (x[k]) f.note(x[k] as PtArg);
     if (Array.isArray(x.pts)) for (const p of x.pts as PtArg[]) f.note(p);
+    // Sized elements reach past their anchor: a fitted region frames all of them, not just their anchors.
+    if (f.fitted && x.at) {
+      const n = (k: string) => (typeof x[k] === 'number' ? (x[k] as number) : undefined);
+      const w = n('w'), h = n('h'), rx = n('rx') ?? n('r'), ry = n('ry') ?? n('r');
+      if (a.kind === 'box' && w != null && h != null) f.noteSpan(x.at as PtArg, [{ x: w, y: h }]);
+      else if (a.kind === 'axes' && w != null && h != null) f.noteSpan(x.at as PtArg, [{ x: w, y: -h }]);
+      else if ((a.kind === 'circle' || a.kind === 'shade') && rx != null && ry != null) f.noteSpan(x.at as PtArg, [{ x: -rx, y: -ry }, { x: rx, y: ry }]);
+    }
     // Named elements are named points: a point at its centre, a line at its ends.
     const id = x.id as string | undefined;
+    if (id) this.elements.add(`${key(tgt(a as { page?: number; region?: string }))}:${id}`);
     if (id && a.kind === 'point') f.define(id, x.at as PtArg);
     if (id && (a.kind === 'line' || a.kind === 'arrow') && x.to) { f.define(`${id}.a`, x.from as PtArg); f.define(`${id}.b`, x.to as PtArg); }
   }
@@ -71,7 +82,15 @@ export class Figures {
   resolve(a: RawAction): Action | null | string {
     if (a.kind === 'let') return null;
     if (a.kind === 'sketch' || a.kind === 'scroll' || a.kind === 'clear' || 'ref' in a) return a as Action;
-    if (a.kind === 'connect') return a; // ends resolve in the toolkit (quotes, ids, coords)
+    if (a.kind === 'connect') {
+      // Page marks resolve here; quotes, ids and coords resolve in the toolkit.
+      const named = (e: RawEnd) => 'ref' in e && !this.elements.has(`r:${e.region}:${e.ref}`) && this.figure({ region: e.region }).has(e.ref);
+      if (!('mark' in a.from) && !('mark' in a.to) && !named(a.from) && !named(a.to)) return a as Action;
+      const from = this.markEnd(a.from), to = this.markEnd(a.to);
+      if (typeof from === 'string') return from;
+      if (typeof to === 'string') return to;
+      return { ...a, from, to };
+    }
     if ('mark' in a) return this.markShape(a);
     const t = tgt(a as { page?: number; region?: string });
     const f = this.figure(t);
@@ -113,6 +132,28 @@ export class Figures {
     // Unchanged (all literal, in range, unfitted): hand back the same object, so identity-keyed
     // bookkeeping (debug timings, tests) sees the action it ran.
     return sameShape(out, a as Record<string, unknown>) ? (a as Action) : (out as Action);
+  }
+
+  /** A connector end on a page mark (or a let-only name): a dot or line end → its point, a line → its midpoint, text → its quote, else its box. */
+  private markEnd(e: RawEnd): End | string {
+    // A region end naming a point that only a {{let}} defines (no element has that id): the point itself.
+    if ('ref' in e && !this.elements.has(`r:${e.region}:${e.ref}`)) {
+      const f = this.figure({ region: e.region });
+      if (f.has(e.ref)) {
+        const w = f.world({ ref: e.ref });
+        if (!('x' in w)) return 'missing' in w ? `unknown point ${w.missing}` : w.degenerate;
+        return { region: e.region, at: f.toLocal(w, REGION_H) };
+      }
+    }
+    if (!('mark' in e)) return e;
+    const [base, end] = e.mark.split('.');
+    const m = this.ground.mark(e.page, base);
+    if (!m) return `unknown mark ${e.mark}`;
+    if (end && !('from' in m)) return `${base} is not a line`;
+    if (m.kind === 'dot') return { page: e.page, at: m.at };
+    if ('from' in m) return { page: e.page, at: end === 'a' ? m.from : end === 'b' ? m.to : mid(m.from, m.to) };
+    if (m.kind === 'text') return { page: e.page, quote: m.text, near: { x: m.rect.x + m.rect.w / 2, y: m.rect.y + m.rect.h / 2 } };
+    return { page: e.page, rect: m.rect };
   }
 
   private markShape(a: Extract<RawAction, { mark: string }>): Action | string {

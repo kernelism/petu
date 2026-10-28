@@ -137,7 +137,7 @@ async function writeLabel(g: SVGGElement, box: SRect, text: string, o: TextOpts,
 async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<ElementPlan | string> {
   const r = env.rng();
   const P = (p: SPt) => ctx.toSpace(p);
-  const anchorRects = async (quote: string, near?: SPt) => locateQuote(await ctx.runs(), quote, near).map((x) => ctx.rectToSpace(x));
+  const anchorRects = async (quote: string, near?: SPt) => locateQuote(await ctx.runs(), quote, near, { aspect: ctx.h / 1000 }).map((x) => ctx.rectToSpace(x));
   const px = (n: number) => n / Math.max(ctx.scale(), 1e-3);
   const DOT_PX = tokenNum('--ink-dot-r');
   await fontsFor('text' in a ? a.text : undefined, a.kind === 'axes' ? a.xLabel : undefined, a.kind === 'axes' ? a.yLabel : undefined);
@@ -401,7 +401,7 @@ async function endBox(end: End, env: BuildEnv): Promise<{ t: Target; r: SRect; p
   const ctx = await env.ctx(t);
   if (typeof ctx === 'string') return ctx;
   if ('quote' in end) {
-    const rects = locateQuote(await ctx.runs(), end.quote, end.near).map((x) => ctx.rectToSpace(x));
+    const rects = locateQuote(await ctx.runs(), end.quote, end.near, { aspect: ctx.h / 1000 }).map((x) => ctx.rectToSpace(x));
     return rects.length ? { t, r: union(rects) } : 'connector anchor not found';
   }
   if ('ref' in end) {
@@ -412,6 +412,7 @@ async function endBox(end: End, env: BuildEnv): Promise<{ t: Target; r: SRect; p
     const s = 8;
     return { t, r: { x: e.anchor.x - s, y: e.anchor.y - s, w: 2 * s, h: 2 * s } };
   }
+  if ('rect' in end) return { t, r: ctx.rectToSpace(end.rect) };
   const p = ctx.toSpace(end.at), s = 8;
   return { t, r: { x: p.x - s, y: p.y - s, w: 2 * s, h: 2 * s } };
 }

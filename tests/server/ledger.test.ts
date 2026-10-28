@@ -77,6 +77,9 @@ describe('prices', () => {
   });
   it('worst case and unknown models', () => {
     expect(worstCaseUsd('gpt-6.1-terra', 10000, 1400)).toBeCloseTo((25000 + 7000) / 1e6);
+    // The reported TTL split prices each part at its own rate (P0: 4092 at 12h, 3002 at 30m).
+    const split = costUsd('gpt-6.1-terra', { input_tokens: 7265, output_tokens: 129, input_tokens_details: { cached_tokens: 0, cache_write_tokens: 7094, cache_write_tokens_details: { ttl_12h_tokens: 4092, ttl_30m_tokens: 3002 } } }, '12h');
+    expect(split).toBeCloseTo((171 * 1 + 4092 * 2.5 + 3002 * 1.25 + 129 * 5) / 1e6, 10);
     expect(() => costUsd('gpt-9', { input_tokens: 1, output_tokens: 1 })).toThrow();
   });
 });

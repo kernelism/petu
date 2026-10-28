@@ -69,19 +69,3 @@ export const SCRIPTS: Record<string, Demo & { src: string }> = {
       `{{label id=pl "1/z" dir=n}} and a label.`,
   },
 };
-
-/**
- * Dev-only: `?scriptfile=<name>` plays public/dev/llm/<name>.txt (gitignored; e.g. a model-written
- * script) on lec09's PDF. The file's first line is the question unless `&q=` is given.
- */
-const devParams = typeof location !== 'undefined' && import.meta.env.DEV ? new URLSearchParams(location.search) : null;
-const scriptFile = devParams?.get('scriptfile');
-if (scriptFile && /^[\w-]+$/.test(scriptFile)) {
-  const entry = { src: SCRIPTS.lec09.src, question: devParams!.get('q') ?? '', script: '' };
-  SCRIPTS.file = entry; // filled before the PDF is ready (autoplay reads it then)
-  void fetch(`/dev/llm/${scriptFile}.txt`).then((r) => r.text()).then((t) => {
-    const nl = t.indexOf('\n');
-    if (!entry.question) entry.question = t.slice(0, nl).trim();
-    entry.script = t.slice(nl + 1);
-  });
-}
