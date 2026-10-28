@@ -13,8 +13,15 @@ import type { Effort, ModelConfig } from './openai';
 
 /** The $40 hard stop for checkpoint 2 (prior spike spend included). PETU_TOTAL_CAP_USD may only lower it. */
 export const MAX_TOTAL_USD = HARD_STOP_USD;
-/** Per-phase budgets (plan §3). Override one for a run with PETU_CAP_<PHASE>, e.g. PETU_CAP_DEV=3 for contingency. */
-export const PHASE_CAPS: Record<Phase, number> = { dev: 1, bakeoff: 6, iterate: 7, validate: 2, founder: 21.99 };
+/**
+ * Per-phase budgets (plan §3; Lessons v3 "Spend" adds the lesson* phases inside the same $40 hard
+ * stop, from the headroom outside the founder reserve). Override one for a run with
+ * PETU_CAP_<PHASE>, e.g. PETU_CAP_DEV=3 for contingency.
+ */
+export const PHASE_CAPS: Record<Phase, number> = {
+  dev: 1, bakeoff: 6, iterate: 7, validate: 2, founder: 21.99,
+  lessondev: 1.5, lessonbake: 3, lessoniter: 3.5, lessonval: 2,
+};
 export const PHASES = Object.keys(PHASE_CAPS) as Phase[];
 const EFFORTS: Effort[] = ['none', 'low', 'medium', 'high'];
 /**
@@ -27,12 +34,19 @@ const EFFORTS: Effort[] = ['none', 'low', 'medium', 'high'];
  */
 export const DEFAULT_MODEL = 'gpt-6.1-terra';
 export const DEFAULT_EFFORT: Effort = 'none';
+/** Stage 2's output budget: a script that walks several pages and draws (p3.2 answers used ≤ ~900). */
+export const DEFAULT_MAX_OUTPUT = 3200;
+/** Stage 1 (spec A): the fast model at effort none; its JSON is ≤ 6 pages and ≤ 80 words. */
+export const DEFAULT_SCOUT_MODEL = 'gpt-6.1-terra';
+export const SCOUT_MAX_OUTPUT = 400;
 /** Models whose API rejects reasoning.effort "none" (developers.openai.com/api/docs/guides/reasoning, 2026-10-28). */
 const NO_NONE = new Set(['gpt-6.1-sol', 'gpt-6-astra']);
 
 export type PetuEnv = {
   key: string;
   model: ModelConfig;
+  /** Stage 1 (scout): a fast model at no reasoning; JSON out. */
+  scout: ModelConfig;
   phase: Phase;
   caps: Caps;
   priorUsd: number;
@@ -62,8 +76,15 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   const effort = oneOf('PETU_EFFORT', EFFORTS, DEFAULT_EFFORT);
   if (effort === 'none' && NO_NONE.has(model)) throw new Error(`petu: ${model} does not accept reasoning effort none; set PETU_EFFORT=low`);
   const verbosity = str('PETU_VERBOSITY') == null ? undefined : oneOf('PETU_VERBOSITY', ['low', 'medium'] as const, 'low');
-  const maxOutput = Math.round(num('PETU_MAX_OUTPUT', 1400));
+  // Lessons v3: an answer may walk several pages and build a figure across them.
+  const maxOutput = Math.round(num('PETU_MAX_OUTPUT', DEFAULT_MAX_OUTPUT));
   if (maxOutput < 1) throw new Error('petu: PETU_MAX_OUTPUT must be ≥ 1');
+
+  const scoutModel = str('PETU_SCOUT_MODEL') ?? DEFAULT_SCOUT_MODEL;
+  if (!PRICES[scoutModel]) throw new Error(`petu: PETU_SCOUT_MODEL "${scoutModel}" has no price in server/prices.ts`);
+  const scoutEffort = oneOf('PETU_SCOUT_EFFORT', EFFORTS, 'none');
+  if (scoutEffort === 'none' && NO_NONE.has(scoutModel)) throw new Error(`petu: ${scoutModel} does not accept reasoning effort none; set PETU_SCOUT_EFFORT=low`);
+  const explicitCache = str('PETU_EXPLICIT_CACHE') !== '0';
 
   const phase = oneOf('PETU_PHASE', PHASES, 'founder');
   const phaseUsd = Object.fromEntries(PHASES.map((p) => [p, num(`PETU_CAP_${p.toUpperCase()}`, PHASE_CAPS[p])])) as Record<Phase, number>;
@@ -81,7 +102,8 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
 
   return {
     key: get('OPENAI_API_KEY')?.trim() ?? '',
-    model: { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache: str('PETU_EXPLICIT_CACHE') !== '0' },
+    model: { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache },
+    scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, fast: false, explicitCache },
     phase, caps,
     priorUsd: num('PETU_PRIOR_USD', 0.0076),
     pdfDirs,

@@ -72,7 +72,7 @@ describe('groundPage', () => {
 describe('ContextBuilder', () => {
   beforeEach(() => vi.useRealTimers());
 
-  it('builds the visible page, ±2 neighbours nearest first, and their grounds', async () => {
+  it('builds the deck digest, the visible page, and its ground (no scout: the visible page alone)', async () => {
     const { doc } = fakeDoc(deck);
     const b = new ContextBuilder(doc, 'lec.pdf', { OPS: O });
     const { context, grounds } = await b.build(5, 'what is this?', []);
@@ -80,38 +80,57 @@ describe('ContextBuilder', () => {
     expect(context.numPages).toBe(9);
     expect(context.page).toBe(5);
     expect(context.image.b64).toBe('JPEG');
-    expect(grounds.map((g) => g.page)).toEqual([5, 4, 6, 3, 7]);
-    const heads = context.pageText.split('\n').filter((l) => l.startsWith('PAGE'));
-    expect(heads).toEqual(['PAGE 5 (visible; 16:9 slide; image attached)', 'PAGE 4 (text only)', 'PAGE 6 (text only)', 'PAGE 3 (text only)', 'PAGE 7 (text only)']);
+    expect(grounds.map((g) => g.page)).toEqual([5]);
     expect(context.pageText.split('\n').slice(0, 4)).toEqual(['PAGE 5 (visible; 16:9 slide; image attached)', 't1 94 50–196: Slide 5 title', 't2 183 50–219: body of slide 5', '#d1 dot 505,556']);
-    expect(context.docText.split('\n')[0]).toBe('DOCUMENT lec.pdf (9 pages)');
-    // Neighbour #t ids resolve for the director.
-    expect(groundingOf(grounds).mark(4, '#t1')).toMatchObject({ kind: 'text', text: 'Slide 4 title' });
+    const digest = context.docText.split('\n');
+    expect(digest[0]).toMatch(/^DECK lec\.pdf \(9 pages\)/);
+    expect(digest).toHaveLength(10);
+    expect(digest).toContain('p8: Lucas Kanade · least squares optical flow · aperture problem');
+    expect(context.pagesText).toBeUndefined();
+    expect(context.images).toBeUndefined();
     expect(context.searchText).toBeUndefined();
     expect(context.ink).toBeUndefined();
     b.destroy();
   });
 
-  it('caps neighbours at ~1,500 tokens in total', async () => {
-    const long = Array.from({ length: 9 }, () => ({ lines: Array.from({ length: 10 }, (_, i) => `${'word '.repeat(60)}${i}`) }));
-    const { doc } = fakeDoc(long);
-    const b = new ContextBuilder(doc, 'x.pdf', { OPS: O });
-    const { context } = await b.build(5, 'q', []);
-    const visible = context.pageText.indexOf('PAGE 4');
-    expect(context.pageText.length - visible).toBeLessThanOrEqual(1500 * 3.3 + 10);
-    expect(context.pageText).toContain('PAGE 7 (text only)');
+  it('the digest is the same string for the scout, the prewarm and the answer (one cacheable prefix)', async () => {
+    const { doc } = fakeDoc(deck);
+    const b = new ContextBuilder(doc, 'lec.pdf', { OPS: O });
+    const d = await b.digest(5, 'least squares');
+    expect((await b.pagePrefix(5)).docText).toBe(d);
+    expect((await b.build(2, 'other', [], { pages: [8], plan: '' })).context.docText).toBe(d);
     b.destroy();
   });
 
-  it('adds search hits from pages not already sent, once the index has them', async () => {
+  it("multi-page: the scout's pages get full listings and marks in its order, the first three images, and every page's grounds", async () => {
     const { doc } = fakeDoc(deck);
     const b = new ContextBuilder(doc, 'lec.pdf', { OPS: O });
-    await (b as unknown as { index: { fill(): Promise<void> } }).index.fill();
-    const { context } = await b.build(2, 'least squares optical flow', []);
-    expect(context.searchText).toBe('PAGE 8 (search hit)\nLucas Kanade\nleast squares optical flow\naperture problem');
-    const near = await b.build(7, 'least squares optical flow', []);
-    expect(near.context.searchText).toBeUndefined(); // page 8 is a neighbour of 7
-    expect(near.context.docText).toContain('p8: Lucas Kanade');
+    const { context, grounds } = await b.build(5, 'how does it work?', [], { pages: [8, 2, 5, 3, 1, 9], plan: 'walk 8 then 2' });
+    expect(grounds.map((g) => g.page)).toEqual([5, 8, 2, 3, 1, 9]);
+    expect(context.images?.map((i) => i.page)).toEqual([8, 2, 3]);
+    expect(context.images?.every((i) => i.b64 === 'JPEG')).toBe(true);
+    const heads = context.pagesText!.split('\n').filter((l) => l.startsWith('PAGE'));
+    expect(heads).toEqual([
+      'PAGE 8 (16:9 slide; image attached)', 'PAGE 2 (16:9 slide; image attached)', 'PAGE 3 (16:9 slide; image attached)',
+      'PAGE 1 (16:9 slide; listing only, no image)', 'PAGE 9 (16:9 slide; listing only, no image)',
+    ]);
+    expect(context.pagesText).toContain('#d1 dot 505,556');
+    expect(context.scout).toEqual({ pages: [8, 2, 5, 3, 1, 9], plan: 'walk 8 then 2' });
+    // Marks and lines on non-visible pages resolve for the director (addressed with p=).
+    const g = groundingOf(grounds);
+    expect(g.mark(8, '#t1')).toMatchObject({ kind: 'text', text: 'Lucas Kanade' });
+    expect(g.mark(9, '#d1')).toMatchObject({ kind: 'dot' });
+    expect(g.mark(4, '#t1')).toBeUndefined(); // not sent with a listing
+    b.destroy();
+  });
+
+  it("caps the other pages' listings in total", async () => {
+    const long = Array.from({ length: 9 }, () => ({ lines: Array.from({ length: 40 }, (_, i) => `${'word '.repeat(60)}${i}`) }));
+    const { doc } = fakeDoc(long);
+    const b = new ContextBuilder(doc, 'x.pdf', { OPS: O });
+    const { context } = await b.build(5, 'q', [], { pages: [1, 2, 3, 4, 6, 7], plan: '' });
+    expect(context.pagesText!.length).toBeLessThanOrEqual(12000 * 3.3 + 10);
+    expect(context.pagesText).toContain('PAGE 7 (16:9 slide; listing only, no image)');
     b.destroy();
   });
 

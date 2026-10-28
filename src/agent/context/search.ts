@@ -99,6 +99,8 @@ export class PageIndex {
 
   set(page: number, lines: string[]) { this.pages.set(page, lines); }
   has(page: number) { return this.pages.has(page); }
+  /** A page's text lines, if indexed. */
+  lines(page: number): string[] | undefined { return this.pages.get(page); }
   ready() { return this.pages.size >= this.numPages; }
 
   /** Fills every missing page, a few per idle slice. Safe to call repeatedly. */

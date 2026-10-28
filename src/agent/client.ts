@@ -1,5 +1,6 @@
 // src/agent/client.ts — the browser side of POST /api/ask (NDJSON AskEvents) and GET /api/spend.
 import { formatUsd, HARD_STOP_USD, type AskErrorCode, type AskEvent, type AskRequest, type SpendSummary } from './protocol';
+import { fallbackScout, parseScout, type ScoutRequest, type ScoutResult } from './scout';
 
 export class AskError extends Error {
   constructor(readonly code: AskErrorCode, message: string, readonly retryable: boolean) { super(message); }
@@ -7,6 +8,8 @@ export class AskError extends Error {
 
 export type AskHandlers = {
   onMeta?(e: Extract<AskEvent, { t: 'meta' }>): void;
+  /** Stage 1 finished: the scout's pages, plan and latency. */
+  onScout?(e: Extract<AskEvent, { t: 'scout' }>): void;
   onNote?(message: string): void;
   onDone?(e: Extract<AskEvent, { t: 'done' }>): void;
   /** The stream ended early after narration started: play what arrived, then say so. */
@@ -84,6 +87,28 @@ export async function* askStream(req: AskRequest, signal: AbortSignal, h: AskHan
   } finally {
     if (signal.aborted) void reader.cancel().catch(() => {});
     else reader.releaseLock();
+  }
+}
+
+/**
+ * POST /api/scout → the pages to teach from and a plan. Never throws: any failure (network, server,
+ * cap, bad JSON) falls back to the visible page alone, so the answer still goes ahead. An abort
+ * returns null.
+ */
+export async function scoutPages(req: ScoutRequest, signal: AbortSignal, f: typeof fetch = fetch, now: () => number = () => performance.now()): Promise<ScoutResult | null> {
+  const t0 = now();
+  try {
+    const r = await f('/api/scout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req), signal });
+    const body = (await r.json().catch(() => null)) as Partial<ScoutResult> | null;
+    const ms = Math.round(now() - t0);
+    if (!r.ok || !body) return fallbackScout(req.page, `scout server error (${r.status})`, ms);
+    // The server parses already; parse again so a bad reply can never pass a bad page on.
+    const p = parseScout(JSON.stringify({ pages: body.pages, plan: body.plan }), req.numPages, req.page);
+    const fallback = body.fallback ?? p.fallback;
+    return { pages: p.pages, plan: p.plan, ms: typeof body.ms === 'number' ? body.ms : ms, usd: typeof body.usd === 'number' ? body.usd : 0, ...(fallback ? { fallback } : {}) };
+  } catch {
+    if (signal.aborted) return null;
+    return fallbackScout(req.page, "couldn't reach the scout", Math.round(now() - t0));
   }
 }
 

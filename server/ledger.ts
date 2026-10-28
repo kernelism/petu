@@ -3,9 +3,9 @@ import { closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, ren
 import { dirname } from 'node:path';
 import { formatUsd, type SpendSummary } from '../src/agent/protocol';
 
-export type Phase = 'dev' | 'bakeoff' | 'iterate' | 'validate' | 'founder';
+export type Phase = 'dev' | 'bakeoff' | 'iterate' | 'validate' | 'founder' | 'lessondev' | 'lessonbake' | 'lessoniter' | 'lessonval';
 export type Entry = {
-  id: string; at: string; phase: Phase; kind: 'answer' | 'prewarm' | 'judge';
+  id: string; at: string; phase: Phase; kind: 'answer' | 'scout' | 'prewarm' | 'judge';
   model: string; usd: number; estimated?: boolean; tokens?: { in: number; cached: number; out: number };
   /** Booked at start-up from a reservation whose process died mid-request. */
   recovered?: boolean;

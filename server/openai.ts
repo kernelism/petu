@@ -42,6 +42,8 @@ import { SseParser, ResponseEvents } from './sse';
 import { ScriptFilter } from './scriptFilter';
 import { Lint } from './lint';
 import { systemPrompt, PROMPT_VERSION } from './prompt/system';
+import { SCOUT_SYSTEM, SCOUT_VERSION } from './prompt/scout';
+import { SCOUT_SCHEMA, fallbackScout, parseScout, type ScoutRequest, type ScoutResult } from '../src/agent/scout';
 import { CacheStats, estimatedUsage } from './cacheStats';
 
 export type Effort = 'none' | 'low' | 'medium' | 'high';
@@ -83,10 +85,25 @@ const common = (cfg: ModelConfig) => ({
   prompt_cache_key: cacheKey(),
 });
 
+/**
+ * Stage 2 (perform). Cacheable prefix: the system prompt (12h), the deck digest (30m: constant per
+ * document), the visible page's listing and image (30m: constant per page). Then history, then the
+ * volatile tail: the scout's other pages (listings, then their images), the scout's plan, student
+ * ink, and the question last.
+ */
 export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { context: AskContext }, cfg: ModelConfig, prewarm = false) {
   const c = r.context;
   const tail: unknown[] = [];
+  if (c.pagesText) tail.push({ type: 'input_text', text: c.pagesText });
+  for (const im of c.images ?? []) {
+    tail.push({ type: 'input_text', text: `IMAGE of page ${im.page}:` });
+    tail.push({ type: 'input_image', image_url: img(im.b64), detail: 'high' });
+  }
   if (c.searchText) tail.push({ type: 'input_text', text: c.searchText });
+  if (c.scout) {
+    const order = c.scout.pages.join(', ');
+    tail.push({ type: 'input_text', text: `PLAN (a first read of the whole document; pages in teaching order: ${order})${c.scout.plan ? `: ${c.scout.plan}` : ''}` });
+  }
   if (c.ink) {
     tail.push({ type: 'input_text', text: `STUDENT INK on page ${c.page}: ${c.ink.summary}` });
     if (c.ink.crop) tail.push({ type: 'input_image', image_url: img(c.ink.crop.b64), detail: 'high' });
@@ -95,7 +112,7 @@ export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { con
   const input = [
     developer(cfg),
     { role: 'user', content: [
-      { type: 'input_text', text: c.docText },
+      { type: 'input_text', text: c.docText, ...bp(cfg.explicitCache, '30m') },
       { type: 'input_text', text: c.pageText },
       { type: 'input_image', image_url: img(c.image.b64), detail: 'high', ...bp(cfg.explicitCache, '30m') },
     ] },
@@ -112,6 +129,65 @@ export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { con
     ...(cfg.verbosity ? { text: { verbosity: cfg.verbosity } } : {}),
     metadata: { prompt: PROMPT_VERSION },
   };
+}
+
+/** The scout's cache key: one per scout prompt version, shared by every document. */
+export const scoutCacheKey = () => `petu-scout-${SCOUT_VERSION}`;
+/** How much of the previous answer the scout reads. */
+const PRIOR_CHARS = 600;
+
+/**
+ * Stage 1 (scout). Cacheable prefix: the scout instructions and the deck digest (30m), byte-identical
+ * to the digest the answer sends. Then the page in view, the previous exchange, the question last.
+ * Strict JSON out.
+ */
+export function buildScoutRequest(r: ScoutRequest, cfg: ModelConfig, prewarm = false) {
+  const tail = [`The student is looking at page ${r.page}.`];
+  if (r.prior) tail.push(`PREVIOUS QUESTION (page ${r.prior.page}): ${r.prior.q}\nPREVIOUS ANSWER (spoken): ${r.prior.a.length > PRIOR_CHARS ? `${r.prior.a.slice(0, PRIOR_CHARS)}…` : r.prior.a}`);
+  tail.push(`QUESTION: ${r.question}`);
+  return {
+    model: cfg.model, store: false, max_output_tokens: cfg.maxOutput, reasoning: { effort: cfg.effort },
+    prompt_cache_key: scoutCacheKey(),
+    input: [
+      { role: 'developer', content: [{ type: 'input_text', text: SCOUT_SYSTEM }] },
+      { role: 'user', content: [{ type: 'input_text', text: r.digest, ...bp(cfg.explicitCache, '30m') }] },
+      ...(prewarm ? [] : [{ role: 'user', content: [{ type: 'input_text', text: tail.join('\n') }] }]),
+    ],
+    stream: false,
+    text: { format: { type: 'json_schema', name: 'scout', schema: SCOUT_SCHEMA, strict: true } },
+    ...(cfg.explicitCache ? { prompt_cache_options: { mode: 'explicit', ...(prewarm ? { prewarm: true } : {}) } } : {}),
+    metadata: { prompt: SCOUT_VERSION },
+  };
+}
+
+/** Upper bound on the scout's wait for a reply: past it the answer goes ahead on the visible page. */
+export const SCOUT_TIMEOUT_MS = 8000;
+
+/**
+ * Stage 1: one non-streamed JSON call (no retry: a slow or failed scout falls back to the visible
+ * page rather than delaying the answer). Booked as kind 'scout'. Never throws.
+ */
+export async function scout(r: ScoutRequest, cfg: ModelConfig, d: Deps, signal?: AbortSignal): Promise<ScoutResult> {
+  const now = d.now ?? (() => performance.now());
+  const t0 = now();
+  if (!d.key) return fallbackScout(r.page, 'no key');
+  if (!PRICES[cfg.model]) return fallbackScout(r.page, `no price for ${cfg.model}`);
+  const body = buildScoutRequest(r, cfg);
+  const res = await callJson(body, cfg.model, estimateInputTokens(body, []), cfg.maxOutput, cfg.fast, 'scout', d, { timeoutMs: Math.min(SCOUT_TIMEOUT_MS, d.timeouts?.callMs ?? SCOUT_TIMEOUT_MS), retry: false, signal });
+  const ms = Math.round(now() - t0);
+  if (!res.ok) return fallbackScout(r.page, res.code === 'cap' ? 'cap' : `scout failed: ${res.message.slice(0, 120)}`, ms, res.usd);
+  const p = parseScout(outputText(res.json), r.numPages, r.page);
+  return { pages: p.pages, plan: p.plan, ms, usd: res.usd, ...(p.fallback ? { fallback: p.fallback } : {}) };
+}
+
+/** Writes the scout's prefix (instructions + digest) without generating output. */
+export async function prewarmScout(r: Pick<ScoutRequest, 'digest' | 'docHash' | 'numPages' | 'page' | 'docName'>, cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {
+  if (!cfg.explicitCache) return { ok: false, usd: 0, reason: 'prewarm needs explicit caching (PETU_EXPLICIT_CACHE=0)' };
+  if (!d.key) return { ok: false, usd: 0, reason: 'no key' };
+  if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };
+  const body = buildScoutRequest({ ...r, question: '' }, cfg, true);
+  const res = await callJson(body, cfg.model, estimateInputTokens(body, []), cfg.maxOutput, cfg.fast, 'prewarm', d);
+  return res.ok ? { ok: true, usd: res.usd } : { ok: false, usd: res.usd, reason: res.message };
 }
 
 /** The system block alone, as a prewarm: written once and shared by every document. */
@@ -151,7 +227,7 @@ const imageDims = (im: { b64: string; w: number; h: number }) => {
   return { w: Math.max(im.w, real?.w ?? 0), h: Math.max(im.h, real?.h ?? 0) };
 };
 /** The images of an answer request, sized for the worst case. */
-export const askImages = (c: AskContext) => [c.image, ...(c.ink?.crop ? [c.ink.crop] : [])].map(imageDims);
+export const askImages = (c: AskContext) => [c.image, ...(c.images ?? []), ...(c.ink?.crop ? [c.ink.crop] : [])].map(imageDims);
 
 /** One answer: gate → stream → filters → book. Emits AskEvents; resolves when done. */
 export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: AskEvent) => void, signal: AbortSignal): Promise<void> {
@@ -322,7 +398,8 @@ export async function judge(j: JudgeRequest, d: Deps): Promise<JudgeResult> {
 type CallResult = { ok: true; json: any; usd: number } | { ok: false; code: string; message: string; usd: number };
 
 /** A non-streamed call: reserve the worst case → POST (one retry on 429/5xx/network) → book usage. */
-async function callJson(body: unknown, model: string, est: number, maxOutput: number, fast: boolean, kind: 'prewarm' | 'judge', d: Deps): Promise<CallResult> {
+type CallOpts = { timeoutMs?: number; retry?: boolean; signal?: AbortSignal };
+async function callJson(body: unknown, model: string, est: number, maxOutput: number, fast: boolean, kind: 'prewarm' | 'judge' | 'scout', d: Deps, o: CallOpts = {}): Promise<CallResult> {
   const id = randomUUID();
   const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(model, est, maxOutput, fast), { kind, model });
   if (refused) return { ok: false, code: 'cap', message: capHint(refused.code, refused.message, d.phase), usd: 0 };
@@ -330,9 +407,12 @@ async function callJson(body: unknown, model: string, est: number, maxOutput: nu
   const T = { ...TIMEOUTS, ...d.timeouts };
   let last: CallResult = { ok: false, code: 'network', message: 'Network error reaching OpenAI.', usd: 0 };
   let reached = false;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const attempts = o.retry === false ? 1 : 2;
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
-      const res = await d.fetch(URL_, { method: 'POST', signal: AbortSignal.timeout(T.callMs), headers: headers(d.key), body: JSON.stringify(body) });
+      const timeout = AbortSignal.timeout(o.timeoutMs ?? T.callMs);
+      const signal = o.signal ? AbortSignal.any([timeout, o.signal]) : timeout;
+      const res = await d.fetch(URL_, { method: 'POST', signal, headers: headers(d.key), body: JSON.stringify(body) });
       const text = await res.text();
       if (res.ok) {
         const json = JSON.parse(text);
@@ -349,10 +429,10 @@ async function callJson(body: unknown, model: string, est: number, maxOutput: nu
       // A network error or timeout after sending may still bill: the last try is booked below at its
       // worst case; a first try that a retry follows is booked now, on its own.
       last = { ok: false, code: 'network', message: scrub(String(e), d.key).slice(0, 200), usd: 0 };
-      if (attempt === 0) d.ledger.settle({ id: `${id}:a0`, phase: d.phase, kind, model, usd: worstCaseUsd(model, est, maxOutput, fast), estimated: true });
+      if (attempt < attempts - 1) d.ledger.settle({ id: `${id}:a0`, phase: d.phase, kind, model, usd: worstCaseUsd(model, est, maxOutput, fast), estimated: true });
       else reached = true;
     }
-    if (attempt === 0) await sleep(500 + Math.random() * 300);
+    if (attempt < attempts - 1) await sleep(500 + Math.random() * 300);
   }
   if (reached) {
     const usd = worstCaseUsd(model, est, maxOutput, fast);

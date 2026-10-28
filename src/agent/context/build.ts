@@ -11,8 +11,10 @@ import { fontLookup } from '../../pdf/mathGlyphs.ts';
 import { textLines } from './textLines.ts';
 import { figureMarks } from './marks.ts';
 import { paintedFromOperatorList } from './operatorList.ts';
-import { formatNeighbour, formatVisible } from './format.ts';
-import { docHeader, resolveOutline, type Bookmark } from './outline.ts';
+import { formatPage, formatVisible } from './format.ts';
+import { resolveOutline, type Bookmark } from './outline.ts';
+import { deckDigest } from './digest.ts';
+import { answerPages, imagePages } from '../scout.ts';
 import { PageIndex } from './search.ts';
 import { inkSummary } from './ink.ts';
 import { inkCrop, renderPage, type Jpeg } from './image.ts';
@@ -68,8 +70,14 @@ async function pageLines(page: PDFPageProxy): Promise<string[]> {
 }
 
 const NEIGHBOURS = 2;
-const NEIGHBOUR_TOKENS = 1500;
 const CHARS_PER_TOKEN = 3.3;
+/** The scout's other pages share this many tokens of listings; one page gets at most PAGE_TOKENS. */
+const PAGES_TOKENS = 12000;
+const PAGE_TOKENS = 3500;
+/** How long a question waits for the text index to finish before the digest is built from what is read. */
+export const DIGEST_WAIT_MS = 2500;
+/** Pages grounded ahead while the scout thinks (its likely picks: the best keyword matches). */
+const SPECULATE = 3;
 const LRU = 10;
 const CANVASES = 2;
 const WARM_DELAY = 600;
@@ -112,12 +120,45 @@ export class ContextBuilder {
     }, WARM_DELAY);
   }
 
-  /** On Enter: everything for the question. ≤ 5ms when warm; otherwise awaits the missing pieces. */
-  async build(page: number, question: string, ink: StudentStroke[]): Promise<{ context: AskContext; grounds: PageGround[] }> {
-    const { context, grounds } = await this.assemble(page);
-    const sent = new Set(grounds.map((g) => g.page));
-    const searchText = this.index.searchText(question, 3, sent);
-    const visible = grounds[0];
+  /**
+   * Stage 1 (scout): the deck digest, built from every page's text. It waits up to DIGEST_WAIT_MS for
+   * the index to finish; meanwhile the best keyword pages for `question` are grounded ahead, since
+   * the scout usually picks them.
+   */
+  async digest(page: number, question = ''): Promise<string> {
+    if (question) for (const { page: p } of this.index.topPages(question, SPECULATE, new Set([page]))) void this.entry(p, false).ground.catch(() => undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([this.index.fill(), new Promise<void>((ok) => { timer = setTimeout(ok, DIGEST_WAIT_MS); })]);
+    clearTimeout(timer);
+    return deckDigest(this.name, this.doc.numPages, (p) => this.index.lines(p), await this.outline());
+  }
+
+  /**
+   * Stage 2 (perform): everything for the question. The visible page always comes first (listing +
+   * image); then the scout's pages, in its order, with full listings, the first of them as images
+   * (4 images in all). `grounds` covers every page sent with a listing, so marks on any of them resolve.
+   */
+  async build(page: number, _question: string, ink: StudentStroke[], scout?: { pages: number[]; plan: string }): Promise<{ context: AskContext; grounds: PageGround[] }> {
+    const { context, grounds: [visible] } = await this.assemble(page);
+    const pages = answerPages(page, scout?.pages ?? []).slice(1);
+    const withImage = new Set(imagePages(page, scout?.pages ?? []));
+    const [others, images] = await Promise.all([
+      Promise.all(pages.map((p) => this.entry(p, withImage.has(p)).ground.catch(() => null))),
+      Promise.all(pages.filter((p) => withImage.has(p)).map(async (p) => {
+        try { return { page: p, ...(await this.entry(p, true).image!).jpeg }; } catch { return null; }
+      })),
+    ]);
+    const sentImages = images.filter((x): x is NonNullable<typeof x> => x != null);
+    const imaged = new Set(sentImages.map((x) => x.page));
+    const blocks: string[] = [];
+    let budget = PAGES_TOKENS * CHARS_PER_TOKEN;
+    const got = others.filter((g): g is PageGround => g != null);
+    got.forEach((g, i) => {
+      const share = Math.min(PAGE_TOKENS * CHARS_PER_TOKEN, budget / (got.length - i));
+      const s = formatPage(g, { image: imaged.has(g.page), maxChars: share });
+      blocks.push(s);
+      budget -= s.length + 1;
+    });
     const summary = inkSummary(ink, visible);
     let inkPart: AskContext['ink'];
     if (summary) {
@@ -128,10 +169,19 @@ export class ContextBuilder {
       } catch { /* the summary alone still helps */ }
       inkPart = { summary, ...(crop ? { crop } : {}) };
     }
-    return { context: { ...context, ...(searchText ? { searchText } : {}), ...(inkPart ? { ink: inkPart } : {}) }, grounds };
+    return {
+      context: {
+        ...context,
+        ...(blocks.length ? { pagesText: blocks.join('\n') } : {}),
+        ...(sentImages.length ? { images: sentImages } : {}),
+        ...(scout ? { scout: { pages: scout.pages, plan: scout.plan } } : {}),
+        ...(inkPart ? { ink: inkPart } : {}),
+      },
+      grounds: [visible, ...got],
+    };
   }
 
-  /** For prewarm: the same context without question-specific parts (no search, no ink). */
+  /** For prewarm: the cacheable prefix (digest + visible page), nothing question-specific. */
   async pagePrefix(page: number): Promise<AskContext> {
     return (await this.assemble(page)).context;
   }
@@ -158,30 +208,21 @@ export class ContextBuilder {
     return out;
   }
 
+  /** The digest and the visible page (listing + image): the answer's cacheable prefix. */
   private async assemble(page: number): Promise<{ context: AskContext; grounds: PageGround[] }> {
-    const ps = this.window(page);
     const img = this.entry(page, true).image!;
-    const [grounds, image, bookmarks] = await Promise.all([Promise.all(ps.map((p) => this.entry(p, false).ground)), img, this.outline()]);
-    for (const g of grounds) if (!this.index.has(g.page)) this.index.set(g.page, g.lines.map((l) => l.text));
-    void this.index.fill();
-    const blocks = [formatVisible(grounds[0])];
-    let budget = NEIGHBOUR_TOKENS * CHARS_PER_TOKEN;
-    grounds.slice(1).forEach((g, i, rest) => {
-      const share = budget / (rest.length - i);
-      const s = formatNeighbour(g, share);
-      blocks.push(s);
-      budget -= s.length + 1;
-    });
+    const [ground, image, docText] = await Promise.all([this.entry(page, false).ground, img, this.digest(page)]);
+    if (!this.index.has(page)) this.index.set(page, ground.lines.map((l) => l.text));
     const context: AskContext = {
       docName: this.name,
       docHash: this.doc.fingerprints?.[0] ?? this.name,
       numPages: this.doc.numPages,
       page,
-      docText: docHeader(this.name, this.doc.numPages, page, this.index.firstLines(), bookmarks),
-      pageText: blocks.join('\n'),
+      docText,
+      pageText: formatVisible(ground),
       image: image.jpeg,
     };
-    return { context, grounds };
+    return { context, grounds: [ground] };
   }
 
   private outline(): Promise<Bookmark[]> {

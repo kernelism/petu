@@ -1,15 +1,15 @@
 // server/lint.ts
-const DRAW = /^\{\{\s*(circle|box|highlight|underline|line|arrow|point|curve|shade|angle|brace|axes|plot|math|write|label|connect)\b/i;
-export const MAX_DRAW = 10, MAX_EM = 3, MAX_SKETCH = 2;
+/** Every tag name the parser knows (src/script/parseTag.ts). */
+export const TAG_NAMES = new Set(['scroll', 'highlight', 'underline', 'circle', 'box', 'line', 'arrow', 'point', 'label', 'curve', 'shade', 'angle', 'brace', 'write', 'math', 'axes', 'plot', 'let', 'sketch', 'connect', 'emph', 'move', 'fade', 'clear']);
 
 /**
- * Streaming guard against runaway answers; the prompt does the real work. Over-limit tags are
- * dropped (their tag text only — the narration stays) or lose their `em` flag. Text outside tags
- * passes through untouched. Notes go to `done.lint`.
+ * Grammar checks on the stream, for the debug panel and the eval (`done.lint`). Lessons v3: no
+ * style counts (no caps on drawings, accents or sketches); the prompt shapes the answer. Lint never
+ * changes the stream: the parser skips a malformed tag and the director skips an unresolvable one,
+ * each with its own reason. Lint only notes what it sees: an unknown tag name, an unclosed quote.
  */
 export class Lint {
   private buf = ''; private inTag = false;
-  private draws = 0; private ems = 0; private sketches = 0;
   notes: string[] = [];
   push(s: string): string {
     let out = '';
@@ -28,9 +28,10 @@ export class Lint {
   }
   end(): string { const b = this.buf; this.buf = ''; this.inTag = false; return b; }
   private tag(t: string): string {
-    if (/^\{\{\s*sketch\b/i.test(t) && ++this.sketches > MAX_SKETCH) { this.notes.push('dropped extra sketch'); return ''; }
-    if (DRAW.test(t) && ++this.draws > MAX_DRAW) { this.notes.push(`dropped drawing #${this.draws}`); return ''; }
-    if (/\sem(\s|\}\})/.test(t) && ++this.ems > MAX_EM) { this.notes.push('removed extra em'); return t.replace(/\sem(?=\s|\}\})/, ''); }
+    const name = /^\{\{\s*([A-Za-z]+)/.exec(t)?.[1]?.toLowerCase();
+    if (!name || !TAG_NAMES.has(name)) this.notes.push(`unknown tag ${JSON.stringify(t.slice(0, 40))}`);
+    const quotes = (t.match(/"/g) ?? []).length;
+    if (quotes % 2) this.notes.push(`unclosed quote in ${JSON.stringify(t.slice(0, 40))}`);
     return t;
   }
 }

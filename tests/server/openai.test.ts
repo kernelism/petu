@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from '../../server/ledger';
 import { costUsd } from '../../server/prices';
-import { ask, buildRequest, buildSystemPrewarm, estimateInputTokens, prewarm, prewarmSystem, judge, systemTokensLow, type ModelConfig, type Deps } from '../../server/openai';
+import { ask, askImages, buildRequest, buildScoutRequest, buildSystemPrewarm, estimateInputTokens, prewarm, prewarmScout, prewarmSystem, judge, scout, scoutCacheKey, systemTokensLow, type ModelConfig, type Deps } from '../../server/openai';
+import { SCOUT_SYSTEM } from '../../server/prompt/scout';
 import { CacheStats } from '../../server/cacheStats';
 import { PROMPT_VERSION, systemPrompt } from '../../server/prompt/system';
 import type { AskEvent, AskRequest, AskContext } from '../../src/agent/protocol';
@@ -479,5 +480,93 @@ describe('estimateInputTokens: worst cases', () => {
     const { askImages } = await import('../../server/openai');
     expect(askImages({ ...context, image: { b64, w: 10, h: 10 } })).toEqual([{ w: 2000, h: 1500 }]);
     expect(estimateInputTokens(lie, askImages({ ...context, image: { b64, w: 10, h: 10 } }))).toBeGreaterThan(estimateInputTokens(lie, [{ w: 10, h: 10 }]) + 2000);
+  });
+});
+
+describe('Lessons v3: two stages', () => {
+  const multi: AskContext = {
+    ...context, docText: 'DECK digest', pageText: 'PAGE 2 (visible) lines',
+    pagesText: 'PAGE 7 (16:9 slide; image attached)\nt1 60 40–300: Seven\nPAGE 9 (16:9 slide; listing only, no image)\nt1 60 40–300: Nine',
+    images: [{ page: 7, b64: 'C'.repeat(400), w: 1280, h: 720 }],
+    scout: { pages: [7, 2, 9], plan: 'walk 7, then 2, then 9; draw one figure' },
+  };
+
+  it('perform: digest (30m) and the visible page (30m) are the cached prefix; the scout pages, their images and the plan come in the tail before the question', () => {
+    const b = buildRequest(req({ context: { ...multi, ink: { summary: 'a loop' } } }), cfg) as any;
+    expect(b.input[1].content[0]).toMatchObject({ text: 'DECK digest', prompt_cache_breakpoint: { mode: 'explicit', ttl: '30m' } });
+    expect(b.input[1].content[2].prompt_cache_breakpoint).toEqual({ mode: 'explicit', ttl: '30m' });
+    expect(JSON.stringify(b).split('prompt_cache_breakpoint').length - 1).toBe(3);
+    const tail = b.input[2].content;
+    expect(tail.map((c: any) => c.type)).toEqual(['input_text', 'input_text', 'input_image', 'input_text', 'input_text', 'input_text']);
+    expect(tail[0].text).toMatch(/^PAGE 7/);
+    expect(tail[1].text).toBe('IMAGE of page 7:');
+    expect(tail[3].text).toBe('PLAN (a first read of the whole document; pages in teaching order: 7, 2, 9): walk 7, then 2, then 9; draw one figure');
+    expect(tail[4].text).toMatch(/^STUDENT INK/);
+    expect(tail.at(-1).text).toMatch(/^QUESTION/);
+    // The prewarm prefix is the same as the answer's prefix.
+    const pre = buildRequest(req({ context: multi }), cfg, true) as any;
+    expect(pre.input).toEqual(b.input.slice(0, 2));
+  });
+
+  it("the worst case counts every image sent", () => {
+    expect(askImages(multi)).toHaveLength(2);
+    const one = estimateInputTokens(buildRequest(req(), cfg), askImages(context));
+    const two = estimateInputTokens(buildRequest(req({ context: multi }), cfg), askImages(multi));
+    expect(two - one).toBeGreaterThan(40 * 23 * 1.2);
+  });
+
+  const sreq = { question: 'How does it work?', docName: 'd.pdf', docHash: 'h', numPages: 12, page: 3, digest: 'DECK d.pdf\np1: a', prior: { q: 'before?', a: 'x'.repeat(2000), page: 2 } };
+  const scfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 400, fast: false, explicitCache: true };
+
+  it('scout request: instructions, then the digest (30m), then the page in view, the previous exchange and the question last; strict JSON out', () => {
+    const b = buildScoutRequest(sreq, scfg) as any;
+    expect(b.input[0]).toEqual({ role: 'developer', content: [{ type: 'input_text', text: SCOUT_SYSTEM }] });
+    expect(b.input[1].content[0]).toEqual({ type: 'input_text', text: 'DECK d.pdf\np1: a', prompt_cache_breakpoint: { mode: 'explicit', ttl: '30m' } });
+    const tail = b.input[2].content[0].text as string;
+    expect(tail.startsWith('The student is looking at page 3.')).toBe(true);
+    expect(tail).toContain('PREVIOUS QUESTION (page 2): before?');
+    expect(tail.length).toBeLessThan(900); // the previous answer is trimmed
+    expect(tail.endsWith('QUESTION: How does it work?')).toBe(true);
+    expect(b).toMatchObject({ stream: false, max_output_tokens: 400, reasoning: { effort: 'none' }, prompt_cache_key: scoutCacheKey(), text: { format: { type: 'json_schema', strict: true } } });
+    // The prewarm is the same prefix (and the same output format, which is part of the prompt).
+    const pre = buildScoutRequest(sreq, scfg, true) as any;
+    expect(pre.input).toEqual(b.input.slice(0, 2));
+    expect(pre.text).toEqual(b.text);
+    expect(pre.prompt_cache_options).toEqual({ mode: 'explicit', prewarm: true });
+  });
+
+  const reply = (text: string, u = { input_tokens: 3000, output_tokens: 60, input_tokens_details: { cached_tokens: 2800 } }) =>
+    ({ status: 200, text: JSON.stringify({ output: [{ type: 'message', content: [{ type: 'output_text', text }] }], usage: u }) });
+
+  it('scout: parses the pages and plan and books a scout entry; no retry on failure, it falls back', async () => {
+    const { f, calls } = fakeFetch([reply('{"pages":[5,6,3],"plan":"p"}')]);
+    const r = await scout(sreq, scfg, deps(f));
+    expect(r).toMatchObject({ pages: [5, 6, 3], plan: 'p' });
+    expect(r.fallback).toBeUndefined();
+    expect(calls).toHaveLength(1);
+    const e = JSON.parse(readFileSync(join(dir, 'spend.json'), 'utf8')).entries;
+    expect(e).toEqual([expect.objectContaining({ kind: 'scout', phase: 'dev', usd: r.usd })]);
+    expect(r.usd).toBeCloseTo(costUsd('gpt-6.1-terra', { input_tokens: 3000, output_tokens: 60, input_tokens_details: { cached_tokens: 2800 } }), 9);
+
+    const down = fakeFetch([{ status: 503 }]);
+    const r2 = await scout(sreq, scfg, deps(down.f));
+    expect(down.calls).toHaveLength(1);
+    expect(r2).toMatchObject({ pages: [3], fallback: expect.stringMatching(/scout failed/) });
+
+    const junk = fakeFetch([reply('not json')]);
+    expect(await scout(sreq, scfg, deps(junk.f))).toMatchObject({ pages: [3], fallback: expect.any(String) });
+  });
+
+  it('scout: a cap refusal never calls fetch and falls back', async () => {
+    const tight = new Ledger(join(dir, 'tight.json'), { totalUsd: 0 });
+    const { f, calls } = fakeFetch([]);
+    expect(await scout(sreq, scfg, deps(f, { ledger: tight }))).toMatchObject({ pages: [3], fallback: 'cap' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('scout prewarm writes the scout prefix and books a prewarm entry', async () => {
+    const { f, calls } = fakeFetch([{ status: 200, text: JSON.stringify({ usage: { input_tokens: 3000, output_tokens: 0 } }) }]);
+    expect(await prewarmScout(sreq, scfg, deps(f))).toMatchObject({ ok: true });
+    expect(JSON.parse(String(calls[0].init.body)).input).toHaveLength(2);
   });
 });
