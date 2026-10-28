@@ -33,6 +33,9 @@ const OVERLAY_RADIUS = 8;
 const CURRENT_LINE = 0.35;
 const SCROLL_ANCHOR = 0.28;
 const VISIBLE_BAND = 0.15;
+/** Window chrome that covers the scroller: top bar above, caption + ask bar below (CSS px). */
+const SAFE_TOP = 64;
+const SAFE_BOTTOM = 156;
 const RESIZE_RERENDER_MS = 160;
 
 const dpr = () => Math.min(2, window.devicePixelRatio || 1);
@@ -372,14 +375,15 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       return L.tops[page - 1] + (Math.max(0, Math.min(1000, y)) / 1000) * L.heights[page - 1];
     };
     let animating = false;
-    const glideTo = async (page: number, y: number) => {
+    /** Glides so content-y `top` sits at the top of the viewport. */
+    const glideTo = async (page: number, top: number) => {
       // Preempt a glide still in flight (scroll.ts stops on 'wheel'), so two never fight.
       if (animating) el.dispatchEvent(new Event('wheel'));
       renderer.pinned.add(page);
       renderer.pump(); // destination starts painting at the start of the glide, not on arrival
       animating = true;
       try {
-        await animateScrollTo(el, contentY(page, y) - el.clientHeight * SCROLL_ANCHOR);
+        await animateScrollTo(el, top);
       } finally {
         animating = false;
         renderer.pinned.delete(page);
@@ -405,18 +409,24 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
         return out;
       },
       textRuns: (page) => textRuns(clampPage(page)),
-      scrollToPage: async (page, y = 0) => {
+      scrollToPage: async (page, y) => {
         page = clampPage(page);
         await ensureSize(page);
-        await glideTo(page, y);
+        if (y != null) { await glideTo(page, contentY(page, y) - el.clientHeight * SCROLL_ANCHOR); return; }
+        // No target point: show the whole page. If it fits between the top bar and the caption,
+        // center it there (a slide stays fully visible while it is explained); else align its top.
+        const L = layoutRef.current!;
+        const room = el.clientHeight - SAFE_TOP - SAFE_BOTTOM;
+        const h = L.heights[page - 1];
+        await glideTo(page, L.tops[page - 1] - SAFE_TOP - Math.max(0, (room - h) / 2));
       },
       ensureVisible: async (page, y = 0) => {
         page = clampPage(page);
         await ensureSize(page);
         const at = contentY(page, y);
         const top = el.scrollTop, h = el.clientHeight;
-        if (at >= top + h * VISIBLE_BAND && at <= top + h * (1 - VISIBLE_BAND)) return false;
-        await glideTo(page, y);
+        if (at >= top + Math.max(h * VISIBLE_BAND, SAFE_TOP) && at <= top + h - Math.max(h * VISIBLE_BAND, SAFE_BOTTOM)) return false;
+        await glideTo(page, at - h * SCROLL_ANCHOR);
         return true;
       },
     };

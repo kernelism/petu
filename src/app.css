@@ -1,0 +1,26 @@
+/* App shell. The stage is the PDF column: full window today; a side panel can narrow it later. */
+.stage {
+  position: fixed;
+  inset: 0;
+}
+.stage > .pv-scroll { position: absolute; }
+
+/* ───────── ?debug ───────── */
+.debug {
+  position: fixed;
+  right: 14px;
+  bottom: 18px;
+  width: 268px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(28,28,30,.86);
+  color: rgba(255,255,255,.88);
+  font: 11px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  z-index: 40;
+}
+.debug-row, .debug-head { display: flex; justify-content: space-between; gap: 10px; white-space: nowrap; }
+.debug-head { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,.14); color: rgba(255,255,255,.5); }
+.debug-act { overflow: hidden; text-overflow: ellipsis; }
+.debug-row.is-skipped { color: #FF9F8A; }
