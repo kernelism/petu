@@ -74,10 +74,13 @@ effort, output limit) are listed in `.env.example`.
 - Figures drawn as one flattened image, unusual vector exports (text as outlines, pattern fills)
   give the tutor fewer marks to point at; it then falls back to quoting nearby text.
 - One answer looks at one page in detail; other pages are text only.
-- Sketches are deliberately simple (3–7 elements). A curve whose points loop back on themselves is
-  skipped rather than drawn wrong; occasionally a construction the model writes can't be resolved
-  and that one element is skipped.
-- The first caption word usually appears 1–1.5 s after Enter, sometimes 2–3 s.
+- A curve whose hand-given points loop back on themselves is skipped rather than drawn wrong;
+  occasionally a construction or a page mark the model writes can't be resolved and that one element
+  is skipped (about 1 in 150 tags on the dev questions). Graphs drawn from a formula ({{plot}}) and
+  every computed number come from the engine.
+- Image views are at most 48×48 cells; computed values are written as decimals (only fractions the
+  tutor wrote itself, like 1/9 weights, stay fractions).
+- The first caption word usually appears 1.2–1.6 s after Enter, sometimes 2–3 s.
 - No history across reloads, one document at a time, desktop browsers only.
 
 ### Reporting a bug
@@ -92,7 +95,8 @@ Instead of a screen recording, send:
    (prints the text lines and figure marks exactly as sent to the model; it reads the PDF locally
    and makes no API call);
 3. a screenshot with `&debug` open (expand the panel; the skipped actions and their reasons are
-   the most useful part);
+   the most useful part). Every answer is also recorded locally in `.petu/answers.jsonl` (question,
+   page, the script as sent, malformed tags with their raw text); its last line is enough;
 4. optionally the raw answer (costs one more answer): open the PDF by URL with `&eval&page=12`
    added, then in the browser console run
    `await __petu.ask("your question"); copy(JSON.stringify(__petu.result()))` and paste the result.

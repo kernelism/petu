@@ -36,6 +36,7 @@ Agent and eval tools:
 npm run ground -- <pdf> <page…>   # prints exactly what the model sees for those pages (lines + marks)
 npm run eval -- --split dev --config terra-none [--n 2] [--only D4,D11] [--replay <runId>] [--no-judge] [--webkit] [--prewarm]
 npm run eval -- --split dev --finish <runId>    # re-do a run's missing judgements/summary, no generation
+npm run eval -- --ask "<deck>:<page>:<question>" --no-judge   # one ad-hoc question (reproduce a founder report)
 node --experimental-strip-types scripts/eval/compare.ts <runIdA> <runIdB>   # judge deltas + verdict
 npm run eval -- … --qset q1 --rubric r2       # checkpoint-2 set / rubric (defaults: q2, r3)
 npm run eval -- … --replay <runId> --fake-judge   # offline: full judge path with a placeholder judgement, $0
@@ -49,7 +50,14 @@ as `board_copies_page`, `board_repeats_narration`, `single_slide`). r3 judges a 
 (`frames.ts`: a sentence-end still every ~35 spoken words, ≤ 6, plus the settled final state and the
 whole board, stitched from the element marked `data-petu-board`), a deck digest and the transcript.
 r3 is not trusted until `calibrate.ts` shows ≥ 80% ±1 agreement and |bias| ≤ 0.5 on 8 hand-scored
-answers.
+answers. **Calibrated 2026-10-28** (8 dev answers of terra-none p4.7, scored blind by an independent
+agent): the first r3 ran +0.75 lenient on craft and economy (±1 93%); with concrete craft/economy
+anchors and an `Engine:` line listing skipped actions (defect `skipped_actions`) it is trusted:
+±1 95%, exact 65%, bias understanding +0.00, illustration +0.38, deck +0.13, craft +0.25, economy
++0.50. Fatal flags did not agree (judge 1, hand 1, overlap 0): read fatals by hand.
+Skips are a first-class metric: per answer `skipped`, `malformed`, `skippedDeps` (a skipped action
+later tags name) and `skipDefect` (> 2, or any dependency); the run prints them with first-word
+p50/p90. The budget preflight counts the scout too (`server/limits.ts` holds the shared output caps).
 
 Eval runs start their own dev server on ports 5186–5195 (never 5180, the default `npm run dev`
 port) and write everything to `.petu/eval/runs/<date>-<config>-<prompt>-<qset>/` (gitignored):
@@ -129,6 +137,10 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   and its script follows the opener's last word; the note tells it never to restate the opener's claim and to open on something new (the mechanism, the first drawn step). A failed scout = stage 2 alone on the visible page.
   The dock shows a faint static "…" while thinking and after the last word if the stream pauses.
   `?debug` shows scout verdict, opener, stage-2 first text and the handoff gap.
+- Every answer leaves a local record in `.petu/answers.jsonl` (question, page, the script as sent,
+  lint notes). Server lint runs the client parser over each completed tag: a malformed tag is noted
+  with its raw text; a hand-placed curve (≥ 4 points) and a drawing made twice are noted too
+  (`done.lint`, shown in `?debug`).
 - `server/` — `plugin.ts` (routes: `/api/ask`, `/api/scout`, `/api/prewarm`, `/api/spend`, `/api/judge` (eval
   token), `/api/dev-pdf/`), `env.ts` (the only reader of the key and `PETU_*` knobs), `openai.ts`
   (request builder: explicit cache breakpoints after the system prompt (12h) and the page block
@@ -138,7 +150,7 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   app: a loopback Host, an Origin (if any) equal to it, and `content-type: application/json` on POSTs
   (`guard` in `plugin.ts`; these routes run before Vite's own host check). Upstream calls time out
   (15s to headers, 20s between chunks, 60s for prewarm/judge).
-- **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p4.6** (kit card and WORKED NUMBERS principles; change an input with `set`, name blocks): hard answer shape (opener ≤ 16
+- **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p4.9** (p4.6: kit card and WORKED NUMBERS principles; change an input with `set`, name blocks; p4.8: the picture at scale after one worked case, FORMULAS — anything that follows from a formula is drawn by the engine from named constants, shared axes, label every curve, reuse by id — name readouts by their quantity; p4.9: a scatter on a plot's axes), scout `s2.2` (a relationship between quantities is shown across its range, computed). History of the older shape: hard answer shape (opener ≤ 16
   words that starts with its mark, one new element per sentence, 3–7 elements, one `em`, a payoff),
   mechanism over definition, precise marks, per-question-type playbook, few-shot examples from the
   fixture and synthetic pages only. Bump `PROMPT_VERSION` on any change. `tests/server/prompt.test.ts`
@@ -164,17 +176,21 @@ shade angle brace axes plot sketch connect emph move fade clear`, plus the visua
 **Visual kit v1** (`src/desk/kit/`, parser `src/script/parseKit.ts`; spec "Visual kit v1"). The model
 names data and operations; the engine lays blocks out from the board's type size, computes every
 number and animates.
-- Blocks (in a sketch, no `fit`/`let`): `grid` (matrix/table of cells, `shade`, `rows=`/`cols=` labels),
-  `bars` (a vector), `table` (headers + rows; empty columns filled by `col`), `scatter` (literal points
+- Blocks (in a sketch, no `fit`/`let`): `grid` (matrix/table of cells, `shade`, `rows=`/`cols=` labels;
+  `view=image` — implied past 12×12, up to 48×48 — draws shaded pixels with no numerals),
+  `bars` (a vector; `view=line` — implied past 16 values — a curve on ticked axes, `axes=v` overlays
+  onto line/plot v's axes), `table` (headers + rows; empty columns filled by `col`), `scatter` (literal points
   or a table's columns), `calc` (a live calculation line: expansion and result), `fit` (least squares
   or `pick=i,j`). Placement `right=`/`below=` another block (bodies aligned, engine spacing; wraps at
   the margin; `below` clears whatever sits under the anchor) with an `op=` glyph (⊛ · × = → − + ÷);
-  a computed block `right=` its own source gets → unless `op=` says otherwise (`op=none`). A grid or
+  a computed block `right=` (`below=`) its own source gets → (↓) unless `op=` says otherwise (`op=none`). A grid or
   bars without a caption is captioned with its id (a single letter in math italic). A section's kit
   composition is centred in the board (the whole group shifts; the first placement at once, later
   ones glide).
-- Computed sources: `map=`/`zip=` (any block with values, or a table column `t.c`) with `fn=` (expr.ts, now with variables and comparisons: x, y,
-  mean sum std norm min max n), `over=G slide=K` (sum of products; `same`, `flip`, `stride`),
+- Computed sources: `map=`/`zip=` (any block with values, or a table column `t.c` — by letter or by
+  header, `t.price`) with `fn=` (expr.ts: variables, comparisons also inside parentheses,
+  min/max/mean/sum(a,b,…), trig, rad/deg, round; x, y, mean sum std norm min max n), `size=RxC fn=`
+  with seeded `rand()`/`randn()` (per block id: replays are identical), `over=G slide=K` (sum of products; `same`, `flip`, `stride`),
   `win=RxC reduce=…|fn=` (cells a b c…), `size=RxC fn="r+c"`, `vals=t.c` (a table column).
 - Verbs: `step id=o[r,c]`, `sweep id=o dur=`, `col id=t.c fn= dur=` (rows fill; a b… this row, pa pb…
   the row above), `set` (an input changes, dependents recompute and tween), `band`, `dist`, `level`
@@ -184,6 +200,14 @@ number and animates.
   state) and then starts; overlays (emph, fade) never interrupt. Sweeps never block the narration
   (draw resolves once the first cell is under way). Reduced motion: no glides, discrete steps.
 - Sections have no per-answer cap and grow past 700 units for tall kit content (`growRegion`).
+- Numbers: computed values are always decimals (133.3, never 400/3); only fractions the model wrote
+  (1/9 weights) keep that form. A mean or an (A)/B fn shows the sum before dividing.
+- Formulas: `{{const v=20 g=9.8 T=2*v/g}}` (or a `let` of plain numbers) names numbers every kit
+  formula can use. `{{plot}}` without hand-drawn `axes` is the engine's: `fn=` over `domain=`, or
+  `x=` `y=` over `t=` (ranges may be formulas), on its own ticked axes or another plot's (`axes=`,
+  one scale; scatters too), `"label"` at the end or `label=top` at the apex, `xlabel=`/`ylabel=`.
+  Charts (scatter, line, plot) default to ~75% of the board; a band's count is a readout above the
+  plot ("inside band: N"). Element ids accept hyphens (`row-column` → `row_column`).
 
 ### Contracts not to break
 
@@ -220,6 +244,7 @@ scrollbars; every control has hover, focus-visible and active states; text ≥ 1
 | Canvas v2 + Toolkit v2 | Desk canvas, free movement, connectors, follow mode, full drawing toolkit, visual language | done (placement replaced by Lessons v3 L) |
 | Lessons v3 L | Split layout: slides left, board right, persistent board, dock under the slide column | done |
 | 2 | Agent: grounding (lines + marks), relational geometry, `/api/ask` streaming from OpenAI with a spend ledger, prompt p3.2, `?debug` latency/cost, judged eval (24 questions, 12 PDFs, held-out test split) | done; held-out test judge 4.61 (P1 4.45), first word p50 1.28s, ~$0.004/answer; awaiting founder review |
+| Lessons v3 tuning | Step 0 (kit forgiveness: header columns, ↓, decimals, image/line views, seeded noise, engine plots from constants, readouts; skips as a metric; answer records) and r3 calibration | done 2026-10-28 (dev replay: 2 skips / 291 tags, 0 malformed, 0 skip defects; first word p50 1.25s / p90 2.3s). Bake-off, iteration and held-out validation paused: the eval set (hard real-world PDFs) and huge-PDF context are being redesigned first |
 | 3 | Polish: settings panel, history, text selection, anchored-bubble captions setting, error states | later |
 | Voice | Own design pass (TTS clock drives the same timeline) | after 3 |
 
