@@ -102,8 +102,8 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
 
   return {
     key: get('OPENAI_API_KEY')?.trim() ?? '',
-    model: { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache },
-    scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, fast: false, explicitCache },
+    model: { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) },
+    scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, fast: str('PETU_SCOUT_FAST') === '1', explicitCache },
     phase, caps,
     priorUsd: num('PETU_PRIOR_USD', 0.0076),
     pdfDirs,

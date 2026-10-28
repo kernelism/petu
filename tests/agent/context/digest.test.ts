@@ -42,3 +42,14 @@ describe('deckDigest', () => {
     expect(deckDigest('x.pdf', 2, m)).toBe(deckDigest('x.pdf', 2, m));
   });
 });
+
+describe('deckDigest: running headers and footers', () => {
+  it('drops lines repeated on most pages, keeps a title shared by a run of a few pages', () => {
+    const m: Record<number, string[]> = {};
+    for (let p = 1; p <= 10; p++) m[p] = ['Prof X (Uni, Fall 26) COURSE 101', p >= 4 && p <= 6 ? 'Worked example' : `Topic ${p}`, `point ${p}`];
+    const lines = deckDigest('d.pdf', 10, at(m)).split('\n');
+    expect(lines.join('\n')).not.toContain('Prof X');
+    expect(lines[1]).toBe('p1: Topic 1 · point 1');
+    expect(lines[5]).toBe('p5: Worked example · point 5');
+  });
+});

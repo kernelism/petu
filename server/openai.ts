@@ -47,7 +47,9 @@ import { SCOUT_SCHEMA, fallbackScout, parseScout, type ScoutRequest, type ScoutR
 import { CacheStats, estimatedUsage } from './cacheStats';
 
 export type Effort = 'none' | 'low' | 'medium' | 'high';
-export type ModelConfig = { model: string; effort: Effort; maxOutput: number; fast: boolean; verbosity?: 'low' | 'medium'; explicitCache: boolean };
+export type ModelConfig = { model: string; effort: Effort; maxOutput: number; fast: boolean; verbosity?: 'low' | 'medium'; explicitCache: boolean;
+  /** Vision detail for the scout's other pages (the visible page is always high). Default high. */
+  pageDetail?: 'low' | 'high' };
 export type Deps = {
   key: string; ledger: Ledger; phase: Phase; fetch: typeof fetch;
   now?: () => number;
@@ -67,7 +69,8 @@ export type Timeouts = { headersMs: number; idleMs: number; callMs: number };
 export const TIMEOUTS: Timeouts = { headersMs: 15_000, idleMs: 20_000, callMs: 60_000 };
 const URL_ = 'https://api.openai.com/v1/responses';
 export const JUDGE_MODEL = 'gpt-6.1-sol';
-const JUDGE_MAX_OUTPUT = 800;
+/** r3 rubric (5 criteria + defect flags + notes) needs more room than r2; the reservation uses this too. */
+const JUDGE_MAX_OUTPUT = 1600;
 
 /** Shared by every document: the system block's cache is reused across PDFs. */
 export const cacheKey = () => `petu-${PROMPT_VERSION}`;
@@ -97,7 +100,7 @@ export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { con
   if (c.pagesText) tail.push({ type: 'input_text', text: c.pagesText });
   for (const im of c.images ?? []) {
     tail.push({ type: 'input_text', text: `IMAGE of page ${im.page}:` });
-    tail.push({ type: 'input_image', image_url: img(im.b64), detail: 'high' });
+    tail.push({ type: 'input_image', image_url: img(im.b64), detail: cfg.pageDetail ?? 'high' });
   }
   if (c.searchText) tail.push({ type: 'input_text', text: c.searchText });
   if (c.scout) {
@@ -154,6 +157,7 @@ export function buildScoutRequest(r: ScoutRequest, cfg: ModelConfig, prewarm = f
       ...(prewarm ? [] : [{ role: 'user', content: [{ type: 'input_text', text: tail.join('\n') }] }]),
     ],
     stream: false,
+    ...(cfg.fast ? { service_tier: 'fast' } : {}),
     text: { format: { type: 'json_schema', name: 'scout', schema: SCOUT_SCHEMA, strict: true } },
     ...(cfg.explicitCache ? { prompt_cache_options: { mode: 'explicit', ...(prewarm ? { prewarm: true } : {}) } } : {}),
     metadata: { prompt: SCOUT_VERSION },

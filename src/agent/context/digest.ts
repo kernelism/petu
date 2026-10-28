@@ -22,10 +22,30 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, Math.max(0,
 export const pageShare = (numPages: number) => Math.max(PAGE_MIN, Math.min(PAGE_CHARS, Math.floor(DIGEST_CHARS / Math.max(1, numPages)) - 8));
 
 /**
+ * Lines that repeat on many pages (running headers and footers: author, course, date) say nothing
+ * about a page: a line on more than 40% of the read pages (and on at least 3) is dropped.
+ */
+export function boilerplate(numPages: number, pages: (page: number) => string[] | undefined): Set<string> {
+  const seen = new Map<string, number>();
+  let read = 0;
+  for (let p = 1; p <= numPages; p++) {
+    const ls = pages(p);
+    if (!ls) continue;
+    read++;
+    for (const l of new Set(ls.map(squash))) if (l) seen.set(l, (seen.get(l) ?? 0) + 1);
+  }
+  const out = new Set<string>();
+  for (const [l, n] of seen) if (n >= 3 && n > 0.4 * read) out.add(l);
+  return out;
+}
+
+/**
  * `p12: Title · line · line…` for every page, in page order. A page the index has not read yet is
  * `p12: …`; a page without text is `p12: (no text)`. A long document's bookmarks come first.
+ * Running headers and footers are left out (they would crowd out every page's title).
  */
 export function deckDigest(name: string, numPages: number, pages: (page: number) => string[] | undefined, bookmarks: Bookmark[] = []): string {
+  const skip = boilerplate(numPages, pages);
   const out = [`DECK ${name} (${numPages} page${numPages === 1 ? '' : 's'}): every page, its title first, then its text, trimmed`];
   if (bookmarks.length) {
     out.push('OUTLINE');
@@ -35,7 +55,7 @@ export function deckDigest(name: string, numPages: number, pages: (page: number)
   for (let p = 1; p <= numPages; p++) {
     const ls = pages(p);
     if (!ls) { out.push(`p${p}: …`); continue; }
-    const lines = ls.filter(keep).map(squash);
+    const lines = ls.filter(keep).map(squash).filter((l) => !skip.has(l));
     out.push(`p${p}: ${lines.length ? clip(lines.join(' · '), share) : '(no text)'}`);
   }
   return out.join('\n');
