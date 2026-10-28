@@ -15,9 +15,10 @@ function env() {
   const layers = { highlight: g(), agent: g() };
   const ctx = (t: Target): TargetCtx => ({ target: t, layers, h: 700, scale: () => 0.6, body: () => 16, toSpace: (p) => p, rectToSpace: (r) => r, runs: async () => [] });
   const grow = vi.fn();
-  const desk = { growRegion: grow, addConnector: vi.fn() } as unknown as DeskApi;
+  const centre = vi.fn();
+  const desk = { growRegion: grow, centreRegion: centre, addConnector: vi.fn() } as unknown as DeskApi;
   const e: BuildEnv = { ctx: async (t) => ctx(t), registry: new Registry(), settings: DEFAULTS, rng: () => null, desk };
-  return { e, layers, grow };
+  return { e, layers, grow, centre };
 }
 /** Parses, builds and draws one tag on its word; resolves once its draw returns (animations may run on). */
 async function tag(e: BuildEnv, src: string) {
@@ -193,6 +194,20 @@ describe('kit blocks on the board', () => {
     await tag(e, 'set id=u fn="x+1"');
     await settle(e);
     expect(st.get('d')!.vals![0]).toEqual([1, 2, 3]);
+  });
+
+  it('the section is asked to centre the whole composition (every block and glyph), as it grows', async () => {
+    const { e, centre } = env();
+    await tag(e, 'bars on=s id=u vals=1,2,3');
+    const st = kitStore(e.registry);
+    const u = st.get('u')!;
+    expect(centre).toHaveBeenLastCalledWith('s', u.placed.rect.x, u.placed.rect.x + u.placed.rect.w);
+    await tag(e, 'bars on=s id=d map=u fn="2*x" right=u');
+    const d = st.get('d')!;
+    const [, x0, x1] = centre.mock.calls.at(-1)!;
+    expect(x0).toBeCloseTo(u.placed.rect.x);
+    expect(x1).toBeCloseTo(d.placed.rect.x + d.placed.rect.w);
+    expect(x1 - x0).toBeLessThan(1000);
   });
 
   it('a block taller than the section grows it', async () => {

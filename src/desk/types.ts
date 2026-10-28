@@ -112,6 +112,8 @@ export interface DeskApi {
   reveal(t: Target, r: SRect, before?: BeforeMove, anchor?: SRect): Promise<boolean>;
   /** Kit blocks need a section `h` units tall (it grows past 700; never shrinks). */
   growRegion?(id: string, h: number): void;
+  /** A section's content spans x0–x1 (units): shift the whole group to centre it in the board. */
+  centreRegion?(id: string, x0: number, x1: number): void;
   /** Ink is landing at this target-space rect: later page framing keeps it in view when it fits. */
   noteInk?(t: Target, r: SRect): void;
   isVisible(t: Target, r: SRect): boolean;

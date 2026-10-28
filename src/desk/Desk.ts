@@ -25,7 +25,7 @@ const WHOLE_REGION = { x: 0, y: 0, w: REGION_W, h: REGION_H };
  * `full`: the section's height in units (700, or more once kit blocks grow it). `y0`–`y1`: the part
  * of it it shows (all of it until a later section crops it to its ink).
  */
-type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; full: number; y0: number; y1: number };
+type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; full: number; y0: number; y1: number; dx: number | null };
 /** `stroke` is the handle's own array, rewritten in place on every re-route (emph re-traces the current path). */
 type Wire = { page: ConnectorEnd; region: ConnectorEnd; section: Section; reversed: boolean; svg: SVGSVGElement; group: SVGGElement; stroke: Stroke; avoid: SRect[] };
 
@@ -196,6 +196,25 @@ export class Desk implements DeskApi {
     this.position();
   }
 
+  /**
+   * A section's content spans x0–x1 (units): the whole group shifts so it sits centred in the board
+   * (its internal layout untouched). The first placement lands there at once; later ones glide.
+   */
+  centreRegion(id: string, x0: number, x1: number): void {
+    const sec = this.ids.get(id);
+    if (!sec || !(x1 > x0)) return;
+    const dx = Math.max(-x0, Math.min(REGION_W - x1, REGION_W / 2 - (x0 + x1) / 2));
+    if (sec.dx != null && Math.abs(dx - sec.dx) < 1) return;
+    const first = sec.dx == null;
+    sec.dx = dx;
+    sec.el.querySelectorAll<SVGSVGElement>('svg').forEach((svg) => {
+      svg.style.transition = first ? 'none' : '';
+      // A percentage of the layer's own width (the section's 1000 units): right at every window size.
+      svg.style.transform = Math.abs(dx) < 0.5 ? '' : `translateX(${((dx / REGION_W) * 100).toFixed(3)}%)`;
+    });
+    this.rerouteAll();
+  }
+
   noteInk(t: Target, r: SRect): void {
     if (t.page == null) return;
     this.inked.unshift({ page: t.page, r });
@@ -352,7 +371,7 @@ export class Desk implements DeskApi {
       return svg.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
     };
     const layers = { highlight: layer('desk-region-hl'), agent: layer('desk-region-ink') };
-    return { id: spec.id, page: spec.page, size: spec.size, body: spec.body ?? null, el, layers, full: REGION_H, y0: 0, y1: REGION_H };
+    return { id: spec.id, page: spec.page, size: spec.size, body: spec.body ?? null, el, layers, full: REGION_H, y0: 0, y1: REGION_H, dx: null };
   }
 
   /** Crops a finished section to its ink (once): its svg shows only that band, the section's box shrinks to it. */
@@ -455,7 +474,7 @@ export class Desk implements DeskApi {
   private viewRect(sec: Section, r: SRect): ViewRect | null {
     const box = this.boxOf(sec), b = this.frame().board;
     if (!box || !b) return null;
-    return { x: b.x + box.x + r.x * box.s, y: b.y + box.y + (r.y - sec.y0) * box.s - this.scroller.scrollTop, w: r.w * box.s, h: r.h * box.s };
+    return { x: b.x + box.x + (r.x + (sec.dx ?? 0)) * box.s, y: b.y + box.y + (r.y - sec.y0) * box.s - this.scroller.scrollTop, w: r.w * box.s, h: r.h * box.s };
   }
 
   /** Puts the board, its sections and every wire where the current window says. */

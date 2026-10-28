@@ -439,7 +439,11 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
   }
   store.add(b);
   grow(env, region, b.placed.rect);
+  const reach = (x: Block) => union([x.placed.rect, ...(x.placed.op ? [{ x: x.placed.op.x - x.m.opW / 2, y: x.placed.op.y - x.m.num, w: x.m.opW, h: 2 * x.m.num }] : [])]);
   const bbox = pad(union([b.placed.rect, ...(b.placed.op ? [{ x: b.placed.op.x - m.opW, y: b.placed.op.y - m.num, w: 2 * m.opW, h: 2 * m.num }] : [])]), m.u(8));
+  // The composition sits centred on the board: the group shifts as it grows, its layout stays left-aligned.
+  const all = union(store.inRegion(region).map(reach));
+  env.desk.centreRegion?.(region, all.x, all.x + all.w);
   return {
     target: ctx.target,
     bbox,

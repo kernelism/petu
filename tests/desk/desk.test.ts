@@ -117,6 +117,20 @@ describe('Desk: the board', () => {
     d.growRegion('a', 800);
     expect(svg.getAttribute('viewBox')).toBe('0 0 1000 900');
   });
+  it('centres a section\'s content in the board: the whole group shifts, first at once, then gliding', async () => {
+    const d = new Desk(fakeHost(), stage);
+    await d.addRegion(spec('a'));
+    const svgs = [...stage.querySelectorAll<SVGSVGElement>('.desk-region svg')];
+    d.centreRegion('a', 40, 400); // content 40–400: its centre 220 goes to 500
+    svgs.forEach((s) => { expect(s.style.transform).toBe('translateX(28.000%)'); expect(s.style.transition).toBe('none'); });
+    d.centreRegion('a', 40, 960); // full width: back in place, gliding
+    svgs.forEach((s) => { expect(s.style.transform).toBe(''); expect(s.style.transition).toBe(''); });
+    d.centreRegion('a', 600, 900); // never pushed past the section's edge
+    expect(svgs[0].style.transform).toBe('translateX(-25.000%)');
+    // a viewBox change (growth) keeps the shift
+    d.growRegion('a', 900);
+    expect(svgs[0].style.transform).toBe('translateX(-25.000%)');
+  });
   it('persists across answers: reset frees the ids and keeps the sections and the split', async () => {
     const h = fakeHost();
     const d = new Desk(h, stage);

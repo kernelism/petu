@@ -92,8 +92,8 @@ export const SCRIPTS: Record<string, Demo & { src: string }> = {
       `{{step id=o[1,2]}} Slide one column: now the right column sees the bright side, and the sum jumps. ` +
       `{{sweep id=o dur=5}} Sweep the rest, and the output is large only where the brightness changes. ` +
       `{{emph id=o[1:3,2:3]}} That band is the edge. ` +
-      `{{sketch id=b near=p1}} Now two patches as vectors: {{bars on=b id=u vals=2,4,3,5 labels=1,2,3,4 "u"}} u, ` +
-      `{{bars on=b id=v vals=3,5,4,6 labels=1,2,3,4 right=u "v"}} and v, the same pattern one step brighter. ` +
+      `{{sketch id=b near=p1}} Now two patches as vectors: {{bars on=b id=u vals=2,4,3,5 labels=1,2,3,4}} u, ` +
+      `{{bars on=b id=v vals=3,5,4,6 labels=1,2,3,4 right=u}} and v, the same pattern one step brighter. ` +
       `{{calc on=b of=u,v fn="(x-y)^2" reduce=sum "SSD"}} Their sum of squared differences is small. ` +
       `{{bars on=b id=nu map=u fn="(x-mean)/std" below=u "(u − mean) / std"}} Subtract each mean and divide by the spread, ` +
       `{{bars on=b id=nv map=v fn="(x-mean)/std" right=nu "(v − mean) / std"}} and the two shapes are identical, ` +
