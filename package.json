@@ -11,7 +11,8 @@
     "fixture": "node --experimental-strip-types scripts/make-fixture.ts",
     "decks": "node --experimental-strip-types scripts/make-decks.ts",
     "eval": "node --experimental-strip-types scripts/eval/run.ts",
-    "ground": "node --experimental-strip-types scripts/ground.ts"
+    "ground": "node --experimental-strip-types scripts/ground.ts",
+    "reports": "node --experimental-strip-types scripts/reports.ts"
   },
   "dependencies": {
     "katex": "0.18.11",
