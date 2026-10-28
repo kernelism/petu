@@ -243,6 +243,18 @@ describe('Desk: connectors', () => {
     expect(svg).not.toBeNull();
     expect(svg.classList.contains('is-hidden')).toBe(false);
   });
+  it('a centred section: the connector lands where its element now is (shifted with the group)', async () => {
+    const h = fakeHost();
+    const d = new Desk(h, stage);
+    await d.addRegion(spec('side', 1));
+    const c = d.addConnector({ t: { page: 1 }, r: { x: 300, y: 300, w: 20, h: 20 } }, { t: { region: 'side' }, r: { x: 300, y: 300, w: 10, h: 10 } });
+    if (typeof c === 'string') throw new Error(c);
+    const before = c.stroke[c.stroke.length - 1].x;
+    d.centreRegion('side', 40, 400); // the group moves 280 units right
+    const after = c.stroke[c.stroke.length - 1].x;
+    const s = d.region('side')!.scale();
+    expect(after - before).toBeCloseTo(280 * s, 1);
+  });
   it('fade while the page anchor is out of view, and return with it', async () => {
     const h = fakeHost();
     const d = new Desk(h, stage);
