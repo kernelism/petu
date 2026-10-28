@@ -18,4 +18,18 @@ describe('itemsToRuns', () => {
     expect(rect.y).toBeGreaterThan(baseline - 40);
     expect(rect.y).toBeLessThan(baseline);
   });
+
+  it('attaches a CSS font from textContent.styles', () => {
+    const runs = itemsToRuns(
+      [{ str: 'Hi', transform: [20, 0, 0, 20, 80, 500], width: 40, height: 20, fontName: 'f1' }],
+      [1, 0, 0, -1, 0, 560], 800, 560,
+      { f1: { fontFamily: 'Times-Bold, serif' } },
+    );
+    expect(runs[0].font).toMatch(/bold/);
+    expect(runs[0].font).toContain('Times-Bold, serif');
+  });
+  it('leaves font undefined when styles are unknown', () => {
+    const runs = itemsToRuns([{ str: 'Hi', transform: [20, 0, 0, 20, 80, 500], width: 40, height: 20 }], [1, 0, 0, -1, 0, 560], 800, 560);
+    expect(runs[0].font).toBeUndefined();
+  });
 });

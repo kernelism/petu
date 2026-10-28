@@ -1,10 +1,32 @@
 import type { PageRect } from '../geometry/space';
 
-export type TextRun = { text: string; rect: PageRect };
+/** `font` is a CSS font string used only to measure relative glyph widths. */
+export type TextRun = { text: string; rect: PageRect; font?: string };
+/** Width of `s` in `font`, in any consistent unit (only ratios are used). */
+export type Measure = (font: string, s: string) => number;
+export type LocateOpts = { measure?: Measure };
+
+let canvasMeasure: Measure | null | undefined;
+/** A cached 2D-canvas measurer, or null where no canvas exists (jsdom, node). */
+function defaultMeasure(): Measure | null {
+  if (canvasMeasure !== undefined) return canvasMeasure;
+  canvasMeasure = null;
+  try {
+    let ctx: { font: string; measureText(s: string): { width: number } } | null = null;
+    if (typeof OffscreenCanvas !== 'undefined') ctx = new OffscreenCanvas(1, 1).getContext('2d') as typeof ctx;
+    else if (typeof document !== 'undefined' && !/jsdom/i.test(navigator.userAgent)) ctx = document.createElement('canvas').getContext('2d');
+    if (ctx) {
+      const c = ctx;
+      canvasMeasure = (font, str) => { c.font = font; return c.measureText(str).width; };
+    }
+  } catch { /* no canvas: proportional */ }
+  return canvasMeasure;
+}
 
 const LIG: Record<string, string> = { 'ﬁ': 'fi', 'ﬂ': 'fl', 'ﬀ': 'ff', 'ﬃ': 'ffi', 'ﬄ': 'ffl' };
 
 function normChar(c: string): string {
+  if (c === '\u00AD') return '';
   if (LIG[c]) return LIG[c];
   const n = c.normalize('NFKC');
   if (/[‘’′`´]/.test(n)) return "'";
@@ -44,7 +66,9 @@ function buildIndex(runs: TextRun[]) {
     const hyphenBreak = !!next && /[-‐]$/.test(r.text) && !sameLine(r.rect, next.rect);
     chars.forEach((c, ci) => {
       if (hyphenBreak && ci === chars.length - 1) return;
-      add(normChar(c), { run: ri, ch: ci });
+      const n = normChar(c);
+      if (n === '-') return; // hyphens are optional: indexed text has none, and the quote's are stripped too
+      add(n, { run: ri, ch: ci });
     });
     if (!next || hyphenBreak) return;
     const gap = next.rect.x - (r.rect.x + r.rect.w);
@@ -92,26 +116,26 @@ const isWordChar = (c: string | undefined) => !!c && /[\p{L}\p{N}]/u.test(c);
  * Finds `quote` in the page's text runs. Returns one rect per line, in model coords, or [].
  * Exact matches on word boundaries win; among several, the one nearest `near` (or the first).
  */
-export function locateQuote(runs: TextRun[], quote: string, near?: { x: number; y: number }): PageRect[] {
-  const q = normalizeText(quote);
+export function locateQuote(runs: TextRun[], quote: string, near?: { x: number; y: number }, opts: LocateOpts = {}): PageRect[] {
+  const q = normalizeText(quote).replace(/-/g, '').replace(/ {2,}/g, ' ').trim();
   if (!q || !runs.length) return [];
   const { text, map } = buildIndex(runs);
   const hits: number[] = [];
   for (let i = text.indexOf(q); i >= 0; i = text.indexOf(q, i + 1)) hits.push(i);
   const whole = hits.filter((i) => !isWordChar(text[i - 1]) && !isWordChar(text[i + q.length]));
-  const candidates = (whole.length ? whole : hits).map((i) => [i, i + q.length] as [number, number]);
+  const candidates = (whole.length ? whole : q.length >= 12 ? hits : []).map((i) => [i, i + q.length] as [number, number]);
   if (!candidates.length) {
     const f = fuzzy(text, q);
     if (f) candidates.push(f);
   }
   if (!candidates.length) return [];
-  const results = candidates.map((range) => rectsFor(runs, map, range));
+  const results = candidates.map((range) => rectsFor(runs, map, range, opts.measure ?? defaultMeasure()));
   if (!near || results.length === 1) return results[0];
   const dist = (rs: PageRect[]) => Math.hypot(rs[0].x + rs[0].w / 2 - near.x, rs[0].y + rs[0].h / 2 - near.y);
   return results.reduce((best, r) => (dist(r) < dist(best) ? r : best));
 }
 
-function rectsFor(runs: TextRun[], map: Slot[], range: [number, number]): PageRect[] {
+function rectsFor(runs: TextRun[], map: Slot[], range: [number, number], measure: Measure | null): PageRect[] {
   const span = new Map<number, { min: number; max: number }>();
   for (let i = range[0]; i < range[1]; i++) {
     const { run, ch } = map[i];
@@ -123,8 +147,19 @@ function rectsFor(runs: TextRun[], map: Slot[], range: [number, number]): PageRe
   const lines: PageRect[] = [];
   [...span.entries()].sort((a, b) => a[0] - b[0]).forEach(([ri, { min, max }]) => {
     const r = runs[ri].rect;
-    const len = Array.from(runs[ri].text).length;
-    const part: PageRect = { x: r.x + (r.w * min) / len, y: r.y, w: (r.w * (max + 1 - min)) / len, h: r.h };
+    const chars = Array.from(runs[ri].text);
+    const len = chars.length;
+    let f0 = min / len, f1 = (max + 1) / len; // proportional by default
+    const font = runs[ri].font;
+    if (measure && font) {
+      try {
+        const total = measure(font, chars.join(''));
+        const a = measure(font, chars.slice(0, min).join('')) / total;
+        const b = measure(font, chars.slice(0, max + 1).join('')) / total;
+        if (total > 0 && Number.isFinite(a) && Number.isFinite(b) && a >= 0 && b > a && b <= 1.0001) { f0 = a; f1 = Math.min(b, 1); }
+      } catch { /* keep proportional */ }
+    }
+    const part: PageRect = { x: r.x + r.w * f0, y: r.y, w: r.w * (f1 - f0), h: r.h };
     const line = lines.find((l) => sameLine(l, part));
     if (!line) { lines.push(part); return; }
     const x1 = Math.min(line.x, part.x), x2 = Math.max(line.x + line.w, part.x + part.w);

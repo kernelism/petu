@@ -1,6 +1,15 @@
 import type { TextRun } from '../locate/locateQuote';
 
-type Item = { str: string; transform: number[]; width: number; height: number };
+type Item = { str: string; transform: number[]; width: number; height: number; fontName?: string };
+type Styles = Record<string, { fontFamily?: string }>;
+
+function cssFont(fontName: string | undefined, styles?: Styles): string | undefined {
+  const fam = fontName ? styles?.[fontName]?.fontFamily : undefined;
+  if (!fam) return undefined;
+  const weight = /bold|black|heavy|semibold/i.test(fam) ? 'bold' : 'normal';
+  const style = /italic|oblique/i.test(fam) ? 'italic' : 'normal';
+  return `${style} ${weight} 100px ${fam}`;
+}
 type Mat = [number, number, number, number, number, number];
 
 const mul = (m: number[], n: number[]): Mat => [
@@ -10,7 +19,7 @@ const mul = (m: number[], n: number[]): Mat => [
 ];
 
 /** viewportTransform/vw/vh come from page.getViewport({ scale: 1 }). */
-export function itemsToRuns(items: Item[], viewportTransform: number[], vw: number, vh: number): TextRun[] {
+export function itemsToRuns(items: Item[], viewportTransform: number[], vw: number, vh: number, styles?: Styles): TextRun[] {
   const runs: TextRun[] = [];
   for (const it of items) {
     if (!it.str || !it.str.trim()) continue;
@@ -18,8 +27,10 @@ export function itemsToRuns(items: Item[], viewportTransform: number[], vw: numb
     const fontH = Math.hypot(t[2], t[3]);
     const x = t[4], baseline = t[5];
     const top = baseline - fontH * 0.88;
+    const font = cssFont(it.fontName, styles);
     runs.push({
       text: it.str,
+      ...(font ? { font } : {}),
       rect: { x: (x / vw) * 1000, y: (top / vh) * 1000, w: (it.width / vw) * 1000, h: ((fontH * 1.12) / vh) * 1000 },
     });
   }
@@ -27,9 +38,9 @@ export function itemsToRuns(items: Item[], viewportTransform: number[], vw: numb
 }
 
 /** Loads and caches runs per page. `page` is a pdf.js PDFPageProxy. */
-export async function getTextRuns(page: { getViewport(o: { scale: number }): { transform: number[]; width: number; height: number }; getTextContent(): Promise<{ items: unknown[] }> }): Promise<TextRun[]> {
+export async function getTextRuns(page: { getViewport(o: { scale: number }): { transform: number[]; width: number; height: number }; getTextContent(): Promise<{ items: unknown[]; styles?: Styles }> }): Promise<TextRun[]> {
   const vp = page.getViewport({ scale: 1 });
   const tc = await page.getTextContent();
   const items = tc.items.filter((i): i is Item => typeof (i as Item).str === 'string');
-  return itemsToRuns(items, vp.transform, vp.width, vp.height);
+  return itemsToRuns(items, vp.transform, vp.width, vp.height, tc.styles);
 }

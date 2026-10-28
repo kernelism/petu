@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { locateQuote, type TextRun } from '../../src/locate/locateQuote';
+import { locateQuote, normalizeText, type TextRun } from '../../src/locate/locateQuote';
 
 const run = (text: string, x: number, y: number, w: number, h = 20): TextRun => ({ text, rect: { x, y, w, h } });
 
@@ -57,5 +57,61 @@ describe('locateQuote', () => {
     const r = locateQuote(runs, 'x', { x: 420, y: 458 });
     expect(r).toHaveLength(1);
     expect(r[0].x).toBe(415);
+  });
+
+  it('M4: returns [] for a short quote that only occurs inside another word', () => {
+    const r = [run('the next one', 50, 100, 120)];
+    expect(locateQuote(r, 'x')).toEqual([]);
+    expect(locateQuote(r, 'ext on')).toEqual([]);
+  });
+  it('M4: still substring-matches long quotes', () => {
+    const r = [run('xbackprojectionsx', 50, 100, 170)];
+    expect(locateQuote(r, 'backprojections')).toHaveLength(1);
+  });
+
+  describe('L3 hyphenation', () => {
+    const hy = [
+      run('we back-', 50, 100, 80), run('projects the ray', 50, 130, 160),
+      run('a 1-', 50, 160, 40), run('D signal on the x-', 50, 190, 170), run('axis here', 50, 220, 90),
+    ];
+    it('matches with and without the line-end hyphen', () => {
+      expect(locateQuote(hy, 'back-projects')).toHaveLength(2);
+      expect(locateQuote(hy, 'backprojects')).toHaveLength(2);
+    });
+    it('matches short hyphenated quotes split across a line', () => {
+      expect(locateQuote(hy, '1-D')).toHaveLength(2);
+      expect(locateQuote(hy, 'x-axis')).toHaveLength(2);
+    });
+    it('matches a mid-line real hyphen either way', () => {
+      const m = [run('the epi-polar line', 50, 100, 180)];
+      expect(locateQuote(m, 'epi-polar')).toHaveLength(1);
+      expect(locateQuote(m, 'epipolar')).toHaveLength(1);
+    });
+    it('maps soft hyphens to nothing', () => {
+      const m = [run('epi\u00ADpolar geometry', 50, 100, 200)];
+      expect(locateQuote(m, 'epipolar geometry')).toHaveLength(1);
+      expect(locateQuote(m, 'epi\u00ADpolar')).toHaveLength(1);
+      expect(normalizeText('a\u00ADb')).toBe('ab');
+    });
+  });
+
+  describe('M5 glyph measurement', () => {
+    // width table: 'i' narrow, 'W' wide
+    const measure = (_f: string, s: string) => [...s].reduce((a, c) => a + (c === 'i' ? 1 : c === 'W' ? 5 : 3), 0);
+    const r = [{ ...run('iiii WW iiii', 0, 0, 100), font: '100px X' }];
+    it('uses measured widths scaled to rect.w', () => {
+      const out = locateQuote(r, 'WW', undefined, { measure });
+      // total = 4+3+10+3+4 = 24 ; prefix 'iiii ' = 7
+      expect(out[0].x).toBeCloseTo(29.17, 1);
+      expect(out[0].w).toBeCloseTo(41.67, 1);
+    });
+    it('falls back to proportional without font or measure', () => {
+      const noFont = [run('iiii WW iiii', 0, 0, 100)];
+      expect(locateQuote(noFont, 'WW', undefined, { measure })[0].x).toBeCloseTo(100 * 5 / 12, 5);
+      expect(locateQuote(r, 'WW')[0].x).toBeCloseTo(100 * 5 / 12, 5);
+    });
+    it('falls back when measure returns garbage', () => {
+      expect(locateQuote(r, 'WW', undefined, { measure: () => 0 })[0].x).toBeCloseTo(100 * 5 / 12, 5);
+    });
   });
 });
