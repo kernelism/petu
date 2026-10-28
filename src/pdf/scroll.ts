@@ -9,6 +9,8 @@ export type ScrollOpts = {
   maxMs?: number;
   /** Aborting stops the glide where it is and resolves. */
   signal?: AbortSignal;
+  /** Marks the glide's writes as the engine's (follow mode tells them from the student's). */
+  owner?: { glideStart(): void; glideEnd(): void; write(el: { scrollTop: number }, top: number): void };
 };
 
 /**
@@ -24,20 +26,22 @@ export function animateScrollTo(el: HTMLElement, target: number | (() => number)
   const from = el.scrollTop;
   const to0 = read();
   if (Math.abs(to0 - from) < 2 || o.signal?.aborted) return Promise.resolve();
-  if (prefersReducedMotion()) { el.scrollTop = to0; return Promise.resolve(); }
+  const put = (v: number) => (o.owner ? o.owner.write(el, v) : void (el.scrollTop = v));
+  if (prefersReducedMotion()) { put(to0); return Promise.resolve(); }
   const dur = Math.min(o.maxMs ?? 600, Math.max(300, (o.ms ?? 500) * Math.min(1.4, Math.abs(to0 - from) / 1200 + 0.6)));
+  o.owner?.glideStart();
   return new Promise((resolve) => {
     let done = false;
     const events = ['wheel', 'touchstart', 'keydown'];
     const cleanup = () => { events.forEach((e) => el.removeEventListener(e, stop)); o.signal?.removeEventListener('abort', stop); };
-    const stop = () => { if (done) return; done = true; cleanup(); resolve(); };
+    const stop = () => { if (done) return; done = true; cleanup(); o.owner?.glideEnd(); resolve(); };
     events.forEach((e) => el.addEventListener(e, stop, { passive: true }));
     o.signal?.addEventListener('abort', stop);
     const t0 = performance.now();
     const tick = (now: number) => {
       if (done) return;
       const t = Math.min(1, (now - t0) / dur);
-      el.scrollTop = from + (read() - from) * easeInOutCubic(t);
+      put(from + (read() - from) * easeInOutCubic(t));
       if (t < 1) requestAnimationFrame(tick); else stop();
     };
     requestAnimationFrame(tick);

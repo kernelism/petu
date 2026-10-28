@@ -158,7 +158,9 @@ export class Scheduler {
 export function actionLeadMs(a: Action): number {
   switch (a.kind) {
     case 'scroll': return 450;
-    case 'board': return 380;
+    // A sketch may glide the page column (420ms) or open the stage before its first stroke.
+    case 'sketch': return 450;
+    case 'board': return 380; // @deprecated, removed in Task E1
     case 'clear': return 0;
     // Ink fires early too, so the director can resolve its anchor and reveal it; the ink itself
     // still starts on the word.

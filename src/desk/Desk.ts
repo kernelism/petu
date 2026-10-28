@@ -1,0 +1,356 @@
+// src/desk/Desk.ts
+import type { SRect } from '../geometry/space';
+import type { PageLayers } from '../pdf/viewerApi';
+import type { Target } from '../script/types';
+import type { Stroke } from '../ink/agent/strokes';
+import { Follow } from './follow';
+import { routeConnector, edgeFor } from './route';
+import {
+  column, lanesFor, gapsFor, placeAll, regionRects, stageLayout, inView, fitTogether, frameTop,
+  type Placed, type RegionReq,
+} from './layout';
+import type { ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskMode, DeskRect, DeskState, Lanes, RegionInfo, RegionMode, RegionSpec } from './types';
+
+export type { DeskHost } from './types';
+
+const SVG = 'http://www.w3.org/2000/svg';
+export const MAX_REGIONS = 2;
+export const GLIDE_MS = 420;
+export const CARD_SWAP_MS = 300;
+const WIRE_PAD = 8;
+
+type Region = { req: RegionReq; mode: RegionMode; el: HTMLDivElement; layers: PageLayers };
+type Wire = { page: ConnectorEnd; region: ConnectorEnd; reversed: boolean; svg: SVGSVGElement; group: SVGGElement };
+type Where = { frame: 'desk' | 'stage'; rect: DeskRect };
+
+const toD = (s: Stroke) => s.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.max(0, ms)));
+const sameLanes = (a: Lanes, b: Lanes) => a.left === b.left && a.right === b.right;
+const sameGaps = (a: ReadonlyMap<number, number>, b: ReadonlyMap<number, number>) => a.size === b.size && [...a].every(([k, v]) => b.get(k) === v);
+
+/** The desk: sketch regions beside pages (C) or on the takeover stage (B), connectors, follow mode. */
+export class Desk implements DeskApi {
+  readonly follow = new Follow();
+  private regions = new Map<string, Region>();
+  private wires: Wire[] = [];
+  private mode: DeskMode = 'c';
+  /** The region on the B stage, and the page on the card. */
+  private active: string | null = null;
+  private card: number | null = null;
+  private lanes: Lanes = { left: 0, right: 0 };
+  private gaps: ReadonlyMap<number, number> = new Map();
+  /** The last place the answer was looked at, for "Back to answer". */
+  private last: { t: Target; r: SRect } | null = null;
+  private subs = new Set<(s: DeskState) => void>();
+  private off: (() => void)[] = [];
+  private back: HTMLButtonElement;
+
+  constructor(private host: DeskHost, private stage: HTMLDivElement) {
+    this.off.push(
+      host.onLayout(() => void this.relayout(0)),
+      host.onUserIntent(() => this.follow.userTookOver()),
+      host.onCardClick(() => this.leaveB()),
+      this.follow.subscribe(() => this.emit()),
+    );
+    this.back = document.createElement('button');
+    this.back.type = 'button';
+    this.back.className = 'desk-card-back';
+    this.back.addEventListener('click', () => this.leaveB());
+    stage.appendChild(this.back);
+  }
+
+  destroy(): void { this.off.forEach((f) => f()); this.stage.replaceChildren(); this.stage.classList.remove('is-b'); }
+
+  /** Esc between answers: leave the stage without touching follow mode. */
+  exitStage(): Promise<void> { return this.exitB(); }
+
+  // ---------------------------------------------------------------------------------------------
+  // DeskApi
+
+  following(): boolean { return this.follow.following(); }
+  cancel(): void { this.host.cancelGlide(); }
+  subscribe(cb: (s: DeskState) => void): () => void { this.subs.add(cb); return () => { this.subs.delete(cb); }; }
+
+  state(): DeskState {
+    const L = this.host.layout();
+    const { W, H } = this.host.viewport();
+    const sketching = [...this.regions.values()].some((r) => r.mode !== 'b');
+    const s: DeskState = { mode: this.mode, following: this.follow.following(), sketching, column: { x: L?.pageX ?? 0, w: L?.pageW ?? W } };
+    if (this.mode === 'b' && this.card != null) { s.canvas = stageLayout(W, H, this.host.aspect(this.card)).canvas; s.card = this.card; }
+    return s;
+  }
+
+  region(id: string): RegionInfo | null {
+    const r = this.regions.get(id);
+    if (!r) return null;
+    return { id, page: r.req.page, size: r.req.size, mode: r.mode, layers: r.layers, scale: () => this.where({ region: id }, { x: 0, y: 0, w: 1000, h: 0 })!.rect.w / 1000 };
+  }
+
+  async addRegion(spec: RegionSpec): Promise<RegionInfo | string> {
+    if (this.regions.size >= MAX_REGIONS) return `max ${MAX_REGIONS} regions per answer`;
+    if (this.regions.has(spec.id)) return 'duplicate region id';
+    const el = document.createElement('div');
+    el.className = 'desk-region';
+    el.dataset.id = spec.id;
+    const layer = (cls: string) => {
+      const svg = document.createElementNS(SVG, 'svg');
+      svg.setAttribute('class', `desk-region-layer ${cls}`);
+      svg.setAttribute('viewBox', '0 0 1000 700');
+      svg.setAttribute('aria-hidden', 'true');
+      el.appendChild(svg);
+      return svg.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
+    };
+    const layers = { highlight: layer('desk-region-hl'), agent: layer('desk-region-ink') };
+    const r: Region = { req: { ...spec }, mode: 'b', el, layers };
+    this.regions.set(spec.id, r);
+    await this.relayout(GLIDE_MS);
+    if (r.mode === 'b' && this.follow.following()) await this.enterB(spec.id, spec.page);
+    el.classList.add('is-shown');
+    return this.region(spec.id)!;
+  }
+
+  async reveal(t: Target, r: SRect): Promise<boolean> {
+    this.last = { t, r };
+    if (!this.follow.following()) return false;
+    if (this.isVisible(t, r)) return false;
+    if (t.region != null) {
+      const reg = this.regions.get(t.region);
+      if (!reg) return false;
+      if (reg.mode === 'b') { await this.enterB(t.region, this.card ?? reg.req.page); return true; }
+    } else if (this.mode === 'b') {
+      // Pointing at another page while the stage is up: that page goes on the card (rule 2).
+      await this.host.setCard({ page: t.page, rect: this.stageNow(t.page).card }, CARD_SWAP_MS);
+      this.card = t.page;
+      this.emit();
+      return true;
+    }
+    if (this.mode === 'b') await this.exitB();
+    const w = this.where(t, r);
+    if (!w) return false;
+    await this.host.glideTo(() => frameTop(this.where(t, r)!.rect, this.view()), 450);
+    return true;
+  }
+
+  isVisible(t: Target, r: SRect): boolean {
+    if (t.region != null) {
+      const reg = this.regions.get(t.region);
+      if (!reg) return false;
+      if (reg.mode === 'b') return this.mode === 'b' && this.active === t.region;
+      if (this.mode === 'b') return false;
+    } else if (this.mode === 'b') return t.page === this.card;
+    const w = this.where(t, r);
+    return !!w && inView(w.rect, { top: this.host.scrollTop(), H: this.host.viewport().H, max: this.host.maxScroll() });
+  }
+
+  whenVisible(t: Target, r: SRect, maxMs = 1200): Promise<boolean> {
+    if (this.isVisible(t, r)) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const check = () => { if (this.isVisible(t, r)) done(true); };
+      const offScroll = this.host.onScroll(check);
+      const offState = this.subscribe(check);
+      const timer = setTimeout(() => done(false), maxMs);
+      const done = (v: boolean) => { offScroll(); offState(); clearTimeout(timer); resolve(v); };
+    });
+  }
+
+  async frameBoth(a: ConnectorEnd, b: ConnectorEnd): Promise<void> {
+    const pageEnd = a.t.page != null ? a : b, regEnd = a.t.page != null ? b : a;
+    const reg = regEnd.t.region != null ? this.regions.get(regEnd.t.region) : undefined;
+    this.last = regEnd;
+    if (!this.follow.following() || !reg || pageEnd.t.page == null) return;
+    if (reg.mode === 'b') { await this.enterB(reg.req.id, pageEnd.t.page); return; }
+    if (this.mode === 'b') await this.exitB();
+    const pa = this.where(pageEnd.t, pageEnd.r), ra = this.where(regEnd.t, regEnd.r);
+    if (!pa || !ra) return;
+    const { H } = this.host.viewport();
+    if (fitTogether([pa.rect, ra.rect], H)) {
+      const u = () => { const p = this.where(pageEnd.t, pageEnd.r)!.rect, q = this.where(regEnd.t, regEnd.r)!.rect; const y = Math.min(p.y, q.y); return { x: 0, y, w: 1, h: Math.max(p.y + p.h, q.y + q.h) - y }; };
+      if (!inView(u(), this.view())) await this.host.glideTo(() => frameTop(u(), this.view()), 450);
+      return;
+    }
+    // They can't be on screen together: the region goes to the stage, the page onto the card (rule 3).
+    reg.req.forceB = true;
+    await this.relayout(GLIDE_MS);
+    await this.enterB(reg.req.id, pageEnd.t.page);
+  }
+
+  async scrollToPage(page: number, y?: number): Promise<void> {
+    this.last = { t: { page }, r: { x: 0, y: 0, w: 1000, h: 0 } };
+    if (!this.follow.following()) return;
+    if (this.mode === 'b') await this.exitB();
+    await this.host.scrollToPage(page, y);
+  }
+
+  addConnector(from: ConnectorEnd, to: ConnectorEnd): ConnectorHandle | string {
+    const reversed = from.t.region != null;
+    const page = reversed ? to : from, region = reversed ? from : to;
+    if (page.t.page == null || region.t.region == null || !this.regions.has(region.t.region)) return 'connector needs a page and a region';
+    const svg = document.createElementNS(SVG, 'svg') as SVGSVGElement;
+    svg.setAttribute('class', 'desk-wire');
+    svg.setAttribute('aria-hidden', 'true');
+    const group = svg.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
+    const w: Wire = { page, region, reversed, svg, group };
+    const stroke = this.route(w);
+    if (!stroke) return 'connector end off screen';
+    this.wires.push(w);
+    return { group, stroke, scale: 1 };
+  }
+
+  /**
+   * Fades out and removes every region and wire, leaves B and follows again. By default the lanes
+   * collapse too (the column glides back to center). With `keepLanes` the column stays where it is,
+   * so a sketch that immediately follows (the new answer's first action) glides from here directly
+   * instead of back to center and out again; a later reset() without it collapses them.
+   */
+  async reset(ms: number, opts: { keepLanes?: boolean } = {}): Promise<void> {
+    this.follow.setAnswering(true);
+    const els: Element[] = [...[...this.regions.values()].map((r) => r.el), ...this.wires.map((w) => w.svg)];
+    this.regions.clear();
+    this.wires = [];
+    this.last = null;
+    for (const el of els) { (el as HTMLElement).style.transition = `opacity ${ms}ms ease-out`; (el as HTMLElement).style.opacity = '0'; }
+    const leaving = this.mode === 'b' ? this.exitB() : Promise.resolve();
+    await Promise.all([wait(ms).then(() => els.forEach((e) => e.remove())), leaving, opts.keepLanes ? Promise.resolve() : this.applyColumn([], GLIDE_MS)]);
+    this.emit();
+  }
+
+  /** "Back to answer": follow again and return to where the answer was. */
+  async resume(): Promise<void> {
+    this.follow.resume();
+    const l = this.last;
+    if (!l) return;
+    if (l.t.region != null && this.regions.get(l.t.region)?.mode === 'b') { await this.enterB(l.t.region, this.card ?? this.regions.get(l.t.region)!.req.page); return; }
+    await this.reveal(l.t, l.r);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+
+  private view() { return { top: this.host.scrollTop(), H: this.host.viewport().H, max: this.host.maxScroll() }; }
+  private stageNow(page: number) { const { W, H } = this.host.viewport(); return stageLayout(W, H, this.host.aspect(page)); }
+  private placed(): Placed[] { return [...this.regions.values()].map((r) => ({ ...r.req, mode: r.mode })); }
+
+  /** Rule 7: re-places every region for the current window from its request; moves frames between the desk and the stage. */
+  private async relayout(ms: number): Promise<void> {
+    const { W, H } = this.host.viewport();
+    const placed = placeAll([...this.regions.values()].map((r) => r.req), W, H);
+    for (const p of placed) this.regions.get(p.id)!.mode = p.mode;
+    await this.applyColumn(placed, ms);
+    // The stage shows a region that is no longer B (the window grew): back to C.
+    if (this.mode === 'b' && this.active && this.regions.get(this.active)?.mode !== 'b') await this.exitB();
+    this.position();
+    // Still in B (a resize): the card follows the new stage at once. Same card, so the viewer only moves it.
+    if (this.mode === 'b' && this.card != null) {
+      this.placeBack(this.card);
+      await this.host.setCard({ page: this.card, rect: this.stageNow(this.card).card }, 0);
+    }
+  }
+
+  private async applyColumn(placed: Placed[], ms: number) {
+    const { W } = this.host.viewport();
+    const lanes = lanesFor(placed, W);
+    const gaps = gapsFor(placed, W, column(W, lanes));
+    if (sameLanes(lanes, this.lanes) && sameGaps(gaps, this.gaps)) return;
+    this.lanes = lanes;
+    this.gaps = gaps;
+    await this.host.setColumn(lanes, gaps, ms);
+  }
+
+  /** Puts every frame and wire where the current layout says. */
+  private position() {
+    const L = this.host.layout();
+    if (!L) return;
+    const { W, H } = this.host.viewport();
+    const rects = regionRects(this.placed(), L, W);
+    for (const r of this.regions.values()) {
+      const rect = r.mode === 'b' ? stageLayout(W, H, this.host.aspect(this.card ?? r.req.page)).region : rects.get(r.req.id)!;
+      const parent = r.mode === 'b' ? this.stage : this.host.layer();
+      if (r.el.parentNode !== parent) parent.appendChild(r.el); // same nodes: ink in flight keeps drawing (rule 7)
+      Object.assign(r.el.style, { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.w}px`, height: `${rect.h}px` });
+      r.el.classList.toggle('is-staged', r.mode === 'b');
+      r.el.classList.toggle('is-active', r.mode !== 'b' || this.active === r.req.id);
+    }
+    for (const w of this.wires) {
+      const s = this.route(w);
+      if (s) w.group.querySelector('path')?.setAttribute('d', toD(s));
+    }
+    this.emit();
+  }
+
+  /** Target-space rect → desk px (C) or stage px (B). Null for an unknown region. */
+  private where(t: Target, r: SRect): Where | null {
+    const L = this.host.layout();
+    if (!L) return null;
+    const { W, H } = this.host.viewport();
+    if (t.region != null) {
+      const reg = this.regions.get(t.region);
+      if (!reg) return null;
+      const box = reg.mode === 'b' ? stageLayout(W, H, this.host.aspect(this.card ?? reg.req.page)).region : regionRects(this.placed(), L, W).get(t.region)!;
+      const k = box.w / 1000;
+      return { frame: reg.mode === 'b' ? 'stage' : 'desk', rect: { x: box.x + r.x * k, y: box.y + r.y * k, w: r.w * k, h: r.h * k } };
+    }
+    if (this.mode === 'b' && t.page === this.card) {
+      const c = this.stageNow(t.page).card, k = c.w / 1000;
+      return { frame: 'stage', rect: { x: c.x + r.x * k, y: c.y + r.y * k, w: r.w * k, h: r.h * k } };
+    }
+    const k = L.pageW / 1000;
+    return { frame: 'desk', rect: { x: L.pageX + r.x * k, y: L.tops[t.page - 1] + r.y * k, w: r.w * k, h: r.h * k } };
+  }
+
+  /** Routes a wire for the current layout and fits its svg around it. Null when an end can't be placed. */
+  private route(w: Wire): Stroke | null {
+    const reg = this.regions.get(w.region.t.region!);
+    const p = this.where(w.page.t, w.page.r), q = this.where(w.region.t, w.region.r);
+    if (!reg || !p || !q || p.frame !== q.frame) return null; // in B the page end must be on the card
+    const L = this.host.layout()!;
+    const page = p.frame === 'stage'
+      ? this.stageNow(w.page.t.page!).card
+      : { x: L.pageX, y: L.tops[w.page.t.page! - 1], w: L.pageW, h: L.heights[w.page.t.page! - 1] };
+    let s = routeConnector(p.rect, q.rect, edgeFor(reg.mode, page));
+    if (w.reversed) s = s.slice().reverse();
+    const xs = s.map((v) => v.x), ys = s.map((v) => v.y);
+    const box = { x: Math.min(...xs) - WIRE_PAD, y: Math.min(...ys) - WIRE_PAD, w: Math.max(...xs) - Math.min(...xs) + 2 * WIRE_PAD, h: Math.max(...ys) - Math.min(...ys) + 2 * WIRE_PAD };
+    const parent = p.frame === 'stage' ? this.stage : this.host.layer();
+    if (w.svg.parentNode !== parent) parent.appendChild(w.svg);
+    w.svg.setAttribute('viewBox', `${box.x} ${box.y} ${box.w} ${box.h}`);
+    Object.assign(w.svg.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
+    return s;
+  }
+
+  /** Shows region `id` on the takeover stage with `page` on the card. */
+  private async enterB(id: string, page: number): Promise<void> {
+    if (this.mode === 'b' && this.active === id && this.card === page) return; // already up: nothing moves
+    const swap = this.mode === 'b' && this.card !== page;
+    this.mode = 'b';
+    this.active = id;
+    this.card = page;
+    this.stage.classList.add('is-b');
+    this.placeBack(page);
+    this.position();
+    await this.host.setCard({ page, rect: this.stageNow(page).card }, swap ? CARD_SWAP_MS : GLIDE_MS);
+  }
+
+  /** "Page N · Back to page", under the card. */
+  private placeBack(page: number) {
+    this.back.textContent = `Page ${page} · Back to page`;
+    const c = this.stageNow(page).card;
+    Object.assign(this.back.style, { left: `${c.x}px`, top: `${c.y + c.h + 8}px` });
+  }
+
+  private async exitB(): Promise<void> {
+    if (this.mode !== 'b') return;
+    this.mode = 'c';
+    this.active = null;
+    this.card = null;
+    this.stage.classList.remove('is-b');
+    this.position();
+    await this.host.setCard(null, GLIDE_MS);
+  }
+
+  /** The student clicked the card (or its button): back to the page, and stop following. */
+  private leaveB() {
+    this.follow.userTookOver();
+    void this.exitB();
+  }
+
+  private emit() { const s = this.state(); this.subs.forEach((f) => f(s)); }
+}

@@ -35,7 +35,7 @@ export function strokeDurationMs(lenPx: number, minMs?: number, speed = 1): numb
 export const prefersReducedMotion = (): boolean =>
   typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-const toD = (pts: SPt[]) => pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');
+export const toD = (pts: SPt[]) => pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');
 
 export type InkOpts = {
   color: string;
@@ -51,6 +51,10 @@ export type InkOpts = {
   speed?: number;
   /** Fade mode's duration. Default 280ms. */
   fadeMs?: number;
+  /** SVG dash pattern in CSS px (non-scaling), e.g. '7 6'. */
+  dash?: string;
+  /** Stroke opacity. Default 1. */
+  opacity?: number;
 };
 
 const frame = () => new Promise<number>((r) => requestAnimationFrame(r));
@@ -64,6 +68,8 @@ function makePath(g: SVGGElement, o: InkOpts): SVGPathElement {
   p.setAttribute('stroke-linecap', 'round');
   p.setAttribute('stroke-linejoin', 'round');
   p.setAttribute('vector-effect', 'non-scaling-stroke');
+  if (o.dash) p.setAttribute('stroke-dasharray', o.dash);
+  if (o.opacity != null) p.setAttribute('stroke-opacity', String(o.opacity));
   g.appendChild(p);
   return p;
 }

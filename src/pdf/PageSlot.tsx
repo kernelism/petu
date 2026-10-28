@@ -11,6 +11,8 @@ export type SlotHandle = {
 type Props = {
   page: number;
   top: number;
+  /** The page column's left edge (desk px). */
+  left: number;
   width: number;
   height: number;
   /** Page-space height (1000 * h / w). */
@@ -25,7 +27,7 @@ type Props = {
  * One page: always mounted, absolutely positioned, a white sheet until the viewer swaps a rendered
  * canvas into `canvasHost`. Layers, bottom to top: canvas, highlights, overlay slot, agent ink.
  */
-function PageSlotImpl({ page, top, width, height, spaceH, register, renderOverlay, current = false }: Props) {
+function PageSlotImpl({ page, top, left, width, height, spaceH, register, renderOverlay, current = false }: Props) {
   const parts = useRef<Partial<SlotHandle>>({});
   const tryRegister = () => {
     const p = parts.current;
@@ -51,7 +53,7 @@ function PageSlotImpl({ page, top, width, height, spaceH, register, renderOverla
       ref={elRef}
       className={current ? 'pv-page is-current' : 'pv-page'}
       data-page={page}
-      style={{ top, width, height, marginLeft: -width / 2 }}
+      style={{ top, left, width, height }}
     >
       <div ref={hostRef} className="pv-canvas-host" />
       <svg className="pv-layer pv-highlight" viewBox={viewBox} preserveAspectRatio="none" aria-hidden="true">

@@ -6,7 +6,8 @@ import type { Action, ScriptEvent } from '../../src/script/types';
 /** Every word lasts 100ms; time is Date.now() (faked). */
 const fixedClock = () => new PacedClock(() => 170, () => Date.now(), () => 100);
 const w = (text: string): ScriptEvent => ({ type: 'word', text });
-const act = (kind: 'clear' | 'board' = 'clear'): ScriptEvent => ({ type: 'action', action: { kind } });
+const SKETCH: Action = { kind: 'sketch', id: 's', page: 1, size: 'm', place: 'auto' };
+const act = (kind: 'clear' | 'sketch' = 'clear'): ScriptEvent => ({ type: 'action', action: kind === 'clear' ? { kind } : SKETCH });
 const words = (s: string) => s.split(' ').map(w);
 const END: ScriptEvent = { type: 'end' };
 
@@ -46,26 +47,26 @@ describe('Scheduler', () => {
 
   it('fires actions with the next word; sharing a word, they fire together', () => {
     const { s, log, ats } = make();
-    s.push([w('a'), w('b.'), act(), act('board'), w('c'), END]);
+    s.push([w('a'), w('b.'), act(), act('sketch'), w('c'), END]);
     vi.advanceTimersByTime(1000);
-    expect(log).toEqual(['0:a', '100:b.', '200:<clear>', '200:<board>', '200:c', '300:done']);
+    expect(log).toEqual(['0:a', '100:b.', '200:<clear>', '200:<sketch>', '200:c', '300:done']);
     expect(ats).toEqual([200, 200]);
   });
 
   it('fires an action up to its lead early, reporting its word time', () => {
-    const { s, log, ats } = make({ lead: (a) => (a.kind === 'board' ? 250 : 0) });
-    s.push([...words('one two three four five.'), act('board'), w('six.'), END]);
+    const { s, log, ats } = make({ lead: (a) => (a.kind === 'sketch' ? 250 : 0) });
+    s.push([...words('one two three four five.'), act('sketch'), w('six.'), END]);
     vi.advanceTimersByTime(2000);
-    expect(log.slice(0, 4)).toEqual(['0:one', '100:two', '200:three', '250:<board>']);
+    expect(log.slice(0, 4)).toEqual(['0:one', '100:two', '200:three', '250:<sketch>']);
     expect(ats).toEqual([500]);
     expect(log).toContain('500:six.');
   });
 
   it('never fires an action before an earlier one', () => {
-    const { s, log } = make({ lead: (a) => (a.kind === 'board' ? 1000 : 0) });
-    s.push([w('a'), w('b.'), act(), w('c'), act('board'), w('d.'), END]);
+    const { s, log } = make({ lead: (a) => (a.kind === 'sketch' ? 1000 : 0) });
+    s.push([w('a'), w('b.'), act(), w('c'), act('sketch'), w('d.'), END]);
     vi.advanceTimersByTime(1000);
-    expect(log.slice(0, 5)).toEqual(['0:a', '100:b.', '200:<clear>', '200:<board>', '200:c']);
+    expect(log.slice(0, 5)).toEqual(['0:a', '100:b.', '200:<clear>', '200:<sketch>', '200:c']);
   });
 
   it('never outruns the stream, and pauses between clauses rather than mid-phrase', () => {
@@ -98,6 +99,12 @@ describe('Scheduler', () => {
     vi.advanceTimersByTime(1550);
     s.push([w('p')]);
     expect(log.at(-1)).toBe('1550:p');
+  });
+
+  it('leads a sketch by 450ms, so its glide lands on its word', () => {
+    expect(actionLeadMs(SKETCH)).toBe(450);
+    expect(actionLeadMs({ kind: 'scroll', page: 1 })).toBe(450);
+    expect(actionLeadMs({ kind: 'clear' })).toBe(0);
   });
 
   it('flushes actions waiting on a stalled word after FLUSH_MS of silence', () => {

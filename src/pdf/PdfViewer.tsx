@@ -7,7 +7,11 @@ import type { TextRun } from '../locate/locateQuote';
 import { getTextRuns } from './textRuns';
 import { animateScrollTo } from './scroll';
 import { prefersReducedMotion } from '../ink/agent/animate';
+import { ink } from '../ink/student/store';
 import { PageSlot, type SlotHandle } from './PageSlot';
+import { column, computeLayout, pageAt, SAFE_TOP, SAFE_BOTTOM, TOP_PAD, type Lanes, type PageLayout } from '../desk/layout';
+import { ScrollOwner, isScrollKey } from '../desk/follow';
+import type { DeskHost, StageRect } from '../desk/types';
 import './viewer.css';
 
 type Props = {
@@ -17,12 +21,6 @@ type Props = {
   renderOverlay?(page: number, spaceH: number): ReactNode;
 };
 
-const TOP_PAD = 72;
-const BOTTOM_PAD = 200;
-const GAP = 24;
-const MAX_W = 860;
-const SIDE = 64;
-const MIN_W = 200;
 /** Pages further than this from the current page lose their canvas once they leave the render range. */
 const KEEP_RADIUS = 3;
 /** Concurrent pdf.js renders. More than 2 starves the main thread while scrolling. */
@@ -34,44 +32,16 @@ const OVERLAY_RADIUS = 8;
 const CURRENT_LINE = 0.35;
 const SCROLL_ANCHOR = 0.28;
 const VISIBLE_BAND = 0.15;
-/** Window chrome that covers the scroller: top bar above, caption + ask bar below (CSS px). */
-const SAFE_TOP = 64;
-const SAFE_BOTTOM = 156;
 const RESIZE_RERENDER_MS = 160;
 /** A reveal (making an ink target visible) glides at most this long. */
 const REVEAL_MAX_MS = 450;
 
 const dpr = () => Math.min(2, window.devicePixelRatio || 1);
-/** Page width for a scroller of `w` CSS px. */
-const fitWidth = (w: number) => Math.max(MIN_W, Math.min(w - SIDE, MAX_W));
 
 // ---------------------------------------------------------------------------------------------
-// Layout: absolute tops computed in JS, so scroll math never has to read the DOM.
+// Layout: absolute tops computed in JS (src/desk/layout.ts), so scroll math never reads the DOM.
 
-type Layout = { pageW: number; tops: Float64Array; heights: Float64Array; total: number };
-
-function computeLayout(pageW: number, aspects: Float64Array): Layout {
-  const n = aspects.length;
-  const tops = new Float64Array(n);
-  const heights = new Float64Array(n);
-  let y = TOP_PAD;
-  for (let i = 0; i < n; i++) {
-    tops[i] = y;
-    heights[i] = pageW * aspects[i];
-    y += heights[i] + (i < n - 1 ? GAP : 0);
-  }
-  return { pageW, tops, heights, total: y + BOTTOM_PAD };
-}
-
-/** 1-based page whose slot (including the gap below it) contains content-y `y`. */
-function pageAt(L: Layout, y: number): number {
-  let lo = 0, hi = L.tops.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (L.tops[mid] <= y) lo = mid; else hi = mid - 1;
-  }
-  return lo + 1;
-}
+type Layout = PageLayout;
 
 // ---------------------------------------------------------------------------------------------
 // Renderer: owns every canvas. Renders pages near the viewport, closest-to-current first, at most
@@ -226,7 +196,15 @@ export default PdfViewer;
 function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const sizerRef = useRef<HTMLDivElement>(null);
-  const [pageW, setPageW] = useState(0);
+  /** The scroller's width; the page column follows from it and the lanes the desk reserves. */
+  const [viewW, setViewW] = useState(0);
+  const [lanes, setLanes] = useState<Lanes>({ left: 0, right: 0 });
+  const [gaps, setGaps] = useState<ReadonlyMap<number, number>>(() => new Map());
+  const deskLayerRef = useRef<HTMLDivElement>(null);
+  /** Desk subscribers, told after every committed layout (resize, a page's true size, the column). */
+  const layoutSubs = useRef(new Set<() => void>());
+  /** Every programmatic scrollTop write goes through this, so the student's scrolls stand out (rule 6). */
+  const owner = useRef(new ScrollOwner()).current;
   /** While the column glides, pages scale by transform and the width isn't re-measured per frame. */
   const glideRef = useRef<{ timer: number; finish(): void; origin(): string; done(): void } | null>(null);
   /** h/w per page. Seeded from page 1, corrected per page as pages load. */
@@ -269,7 +247,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
   // Fit-to-width, tracked with a ResizeObserver.
   useLayoutEffect(() => {
     const el = scrollRef.current!;
-    const measure = () => setPageW(fitWidth(el.clientWidth));
+    const measure = () => setViewW(el.clientWidth);
     measure();
     const ro = new ResizeObserver(() => { if (!glideRef.current) measure(); });
     ro.observe(el);
@@ -277,9 +255,9 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
   }, []);
 
   const layout = useMemo(
-    () => (pageW > 0 && aspectsRef.current ? computeLayout(pageW, aspectsRef.current) : null),
+    () => (viewW > 0 && aspectsRef.current ? computeLayout(column(viewW, lanes), aspectsRef.current, gaps) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pageW, aspectsVersion],
+    [viewW, lanes, gaps, aspectsVersion],
   );
 
   const saveAnchor = useCallback(() => {
@@ -299,9 +277,10 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     const a = anchorRef.current;
     if (a) {
       const want = layout.tops[a.page - 1] + a.frac * layout.heights[a.page - 1] - el.clientHeight * CURRENT_LINE;
-      if (Math.abs(el.scrollTop - want) > 0.5) el.scrollTop = want;
+      if (Math.abs(el.scrollTop - want) > 0.5) owner.write(el, want);
     }
     saveAnchor();
+    layoutSubs.current.forEach((f) => f());
   }, [layout, saveAnchor]);
 
   const register = useCallback((page: number, h: SlotHandle | null) => {
@@ -355,23 +334,28 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     };
     let raf = 0;
     const onScroll = () => {
+      if (owner.isForeign(el.scrollTop) && cardPage == null) intent(); // scrollbar drag, find-in-page, focus…
+      subs.scroll.forEach((f) => f());
       saveAnchor();
       // A scroll during a column glide: keep scaling around the current reading line.
       if (glideRef.current && sizerRef.current) sizerRef.current.style.transformOrigin = glideRef.current.origin();
       if (!raf) raf = requestAnimationFrame(() => { raf = 0; publishCurrent(); });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
-    // The reader taking over (wheel, touch, keys) ends the agent's focus page.
-    const onUserScroll = () => { if (focusRef.current != null) setFocusPage(null); };
+    // The reader taking over (wheel incl. pinch/ctrl+wheel, touch, scroll keys, zoom) ends the agent's focus page and follow mode.
+    const onUserScroll = () => intent();
+    const onKey = (e: KeyboardEvent) => { if (isScrollKey(e)) intent(); };
+    const onZoom = () => { if ((window.visualViewport?.scale ?? 1) !== 1) intent(); };
     el.addEventListener('wheel', onUserScroll, { passive: true });
     el.addEventListener('touchstart', onUserScroll, { passive: true });
-    el.addEventListener('keydown', onUserScroll);
+    window.addEventListener('keydown', onKey);
+    window.visualViewport?.addEventListener('resize', onZoom);
     currentRef.current = computeCurrent();
     setCenter(currentRef.current);
 
     // Re-render at a new DPR when the window moves between displays.
     let mq: MediaQueryList | null = null;
-    const onDpr = () => { watchDpr(); renderer.pump(); };
+    const onDpr = () => { watchDpr(); renderer.pump(); intent(); }; // browser zoom changes the DPR
     const watchDpr = () => {
       mq?.removeEventListener('change', onDpr);
       mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
@@ -417,7 +401,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       const ctrl = (glide = new AbortController());
       renderer.pin(page); // destination starts painting at the start of the glide, not on arrival
       try {
-        await animateScrollTo(el, top, { signal: ctrl.signal, maxMs });
+        await animateScrollTo(el, top, { signal: ctrl.signal, maxMs, owner });
       } finally {
         renderer.unpin(page);
         if (glide === ctrl) glide = null;
@@ -491,54 +475,160 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       },
       ensureSize: async (page) => { if (page >= 1 && page <= doc.numPages) await ensureSize(page); },
       cancelScroll: () => glide?.abort(),
-      frameCurrent: async () => {
-        const page = focusRef.current ?? currentRef.current;
-        if (!layoutRef.current || !fits(page)) return;
-        if (Math.abs(el.scrollTop - Math.max(0, framedTop(page))) < 2) return;
-        await glideTo(page, () => framedTop(page), REVEAL_MAX_MS);
+      /** @deprecated The side-panel board's column glide. A no-op; removed in Task E1. */
+      frameCurrent: async () => {},
+      /** @deprecated A no-op; removed in Task E1. */
+      glideColumn: async () => {},
+      deskHost: () => host,
+    };
+
+    // ---- The desk host (src/desk/Desk.ts drives it) -------------------------------------------
+    const subs = { scroll: new Set<() => void>(), intent: new Set<() => void>(), card: new Set<() => void>() };
+    const sub = (set: Set<() => void>) => (cb: () => void) => { set.add(cb); return () => { set.delete(cb); }; };
+    const intent = () => { if (focusRef.current != null) setFocusPage(null); subs.intent.forEach((f) => f()); };
+
+    /** Glides the page column to new lanes / below-gaps: pages slide and scale by transform, then re-lay out once. */
+    const setColumn = (next: Lanes, nextGaps: ReadonlyMap<number, number>, ms: number) => new Promise<void>((done) => {
+      if (prefersReducedMotion()) ms = 0;
+      glideRef.current?.finish();
+      const sizer = sizerRef.current, L = layoutRef.current;
+      const L2 = computeLayout(column(el.clientWidth, next), aspectsRef.current!, nextGaps);
+      const commit = () => {
+        flushSync(() => { setLanes(next); setGaps(nextGaps); });
+        renderer.renderW = L2.pageW;
+        renderer.pump();
+      };
+      if (!sizer || !L || ms <= 0 || (Math.abs(L2.pageW - L.pageW) < 0.5 && Math.abs(L2.pageX - L.pageX) < 0.5)) { commit(); done(); return; }
+      const k = L2.pageW / L.pageW;
+      const finish = () => {
+        if (glideRef.current !== g) return;
+        window.clearTimeout(g.timer);
+        glideRef.current = null;
+        // One synchronous swap: the new layout commits (the anchor keeps the reading line) and the
+        // transform drops in the same frame, so nothing jumps.
+        commit();
+        sizer.style.transition = 'none';
+        sizer.style.transform = '';
+        done();
+      };
+      // Scale around the point that makes the transformed pages land where the new layout puts them
+      // (x: the old column's left edge, which the translate carries to the new one; y: the reading line).
+      const origin = () => {
+        const a = anchorRef.current;
+        let o = el.scrollTop + el.clientHeight * CURRENT_LINE;
+        if (a && Math.abs(1 - k) > 1e-3) {
+          const pOld = L.tops[a.page - 1] + a.frac * L.heights[a.page - 1];
+          const pNew = L2.tops[a.page - 1] + a.frac * L2.heights[a.page - 1];
+          const top = Math.max(0, Math.min(pNew - el.clientHeight * CURRENT_LINE, L2.total - el.clientHeight));
+          o = (pNew - top + el.scrollTop - pOld * k) / (1 - k);
+        }
+        return `${L.pageX}px ${o}px`;
+      };
+      const g = { timer: 0, finish, origin, done };
+      glideRef.current = g;
+      sizer.style.transformOrigin = origin();
+      sizer.style.transition = `transform ${ms}ms cubic-bezier(.2,.8,.2,1)`;
+      sizer.style.transform = `translateX(${L2.pageX - L.pageX}px) scale(${k})`;
+      g.timer = window.setTimeout(finish, ms + 40);
+    });
+
+    /**
+     * B: the scroller itself becomes the reference card. Its box grows to hold the whole card page
+     * (the scroller clips to its box before the transform), scrollTop puts that page TOP_PAD below
+     * the box top, and a compensating translate keeps it where it was; then it transitions onto the card.
+     */
+    let cardPage: number | null = null;
+    /** The card's current transform, so asking for the same card again costs nothing. */
+    let cardTo = '';
+    const wait = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
+    const frame = () => new Promise((r) => requestAnimationFrame(r));
+    const setCard = async (card: { page: number; rect: StageRect } | null, ms: number) => {
+      if (prefersReducedMotion()) ms = 0;
+      const L = layoutRef.current;
+      if (!L) return;
+      const ease = 'cubic-bezier(.2,.8,.2,1)';
+      if (card) {
+        const k = card.rect.w / L.pageW;
+        const to = `translate(${card.rect.x - L.pageX * k}px, ${card.rect.y - TOP_PAD * k}px) scale(${k})`;
+        if (cardPage === card.page) {
+          // Already the card (B re-entry, another B region, a resize): only move to the new rect, if
+          // it moved. Never re-run the entry from the page's scroller position (a jump, and ~430ms).
+          const i = card.page - 1;
+          el.style.height = `${Math.max(el.clientHeight, L.heights[i] + 2 * TOP_PAD)}px`;
+          if (Math.abs(el.scrollTop - (L.tops[i] - TOP_PAD)) > 0.5) owner.write(el, L.tops[i] - TOP_PAD);
+          if (cardTo === to) return;
+          cardTo = to;
+          el.style.transition = ms > 0 ? `transform ${ms}ms ${ease}` : 'none';
+          el.style.transform = to;
+          if (ms > 0) await wait(ms);
+          return;
+        }
+        const swap = cardPage != null && cardPage !== card.page;
+        if (swap) { el.style.transition = 'opacity 120ms ease-out'; el.style.opacity = '0'; await wait(120); }
+        if (cardPage != null) renderer.unpin(cardPage);
+        renderer.pin(card.page);
+        const i = card.page - 1;
+        const onScreen = L.tops[i] - el.scrollTop; // where the page is now (stage px)
+        el.classList.add('is-b');
+        el.style.transition = 'none';
+        el.style.height = `${Math.max(el.clientHeight, L.heights[i] + 2 * TOP_PAD)}px`;
+        owner.write(el, L.tops[i] - TOP_PAD);
+        el.style.transformOrigin = '0 0';
+        el.style.transform = swap ? '' : `translate(0px, ${onScreen - TOP_PAD}px)`;
+        for (const h of slots.current.values()) h.el.toggleAttribute('data-card', Number(h.el.dataset.page) === card.page);
+        cardPage = card.page;
+        cardTo = to;
+        await frame();
+        el.style.transition = swap ? `opacity 180ms ease-out` : `transform ${ms}ms ${ease}`;
+        el.style.transform = to;
+        el.style.opacity = '1';
+        await wait(swap ? 180 : ms);
+        return;
+      }
+      if (cardPage == null) return;
+      // Back: glide the card to where the page will sit framed in the scroller, then drop B in one frame.
+      const p = cardPage, i = p - 1;
+      const target = Math.max(0, Math.min(fits(p) ? framedTop(p) : L.tops[i] - SAFE_TOP, L.total - el.clientHeight));
+      el.style.transition = `transform ${ms}ms ${ease}`;
+      el.style.transform = `translate(0px, ${L.tops[i] - target - TOP_PAD}px)`;
+      await wait(ms);
+      el.style.transition = 'none';
+      el.style.transform = '';
+      el.style.height = '';
+      el.classList.remove('is-b');
+      for (const h of slots.current.values()) h.el.removeAttribute('data-card');
+      owner.write(el, target);
+      renderer.unpin(p);
+      cardPage = null;
+      cardTo = '';
+    };
+    const onCardClick = (e: MouseEvent) => {
+      if (cardPage == null || ink.get().canvasOn) return;
+      if ((e.target as HTMLElement).closest?.('.pv-page[data-card]')) subs.card.forEach((f) => f());
+    };
+    el.addEventListener('click', onCardClick);
+
+    const host: DeskHost = {
+      viewport: () => ({ W: el.clientWidth, H: cardPage == null ? el.clientHeight : window.innerHeight }),
+      layout: () => layoutRef.current,
+      scrollTop: () => el.scrollTop,
+      maxScroll: () => Math.max(0, (layoutRef.current?.total ?? 0) - el.clientHeight),
+      aspect: (page) => aspectsRef.current?.[clampPage(page) - 1] ?? 1.294,
+      layer: () => deskLayerRef.current!,
+      setColumn,
+      glideTo: async (top, maxMs) => {
+        glide?.abort();
+        const ctrl = (glide = new AbortController());
+        try { await animateScrollTo(el, top, { signal: ctrl.signal, maxMs, owner }); }
+        finally { if (glide === ctrl) glide = null; publishCurrent(); }
       },
-      glideColumn: (width, ms) => new Promise<void>((done) => {
-        if (prefersReducedMotion()) ms = 0;
-        glideRef.current?.finish();
-        const sizer = sizerRef.current, L = layoutRef.current;
-        if (!sizer || !L) { done(); return; }
-        const target = fitWidth(width);
-        const finish = () => {
-          if (glideRef.current !== g) return;
-          done();
-          window.clearTimeout(g.timer);
-          glideRef.current = null;
-          // One synchronous swap: the new layout commits (the anchor keeps the reading line) and the
-          // transform drops in the same frame, so nothing jumps. Canvases re-render once, at the new width.
-          flushSync(() => setPageW(fitWidth(el.clientWidth)));
-          sizer.style.transition = 'none';
-          sizer.style.transform = '';
-          renderer.renderW = layoutRef.current?.pageW ?? target;
-          renderer.pump();
-        };
-        // Scale around the point that makes the transformed pages land exactly where the new layout
-        // will put them. Usually that's the reading line; near the end of the document the new layout
-        // can't scroll that far (shorter content), and the origin absorbs that clamp so nothing snaps.
-        const origin = () => {
-          const a = anchorRef.current, k = target / L.pageW;
-          let o = el.scrollTop + el.clientHeight * CURRENT_LINE;
-          if (a && Math.abs(1 - k) > 1e-3) {
-            const L2 = computeLayout(target, aspectsRef.current!);
-            const pOld = L.tops[a.page - 1] + a.frac * L.heights[a.page - 1];
-            const pNew = L2.tops[a.page - 1] + a.frac * L2.heights[a.page - 1];
-            const top = Math.max(0, Math.min(pNew - el.clientHeight * CURRENT_LINE, L2.total - el.clientHeight));
-            o = (pNew - top + el.scrollTop - pOld * k) / (1 - k);
-          }
-          return `50% ${o}px`;
-        };
-        const g = { timer: 0, finish, origin, done };
-        glideRef.current = g;
-        sizer.style.transformOrigin = origin();
-        sizer.style.transition = `transform ${ms}ms cubic-bezier(.2,.8,.2,1)`;
-        sizer.style.transform = `scale(${target / L.pageW})`;
-        // A little past the CSS transition, so the column has reached its final width when we measure.
-        g.timer = window.setTimeout(finish, ms + 40);
-      }),
+      cancelGlide: () => glide?.abort(),
+      scrollToPage: (page, y) => api.scrollToPage(page, y),
+      setCard,
+      onLayout: (cb) => { layoutSubs.current.add(cb); return () => { layoutSubs.current.delete(cb); }; },
+      onScroll: sub(subs.scroll),
+      onUserIntent: sub(subs.intent),
+      onCardClick: sub(subs.card),
     };
     cbRef.current.onReady(api);
 
@@ -548,7 +638,9 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       el.removeEventListener('scroll', onScroll);
       el.removeEventListener('wheel', onUserScroll);
       el.removeEventListener('touchstart', onUserScroll);
-      el.removeEventListener('keydown', onUserScroll);
+      window.removeEventListener('keydown', onKey);
+      window.visualViewport?.removeEventListener('resize', onZoom);
+      el.removeEventListener('click', onCardClick);
       if (raf) cancelAnimationFrame(raf);
       mq?.removeEventListener('change', onDpr);
       io.disconnect();
@@ -559,6 +651,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
   }, [doc, ready, saveAnchor, setFocusPage]);
 
   // After a resize settles, re-render visible pages at the new width (CSS scales them meanwhile).
+  const pageW = layout?.pageW ?? 0;
   useEffect(() => {
     const r = rendererRef.current;
     if (!r || pageW <= 0 || r.renderW === pageW) return;
@@ -575,6 +668,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
               key={i + 1}
               page={i + 1}
               top={layout.tops[i]}
+              left={layout.pageX}
               width={layout.pageW}
               height={layout.heights[i]}
               spaceH={1000 * aspectsRef.current![i]}
@@ -583,6 +677,8 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
               current={i + 1 === (focus ?? center)}
             />
           ))}
+          {/* Sketch regions and connectors (C) live here, in the pages' coordinate frame: they scroll natively. */}
+          <div ref={deskLayerRef} className="desk-layer" />
         </div>
       )}
     </div>

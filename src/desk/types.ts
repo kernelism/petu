@@ -92,7 +92,7 @@ export type ConnectorHandle = { group: SVGGElement; stroke: Stroke; scale: numbe
 /** The desk, as the director sees it. Implemented by Lane C (src/desk/Desk.ts). */
 export interface DeskApi {
   /** A new answer (or {{clear}}): fades regions and connectors out with the page marks, resumes following. */
-  reset(ms: number): Promise<void>;
+  reset(ms: number, opts?: { keepLanes?: boolean }): Promise<void>;
   /** Places a region (rules 7, 8). Resolves once it is drawable. A string is a skip reason. */
   addRegion(spec: RegionSpec): Promise<RegionInfo | string>;
   region(id: string): RegionInfo | null;
