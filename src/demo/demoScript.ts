@@ -39,11 +39,13 @@ export const DEMO_SCRIPT =
  *   image 1  y 410 from x 40 to 290 (C looks straight up); x = where the ray crosses it (271,410)
  *   ray      C → (480,50); three candidate points on it: (304,353) (378,226) (448,105)
  *   sight    dashed lines from each point to C'
- *   l'       image 2 of C' (looking up-left) cut by this slice: the line through e' (415,600), where
- *            the baseline meets it, up to (765,425). The sight lines cross it at (619,498) (678,469)
+ *   l'       image 2 of C' (looking up-left) cut by this slice: the line from the baseline at
+ *            (415,600) up to (765,425); its start (e') stays unlabelled so the sketch ends on the payoff. The sight lines cross it at (619,498) (678,469)
  *            (719,448), dotted in accent.
  *   payoff   (580,170), size l, in the empty top right, clear of the farthest sight line
  * Elements (6): cameras + baseline, image 1 + x, ray, three points, sight lines, l' + its dots.
+ * The connector leaves x horizontally (the Desk's router), so it crosses the slide's image 2; at x's
+ * height there is no clear path. place=left was tried: it then crosses all three sight lines and l'.
  */
 export const DEMO_SIDE_QUESTION = 'Sketch it from the side';
 export const DEMO_SIDE_SCRIPT =
@@ -61,20 +63,21 @@ export const DEMO_SIDE_SCRIPT =
   `{{line on=side from=415,600 to=765,425 em id=lp}} this one, {{label id=lp "l′" dir=ne em}} l-prime. ` +
   `All three land on it, {{point on=side at=619,498 em}} here, {{point on=side at=678,469 em}} here, ` +
   `{{point on=side at=719,448 em}} and here. ` +
-  `It starts at {{point on=side at=415,600 "e′" dir=sw}} e-prime, where C itself lands. ` +
   `So wherever the real point is, {{write on=side at=580,170 "x′ must be on l′" size=l}} x-prime must be on l-prime.`;
 
 /**
  * B demo: a bigger diagram takes the stage (size l), with the slide pinned as the reference card.
  * Region `big` (1000 × 700), a pseudo-3D view of the classic epipolar figure:
- *   cameras  C (180,520), C' (820,520); baseline y 520
- *   images   two translucent planes: (150,330) (400,290) (400,560) (150,600) and its mirror
- *   point    X (500,90); rays C → X and C' → X stop short of the dots
- *   x, x'    where the rays pierce the planes: 0.3 of the way up, (276,391) and (724,391)
+ *   cameras  C (80,560), C' (920,560), outside their image planes; baseline y 560
+ *   images   two translucent planes: (150,250) (410,210) (410,600) (150,640) and its mirror; the
+ *            baseline crosses both
+ *   point    X (500,80); rays C → X and C' → X stop short of the dots
+ *   x, x'    on the rays, 0.45 of the way up: (269,340) and (731,340); labels above (dir=n), in the
+ *            gap between the ray and l, clear of the connector that arrives from the left
  *   plane    the triangle C, C', X, shaded
- *   l, l'    the plane meets each image along the line from the epipole (e (360,520), e' (640,520))
- *            through x (x'), to the plane's top edge: (360,520)→(226,315), (640,520)→(774,314)
- *   payoff   bottom-left, under the planes
+ *   l, l'    the plane meets each image along the line from the epipole (e (390,560), e' (610,560))
+ *            through x (x'), up to the image's top edge: (390,560)→(217,245), (610,560)→(783,245)
+ *   payoff   centered under the baseline, between the planes' bottom corners
  * Elements (6): cameras + baseline, image planes, X + rays, x and x', the epipolar plane, l and l'
  * (after circling x on the slide, which the card keeps showing).
  */
@@ -82,18 +85,18 @@ export const DEMO_PLANE_QUESTION = 'Show me the whole epipolar plane';
 export const DEMO_PLANE_SCRIPT =
   `{{scroll p=3}} The epipolar plane is one flat sheet through both cameras and the point, and it cuts each image along a line. ` +
   `Start from {{circle p=3 at=305,459 r=30}} x on the slide. ` +
-  `{{sketch id=big near=p3 size=l}} Here are {{point on=big at=180,520 "C" dir=sw}} camera C ` +
-  `{{point on=big at=820,520 "C′" dir=se}} and camera C-prime, {{line on=big from=189,520 to=811,520}} joined by the baseline. ` +
-  `Each looks through {{shade on=big pts=150,330 400,290 400,560 150,600}} its own image ` +
-  `{{shade on=big pts=600,290 850,330 850,600 600,560}} plane. ` +
-  `Now a point {{point on=big at=500,90 "X" dir=n}} X out in the world, ` +
-  `{{line on=big from=186,512 to=494,98}} seen from {{line on=big from=814,512 to=506,98}} both cameras. ` +
-  `It lands at {{point on=big at=276,391 "x" dir=w id=x}} x in image 1, ` +
-  `{{connect from=p3:305,459 to=big:x}} our x from the slide, {{point on=big at=724,391 "x′" dir=e}} and at x-prime in image 2. ` +
-  `C, C-prime and X make {{shade on=big pts=180,520 820,520 500,90}} one flat sheet: the epipolar plane. ` +
-  `It cuts image 1 {{line on=big from=360,520 to=226,315}} along this line, ` +
-  `and image 2 {{line on=big from=640,520 to=774,314 em id=lp}} along {{label id=lp "l′" dir=ne em}} l-prime. ` +
-  `{{write on=big at=90,655 "the plane meets image 2 in l′"}} So a match for x has to sit on l-prime.`;
+  `{{sketch id=big near=p3 size=l}} Here are {{point on=big at=80,560 "C" dir=sw}} camera C ` +
+  `{{point on=big at=920,560 "C′" dir=se}} and camera C-prime, {{line on=big from=89,560 to=911,560}} joined by the baseline. ` +
+  `Each looks through {{shade on=big pts=150,250 410,210 410,600 150,640}} its own image ` +
+  `{{shade on=big pts=590,210 850,250 850,640 590,600}} plane. ` +
+  `Now a point {{point on=big at=500,80 "X" dir=n}} X out in the world, ` +
+  `{{line on=big from=86,553 to=494,87}} seen from {{line on=big from=914,553 to=506,87}} both cameras. ` +
+  `It lands at {{point on=big at=269,340 "x" dir=n id=x}} x in image 1, ` +
+  `{{connect from=p3:305,459 to=big:x}} our x from the slide, {{point on=big at=731,340 "x′" dir=n}} and at x-prime in image 2. ` +
+  `C, C-prime and X make {{shade on=big pts=80,560 920,560 500,80}} one flat sheet: the epipolar plane. ` +
+  `It cuts image 1 {{line on=big from=390,560 to=217,245 id=l}} along this line, {{label id=l "l" dir=nw}} l, ` +
+  `and image 2 {{line on=big from=610,560 to=783,245 em id=lp}} along {{label id=lp "l′" dir=ne em}} l-prime. ` +
+  `{{write on=big at=370,672 "a match for x sits on l′"}} So a match for x has to sit on l-prime.`;
 
 export type Demo = { question: string; script: string };
 export const DEMOS: Demo[] = [
