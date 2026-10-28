@@ -131,7 +131,7 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   app: a loopback Host, an Origin (if any) equal to it, and `content-type: application/json` on POSTs
   (`guard` in `plugin.ts`; these routes run before Vite's own host check). Upstream calls time out
   (15s to headers, 20s between chunks, 60s for prewarm/judge).
-- **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p4.4** (kit card and WORKED NUMBERS principles): hard answer shape (opener ≤ 16
+- **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p4.5** (kit card and WORKED NUMBERS principles): hard answer shape (opener ≤ 16
   words that starts with its mark, one new element per sentence, 3–7 elements, one `em`, a payoff),
   mechanism over definition, precise marks, per-question-type playbook, few-shot examples from the
   fixture and synthetic pages only. Bump `PROMPT_VERSION` on any change. `tests/server/prompt.test.ts`
