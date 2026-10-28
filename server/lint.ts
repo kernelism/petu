@@ -1,8 +1,11 @@
 // server/lint.ts
+import { parseTag } from '../src/script/parseTag';
 /** Every tag name the parser knows (src/script/parseTag.ts). */
 export const TAG_NAMES = new Set(['scroll', 'highlight', 'underline', 'circle', 'box', 'line', 'arrow', 'point', 'label', 'curve', 'shade', 'angle', 'brace', 'write', 'math', 'axes', 'plot', 'let', 'sketch', 'connect', 'emph', 'move', 'fade', 'clear',
   // the visual kit (src/script/parseKit.ts)
-  'grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'step', 'sweep', 'set', 'band', 'dist', 'col', 'level']);
+  'grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'step', 'sweep', 'set', 'band', 'dist', 'col', 'level', 'const']);
+/** A curve through this many hand-placed points or more is probably something that follows from a formula. */
+const HAND_CURVE_PTS = 4;
 /** Kit tags whose values come from the engine: a literal result in them (`result=`, `=…` after an op) is the model computing by hand. */
 const KIT_COMPUTED = /^\{\{\s*(grid|bars|calc)\b[^}]*\b(result|value|answer|out)=/i;
 
@@ -14,6 +17,7 @@ const KIT_COMPUTED = /^\{\{\s*(grid|bars|calc)\b[^}]*\b(result|value|answer|out)
  */
 export class Lint {
   private buf = ''; private inTag = false;
+  private seen = new Map<string, string>();
   notes: string[] = [];
   push(s: string): string {
     let out = '';
@@ -37,6 +41,22 @@ export class Lint {
     const quotes = (t.match(/"/g) ?? []).length;
     if (quotes % 2) this.notes.push(`unclosed quote in ${JSON.stringify(t.slice(0, 40))}`);
     if (KIT_COMPUTED.test(t)) this.notes.push(`hand-computed result in ${JSON.stringify(t.slice(0, 40))}`);
+    // The same parser the client runs: a malformed tag is dropped there, so note it here with its raw text.
+    const a = name && TAG_NAMES.has(name) ? parseTag(t.slice(2, -2)) : null;
+    if (name && TAG_NAMES.has(name) && !a) this.notes.push(`malformed (dropped): ${t.slice(0, 300)}`);
+    if (a) {
+      const x = a as unknown as Record<string, unknown>;
+      // Notes, not skips: hand-placed geometry where a formula would do, and a drawing made twice.
+      if (a.kind === 'curve' && Array.isArray(x.pts) && x.pts.length >= HAND_CURVE_PTS) this.notes.push(`hand-placed curve (${x.pts.length} points): draw it from its formula with {{plot}}: ${t.slice(0, 120)}`);
+      if (['line', 'arrow', 'curve', 'circle', 'box', 'shade', 'brace'].includes(a.kind) && 'region' in a) {
+        const { id: _id, em: _em, ...geo } = x;
+        void _id; void _em;
+        const key = JSON.stringify(geo);
+        const prev = this.seen.get(key);
+        if (prev) this.notes.push(`duplicate drawing (same as ${prev.slice(0, 80)}): reuse it by id: ${t.slice(0, 120)}`);
+        else this.seen.set(key, t);
+      }
+    }
     return t;
   }
 }

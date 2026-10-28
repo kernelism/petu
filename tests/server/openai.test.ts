@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from '../../server/ledger';
 import { costUsd } from '../../server/prices';
-import { ask, askImages, buildRequest, buildScoutRequest, buildSystemPrewarm, estimateInputTokens, openerNote, prewarm, prewarmScout, prewarmSystem, judge, scoutStream, scoutCacheKey, systemTokensLow, type ModelConfig, type Deps } from '../../server/openai';
+import { type AnswerRecord, ask, askImages, buildRequest, buildScoutRequest, buildSystemPrewarm, estimateInputTokens, openerNote, prewarm, prewarmScout, prewarmSystem, judge, scoutStream, scoutCacheKey, systemTokensLow, type ModelConfig, type Deps } from '../../server/openai';
 import { SCOUT_SYSTEM } from '../../server/prompt/scout';
 import type { ScoutEvent } from '../../src/agent/scout';
 import { CacheStats } from '../../server/cacheStats';
@@ -245,6 +245,18 @@ describe('ask', () => {
   it('systemTokensLow is a lower bound on the system block', () => {
     expect(systemTokensLow()).toBeGreaterThan(1024);
     expect(systemTokensLow()).toBeLessThan(systemPrompt().length / 3);
+  });
+  it('keeps an answer record: question, page, the script as sent, and a malformed tag with its raw text', async () => {
+    const chunks = [
+      sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message', phase: 'final_answer' } }),
+      ...textEvents('m1', ['Look {{grid on=s id=g ', 'vals=1,2;3}} here.']),
+      sse({ type: 'response.completed', response: { status: 'completed', usage } }),
+    ];
+    const { f } = fakeFetch([{ chunks }]);
+    const recs: AnswerRecord[] = [];
+    await run(req(), deps(f, { log: (r) => recs.push(r) }));
+    expect(recs).toHaveLength(1);
+    expect(recs[0]).toMatchObject({ question: 'Why does disparity shrink?', page: 2, script: 'Look {{grid on=s id=g vals=1,2;3}} here.', lint: ['malformed (dropped): {{grid on=s id=g vals=1,2;3}}'] });
   });
   it('streams the script once when a commentary message is followed by a final_answer duplicate', async () => {
     const chunks = [

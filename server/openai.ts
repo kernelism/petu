@@ -60,7 +60,10 @@ export type Deps = {
   cache?: CacheStats;
   /** Upstream timeouts (tests pass short ones). */
   timeouts?: Partial<Timeouts>;
+  /** The answer record (plugin: .petu/answers.jsonl): question, page, the script as sent, lint notes with any malformed tag's raw text. */
+  log?: (rec: AnswerRecord) => void;
 };
+export type AnswerRecord = { at: string; phase: string; model: string; effort: string; page: number; question: string; script: string; lint: string[]; usd: number; error?: string };
 /**
  * `headersMs`: no response headers → the attempt is abandoned (retried once, before any text).
  * `idleMs`: a streamed answer that sends nothing for this long is ended (cut_off after text).
@@ -360,8 +363,8 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   if (signal.aborted) up.abort();
   const filter = new ScriptFilter(), lint = new Lint(), sse = new SseParser(), events = new ResponseEvents();
   let outChars = 0, rawChars = 0, ttft = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
-  let sent = false, terminal = false, complete = false, idle = false;
-  const send = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; if (Number.isNaN(ttft)) ttft = now() - t0; emit({ t: 'text', d: s }); };
+  let sent = false, terminal = false, complete = false, idle = false, script = '';
+  const send = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; script += s; if (Number.isNaN(ttft)) ttft = now() - t0; emit({ t: 'text', d: s }); };
   try {
     let res: Response | null = null;
     let live: AbortController | null = null;
@@ -438,6 +441,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const u: Usage = usage ?? estimatedUsage(est, cachedGuess, Math.ceil(Math.max(rawChars, outChars) / 3.2));
   const usd = costUsd(cfg.model, u, '12h', cfg.fast);
   d.ledger.settle({ id: reqId, phase: d.phase, kind: 'answer', model: cfg.model, usd, estimated, tokens: tokens(u) });
+  try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}) }); } catch { /* a log failure never fails an answer */ }
   if (signal.aborted) return;
   if (failed && failed.code !== 'cut_off' && !outChars) { emit(failed); return; }
   const s = d.ledger.summary();

@@ -354,7 +354,7 @@ async function main(): Promise<void> {
     writeJson(join(dir, 'summary.json'), summary);
     writeJson(join(dir, 'run.json'), { args, config: cfg, phase, replayOf: args.replay, ...(args.finish ? { finishedAt: new Date().toISOString() } : {}) });
     writeFileSync(join(dir, 'report.html'), renderReport(summary, items, readCalibration(dir, args.fakeJudge)));
-    console.log(`run ${runId}\n  answers ${summary.run.n}  judge mean ${summary.judge.mean?.toFixed(2) ?? '-'}  fatal ${summary.judge.fatal}  gen $${summary.genUsd.toFixed(3)}  judge $${summary.judge.usd.toFixed(3)}\n  open ${join(dir, 'report.html')}`);
+    console.log(`run ${runId}\n  skipped ${summary.run.sum.skippedTotal}  malformed ${summary.run.sum.malformed}  skip defects ${summary.run.skipDefects}/${summary.run.n}  first word p50 ${summary.run.firstWordMs.p50?.toFixed(0) ?? '-'} p90 ${summary.run.firstWordMs.p90?.toFixed(0) ?? '-'} ms\n  answers ${summary.run.n}  judge mean ${summary.judge.mean?.toFixed(2) ?? '-'}  fatal ${summary.judge.fatal}  gen $${summary.genUsd.toFixed(3)}  judge $${summary.judge.usd.toFixed(3)}\n  open ${join(dir, 'report.html')}`);
   } finally {
     for (const c of chromes) await c.close();
     server.stop();

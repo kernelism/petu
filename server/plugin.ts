@@ -18,7 +18,7 @@
 //
 // Logging: route + message only. Never request headers, bodies or the key.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { createReadStream, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, createReadStream, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
@@ -62,7 +62,9 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   const token = env.evalToken ?? randomBytes(24).toString('hex');
   if (!env.evalToken) writeFileSync(join(dir, 'eval-token'), token, { mode: 0o600 });
   const cache = new CacheStats(join(dir, 'cache.json'), o.now);
-  const deps: Deps = { key: env.key, ledger, phase: env.phase, fetch: o.fetch ?? fetch, cache, ...(o.timeouts ? { timeouts: o.timeouts } : {}) };
+  // Every answer's record, local only (gitignored): diagnosable without screenshots.
+  const log = (rec: object) => appendFileSync(join(dir, 'answers.jsonl'), `${JSON.stringify(rec)}\n`);
+  const deps: Deps = { key: env.key, ledger, phase: env.phase, fetch: o.fetch ?? fetch, cache, log, ...(o.timeouts ? { timeouts: o.timeouts } : {}) };
   let systemWarming: Promise<unknown> | null = null;
   const now = o.now ?? Date.now;
   const prewarmed = new Map<string, number>();
