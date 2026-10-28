@@ -5,7 +5,8 @@ import {
   DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, DEMO_QUESTION, DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, pickDemo,
 } from '../../src/demo/demoScript';
 import { SCRIPTS } from '../../src/demo/scripts';
-import type { Action } from '../../src/script/types';
+import type { Action, Pt, RawAction } from '../../src/script/types';
+import type { GroundMark } from '../../src/geometry/resolve';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -168,12 +169,50 @@ describe('pickDemo', () => {
 describe('demos through the resolver', () => {
   it('every demo and dev script resolves to the very objects it parsed (byte-identical playback)', async () => {
     const { Figures } = await import('../../src/geometry/resolve');
-    const all = { DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.fromEntries(Object.entries(SCRIPTS).map(([k, v]) => [k, v.script])) };
+    // `relational` is literal-free by design (it shows the agent grammar): checked on its own below.
+    const all = { DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.fromEntries(Object.entries(SCRIPTS).filter(([k]) => k !== 'relational').map(([k, v]) => [k, v.script])) };
     for (const [name, script] of Object.entries(all)) {
       const raw = parseAll(script);
       const f = new Figures({ mark: () => undefined });
       raw.forEach((a) => f.note(a));
       for (const a of raw) expect(f.resolve(a), `${name}: ${a.kind}`).toBe(a);
     }
+  });
+});
+
+describe('relational (agent grammar on the fixture, no API call)', () => {
+  // The fixture p3 marks, as scripts/ground.ts lists them.
+  const marks: Record<string, GroundMark> = {
+    '#d1': { kind: 'dot', at: { x: 238, y: 813 } }, '#d2': { kind: 'dot', at: { x: 713, y: 813 } }, '#d3': { kind: 'dot', at: { x: 290, y: 473 } },
+    '#g2': { kind: 'figure', rect: { x: 588, y: 348, w: 225, h: 268 } },
+  };
+  const resolved = async () => {
+    const { Figures } = await import('../../src/geometry/resolve');
+    const raw = parseAll(SCRIPTS.relational.script) as unknown as RawAction[];
+    const f = new Figures({ mark: (page, id) => (page === 3 ? marks[id] : undefined) });
+    raw.forEach((a) => f.note(a));
+    return { raw, out: raw.map((a) => f.resolve(a)), fig: f.figure({ region: 's' }) };
+  };
+  it('uses let, meet, along, through, fit and page marks #d1 / #d3, with no literal geometry in the sketch', async () => {
+    const s = SCRIPTS.relational.script;
+    for (const k of ['{{let ', 'meet(', 'along(', 'through=', ' fit}}', 'mark=#d1', 'mark=#d3']) expect(s).toContain(k);
+    const { raw } = await resolved();
+    // Sketch elements name points (no x,y literals); only the let defines coordinates.
+    for (const a of raw.filter((a) => 'region' in a && a.region === 's' && a.kind !== 'let')) expect(JSON.stringify(a)).not.toMatch(/"x":/);
+  });
+  it('resolves every action (nothing skipped), with the whole figure inside its frame', async () => {
+    const { out, fig } = await resolved();
+    expect(out.filter((o) => typeof o === 'string')).toEqual([]);
+    expect(fig.outOfFrame).toBe(0);
+  });
+  it('rays pass through their points and image points sit on their rays', async () => {
+    const { out } = await resolved();
+    const acts = out.filter((o): o is Action => !!o && typeof o !== 'string');
+    const ray = acts.find((a) => a.kind === 'line' && a.id === 'ray') as Extract<Action, { kind: 'line' }>;
+    const x = acts.find((a) => a.kind === 'point' && a.id === 'x') as Extract<Action, { kind: 'point' }>;
+    const cross = (a: Pt, b: Pt, p: Pt) => ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) / Math.hypot(b.x - a.x, b.y - a.y);
+    expect(Math.abs(cross(ray.from, ray.to, x.at))).toBeLessThan(0.5);
+    const far = acts.find((a) => a.kind === 'point' && a.id === 'X2') as Extract<Action, { kind: 'point' }>;
+    expect(Math.abs(cross(ray.from, ray.to, far.at))).toBeLessThan(0.5);
   });
 });

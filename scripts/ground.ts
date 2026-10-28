@@ -13,7 +13,7 @@ if (!file) {
   process.exit(1);
 }
 const neighbours = args.includes('--neighbours');
-const doc = await pdfjs.getDocument({ data: new Uint8Array(readFileSync(file)), verbosity: 0, isEvalSupported: false }).promise;
+const doc = await pdfjs.getDocument({ data: new Uint8Array(readFileSync(file)), verbosity: 0, isEvalSupported: false, fontExtraProperties: true }).promise;
 const pages = args.filter((a) => !a.startsWith('--')).flatMap((a) => {
   const m = /^(\d+)-(\d+)$/.exec(a);
   return m ? Array.from({ length: +m[2] - +m[1] + 1 }, (_, i) => +m[1] + i) : [Number(a)];

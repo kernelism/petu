@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { formatUsd } from '../../src/agent/protocol';
 import { AskError, askErrorLine, askStream, capLine, getSpend, spendBlocked } from '../../src/agent/client';
 import type { AskEvent, AskRequest, SpendSummary } from '../../src/agent/protocol';
 
@@ -157,19 +158,28 @@ describe('copy', () => {
     expect(spendBlocked(spend({ todayUsd: 3, dailyCapUsd: 3 }))).toBe(true);
   });
 
-  it('capLine names the cap that is used up, in dollars', () => {
-    expect(capLine(spend({ totalUsd: 40, capUsd: 40 }))).toBe('Spending cap reached: $40.00 of $40.00 used. Raise it in .env to continue.');
-    expect(capLine(spend({ totalUsd: 0.0076, capUsd: 0 }))).toBe('Spending cap reached: $0.01 of $0.00 used. Raise it in .env to continue.');
-    expect(capLine(spend({ totalUsd: 10, todayUsd: 3.01, dailyCapUsd: 3 }))).toBe("Today's spending cap reached: $3.01 of $3.00 used. Raise it in .env to continue.");
-    expect(capLine(null)).toBe('Spending cap reached. Raise it in .env to continue.');
+  it('capLine names the cap that is used up, in dollars, with the command-line knob', () => {
+    expect(capLine(spend({ totalUsd: 40, capUsd: 40 }))).toBe("Spending cap reached: $40.00 of $40.00 used. This is the checkpoint's $40.00 hard stop.");
+    expect(capLine(spend({ totalUsd: 0.0076, capUsd: 0 }))).toBe('Spending cap reached: $0.0076 of $0.00 used. Raise it for this run: PETU_TOTAL_CAP_USD=40 npm run dev.');
+    expect(capLine(spend({ totalUsd: 10, todayUsd: 3.01, dailyCapUsd: 3 }))).toBe("Today's spending cap reached: $3.01 of $3.00 used. Raise it for this run: PETU_DAILY_CAP_USD=6 npm run dev.");
+    expect(capLine(null)).toBe('Spending cap reached. Raise it for this run on the command line, e.g. PETU_DAILY_CAP_USD=6 npm run dev.');
     // The server refuses for another reason (a phase budget): its line, which names the budget.
-    expect(capLine(spend({ totalUsd: 5, blocked: 'Spending stopped: $1.00 of this phase’s budget ($1.00) is used.' })))
-      .toBe('Spending stopped: $1.00 of this phase’s budget ($1.00) is used. Raise it in .env to continue.');
+    expect(capLine(spend({ totalUsd: 5, phase: 'dev', phaseCapUsd: 1, blockedCode: 'phase', blocked: 'Spending stopped: $1.00 of this phase’s budget ($1.00) is used.' })))
+      .toBe('Spending stopped: $1.00 of this phase’s budget ($1.00) is used. Raise it for this run: PETU_CAP_DEV=2 npm run dev.');
+    // Older servers send only the line: the cap is read from it.
+    expect(capLine(spend({ totalUsd: 0.01, todayUsd: 0.014, dailyCapUsd: 0.02, blocked: "Spending stopped: $0.014 of today's cap ($0.020) is used." })))
+      .toBe("Spending stopped: $0.014 of today's cap ($0.020) is used. Raise it for this run: PETU_DAILY_CAP_USD=1 npm run dev.");
+    expect(capLine(null)).not.toMatch(/\.env/);
+  });
+
+  it('formatUsd keeps two significant digits below $0.10', () => {
+    expect([0, 0.014, 0.02, 0.0076, 0.1, 0.105, 3.01, 40, 0.00012].map(formatUsd))
+      .toEqual(['$0.00', '$0.014', '$0.020', '$0.0076', '$0.10', '$0.10', '$3.01', '$40.00', '$0.00012']);
   });
 
   it('askErrorLine follows the copy table, with Retry only where it helps', () => {
     expect(askErrorLine('no_key', null)).toEqual({ message: 'Add your OpenAI key to .env, then restart the dev server.', retry: false });
-    expect(askErrorLine('cap', spend({ totalUsd: 40, capUsd: 40 }))).toEqual({ message: 'Spending cap reached: $40.00 of $40.00 used. Raise it in .env to continue.', retry: false });
+    expect(askErrorLine('cap', spend({ totalUsd: 40, capUsd: 40 }))).toEqual({ message: "Spending cap reached: $40.00 of $40.00 used. This is the checkpoint's $40.00 hard stop.", retry: false });
     expect(askErrorLine('rate_limited', null)).toEqual({ message: 'The tutor is busy. Try again in a moment.', retry: true });
     expect(askErrorLine('network', null)).toEqual({ message: "Couldn't reach the tutor.", retry: true });
     expect(askErrorLine('upstream', null)).toEqual({ message: "Couldn't reach the tutor.", retry: true });

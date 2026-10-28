@@ -2,6 +2,7 @@
 //
 //   POST /api/ask              AskRequest → NDJSON AskEvents
 //   POST /api/prewarm          { context } → { ok, usd, reason? } (deduped per docHash+page for 25 min)
+//                              { scope: 'system' } → the shared system block (document open; ≤ 1 per 11.5h)
 //   GET  /api/spend            → SpendSummary (+ phase, phaseCapUsd, byPhase, byModel, n)
 //   POST /api/judge            eval only; header x-petu-eval: <.petu/eval-token> → JudgeResult
 //   GET  /api/dev-pdf/<n>.pdf  <n>.pdf from the first PETU_PDF_DIRS directory that has it
@@ -14,7 +15,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
 import type { AskContext, AskEvent, AskRequest } from '../src/agent/protocol';
 import { Ledger } from './ledger';
-import { ask, judge, prewarm, type Deps, type JudgeRequest } from './openai';
+import { ask, judge, prewarm, prewarmSystem, type Deps, type JudgeRequest } from './openai';
+import { CacheStats } from './cacheStats';
 import { worstCaseUsd } from './prices';
 import { loadPetuEnv, type PetuEnv } from './env';
 
@@ -38,7 +40,9 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   const ledger = new Ledger(join(dir, 'spend.json'), env.caps, undefined, env.priorUsd);
   const token = randomBytes(24).toString('hex');
   writeFileSync(join(dir, 'eval-token'), token, { mode: 0o600 });
-  const deps: Deps = { key: env.key, ledger, phase: env.phase, fetch: o.fetch ?? fetch };
+  const cache = new CacheStats(join(dir, 'cache.json'), o.now);
+  const deps: Deps = { key: env.key, ledger, phase: env.phase, fetch: o.fetch ?? fetch, cache };
+  let systemWarming: Promise<unknown> | null = null;
   const now = o.now ?? Date.now;
   const prewarmed = new Map<string, number>();
 
@@ -90,6 +94,13 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
     const body = await readJson(req, res);
     if (body === undefined) return;
+    if (body?.scope === 'system') {
+      // One at a time; prewarmSystem itself skips a block read or written in the last 11.5h.
+      if (systemWarming) return json(res, 200, { ok: true, usd: 0, reason: 'deduped' });
+      const p = prewarmSystem(env.model, deps);
+      systemWarming = p;
+      try { return json(res, 200, await p); } finally { systemWarming = null; }
+    }
     const bad = validateContext(body?.context);
     if (bad) return json(res, 400, badRequest(bad));
     const c = body.context as AskContext;
@@ -106,7 +117,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     if (req.method !== 'GET') return json(res, 405, { error: 'GET only' });
     const s = ledger.summary();
     const refusal = ledger.check(env.phase, worstCaseUsd(env.model.model, TYPICAL_INPUT_TOKENS, env.model.maxOutput, env.model.fast));
-    return json(res, 200, { ...s, phase: env.phase, phaseCapUsd: env.caps.phaseUsd?.[env.phase], ...(refusal ? { blocked: refusal.message } : {}) });
+    return json(res, 200, { ...s, phase: env.phase, phaseCapUsd: env.caps.phaseUsd?.[env.phase], ...(refusal ? { blocked: refusal.message, blockedCode: refusal.code } : {}) });
   }
 
   async function routeJudge(req: IncomingMessage, res: ServerResponse) {

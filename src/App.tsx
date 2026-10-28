@@ -31,7 +31,7 @@ import type { Grounding } from './geometry/resolve';
 import type { AskEvent } from './agent/protocol';
 import { AskError, askErrorLine, capLine, type AskHandlers } from './agent/client';
 import { useAgent, type MakeContext } from './agent/useAgent';
-import { ContextBuilder } from './agent/context/build';
+import { ContextBuilder, groundPage } from './agent/context/build';
 import { installEvalHooks, outOfFrameOf, type EvalBackend, type Recorder, type RegistryRow } from './agent/evalHooks';
 import type { Registry } from './desk/registry';
 import { groundingOf, type PageGround } from './agent/context/types';
@@ -70,6 +70,14 @@ const STILL_THINKING_MS = 4000;
 const STILL_THINKING = 'Still thinking…';
 /** Demos and dev scripts send no page marks: every `mark=` is skipped. */
 const NO_MARKS: Grounding = { mark: () => undefined };
+
+/** The grounding of the pages a dev script names (p=N, pN:), when it points with page marks. */
+async function devGrounding(doc: PdfDoc, script: string): Promise<Grounding> {
+  if (!/mark=#|:#/.test(script)) return NO_MARKS;
+  const pages = [...new Set([...script.matchAll(/\bp=?(\d+)\b/g)].map((m) => Number(m[1])))].filter((p) => p >= 1 && p <= doc.numPages);
+  const OPS = (await import('pdfjs-dist')).OPS as unknown as Record<string, number>;
+  return groundingOf(await Promise.all(pages.map(async (p) => groundPage(await doc.getPage(p), OPS))));
+}
 
 /** A URL's file name for the top bar; a malformed escape falls back to the raw text. */
 function fileNameOf(src: string): string {
@@ -225,6 +233,8 @@ function registryRows(reg: Registry): RegistryRow[] {
 
 export default function App() {
   const [doc, setDoc] = useState<PdfDoc | null>(null);
+  const docRef = useRef<PdfDoc | null>(null);
+  docRef.current = doc;
   const [fileName, setFileName] = useState('');
   const [isSample, setIsSample] = useState(false);
   const [page, setPage] = useState(1);
@@ -305,7 +315,7 @@ export default function App() {
   const clearHide = () => window.clearTimeout(hideTimer.current);
   const clearThink = () => { window.clearTimeout(thinkTimer.current); setHint(undefined); };
 
-  const agent = useAgent({ doc, name: fileName, enabled: !DEMO_PATH || EVAL, make: MAKE_CONTEXT });
+  const agent = useAgent({ doc, name: fileName, enabled: !DEMO_PATH || EVAL, make: MAKE_CONTEXT, warmSystem: !params.has('nogen') });
   const agentRef = useRef(agent);
   agentRef.current = agent;
 
@@ -519,7 +529,13 @@ export default function App() {
       }
       : toAgent
         ? ag.source({ question: q, page, ink: () => ink.get().strokes, handlers, onGrounding: (g) => { groundingRef.current = g; } })
-        : (signal) => streamDemo(signal, (DEV_SCRIPT ?? pickDemo(q)).script); // checkpoint 1: demos play the closest script
+        : async function* (signal) {
+          // checkpoint 1: demos play the closest script. A dev script that points with page marks
+          // (?script=relational) resolves them against the pages' own grounding, as an answer would.
+          const script = (DEV_SCRIPT ?? pickDemo(q)).script;
+          if (DEV_SCRIPT && docRef.current) groundingRef.current = await devGrounding(docRef.current, script);
+          yield* streamDemo(signal, script);
+        };
     const source = async function* (signal: AbortSignal) {
       try {
         for await (const c of inner(signal)) {

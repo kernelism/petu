@@ -7,6 +7,7 @@ import type { AskContext } from '../protocol';
 import type { StudentStroke } from '../../ink/student/store';
 import type { PageGround } from './types';
 import { itemsToRuns } from '../../pdf/textRuns.ts';
+import { fontLookup } from '../../pdf/mathGlyphs.ts';
 import { textLines } from './textLines.ts';
 import { figureMarks } from './marks.ts';
 import { paintedFromOperatorList } from './operatorList.ts';
@@ -35,9 +36,10 @@ export async function groundPage(page: PDFPageProxy, OPS: Record<string, number>
   const aspect = vp.height / vp.width;
   const tc = await page.getTextContent();
   const items = (tc.items as unknown[]).filter((i): i is TextItem => typeof (i as TextItem).str === 'string');
-  const runs = itemsToRuns(items, vp.transform, vp.width, vp.height, tc.styles as Styles);
-  const text = textUsable(items.map((i) => i.str).join(''));
+  // The operator list first: it loads the page's fonts, which the math-font repair reads.
   const ol = await page.getOperatorList();
+  const runs = itemsToRuns(items, vp.transform, vp.width, vp.height, tc.styles as Styles, fontLookup(page.commonObjs as never));
+  const text = textUsable(runs.map((r) => r.text).join(''));
   const { paths, images } = paintedFromOperatorList(ol as unknown as { fnArray: number[]; argsArray: unknown[][] }, OPS, vp.transform, vp.width, vp.height);
   const largeImage = images.some((im) => im.rect.w * im.rect.h > 0.25e6);
   // Few characters on a page that paints a scan or outlined glyphs, or a broken text layer.

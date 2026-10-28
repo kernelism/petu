@@ -4,6 +4,18 @@ import { locateQuote, normalizeText, type TextRun } from '../../src/locate/locat
 const run = (text: string, x: number, y: number, w: number, h = 20): TextRun => ({ text, rect: { x, y, w, h } });
 
 describe('locateQuote', () => {
+  it('finds a quote written with the listing\'s superscript markup ("10^(400)")', () => {
+    const runs = [
+      run('2', 395, 401, 13, 52), run('64', 408, 394, 21, 37), run('×', 429, 394, 16, 37), run('64', 446, 394, 21, 37),
+      run('∼', 475, 401, 20, 52), run('10', 503, 401, 26, 52), run('400', 529, 394, 31, 37),
+    ];
+    const r = locateQuote(runs, '10^(400)', undefined, { aspect: 9 / 16 });
+    expect(r).toHaveLength(1);
+    expect(r[0].x).toBeCloseTo(503, 0);
+    expect(r[0].x + r[0].w).toBeCloseTo(560, 0);
+    expect(locateQuote(runs, '2^(64×64)', undefined, { aspect: 9 / 16 })).toHaveLength(1);
+  });
+
   const runs: TextRun[] = [
     run('Given a point in one image, its match must', 50, 100, 600),
     run('lie on the epi-', 50, 130, 200),

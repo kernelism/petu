@@ -1,5 +1,5 @@
 // src/agent/client.ts — the browser side of POST /api/ask (NDJSON AskEvents) and GET /api/spend.
-import type { AskErrorCode, AskEvent, AskRequest, SpendSummary } from './protocol';
+import { formatUsd, HARD_STOP_USD, type AskErrorCode, type AskEvent, type AskRequest, type SpendSummary } from './protocol';
 
 export class AskError extends Error {
   constructor(readonly code: AskErrorCode, message: string, readonly retryable: boolean) { super(message); }
@@ -102,7 +102,7 @@ export async function getSpend(f: typeof fetch = fetch): Promise<SpendSummary | 
 // ------------------------------------------------------------------------------------------------
 // Copy: one calm line per state.
 
-const usd = (n: number) => `$${n.toFixed(2)}`;
+const usd = formatUsd;
 const dailyHit = (s: SpendSummary) => s.dailyCapUsd != null && s.todayUsd >= s.dailyCapUsd && s.totalUsd < s.capUsd;
 
 /** No more answers can be bought: the server says so, or a cap is used up. */
@@ -111,14 +111,35 @@ export function spendBlocked(s: SpendSummary | null): boolean {
   return !!s.blocked || s.totalUsd >= s.capUsd || (s.dailyCapUsd != null && s.todayUsd >= s.dailyCapUsd);
 }
 
+/** A suggested new cap for the knob line: double, at least $1, never past the hard stop. */
+const raiseTo = (cap: number) => Math.min(HARD_STOP_USD, Math.max(1, Math.ceil(cap * 2)));
+/** How to lift a cap: caps are set per run on the command line, never by editing .env. */
+export function knobLine(code: 'total' | 'daily' | 'phase', s: SpendSummary): string {
+  if (code === 'daily') return `Raise it for this run: PETU_DAILY_CAP_USD=${raiseTo(s.dailyCapUsd ?? 3)} npm run dev.`;
+  if (code === 'phase') {
+    const phase = (s.phase ?? 'founder').toUpperCase();
+    return `Raise it for this run: PETU_CAP_${phase}=${raiseTo(s.phaseCapUsd ?? 1)} npm run dev.`;
+  }
+  return s.capUsd < HARD_STOP_USD
+    ? `Raise it for this run: PETU_TOTAL_CAP_USD=${HARD_STOP_USD} npm run dev.`
+    : `This is the checkpoint's ${usd(HARD_STOP_USD)} hard stop.`;
+}
+
+/** Which cap the server's refusal line names (older servers send only the line). */
+function blockedCode(s: SpendSummary): 'total' | 'daily' | 'phase' {
+  if (s.blockedCode) return s.blockedCode;
+  const b = s.blocked ?? '';
+  return /today/i.test(b) ? 'daily' : /phase/i.test(b) ? 'phase' : 'total';
+}
+
 /** The cap line, in the caption and in place of the ask bar's placeholder. */
 export function capLine(s: SpendSummary | null): string {
-  if (!s) return 'Spending cap reached. Raise it in .env to continue.';
-  if (dailyHit(s)) return `Today's spending cap reached: ${usd(s.todayUsd)} of ${usd(s.dailyCapUsd!)} used. Raise it in .env to continue.`;
+  if (!s) return 'Spending cap reached. Raise it for this run on the command line, e.g. PETU_DAILY_CAP_USD=6 npm run dev.';
+  if (dailyHit(s)) return `Today's spending cap reached: ${usd(s.todayUsd)} of ${usd(s.dailyCapUsd!)} used. ${knobLine('daily', s)}`;
   // Neither the total nor today's cap is used up, but the server refuses (a phase budget, or the
   // next answer's worst case would cross a cap): its own line names which.
-  if (s.totalUsd < s.capUsd && typeof s.blocked === 'string' && s.blocked) return `${s.blocked.trim()} Raise it in .env to continue.`;
-  return `Spending cap reached: ${usd(s.totalUsd)} of ${usd(s.capUsd)} used. Raise it in .env to continue.`;
+  if (s.totalUsd < s.capUsd && typeof s.blocked === 'string' && s.blocked) return `${s.blocked.trim()} ${knobLine(blockedCode(s), s)}`;
+  return `Spending cap reached: ${usd(s.totalUsd)} of ${usd(s.capUsd)} used. ${knobLine('total', s)}`;
 }
 
 /** What the caption says for a failed answer, and whether Retry is offered. */

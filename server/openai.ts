@@ -21,6 +21,12 @@
 //    (response.error.message), `error` (message).
 //  - `text.verbosity` is not documented on the pages read; it stays opt-in (PETU_VERBOSITY), off by default.
 //  - Structured output: `text.format: { type: 'json_schema', name, schema, strict: true }`.
+// Cache key (P0 smoke: a per-document key gave the 12h system block 0% cache on every new PDF):
+// `prompt_cache_key` is per prompt version, shared by every document, so all answers route to the
+// machines that hold the system block. The page block is told apart by its content and its own 30m
+// breakpoint (the docs: keys influence routing, they never isolate matching on GPT-5.6+). A
+// system-only prewarm (`prewarmSystem`) writes the 12h block when a document opens, if no request
+// has read or written it in the last 11.5h (server/cacheStats.ts).
 // Explicit caching is on by default (PETU_EXPLICIT_CACHE=0 falls back to implicit caching: same stable
 // prefix first, no breakpoint fields, /api/prewarm disabled).
 //
@@ -34,6 +40,7 @@ import { SseParser, ResponseEvents } from './sse';
 import { ScriptFilter } from './scriptFilter';
 import { Lint } from './lint';
 import { systemPrompt, PROMPT_VERSION } from './prompt/system';
+import { CacheStats, estimatedUsage } from './cacheStats';
 
 export type Effort = 'none' | 'low' | 'medium' | 'high';
 export type ModelConfig = { model: string; effort: Effort; maxOutput: number; fast: boolean; verbosity?: 'low' | 'medium'; explicitCache: boolean };
@@ -42,16 +49,28 @@ export type Deps = {
   now?: () => number;
   /** Retry back-off; tests pass an immediate one. */
   sleep?: (ms: number) => Promise<void>;
+  /** What the prompt cache likely holds: abort and crash estimates read it, usage feeds it. */
+  cache?: CacheStats;
 };
 const URL_ = 'https://api.openai.com/v1/responses';
 export const JUDGE_MODEL = 'gpt-6.1-sol';
 const JUDGE_MAX_OUTPUT = 800;
+
+/** Shared by every document: the system block's cache is reused across PDFs. */
+export const cacheKey = () => `petu-${PROMPT_VERSION}`;
+/** A lower bound on the system block's tokens (≈ 3.3 chars/token measured; 4 keeps it low). */
+export const systemTokensLow = () => Math.floor(systemPrompt().length / 4);
 
 const bp = (on: boolean, ttl: '30m' | '12h') => (on ? { prompt_cache_breakpoint: { mode: 'explicit', ttl } } : {});
 const img = (b64: string) => `data:image/jpeg;base64,${b64}`;
 const sleepDefault = (ms: number) => new Promise<void>((ok) => setTimeout(ok, ms));
 const scrub = (s: string, key: string) => (key ? s.split(key).join('***') : s);
 const headers = (key: string) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' });
+const developer = (cfg: ModelConfig) => ({ role: 'developer', content: [{ type: 'input_text', text: systemPrompt(), ...bp(cfg.explicitCache, '12h') }] });
+const common = (cfg: ModelConfig) => ({
+  model: cfg.model, store: false, max_output_tokens: cfg.maxOutput, reasoning: { effort: cfg.effort },
+  prompt_cache_key: cacheKey(),
+});
 
 export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { context: AskContext }, cfg: ModelConfig, prewarm = false) {
   const c = r.context;
@@ -63,7 +82,7 @@ export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { con
   }
   tail.push({ type: 'input_text', text: `QUESTION (the student is looking at page ${c.page}): ${r.question}` });
   const input = [
-    { role: 'developer', content: [{ type: 'input_text', text: systemPrompt(), ...bp(cfg.explicitCache, '12h') }] },
+    developer(cfg),
     { role: 'user', content: [
       { type: 'input_text', text: c.docText },
       { type: 'input_text', text: c.pageText },
@@ -76,14 +95,17 @@ export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { con
     ...(prewarm ? [] : [{ role: 'user', content: tail }]),
   ];
   return {
-    model: cfg.model, input, store: false, stream: !prewarm,
-    max_output_tokens: cfg.maxOutput, reasoning: { effort: cfg.effort },
-    prompt_cache_key: `petu-${c.docHash}`,
+    ...common(cfg), input, stream: !prewarm,
     ...(cfg.explicitCache ? { prompt_cache_options: { mode: 'explicit', ...(prewarm ? { prewarm: true } : {}) } } : {}),
     ...(cfg.fast ? { service_tier: 'fast' } : {}),
     ...(cfg.verbosity ? { text: { verbosity: cfg.verbosity } } : {}),
     metadata: { prompt: PROMPT_VERSION },
   };
+}
+
+/** The system block alone, as a prewarm: written once and shared by every document. */
+export function buildSystemPrewarm(cfg: ModelConfig) {
+  return { ...common(cfg), input: [developer(cfg)], stream: false, prompt_cache_options: { mode: 'explicit', prewarm: true }, metadata: { prompt: PROMPT_VERSION } };
 }
 
 /** Upper bound on input tokens: text at 3.2 chars/token, images by the 32-px patch rule × 1.2. */
@@ -101,8 +123,11 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const body = buildRequest(r, cfg);
   const images = [r.context.image, ...(r.context.ink?.crop ? [r.context.ink.crop] : [])];
   const est = estimateInputTokens(body, images);
-  const refused = d.ledger.reserve(reqId, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput, cfg.fast));
-  if (refused) { emit({ t: 'error', code: 'cap', message: capHint(refused.code, refused.message), retryable: false }); return; }
+  const ck = { model: cfg.model, version: PROMPT_VERSION, docHash: r.context.docHash, page: r.context.page };
+  const cachedGuess = d.cache?.expectedCached(ck, est) ?? 0;
+  const estUsd = costUsd(cfg.model, estimatedUsage(est, cachedGuess, cfg.maxOutput), '12h', cfg.fast);
+  const refused = d.ledger.reserve(reqId, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput, cfg.fast), { kind: 'answer', model: cfg.model, estUsd });
+  if (refused) { emit({ t: 'error', code: 'cap', message: capHint(refused.code, refused.message, d.phase), retryable: false }); return; }
   emit({ t: 'meta', reqId, model: cfg.model, effort: cfg.effort });
 
   const now = d.now ?? (() => performance.now());
@@ -157,10 +182,12 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   } finally {
     signal.removeEventListener('abort', onAbort);
   }
-  // Book it: real usage when we have it, else an estimate (input at the write rate, output as streamed).
+  // Book it: real usage when we have it, else an estimate: the input this (doc, page) most likely
+  // read from cache at the cached rate, the rest at the 12h write rate, output as streamed.
   const estimated = !usage;
   if (!sent) { d.ledger.release(reqId); return; }
-  const u: Usage = usage ?? { input_tokens: est, output_tokens: Math.ceil(outChars / 3.2), input_tokens_details: { cache_write_tokens: est } };
+  if (usage) d.cache?.observe(ck, usage, systemTokensLow());
+  const u: Usage = usage ?? estimatedUsage(est, cachedGuess, Math.ceil(outChars / 3.2));
   const usd = costUsd(cfg.model, u, '12h', cfg.fast);
   d.ledger.settle({ id: reqId, phase: d.phase, kind: 'answer', model: cfg.model, usd, estimated, tokens: tokens(u) });
   if (signal.aborted) return;
@@ -179,6 +206,27 @@ export async function prewarm(context: AskContext, cfg: ModelConfig, d: Deps): P
   if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };
   const body = buildRequest({ question: '', history: [], context }, cfg, true);
   const r = await callJson(body, cfg.model, estimateInputTokens(body, [context.image]), cfg.maxOutput, cfg.fast, 'prewarm', d);
+  if (r.ok && r.json?.usage) d.cache?.observe({ model: cfg.model, version: PROMPT_VERSION, docHash: context.docHash, page: context.page }, r.json.usage, systemTokensLow());
+  return r.ok ? { ok: true, usd: r.usd } : { ok: false, usd: r.usd, reason: r.message };
+}
+
+/**
+ * Writes the system block (12h) so a new document's first answer reads it from cache. Skipped when
+ * a request read or wrote it in the last 11.5h.
+ */
+export async function prewarmSystem(cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {
+  if (!cfg.explicitCache) return { ok: false, usd: 0, reason: 'prewarm needs explicit caching (PETU_EXPLICIT_CACHE=0)' };
+  if (!d.key) return { ok: false, usd: 0, reason: 'no key' };
+  if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };
+  const k = { model: cfg.model, version: PROMPT_VERSION };
+  if (d.cache?.systemFresh(k)) return { ok: true, usd: 0, reason: 'cached' };
+  const body = buildSystemPrewarm(cfg);
+  const r = await callJson(body, cfg.model, estimateInputTokens(body, []), cfg.maxOutput, cfg.fast, 'prewarm', d);
+  if (r.ok) {
+    const u = r.json?.usage as Usage | undefined;
+    const t = u ? (u.input_tokens_details?.cached_tokens ?? 0) + (u.input_tokens_details?.cache_write_tokens ?? 0) : 0;
+    d.cache?.observeSystem(k, Math.max(systemTokensLow(), Math.min(t, u?.input_tokens ?? t)));
+  }
   return r.ok ? { ok: true, usd: r.usd } : { ok: false, usd: r.usd, reason: r.message };
 }
 
@@ -211,8 +259,8 @@ type CallResult = { ok: true; json: any; usd: number } | { ok: false; code: stri
 /** A non-streamed call: reserve the worst case → POST (one retry on 429/5xx/network) → book usage. */
 async function callJson(body: unknown, model: string, est: number, maxOutput: number, fast: boolean, kind: 'prewarm' | 'judge', d: Deps): Promise<CallResult> {
   const id = randomUUID();
-  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(model, est, maxOutput, fast));
-  if (refused) return { ok: false, code: 'cap', message: capHint(refused.code, refused.message), usd: 0 };
+  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(model, est, maxOutput, fast), { kind, model });
+  if (refused) return { ok: false, code: 'cap', message: capHint(refused.code, refused.message, d.phase), usd: 0 };
   const sleep = d.sleep ?? sleepDefault;
   let last: CallResult = { ok: false, code: 'network', message: 'Network error reaching OpenAI.', usd: 0 };
   let reached = false;
@@ -257,8 +305,8 @@ function tokens(u: Usage) {
 }
 
 /** Caps are set per run on the command line (never by editing .env). */
-function capHint(code: 'total' | 'daily' | 'phase', message: string): string {
-  if (code === 'total') return `${message} This is the checkpoint's hard stop.`;
-  if (code === 'daily') return `${message} It resets tomorrow.`;
-  return `${message} Raise it for this run on the command line (e.g. PETU_CAP_DEV=3 npm run dev).`;
+export function capHint(code: 'total' | 'daily' | 'phase', message: string, phase: Phase): string {
+  if (code === 'total') return `${message} PETU_TOTAL_CAP_USD=<dollars> npm run dev sets it for a run, up to the checkpoint's $40 hard stop.`;
+  if (code === 'daily') return `${message} It resets tomorrow, or raise it for this run: PETU_DAILY_CAP_USD=6 npm run dev.`;
+  return `${message} Raise it for this run on the command line: PETU_CAP_${phase.toUpperCase()}=<dollars> npm run dev.`;
 }

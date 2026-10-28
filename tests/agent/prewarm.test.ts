@@ -117,4 +117,21 @@ describe('Prewarm', () => {
     await expect(p.intent('h1', 2, async () => { throw new Error('render'); })).resolves.toBeUndefined();
     expect(calls(f)).toBe(0);
   });
+
+  it('system(): posts { scope: system } once per page load, not when blocked, retried after a failure', async () => {
+    const { p, f, state } = make({ blocked: true });
+    await p.system();
+    expect(calls(f)).toBe(0);
+    state.blocked = false;
+    await p.system();
+    await p.system();
+    expect(calls(f)).toBe(1);
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/prewarm');
+    expect(JSON.parse(String(init.body))).toEqual({ scope: 'system' });
+    const bad = make({ f: vi.fn(async () => new Response('', { status: 500 })) });
+    await bad.p.system();
+    await bad.p.system();
+    expect(calls(bad.f)).toBe(2);
+  });
 });

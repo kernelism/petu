@@ -219,6 +219,23 @@ describe('createApi', () => {
     expect(calls).toBe(1);
   });
 
+  it('POST /api/prewarm { scope: system } warms the shared system block once', async () => {
+    const bodies: any[] = [];
+    const f = (async (_u: string, init: RequestInit) => { bodies.push(JSON.parse(String(init.body))); return new Response(JSON.stringify({ usage: { input_tokens: 4100, output_tokens: 0, input_tokens_details: { cache_write_tokens: 4100 } } }), { status: 200 }); }) as unknown as typeof fetch;
+    const api = createApi({ env: env(), root, fetch: f });
+    const out: any[] = [];
+    for (let i = 0; i < 2; i++) {
+      const res = fakeRes();
+      await api.handle(fakeReq('POST', '/api/prewarm', JSON.stringify({ scope: 'system' })), res, () => {});
+      out.push(JSON.parse(res.body()));
+    }
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].input).toHaveLength(1);
+    expect(bodies[0].input[0].role).toBe('developer');
+    expect(out[0]).toMatchObject({ ok: true });
+    expect(out[1]).toMatchObject({ ok: true, usd: 0, reason: 'cached' });
+  });
+
   it('POST /api/judge needs the eval token', async () => {
     const api = createApi({ env: env(), root, fetch: upstream([]).f });
     const res = fakeRes();

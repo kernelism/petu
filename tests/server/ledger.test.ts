@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from '../../server/ledger';
@@ -59,6 +59,38 @@ describe('Ledger', () => {
     expect(b.reserve('y', 'dev', 0.2)?.code).toBe('total');
     b.settle({ id: 'z', phase: 'dev', kind: 'judge', model: 'm', usd: 0.05 });
     expect(JSON.parse(readFileSync(path, 'utf8')).entries.map((e: { id: string }) => e.id)).toEqual(['x', 'z']);
+  });
+  it('a reservation left open by a dead process is booked as an estimate on restart, never dropped', () => {
+    const l = new Ledger(path, { totalUsd: 40 }, day('2026-10-28'));
+    l.reserve('crash', 'founder', 0.03, { kind: 'answer', model: 'gpt-6.1-terra', estUsd: 0.008 });
+    l.reserve('crash2', 'founder', 0.02, { kind: 'prewarm', model: 'gpt-6.1-terra' });
+    // Simulate the crash: the file still holds both, under a pid that is gone.
+    const f = JSON.parse(readFileSync(path, 'utf8'));
+    for (const o of Object.values(f.open) as { pid: number }[]) o.pid = 999999;
+    writeFileSync(path, JSON.stringify(f));
+    const again = new Ledger(path, { totalUsd: 40 }, day('2026-10-28'), 0, { alive: () => false });
+    const after = JSON.parse(readFileSync(path, 'utf8'));
+    expect(after.open).toEqual({});
+    expect(after.entries).toEqual([
+      expect.objectContaining({ id: 'crash', usd: 0.008, estimated: true, recovered: true, kind: 'answer', phase: 'founder' }),
+      expect.objectContaining({ id: 'crash2', usd: 0.02, estimated: true, recovered: true, kind: 'prewarm' }),
+    ]);
+    expect(again.spent()).toBeCloseTo(0.028, 10);
+  });
+  it('a live process\'s open reservation counts toward the caps of another process on the file', () => {
+    const a = new Ledger(path, { totalUsd: 1 }, day('2026-10-28'), 0, { alive: () => true });
+    expect(a.reserve('x', 'dev', 0.8)).toBeNull();
+    const f = JSON.parse(readFileSync(path, 'utf8'));
+    f.open.x.pid = 424242;
+    writeFileSync(path, JSON.stringify(f));
+    const b = new Ledger(path, { totalUsd: 1 }, day('2026-10-28'), 0, { alive: () => true });
+    expect(b.reserve('y', 'dev', 0.3)?.code).toBe('total');
+    expect(JSON.parse(readFileSync(path, 'utf8')).entries).toHaveLength(0);
+  });
+  it('refusal lines show small amounts with two significant digits', () => {
+    const l = new Ledger(path, { totalUsd: 40, dailyUsd: 0.02 }, day('2026-10-28'));
+    l.settle({ id: 'a', phase: 'founder', kind: 'answer', model: 'm', usd: 0.014 });
+    expect(l.reserve('b', 'founder', 0.01)?.message).toBe("Spending stopped: $0.014 of today's cap ($0.020) is used.");
   });
   it('release frees a reservation', () => {
     const l = new Ledger(path, { totalUsd: 0.1 });

@@ -52,8 +52,24 @@ export type SpendSummary = {
   phaseCapUsd?: number;
   /** Set when the next answer would be refused: the refusal line. */
   blocked?: string;
+  /** Which cap `blocked` names. */
+  blockedCode?: 'total' | 'daily' | 'phase';
   byPhase?: Record<string, number>;
   byModel?: Record<string, number>;
   /** Ledger entries. */
   n?: number;
 };
+
+/** The checkpoint's hard stop: PETU_TOTAL_CAP_USD may only lower it (server/env.ts). */
+export const HARD_STOP_USD = 40;
+
+/**
+ * Dollars for people: cents from $0.10 up; below that, two significant digits so small amounts stay
+ * readable ("$0.014 of $0.020", not "$0.01 of $0.02").
+ */
+export function formatUsd(n: number): string {
+  if (!Number.isFinite(n) || n === 0) return '$0.00';
+  const a = Math.abs(n);
+  const d = a >= 0.1 ? 2 : Math.min(6, 1 - Math.floor(Math.log10(a)));
+  return `${n < 0 ? '-' : ''}$${a.toFixed(d)}`;
+}

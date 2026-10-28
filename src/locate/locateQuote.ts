@@ -2,7 +2,8 @@ import type { PageRect } from '../geometry/space';
 import { textLines } from '../agent/context/textLines';
 
 /** `font` is a CSS font string used only to measure relative glyph widths. */
-export type TextRun = { text: string; rect: PageRect; font?: string };
+/** `vertical`: the baseline runs up or down the page (a rotated axis label, a sideways page). */
+export type TextRun = { text: string; rect: PageRect; font?: string; vertical?: boolean };
 /** Width of `s` in `font`, in any consistent unit (only ratios are used). */
 export type Measure = (font: string, s: string) => number;
 /** `aspect` = page h / w (default 1): the line index compares gaps in x units. */
@@ -150,11 +151,13 @@ const isWordChar = (c: string | undefined) => !!c && /[\p{L}\p{N}]/u.test(c);
  * Exact matches on word boundaries win; among several, the one nearest `near` (or the first).
  */
 export function locateQuote(pageRuns: TextRun[], quote: string, near?: { x: number; y: number }, opts: LocateOpts = {}): PageRect[] {
-  const q = normalizeText(quote).replace(/-/g, '').replace(/ {2,}/g, ' ').trim();
+  // The listing writes superscripts as ^c / ^(...) (textLines); the page's runs have no markup.
+  const plain = quote.replace(/\^\(([^()]*)\)/g, '$1').replace(/\^(?=\S)/g, '');
+  const q = normalizeText(plain).replace(/-/g, '').replace(/ {2,}/g, ' ').trim();
   if (!q || !pageRuns.length) return [];
   // Quotes of ≤ 2 characters ("x", "C′") need a position unless the page has exactly one
   // whole-word hit; with `near`, the hit must sit within NEAR_MAX of it.
-  const short = Array.from(normalizeText(quote).replace(/ /g, '')).length <= 2;
+  const short = Array.from(normalizeText(plain).replace(/ /g, '')).length <= 2;
   // Search the same line index the model reads: runs of each line in x order, lines in reading
   // order (equation glyphs and sub/superscripts come out as listed).
   const runs = lineOrder(pageRuns, opts.aspect ?? 1);
@@ -203,7 +206,8 @@ function rectsFor(runs: TextRun[], map: Slot[], range: [number, number], measure
         if (total > 0 && Number.isFinite(a) && Number.isFinite(b) && a >= 0 && b > a && b <= 1.0001) { f0 = a; f1 = Math.min(b, 1); }
       } catch { /* keep proportional */ }
     }
-    const part: PageRect = { x: r.x + r.w * f0, y: r.y, w: r.w * (f1 - f0), h: r.h };
+    // A sideways run: its whole box (the slice direction is unknown without the baseline's sign).
+    const part: PageRect = runs[ri].vertical ? { ...r } : { x: r.x + r.w * f0, y: r.y, w: r.w * (f1 - f0), h: r.h };
     const line = lines.find((l) => sameLine(l, part));
     if (!line) { lines.push(part); return; }
     const x1 = Math.min(line.x, part.x), x2 = Math.max(line.x + line.w, part.x + part.w);

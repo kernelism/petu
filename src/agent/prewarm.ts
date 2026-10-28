@@ -1,5 +1,6 @@
 // src/agent/prewarm.ts — warms the server's prompt cache for the visible page when the student
-// shows intent to ask (ask bar focus, the 3rd typed character), so the answer's prefill is cached.
+// shows intent to ask (ask bar focus, the 3rd typed character), so the answer's prefill is cached;
+// and the shared system block when a document opens.
 import type { AskContext } from './protocol';
 
 /** The server's page-block cache lives 30 minutes; re-warm a little before it lapses. */
@@ -48,6 +49,24 @@ export class Prewarm {
       }
     } finally {
       this.pending = false;
+    }
+  }
+
+  private systemSent = false;
+  /**
+   * A document opened: warm the shared system block (12h), so this document's first answer reads it
+   * from cache. Once per page load; the server skips it if the block is already warm.
+   */
+  async system(): Promise<void> {
+    if (this.off || this.systemSent || this.d.blocked()) return;
+    this.systemSent = true;
+    try {
+      const r = await (this.d.fetch ?? fetch)('/api/prewarm', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: 'system' }) });
+      const body = r.ok ? ((await r.json().catch(() => null)) as { ok?: boolean; reason?: string } | null) : null;
+      if (body?.ok === false && PERMANENT.test(body.reason ?? '')) this.off = true;
+      else if (!body?.ok) this.systemSent = false;
+    } catch {
+      this.systemSent = false;
     }
   }
 

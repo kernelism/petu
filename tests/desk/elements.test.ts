@@ -187,6 +187,22 @@ describe('buildElement', () => {
     const to = vi.mocked(desk.addConnector).mock.calls[2][1];
     expect(to.r.x + to.r.w / 2).toBeCloseTo(271); // runs right up to the dot
   });
+  it('a connector to a box (or any area element) ends at the box itself, not its first corner', async () => {
+    const { e, desk } = env();
+    await run(await buildElement({ kind: 'box', region: 'side', at: { x: 400, y: 200 }, w: 300, h: 200, id: 'bx' }, e));
+    await run(await buildElement({ kind: 'connect', from: { page: 3, quote: 'hello' }, to: { region: 'side', ref: 'bx' } }, e));
+    const to = vi.mocked(desk.addConnector).mock.calls[0][1].r;
+    // The whole outline (the router picks the nearest edge's midpoint), not an 16px square at (400, 200).
+    expect(to.w).toBeGreaterThan(250);
+    expect(to.h).toBeGreaterThan(150);
+    expect(to.x + to.w / 2).toBeCloseTo(550, -1);
+    expect(to.y + to.h / 2).toBeCloseTo(300, -1);
+    await run(await buildElement({ kind: 'circle', region: 'side', at: { x: 200, y: 500 }, rx: 60, ry: 40, id: 'ci' }, e));
+    await run(await buildElement({ kind: 'connect', from: { page: 3, quote: 'hello' }, to: { region: 'side', ref: 'ci' } }, e));
+    const c = vi.mocked(desk.addConnector).mock.calls[1][1].r;
+    expect(c.x + c.w / 2).toBeCloseTo(200, -1);
+    expect(c.y + c.h / 2).toBeCloseTo(500, -1);
+  });
   it("a connector's arrival is an obstacle in its region: a later label is nudged clear of it", async () => {
     const { e, desk, layers } = env();
     // Wire frame px = 2 × region units (a region at scale 2, origin shared).

@@ -395,6 +395,9 @@ async function ref(a: RefAction, env: BuildEnv): Promise<ElementPlan | string> {
   }
 }
 
+/** Elements a connector meets at their anchor (a stroke's end); every other kind is met at its box. */
+const ENDS_AT_ANCHOR = new Set(['line', 'arrow', 'curve', 'angle', 'connect']);
+
 /** Resolves a connector end to a target-space box. */
 async function endBox(end: End, env: BuildEnv): Promise<{ t: Target; r: SRect; point?: boolean } | string> {
   const t: Target = 'page' in end ? { page: end.page } : { region: end.region };
@@ -407,8 +410,12 @@ async function endBox(end: End, env: BuildEnv): Promise<{ t: Target; r: SRect; p
   if ('ref' in end) {
     const e: ElementEntry | undefined = await env.registry.wait(end.ref, REF_WAIT_MS);
     if (!e) { console.warn('[desk] unknown id', end.ref); return 'unknown id'; }
-    // A point: the wire runs right up to its dot (the dot is the end mark). Anything else: near its anchor.
+    // A point: the wire runs right up to its dot (the dot is the end mark). A stroke that ends
+    // somewhere (line, arrow, curve, angle): near that end. Anything with an area (box, circle,
+    // shade, label, math, plot…): the element itself, so the router arrives at its nearest edge's
+    // midpoint, never at the corner where its outline happened to start.
     if (e.kind === 'point') return { t, r: { x: e.anchor.x - 0.5, y: e.anchor.y - 0.5, w: 1, h: 1 }, point: true };
+    if (!ENDS_AT_ANCHOR.has(e.kind)) return { t, r: e.boxes.length ? union(e.boxes) : e.bbox };
     const s = 8;
     return { t, r: { x: e.anchor.x - s, y: e.anchor.y - s, w: 2 * s, h: 2 * s } };
   }

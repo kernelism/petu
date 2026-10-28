@@ -7,11 +7,12 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadEnv } from 'vite';
 import { PRICES } from './prices';
+import { HARD_STOP_USD } from '../src/agent/protocol';
 import type { Caps, Phase } from './ledger';
 import type { Effort, ModelConfig } from './openai';
 
 /** The $40 hard stop for checkpoint 2 (prior spike spend included). PETU_TOTAL_CAP_USD may only lower it. */
-export const MAX_TOTAL_USD = 40;
+export const MAX_TOTAL_USD = HARD_STOP_USD;
 /** Per-phase budgets (plan §3). Override one for a run with PETU_CAP_<PHASE>, e.g. PETU_CAP_DEV=3 for contingency. */
 export const PHASE_CAPS: Record<Phase, number> = { dev: 1, bakeoff: 6, iterate: 7, validate: 2, founder: 21.99 };
 export const PHASES = Object.keys(PHASE_CAPS) as Phase[];

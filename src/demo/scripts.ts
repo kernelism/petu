@@ -45,6 +45,33 @@ export const SCRIPTS: Record<string, Demo & { src: string }> = {
       `{{highlight p=40 "Disparity is inversely proportional to depth."}} Disparity is inversely proportional to depth.`,
   },
   /**
+   * The agent's relational grammar, played without an API call (E1.2): the sample deck's page 3, top
+   * view of the two cameras. Geometry is named, never computed by hand: `let` sets the world points
+   * once (fitted to the region by `fit`), the image points are `meet`s of rays with the image
+   * planes, the far point is `along` the first ray, the ray is drawn `through` x, and the page is
+   * pointed at by its own marks (#d3 = x, #d1 = C, #d2 = C′).
+   *   world: C 0,0 and C′ 600,0 (baseline), image planes at y −120, X 150,−350, X2 = 2.4 × along C→X
+   *   (x′ and x2′ land ~120 apart on image 2, so the epipolar segment reads as a line)
+   */
+  relational: {
+    src: '/fixtures/epipolar.pdf',
+    question: 'Why must the match lie on a line?',
+    script:
+      `{{scroll p=3}} This {{circle p=3 mark=#d3 em}} point x could have come from anywhere along one ray, so its match can only be on a line. ` +
+      `{{sketch id=s near=p3 size=m fit}} Seen {{let on=s C=0,0 C'=600,0 X=150,-350 X2=along(C,X,2.4) L1=-150,-120 L2=150,-120 R1=380,-120 R2=750,-120}} ` +
+      `from above, {{point on=s at=C "C" dir=s}} camera C {{line on=s from=L1 to=L2 weight=secondary}} looks through image 1. ` +
+      `{{line on=s from=C through=X dash id=ray}} Its ray through x runs out into the scene, ` +
+      `{{point on=s at=meet(C,X,L1,L2) "x" dir=w id=x}} crossing image 1 at x. ` +
+      `{{connect from=p3:#d3 to=s:x}} That is the page's x. ` +
+      `A near point {{point on=s at=X "X" dir=e}} here ` +
+      `and a far one {{point on=s at=X2 "X2" dir=e id=X2}} there both land on x. ` +
+      `Now {{point on=s at=C' "C′" dir=s}} camera C′, {{line on=s from=R1 to=R2 weight=secondary}} with image 2, ` +
+      `sees them apart: {{line on=s from=C' to=X weight=faint}} the near one {{point on=s at=meet(C',X,R1,R2) "x′" dir=n}} here, ` +
+      `{{line on=s from=C' to=X2 weight=faint}} the far one {{point on=s at=meet(C',X2,R1,R2) "x2′" dir=n}} there. ` +
+      `{{line on=s from=meet(C',X,R1,R2) to=meet(C',X2,R1,R2) em}} Every depth lands on this one line in image 2: ` +
+      `{{circle p=3 mark=#d1}} that is why, {{circle p=3 mark=#d2}} for this pair of cameras, the search is one-dimensional.`,
+  },
+  /**
    * Toolkit check (not a teaching demo): every v2 element once, in one region beside the sample
    * deck's page 3, for screenshots and the timing audit. Also every look flag: the three weights
    * (primary default, secondary, faint), dash (faint by default), shade plain / outline / em.

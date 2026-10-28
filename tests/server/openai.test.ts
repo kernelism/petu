@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from '../../server/ledger';
 import { costUsd } from '../../server/prices';
-import { ask, buildRequest, estimateInputTokens, prewarm, judge, type ModelConfig, type Deps } from '../../server/openai';
+import { ask, buildRequest, buildSystemPrewarm, estimateInputTokens, prewarm, prewarmSystem, judge, systemTokensLow, type ModelConfig, type Deps } from '../../server/openai';
+import { CacheStats } from '../../server/cacheStats';
+import { PROMPT_VERSION, systemPrompt } from '../../server/prompt/system';
 import type { AskEvent, AskRequest, AskContext } from '../../src/agent/protocol';
 
 const KEY = 'sk-test-SECRET-abc123';
@@ -85,14 +87,14 @@ describe('buildRequest', () => {
     expect(tail[2].type).toBe('input_image');
     expect(tail[tail.length - 1].text).toBe('QUESTION (the student is looking at page 2): Why does disparity shrink?');
     expect(b.input).toHaveLength(5);
-    expect(b).toMatchObject({ model: 'gpt-6.1-terra', stream: true, store: false, max_output_tokens: 1400, reasoning: { effort: 'none' }, prompt_cache_key: 'petu-abc', prompt_cache_options: { mode: 'explicit' } });
+    expect(b).toMatchObject({ model: 'gpt-6.1-terra', stream: true, store: false, max_output_tokens: 1400, reasoning: { effort: 'none' }, prompt_cache_key: `petu-${PROMPT_VERSION}`, prompt_cache_options: { mode: 'explicit' } });
     expect(b.service_tier).toBeUndefined();
   });
   it('implicit caching drops the breakpoint fields; fast and verbosity are opt-in', () => {
     const b = buildRequest(req(), { ...cfg, explicitCache: false, fast: true, verbosity: 'low' }) as any;
     expect(JSON.stringify(b)).not.toContain('prompt_cache_breakpoint');
     expect(b.prompt_cache_options).toBeUndefined();
-    expect(b.prompt_cache_key).toBe('petu-abc');
+    expect(b.prompt_cache_key).toBe(`petu-${PROMPT_VERSION}`);
     expect(b.service_tier).toBe('fast');
     expect(b.text).toEqual({ verbosity: 'low' });
   });
@@ -101,6 +103,39 @@ describe('buildRequest', () => {
     expect(b.input).toHaveLength(2);
     expect(b.stream).toBe(false);
     expect(b.prompt_cache_options).toEqual({ mode: 'explicit', prewarm: true });
+  });
+});
+
+describe('caching across documents', () => {
+  it('the cache key is per prompt version, the same for every document, so the system block is shared', () => {
+    const a = buildRequest(req(), cfg) as any;
+    const b = buildRequest(req({ context: { ...context, docHash: 'other-doc', docText: 'OTHER', pageText: 'P' } }), cfg) as any;
+    expect(a.prompt_cache_key).toBe(b.prompt_cache_key);
+    expect(a.prompt_cache_key).not.toContain('abc');
+    // The system block is byte-identical and ends at its own 12h breakpoint; the page block has a 30m one.
+    expect(a.input[0]).toEqual(b.input[0]);
+    expect(a.input[0].content).toHaveLength(1);
+    expect(a.input[0].content[0].prompt_cache_breakpoint).toEqual({ mode: 'explicit', ttl: '12h' });
+    expect(b.input[1].content.at(-1).prompt_cache_breakpoint).toEqual({ mode: 'explicit', ttl: '30m' });
+    // ≤ 4 cache writes per request (OpenAI prompt-caching guide).
+    expect(JSON.stringify(a).split('prompt_cache_breakpoint').length - 1).toBeLessThanOrEqual(4);
+  });
+  it('the system prewarm is the developer block alone, same key, prewarm flag, nothing streamed', () => {
+    const p = buildSystemPrewarm(cfg) as any;
+    const a = buildRequest(req(), cfg) as any;
+    expect(p.input).toEqual([a.input[0]]);
+    expect(p).toMatchObject({ prompt_cache_key: a.prompt_cache_key, stream: false, prompt_cache_options: { mode: 'explicit', prewarm: true }, model: cfg.model });
+    expect(p.input[0].content[0].text).toBe(systemPrompt());
+  });
+  it('prewarmSystem posts once, then skips while the block is warm', async () => {
+    const cache = new CacheStats(null);
+    const { f, calls } = fakeFetch([{ status: 200, text: JSON.stringify({ usage: { input_tokens: 4100, output_tokens: 0, input_tokens_details: { cache_write_tokens: 4100 } } }) }]);
+    const r1 = await prewarmSystem(cfg, deps(f, { cache }));
+    expect(r1).toMatchObject({ ok: true });
+    expect(r1.usd).toBeCloseTo((4100 * 2.5) / 1e6, 10);
+    expect(JSON.parse(String(calls[0].init.body)).input).toHaveLength(1);
+    expect(await prewarmSystem(cfg, deps(f, { cache }))).toEqual({ ok: true, usd: 0, reason: 'cached' });
+    expect(calls).toHaveLength(1);
   });
 });
 
@@ -162,6 +197,52 @@ describe('ask', () => {
     expect(file.entries).toHaveLength(1);
     expect(file.entries[0]).toMatchObject({ kind: 'answer', estimated: true, phase: 'dev' });
     expect(file.entries[0].usd).toBeGreaterThan(0);
+  });
+  it('an abort on a cached page books the cached share at the read rate (not all input as a 12h write)', async () => {
+    const cache = new CacheStats(null);
+    // The first answer on this page: 4100 system tokens cached, 3000 page tokens written.
+    const first = { input_tokens: 7300, output_tokens: 300, input_tokens_details: { cached_tokens: 4100, cache_write_tokens: 3000, cache_write_tokens_details: { ttl_12h_tokens: 0, ttl_30m_tokens: 3000 } } };
+    const chunks1 = [sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message' } }), ...textEvents('m1', ['Hi.']), sse({ type: 'response.completed', response: { usage: first } })];
+    const { f } = fakeFetch([{ chunks: chunks1 }, { chunks: okBody(['One. ', 'Two. ', 'Three. ', 'Four.']) }, { chunks: okBody(['One. ', 'Two. ', 'Three. ', 'Four.']) }]);
+    await run(req(), deps(f, { cache }));
+    const ctl = new AbortController();
+    await run(req(), deps(f, { cache }), (_e, all) => { if (all.filter((x) => x.t === 'text').length === 2) ctl.abort(); }, ctl.signal);
+    const file = JSON.parse(readFileSync(join(dir, 'spend.json'), 'utf8'));
+    const aborted = file.entries[1];
+    expect(aborted).toMatchObject({ estimated: true });
+    // What the last answer read + wrote (7100), capped at this request's input estimate.
+    expect(aborted.tokens.cached).toBe(Math.min(7100, estimateInputTokens(buildRequest(req(), cfg), [context.image])));
+    // The same abort with nothing known about the cache (another page, fresh stats) costs far more.
+    const ctl2 = new AbortController();
+    await run(req({ context: { ...context, docHash: 'zzz' } }), deps(f, { cache: new CacheStats(null) }), (_e, all) => { if (all.filter((x) => x.t === 'text').length === 2) ctl2.abort(); }, ctl2.signal);
+    const cold = JSON.parse(readFileSync(join(dir, 'spend.json'), 'utf8')).entries[2];
+    expect(cold.tokens.cached).toBe(0);
+    expect(cold.usd / aborted.usd).toBeGreaterThan(3);
+  });
+  it('a new document reuses the system block: the abort estimate counts it as cached', async () => {
+    const cache = new CacheStats(null);
+    cache.observeSystem({ model: cfg.model, version: PROMPT_VERSION }, 4100);
+    const { f } = fakeFetch([{ chunks: okBody(['One. ', 'Two. ', 'Three.']) }]);
+    const ctl = new AbortController();
+    await run(req({ context: { ...context, docHash: 'new-doc' } }), deps(f, { cache }), (_e, all) => { if (all.some((x) => x.t === 'text')) ctl.abort(); }, ctl.signal);
+    const e = JSON.parse(readFileSync(join(dir, 'spend.json'), 'utf8')).entries[0];
+    expect(e.tokens.cached).toBe(4100);
+  });
+  it('a request in flight is persisted with a cache-aware estimate until it settles', async () => {
+    const cache = new CacheStats(null);
+    cache.observeSystem({ model: cfg.model, version: PROMPT_VERSION }, 4100);
+    const { f } = fakeFetch([{ chunks: okBody(['One. ', 'Two.']) }]);
+    let open: any = null;
+    await run(req(), deps(f, { cache }), () => { open ??= JSON.parse(readFileSync(join(dir, 'spend.json'), 'utf8')).open; });
+    const [o] = Object.values(open) as any[];
+    expect(o).toMatchObject({ pid: process.pid, kind: 'answer', model: cfg.model });
+    expect(o.estUsd).toBeLessThan(o.worstUsd);
+    expect(o.estUsd).toBeGreaterThan(0);
+    expect(JSON.parse(readFileSync(join(dir, 'spend.json'), 'utf8')).open).toEqual({});
+  });
+  it('systemTokensLow is a lower bound on the system block', () => {
+    expect(systemTokensLow()).toBeGreaterThan(1024);
+    expect(systemTokensLow()).toBeLessThan(systemPrompt().length / 3);
   });
   it('streams the script once when a commentary message is followed by a final_answer duplicate', async () => {
     const chunks = [

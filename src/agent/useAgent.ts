@@ -28,7 +28,11 @@ export type AgentAsk = {
   onGrounding(g: Grounding): void;
 };
 
-export function useAgent({ doc, name, enabled, make }: { doc: PdfDoc | null; name: string; enabled: boolean; make: MakeContext | null }) {
+export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
+  doc: PdfDoc | null; name: string; enabled: boolean; make: MakeContext | null;
+  /** Prewarm the shared system block when a document opens (off for replay-only eval pages). */
+  warmSystem?: boolean;
+}) {
   const [spend, setSpend] = useState<SpendSummary | null>(null);
   const spendRef = useRef(spend);
   spendRef.current = spend;
@@ -47,6 +51,12 @@ export function useAgent({ doc, name, enabled, make }: { doc: PdfDoc | null; nam
     b.warm(1);
     return () => { b.destroy(); if (builder.current === b) builder.current = null; };
   }, [doc, name, enabled, make, history, prewarm]);
+
+  // The system block is shared by every document: warm it once spend is known not to be blocked.
+  useEffect(() => {
+    if (!enabled || !doc || !warmSystem || !spend || spendBlocked(spend)) return;
+    void prewarm.system();
+  }, [doc, enabled, warmSystem, spend, prewarm]);
 
   const refreshSpend = useCallback(async () => {
     const s = await getSpend();
