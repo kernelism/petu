@@ -2,7 +2,7 @@
 import { EXAMPLES } from './examples.ts';
 
 /** Bump on any change: the eval records it with every run, and it is part of the cache prefix. */
-export const PROMPT_VERSION = 'p4.5';
+export const PROMPT_VERSION = 'p4.6';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -70,7 +70,9 @@ Just before a sketch tag, write a short plan inside <plan>…</plan>: the given 
 A graph of one quantity against another: an axes tag, then a plot tag. A curve's pts run in order along it (a wave through chosen points: left to right); a curve that doubles back on itself is skipped. One value per key: a bent path is several lines.
 Look: main shapes plain; rays and sight lines weight=secondary; construction lines dash; surfaces {{shade on=s pts=O L P outline}}. Label a point as you draw it, {{point on=s at=P "P" dir=s}}; a line by naming it aloud, or {{label id=ray "light" dir=n}} on a line drawn with id=ray. em is the accent colour: keep it for what the student should leave with. {{emph id=ray}} draws attention back to something already drawn; {{fade id=ray}} dims what no longer matters.
 When the board redraws or extends something on a page, tie them: {{connect from=p4:#d3 to=s:X}} from a page mark, or {{connect from=p4:"words on the page" to=s:ray}} from words.
-WORKED NUMBERS. When the idea is a computation (values in a table or matrix, a vector, data points, a rule applied case by case), use the kit blocks below instead of strokes: the engine lays them out and computes every number. Never write a computed number yourself, on the board or in a tag; name the operation and let the engine show its result; in words, say what the result means (it jumps, it doubles, it stays put) rather than reciting the numbers. Pick example values that make the effect visible; when the page gives values, use the page's. Show the input, the operation and the output side by side, then let the computation happen on the board: step through the first case or two while you explain them, then sweep the rest while you say what the pattern shows.`;
+WORKED NUMBERS. When the idea is a computation (values in a table or matrix, a vector, data points, a rule applied case by case), use the kit blocks below instead of strokes: the engine lays them out and computes every number. Never write a computed number yourself, on the board or in a tag; name the operation and let the engine show its result; in words, say what the result means (it jumps, it doubles, it stays put) rather than reciting the numbers. Pick example values that make the effect visible; when the page gives values, use the page's. Show the input, the operation and the output side by side, then let the computation happen on the board: step through the first case or two while you explain them, then sweep the rest while you say what the pattern shows.
+When the confusion is about what changes when an input changes, change the input on the board (set) and let the student watch what follows and what stays put.
+A block shows its id as its name, so the student knows what they are looking at: use the document's symbol (u, v) or a short word.`;
 
 const GRAMMAR = `TAGS (key=value, "quoted text", bare flags; A, B, C are x,y, a name, a #mark or a construction)
 {{scroll p=4}}  {{scroll p=4 y=600}}
@@ -91,7 +93,7 @@ KIT (no fit or let needed; blocks place themselves; parts count from 1: g[2,3], 
 right=g or below=g places a block beside another, op=⊛ (or · × = → − + ÷) between them
 {{grid on=s id=o over=g slide=k right=k op==}} k's weights slide over g, each cell a sum of products (same keeps g's size, flip flips k)
 {{grid on=s id=o over=g win=1x3 reduce=mean below=g}} (reduce=sum, max, min)  {{grid on=s id=o over=g win=2x2 fn="(d-c)/(b-a)"}} (a b c d: the window's cells)
-{{bars on=s id=z map=v fn="(x-mean)/std"}}  {{grid on=s id=z zip=g,h fn="(x-y)^2"}}  {{grid on=s id=z size=6x6 fn="r+c"}}  {{bars on=s id=w vals=t.c}} (column c of t)
+{{bars on=s id=z map=v fn="(x-mean)/std"}}  {{grid on=s id=z zip=g,h fn="(x-y)^2"}} (map and zip read any block or a column t.c: never redraw data in another form; right= its source draws →)  {{grid on=s id=z size=6x6 fn="r+c"}}  {{bars on=s id=w vals=t.c}} (column c of t)
 {{calc on=s of=v reduce=sum "total"}} a calculation line, expansion and result: reduce=sum, mean, max, min, norm, count, dot or cos; of=u,v fn="(x-y)^2"
 {{col id=t.c fn="(b-pb)/pb" dur=4}} fills column c row by row (a b c: this row, pa pb: the row above)  {{scatter on=s id=d pts=t.a,t.b}} follows t
 {{fit on=s id=f of=d}} least squares (pick=2,7: through points 2 and 7)  {{band id=f w=0.5 "inside"}}  {{dist from=d[4] to=f}}

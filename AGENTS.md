@@ -126,7 +126,7 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   the scout's JSON `{opener, pages, plan}` as NDJSON. The opener (the answer's first sentence or two,
   tags on the visible page only, released clause by clause) plays at once; the moment pages and plan
   are parsed, stage 2 is built and asked with the opener verbatim (`context.opener`, ALREADY SPOKEN)
-  and its script follows the opener's last word. A failed scout = stage 2 alone on the visible page.
+  and its script follows the opener's last word; the note tells it never to restate the opener's claim and to open on something new (the mechanism, the first drawn step). A failed scout = stage 2 alone on the visible page.
   The dock shows a faint static "…" while thinking and after the last word if the stream pauses.
   `?debug` shows scout verdict, opener, stage-2 first text and the handoff gap.
 - `server/` — `plugin.ts` (routes: `/api/ask`, `/api/scout`, `/api/prewarm`, `/api/spend`, `/api/judge` (eval
@@ -138,7 +138,7 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   app: a loopback Host, an Origin (if any) equal to it, and `content-type: application/json` on POSTs
   (`guard` in `plugin.ts`; these routes run before Vite's own host check). Upstream calls time out
   (15s to headers, 20s between chunks, 60s for prewarm/judge).
-- **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p4.5** (kit card and WORKED NUMBERS principles): hard answer shape (opener ≤ 16
+- **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p4.6** (kit card and WORKED NUMBERS principles; change an input with `set`, name blocks): hard answer shape (opener ≤ 16
   words that starts with its mark, one new element per sentence, 3–7 elements, one `em`, a payoff),
   mechanism over definition, precise marks, per-question-type playbook, few-shot examples from the
   fixture and synthetic pages only. Bump `PROMPT_VERSION` on any change. `tests/server/prompt.test.ts`
@@ -168,8 +168,12 @@ number and animates.
   `bars` (a vector), `table` (headers + rows; empty columns filled by `col`), `scatter` (literal points
   or a table's columns), `calc` (a live calculation line: expansion and result), `fit` (least squares
   or `pick=i,j`). Placement `right=`/`below=` another block (bodies aligned, engine spacing; wraps at
-  the margin; `below` clears whatever sits under the anchor) with an `op=` glyph (⊛ · × = → − + ÷).
-- Computed sources: `map=`/`zip=` with `fn=` (expr.ts, now with variables and comparisons: x, y,
+  the margin; `below` clears whatever sits under the anchor) with an `op=` glyph (⊛ · × = → − + ÷);
+  a computed block `right=` its own source gets → unless `op=` says otherwise (`op=none`). A grid or
+  bars without a caption is captioned with its id (a single letter in math italic). A section's kit
+  composition is centred in the board (the whole group shifts; the first placement at once, later
+  ones glide).
+- Computed sources: `map=`/`zip=` (any block with values, or a table column `t.c`) with `fn=` (expr.ts, now with variables and comparisons: x, y,
   mean sum std norm min max n), `over=G slide=K` (sum of products; `same`, `flip`, `stride`),
   `win=RxC reduce=…|fn=` (cells a b c…), `size=RxC fn="r+c"`, `vals=t.c` (a table column).
 - Verbs: `step id=o[r,c]`, `sweep id=o dur=`, `col id=t.c fn= dur=` (rows fill; a b… this row, pa pb…

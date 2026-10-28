@@ -141,7 +141,7 @@ export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { con
  * script picks up at the next sentence, as one continuous explanation.
  */
 export const openerNote = (opener: string) =>
-  `ALREADY SPOKEN: you have already said the opening below aloud, and its tags have been drawn. Your script continues straight on from its last word, as the next sentence of the same explanation. Do not repeat, rephrase or summarise it, do not answer the question again, and do not mark again what it marked; build on it. If the opening already says everything the question needs, output nothing.\nOPENING: ${opener}`;
+  `ALREADY SPOKEN: you have already said the opening below aloud, and its tags have been drawn. Your script continues straight on from its last word, as the next sentence of the same explanation. The student has its claim: never state it again, in any words, not even as a lead-in to your next point. Your first sentence must add something the opening did not say: why it holds (the mechanism), or the first step of it drawn. Do not repeat, rephrase or summarise the opening, do not answer the question again, and do not mark again what it marked. If the opening already says everything the question needs, output nothing.\nOPENING: ${opener}`;
 
 /** The scout's cache key: one per scout prompt version, shared by every document. */
 export const scoutCacheKey = () => `petu-scout-${SCOUT_VERSION}`;
