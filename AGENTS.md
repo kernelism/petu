@@ -6,8 +6,8 @@ Core context for anyone (human or agent) working in this repo. Read this first.
 
 A web app where a student opens a PDF and asks questions about it. The tutor answers by
 *performing* on the document: it scrolls to the right page, highlights text in sync with its
-narration, and draws to explain — on the page itself, on the desk beside the page, or on a
-full-screen canvas for big diagrams. The student can draw too.
+narration, and draws to explain — on the page itself, or on a board that opens beside the slides
+(slides pinned left, board right; stacked in a narrow window). The student can draw too.
 
 Narration is shown as paced captions today. The same word timeline will later be driven by TTS.
 
@@ -46,8 +46,8 @@ artefact (stills per sentence, transcript, metrics, judge notes). The test split
 
 Dev URLs (append to the dev server URL):
 - `?demo=1` — PDF-only demo on the fixture
-- `?demo=side` — tutor sketches beside the page ("C")
-- `?demo=plane` — full-screen takeover ("B")
+- `?demo=side` — a sketch on the board (normal split, 1:1), connected to the slide
+- `?demo=plane` — a `size=l` sketch: the wide split (slides 0.4, board 0.6)
 - `?script=lec09`, `?script=toolkit`, `?script=relational` — dev scripts, no API call (lec09 needs a
   local, gitignored PDF; relational shows the `let`/construction grammar on the fixture)
 - `?src=<pdf url>` — open a PDF by URL (e.g. `/api/dev-pdf/<name>.pdf` from `PETU_PDF_DIRS`)
@@ -70,8 +70,11 @@ Pipeline:
 2. `src/playback/` — `clock` (paced narration, TTS-ready interface), `scheduler` (fires each
    action at its word, with per-kind lead), `director` (one serial layout lane + concurrent ink
    lanes, backlog compression, timeouts), `session`.
-3. `src/desk/` — the canvas model: sketch regions anchored to pages, lanes that slide the page
-   column aside (C), the full-screen stage (B), connectors, follow mode, element registry
+3. `src/desk/` — the split layout (spec "Lessons v3" L): `layout.ts` derives the reading / split /
+   stacked frame from the window (margin = gutter = clamp(16px, 2.5vw, 40px)); `Desk.ts` owns the
+   board (sections appended top to bottom, uniformly scaled, text at the slide's measured body size,
+   persisting across answers until × / Esc), connectors in an overlay above slides and board,
+   follow mode, element registry
    (`id=`, `emph`, `move`, `fade`), toolkit elements (`expr` safe parser — no eval, `plot`,
    `math`, `nudge`).
 4. `src/ink/agent/` — stroke geometry and human-like pen motion (live / hand / clean styles).
@@ -147,9 +150,11 @@ shade angle brace axes plot sketch connect emph move fade clear`.
   names topology (marks, names, constructions); the engine computes coordinates. Demo scripts use
   literals and stay byte-identical through the resolver.
 - **Continuity.** Reveal a whole box before drawing in it; pan back before drawing off-screen;
-  frame both ends of a connector (else take over the screen); ids unique; clamp to bounds;
-  nothing drawn under the caption dock; if the student scrolls, show "Back to answer";
-  re-layout on resize; at most 2 regions per answer.
+  bring both ends of a connector on screen (slides and board scroll independently); ids unique;
+  nothing drawn under the caption dock (the viewer's visible band ends above it); if the student
+  scrolls the slides or the board, show "Back to answer"; re-layout on resize; at most 2 sketches
+  per answer. Board elements are never shifted individually: a section scales as a whole, text
+  wraps at its `at`. The board's scroller carries `data-petu-board` (the eval captures it).
 
 ## Explanation quality (applies to demo scripts and the agent prompt)
 
@@ -165,7 +170,8 @@ scrollbars; every control has hover, focus-visible and active states; text ≥ 1
 | Checkpoint | Scope | Status |
 |---|---|---|
 | 1 | Viewer, student canvas, parser, paced clock, director, agent strokes, captions, demos (no AI) | done |
-| Canvas v2 + Toolkit v2 | Desk canvas (C beside page, B takeover), free movement, connectors, follow mode, full drawing toolkit, visual language | done |
+| Canvas v2 + Toolkit v2 | Desk canvas, free movement, connectors, follow mode, full drawing toolkit, visual language | done (placement replaced by Lessons v3 L) |
+| Lessons v3 L | Split layout: slides left, board right, persistent board, dock under the slide column | done |
 | 2 | Agent: grounding (lines + marks), relational geometry, `/api/ask` streaming from OpenAI with a spend ledger, prompt p3.2, `?debug` latency/cost, judged eval (24 questions, 12 PDFs, held-out test split) | done; held-out test judge 4.61 (P1 4.45), first word p50 1.28s, ~$0.004/answer; awaiting founder review |
 | 3 | Polish: settings panel, history, text selection, anchored-bubble captions setting, error states | later |
 | Voice | Own design pass (TTS clock drives the same timeline) | after 3 |

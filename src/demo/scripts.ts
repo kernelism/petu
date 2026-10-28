@@ -72,7 +72,7 @@ export const SCRIPTS: Record<string, Demo & { src: string }> = {
       `{{circle p=3 mark=#d1}} that is why, {{circle p=3 mark=#d2}} for this pair of cameras, the search is one-dimensional.`,
   },
   /**
-   * Toolkit check (not a teaching demo): every v2 element once, in one region beside the sample
+   * Toolkit check (not a teaching demo): every v2 element once, in one board section for the sample
    * deck's page 3, for screenshots and the timing audit. Also every look flag: the three weights
    * (primary default, secondary, faint), dash (faint by default), shade plain / outline / em.
    */

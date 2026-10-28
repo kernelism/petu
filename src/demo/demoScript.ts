@@ -40,11 +40,10 @@ export const DEMO_SCRIPT =
   `and we search {{emph id=lp}} one line instead of the whole image.`;
 
 /**
- * C demo: point at x on the slide, then sketch the same scene from the side on the desk beside it,
- * with a connector from the slide's x to the sketch's x. Region `side` (1000 × 700), true geometry
- * of a verged pair (each camera turned 25° toward the middle, f 200, images 280 wide):
- *   baseline y 668, level with the slide's C–C′ line (the region is centred on the page, so the
- *            slide's y 811 lands at local ≈ 664 at 1280 px wide and ≈ 672 at 1440: within 3 px of both)
+ * Board demo (normal split): point at x on the slide, then sketch the same scene from the side on
+ * the board, with a connector from the slide's x to the sketch's x. Region `side` (1000 × 700), true
+ * geometry of a verged pair (each camera turned 25° toward the middle, f 200, images 280 wide):
+ *   baseline y 668
  *   cameras  C (140,668), C′ (840,668); labels outside the ends (dir=w, e): below would clip at the region edge
  *   image 1  (98,428)–(351,546), drawn right to left so its label hangs under the outer end;
  *            x = (315,529)
@@ -80,8 +79,8 @@ export const DEMO_SIDE_SCRIPT =
   `So wherever the real point is, {{write on=side at=40,118 "x′ must be on l′" size=l em}} x-prime must be on l-prime.`;
 
 /**
- * B demo: a bigger diagram takes the stage (size l), with the slide pinned as the reference card.
- * The first sentence is short and circles x early; the takeover starts on the second.
+ * Wide board demo: a bigger diagram (size l) widens the board to 0.6 of the window; the slide stays
+ * in view on the left. The first sentence is short and circles x early; the board opens on the second.
  * Region `big` (1000 × 700), a pseudo-3D view of the classic epipolar figure:
  *   cameras  C (80,560), C′ (920,560), outside their image planes; baseline y 560
  *   images   two outlined sheets: (150,250) (410,210) (410,600) (150,640) and its mirror; the
