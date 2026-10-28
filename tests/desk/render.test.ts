@@ -44,3 +44,14 @@ describe('text reveal', () => {
     expect(t.querySelector('tspan')).toBeNull(); // back to plain text once written
   });
 });
+
+describe('label halo', () => {
+  it('a made text paints a surface-colored stroke behind its fill', () => {
+    const g = document.createElementNS(SVG, 'g') as SVGGElement;
+    const t = makeText(g, { x: 0, y: 0 }, 'x', { size: 20, style: 'clean', color: '#000' });
+    expect(t.getAttribute('paint-order')).toBe('stroke');
+    expect(t.getAttribute('stroke')).toBeTruthy();
+    expect(Number(t.getAttribute('stroke-width'))).toBeCloseTo(4.4);
+    expect(t.getAttribute('stroke-linejoin')).toBe('round');
+  });
+});

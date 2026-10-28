@@ -1,6 +1,6 @@
 // tests/desk/elements.test.ts
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { buildElement, REF_WAIT_MS } from '../../src/desk/elements';
+import { buildElement, REF_WAIT_MS, encloseRect } from '../../src/desk/elements';
 import { Registry } from '../../src/desk/registry';
 import { DEFAULTS } from '../../src/settings/settings';
 import type { BuildEnv, DeskApi, ElementPlan, TargetCtx } from '../../src/desk/types';
@@ -289,5 +289,19 @@ describe('buildElement', () => {
     await Promise.all([d1, d2]);
     expect(e.registry.get('p')!.anchor).toEqual({ x: 400, y: 200 });
     expect(e.registry.get('p')!.group.getAttribute('transform')).toBe('translate(300 100)');
+  });
+});
+
+describe('anchored shapes enclose their glyphs', () => {
+  it.each([[20, 20], [60, 30], [240, 30]])('an ellipse around a %i×%i rect contains every corner', (w, h) => {
+    const { rx, ry } = encloseRect(w, h);
+    for (const [cx, cy] of [[w / 2, h / 2], [-w / 2, h / 2], [w / 2, -h / 2], [-w / 2, -h / 2]]) {
+      expect((cx / rx) ** 2 + (cy / ry) ** 2).toBeLessThanOrEqual(1);
+    }
+    expect(rx).toBeGreaterThanOrEqual(12);
+    expect(ry).toBeGreaterThanOrEqual(12);
+  });
+  it('uses the smallest such ellipse plus 4', () => {
+    expect(encloseRect(240, 30).rx).toBeCloseTo(240 / Math.SQRT2 + 4);
   });
 });

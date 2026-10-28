@@ -51,3 +51,53 @@ describe('placeLabel', () => {
     expect(s.x + s.w / 2).toBeCloseTo(500);
   });
 });
+
+import { segHitsRect, placeClear, type Seg } from '../../src/desk/nudge';
+
+describe('segHitsRect', () => {
+  const r = { x: 10, y: 10, w: 20, h: 10 };
+  it('detects crossing, touching (within pad) and inside', () => {
+    expect(segHitsRect({ a: { x: 0, y: 15 }, b: { x: 50, y: 15 } }, r)).toBe(true); // through
+    expect(segHitsRect({ a: { x: 15, y: 12 }, b: { x: 20, y: 18 } }, r)).toBe(true); // inside
+    expect(segHitsRect({ a: { x: 0, y: 21 }, b: { x: 50, y: 21 } }, r, 2)).toBe(true); // within pad
+    expect(segHitsRect({ a: { x: 0, y: 25 }, b: { x: 50, y: 25 } }, r, 2)).toBe(false);
+  });
+  it('handles parallel segments and ones that stop short', () => {
+    expect(segHitsRect({ a: { x: 0, y: 0 }, b: { x: 50, y: 0 } }, r, 2)).toBe(false); // parallel, outside
+    expect(segHitsRect({ a: { x: 0, y: 15 }, b: { x: 5, y: 15 } }, r, 2)).toBe(false); // short of the rect
+    expect(segHitsRect({ a: { x: 20, y: 0 }, b: { x: 20, y: 50 } }, r)).toBe(true); // vertical through
+    expect(segHitsRect({ a: { x: 5, y: 5 }, b: { x: 5, y: 5 } }, r, 0)).toBe(false); // a point outside
+  });
+});
+
+describe('placeClear', () => {
+  const anchor = { x: 300, y: 300 };
+  const hits = (r: { x: number; y: number; w: number; h: number }, segs: Seg[]) => segs.some((s) => segHitsRect(s, r));
+  it('moves a label off a horizontal line through its point (dir n)', () => {
+    const segs: Seg[] = [{ a: { x: 100, y: 300 }, b: { x: 500, y: 300 } }];
+    const r = placeClear(anchor, 20, 18, 'n', 3, segs, [], B);
+    expect(hits(r, segs)).toBe(false);
+    expect(r.y + r.h).toBeLessThanOrEqual(300); // the requested side is already clear
+  });
+  it('keeps the requested side when it is clear', () => {
+    expect(placeClear(anchor, 20, 18, 'ne', 3, [], [], B)).toEqual(placeLabel(anchor, 20, 18, 'ne', 3));
+  });
+  it('at a ray crossing with NE and N both crossed, moves to a clear side', () => {
+    const segs: Seg[] = [
+      { a: { x: 300, y: 200 }, b: { x: 300, y: 400 } }, // vertical through the point (crosses N)
+      { a: { x: 300, y: 300 }, b: { x: 400, y: 200 } }, // the NE ray
+    ];
+    const r = placeClear(anchor, 20, 18, 'ne', 3, segs, [], B);
+    expect(hits(r, segs)).toBe(false);
+    expect(placeLabel(anchor, 20, 18, 'ne', 3)).not.toEqual(r);
+  });
+  it('when everything is blocked returns the least-crossed side, inside the bounds', () => {
+    const segs: Seg[] = [];
+    for (let y = 0; y <= 700; y += 6) segs.push({ a: { x: 0, y }, b: { x: 1000, y } });
+    const r = placeClear({ x: 2, y: 2 }, 30, 18, 'nw', 3, segs, [], B);
+    expect(r.x).toBeGreaterThanOrEqual(0);
+    expect(r.y).toBeGreaterThanOrEqual(0);
+    expect(r.x + r.w).toBeLessThanOrEqual(1000);
+    expect(r.y + r.h).toBeLessThanOrEqual(700);
+  });
+});

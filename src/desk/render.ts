@@ -91,6 +91,8 @@ export function makeText(g: SVGGElement, at: SPt, text: string, o: TextOpts): SV
   // 0.34 em below the middle puts the box's center on at.y.
   if (mixed) t.setAttribute('y', String(at.y + o.size * 0.34));
   else set(t, { y: at.y, 'dominant-baseline': 'middle' });
+  // A halo in the surface color (the sheet color in regions; `run` marks region text) keeps a label legible where a stroke passes under it (SVG-native, WebKit-safe).
+  set(t, { 'paint-order': 'stroke', stroke: token('--ink-halo') || (o.run ? token('--shade-sheet') : token('--surface')) || '#fff', 'stroke-width': o.size * 0.22, 'stroke-linejoin': 'round' });
   if (o.run) t.setAttribute('data-run', '');
   if (!mixed) { t.textContent = text; g.appendChild(t); return t; }
   const font = token('--font-math');
@@ -216,7 +218,11 @@ export async function reveal(g: SVGGElement, _box: SRect, chars: number, o: { st
   const dur = Math.min(WRITE_MAX_MS, Math.max(220, (chars / CHARS_PER_SEC) * 1000)) * o.speed;
   const fade = Math.min(UNIT_FADE_MS * o.speed, dur / 2);
   const starts = unitStarts(units.length, dur, fade);
-  const setOp = (u: Unit, v: number) => { (u.el.style as unknown as Record<string, string>)[u.prop] = v >= 1 ? '' : String(v); };
+  const setOp = (u: Unit, v: number) => {
+    const st = u.el.style as unknown as Record<string, string>;
+    st[u.prop] = v >= 1 ? '' : String(v);
+    if (u.prop === 'fillOpacity') st.strokeOpacity = v >= 1 ? '' : String(v); // the halo fades with its glyph
+  };
   units.forEach((u) => setOp(u, 0));
   const t0 = performance.now();
   let from = 0; // units before this are fully in

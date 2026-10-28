@@ -26,8 +26,13 @@ type Props = {
   question?: string;
   /** Between Enter and the first word: the echoed question waits, muted. */
   waiting?: boolean;
-  /** A failed answer: the message plus a Retry control (the caption takes pointer events then). */
-  error?: { message: string; onRetry(): void };
+  /** A quiet status line while no word has arrived yet ("Still thinking…"). Static text, no motion. */
+  hint?: string;
+  /**
+   * A failed or cut-off answer: the message, plus a Retry control when retrying can help (the
+   * caption takes pointer events then).
+   */
+  error?: { message: string; onRetry?(): void };
 };
 
 /** The cross-fade between reading windows (ui.css .caption-text / .caption-leaving). */
@@ -50,7 +55,7 @@ function makeMeasure(el: HTMLElement): (s: string) => number {
   };
 }
 
-export function Caption({ words, visible, question, waiting = false, error }: Props) {
+export function Caption({ words, visible, question, waiting = false, hint, error }: Props) {
   const tokens = groupWords(words);
   const viewRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -101,17 +106,22 @@ export function Caption({ words, visible, question, waiting = false, error }: Pr
   }, [leaving]);
 
   const shown = visible && (tokens.length > 0 || !!question || !!error);
+  const showHint = !!hint && !error && tokens.length === 0;
   const visibleTokens = tokens.slice(Math.min(start, tokens.length));
   return (
-    <div className={`caption${shown ? ' is-visible' : ''}${error ? ' has-error' : ''}`} aria-hidden={!shown}>
+    <div className={`caption${shown ? ' is-visible' : ''}${error?.onRetry ? ' has-error' : ''}`} aria-hidden={!shown}>
       {question && (
         <div className={`caption-q${waiting && !error ? ' is-waiting' : ''}`} title={question}>{question}</div>
       )}
       {error ? (
         <div className="caption-error">
-          <span>{error.message}</span>
-          <button type="button" className="caption-retry" onClick={error.onRetry} tabIndex={shown ? 0 : -1}>Retry</button>
+          <span className="caption-error-msg">{error.message}</span>
+          {error.onRetry && (
+            <button type="button" className="caption-retry" onClick={error.onRetry} tabIndex={shown ? 0 : -1}>Retry</button>
+          )}
         </div>
+      ) : showHint ? (
+        <div className="caption-hint">{hint}</div>
       ) : tokens.length > 0 && (
         <div className={`caption-viewport${tall ? ' is-tall' : ''}`} ref={viewRef}>
           {leaving && (

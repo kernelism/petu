@@ -1,0 +1,179 @@
+import { describe, expect, it, vi } from 'vitest';
+import { AskError, askErrorLine, askStream, capLine, getSpend, spendBlocked } from '../../src/agent/client';
+import type { AskEvent, AskRequest, SpendSummary } from '../../src/agent/protocol';
+
+const REQ = { question: 'q', history: [], context: {} } as unknown as AskRequest;
+
+/** NDJSON for `events`, cut into byte chunks at `cuts` (offsets into the UTF-8 bytes). */
+function body(events: AskEvent[], cuts: number[] = [], tail = '\n'): ReadableStream<Uint8Array> {
+  const bytes = new TextEncoder().encode(events.map((e) => JSON.stringify(e)).join('\n') + tail);
+  const at = [0, ...cuts.filter((c) => c > 0 && c < bytes.length), bytes.length];
+  const parts = at.slice(1).map((end, i) => bytes.slice(at[i], end));
+  return new ReadableStream({ start(c) { for (const p of parts) c.enqueue(p); c.close(); } });
+}
+const fakeFetch = (res: Response | (() => never)) => vi.fn(async () => (typeof res === 'function' ? res() : res)) as unknown as typeof fetch;
+const ok = (b: ReadableStream<Uint8Array>) => new Response(b, { status: 200 });
+
+async function collect(it: AsyncIterable<string>): Promise<string[]> {
+  const out: string[] = [];
+  for await (const c of it) out.push(c);
+  return out;
+}
+
+const META: AskEvent = { t: 'meta', reqId: 'r1', model: 'gpt-6.1-terra', effort: 'none' };
+const DONE: AskEvent = { t: 'done', usd: 0.01, spentUsd: 1, capUsd: 40, ttftMs: 900 };
+
+describe('askStream', () => {
+  it('yields text events in order across awkward byte splits (multi-byte chars included)', async () => {
+    const events: AskEvent[] = [META, { t: 'text', d: 'The line l′ ' }, { t: 'text', d: '{{circle p=3 mark=#d3}} is where — ' }, { t: 'text', d: 'x′ must lie.' }, DONE];
+    const total = new TextEncoder().encode(events.map((e) => JSON.stringify(e)).join('\n')).length;
+    for (const cuts of [[1], [5, 6, 7], [40, 41, 90, 91, 92], Array.from({ length: total }, (_, i) => i)]) {
+      const out = await collect(askStream(REQ, new AbortController().signal, {}, fakeFetch(ok(body(events, cuts)))));
+      expect(out).toEqual(['The line l′ ', '{{circle p=3 mark=#d3}} is where — ', 'x′ must lie.']);
+    }
+  });
+
+  it('posts the request as JSON to /api/ask', async () => {
+    const f = fakeFetch(ok(body([{ t: 'text', d: 'a' }])));
+    await collect(askStream(REQ, new AbortController().signal, {}, f));
+    const [url, init] = (f as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe('/api/ask');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual(REQ);
+  });
+
+  it('routes meta, note and done to handlers', async () => {
+    const h = { onMeta: vi.fn(), onNote: vi.fn(), onDone: vi.fn(), onCutOff: vi.fn() };
+    const events: AskEvent[] = [META, { t: 'text', d: 'Hi.' }, { t: 'note', message: 'dropped 1 message' }, DONE];
+    await collect(askStream(REQ, new AbortController().signal, h, fakeFetch(ok(body(events, [3, 50])))));
+    expect(h.onMeta).toHaveBeenCalledWith(META);
+    expect(h.onNote).toHaveBeenCalledWith('dropped 1 message');
+    expect(h.onDone).toHaveBeenCalledWith(DONE);
+    expect(h.onCutOff).not.toHaveBeenCalled();
+  });
+
+  it('reads a last line without a trailing newline and skips blank or malformed lines', async () => {
+    const enc = new TextEncoder();
+    const raw = `\n${JSON.stringify({ t: 'text', d: 'a' })}\n{not json\n\n${JSON.stringify({ t: 'text', d: 'b' })}`;
+    const b = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode(raw)); c.close(); } });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await collect(askStream(REQ, new AbortController().signal, {}, fakeFetch(ok(b))))).toEqual(['a', 'b']);
+    warn.mockRestore();
+  });
+
+  it('an error before any text throws AskError with its code and retryability', async () => {
+    const events: AskEvent[] = [{ t: 'error', code: 'no_key', message: 'Add OPENAI_API_KEY', retryable: false }];
+    const err = await collect(askStream(REQ, new AbortController().signal, {}, fakeFetch(ok(body(events))))).catch((e) => e);
+    expect(err).toBeInstanceOf(AskError);
+    expect(err).toMatchObject({ code: 'no_key', retryable: false });
+    const err2 = await collect(askStream(REQ, new AbortController().signal, {}, fakeFetch(ok(body([META, { t: 'error', code: 'rate_limited', message: '429', retryable: true }]))))).catch((e) => e);
+    expect(err2).toMatchObject({ code: 'rate_limited', retryable: true });
+  });
+
+  it('an error after text ends normally and reports a cut-off (what arrived plays out)', async () => {
+    const onCutOff = vi.fn();
+    const events: AskEvent[] = [{ t: 'text', d: 'First part ' }, DONE, { t: 'error', code: 'cut_off', message: 'The answer was cut off.', retryable: true }, { t: 'text', d: 'never' }];
+    const out = await collect(askStream(REQ, new AbortController().signal, { onCutOff }, fakeFetch(ok(body(events, [7])))));
+    expect(out).toEqual(['First part ']);
+    expect(onCutOff).toHaveBeenCalledWith('The answer was cut off.');
+    const onCutOff2 = vi.fn();
+    const out2 = await collect(askStream(REQ, new AbortController().signal, { onCutOff: onCutOff2 }, fakeFetch(ok(body([{ t: 'text', d: 'x' }, { t: 'error', code: 'network', message: 'reset', retryable: true }]))))) ;
+    expect(out2).toEqual(['x']);
+    expect(onCutOff2).toHaveBeenCalledOnce();
+  });
+
+  it('a cut_off with no text before it is still a cut-off, not a throw', async () => {
+    const onCutOff = vi.fn();
+    const out = await collect(askStream(REQ, new AbortController().signal, { onCutOff }, fakeFetch(ok(body([META, { t: 'error', code: 'cut_off', message: 'cut', retryable: true }])))));
+    expect(out).toEqual([]);
+    expect(onCutOff).toHaveBeenCalledOnce();
+  });
+
+  it('a stream that drops without a done after text counts as cut off', async () => {
+    const onCutOff = vi.fn();
+    const out = await collect(askStream(REQ, new AbortController().signal, { onCutOff }, fakeFetch(ok(body([META, { t: 'text', d: 'half an' }])))));
+    expect(out).toEqual(['half an']);
+    expect(onCutOff).toHaveBeenCalledOnce();
+  });
+
+  it('maps a failed fetch to network and HTTP errors to bad_request / upstream', async () => {
+    const net = await collect(askStream(REQ, new AbortController().signal, {}, fakeFetch(() => { throw new TypeError('Failed to fetch'); }))).catch((e) => e);
+    expect(net).toMatchObject({ code: 'network', retryable: true });
+    const bad = await collect(askStream(REQ, new AbortController().signal, {}, fakeFetch(new Response('no', { status: 400 })))).catch((e) => e);
+    expect(bad).toMatchObject({ code: 'bad_request', retryable: false });
+    const up = await collect(askStream(REQ, new AbortController().signal, {}, fakeFetch(new Response('no', { status: 502 })))).catch((e) => e);
+    expect(up).toMatchObject({ code: 'upstream', retryable: true });
+    const missing = await collect(askStream(REQ, new AbortController().signal, {}, fakeFetch(new Response('no', { status: 404 })))).catch((e) => e);
+    expect(missing).toMatchObject({ code: 'network', retryable: true });
+  });
+
+  it('aborting stops reading, cancels the body and does not throw', async () => {
+    const ctrl = new AbortController();
+    const enc = new TextEncoder();
+    let cancelled = false;
+    let push!: (s: string) => void;
+    const b = new ReadableStream<Uint8Array>({
+      start(c) { push = (s) => c.enqueue(enc.encode(s)); },
+      cancel() { cancelled = true; },
+    });
+    const f = vi.fn(async (_u: string, init: RequestInit) => {
+      init.signal!.addEventListener('abort', () => {});
+      return ok(b);
+    }) as unknown as typeof fetch;
+    const out: string[] = [];
+    const run = (async () => { for await (const c of askStream(REQ, ctrl.signal, {}, f)) { out.push(c); ctrl.abort(); push(`${JSON.stringify({ t: 'text', d: 'late' })}\n`); } })();
+    push(`${JSON.stringify({ t: 'text', d: 'first' })}\n`);
+    await expect(run).resolves.toBeUndefined();
+    expect(out).toEqual(['first']);
+    expect(cancelled).toBe(true);
+  });
+
+  it('a fetch rejected because the signal aborted returns quietly', async () => {
+    const ctrl = new AbortController();
+    ctrl.abort();
+    const f = fakeFetch(() => { throw new DOMException('aborted', 'AbortError'); });
+    await expect(collect(askStream(REQ, ctrl.signal, {}, f))).resolves.toEqual([]);
+  });
+});
+
+describe('getSpend', () => {
+  it('returns the summary, or null when the server is missing or down', async () => {
+    const s: SpendSummary = { totalUsd: 1.5, capUsd: 40, todayUsd: 0.2 };
+    expect(await getSpend(fakeFetch(new Response(JSON.stringify(s), { status: 200 })))).toEqual(s);
+    expect(await getSpend(fakeFetch(new Response('<html>', { status: 200 })))).toBeNull();
+    expect(await getSpend(fakeFetch(new Response('', { status: 404 })))).toBeNull();
+    expect(await getSpend(fakeFetch(() => { throw new TypeError('down'); }))).toBeNull();
+  });
+});
+
+describe('copy', () => {
+  const spend = (o: Partial<SpendSummary>): SpendSummary => ({ totalUsd: 0, capUsd: 40, todayUsd: 0, ...o });
+
+  it('spendBlocked: the server says so, or a cap is used up', () => {
+    expect(spendBlocked(null)).toBe(false);
+    expect(spendBlocked(spend({ totalUsd: 1 }))).toBe(false);
+    expect(spendBlocked(spend({ blocked: 'total' }))).toBe(true);
+    expect(spendBlocked(spend({ totalUsd: 0.0076, capUsd: 0 }))).toBe(true);
+    expect(spendBlocked(spend({ todayUsd: 3, dailyCapUsd: 3 }))).toBe(true);
+  });
+
+  it('capLine names the cap that is used up, in dollars', () => {
+    expect(capLine(spend({ totalUsd: 40, capUsd: 40 }))).toBe('Spending cap reached: $40.00 of $40.00 used. Raise it in .env to continue.');
+    expect(capLine(spend({ totalUsd: 0.0076, capUsd: 0 }))).toBe('Spending cap reached: $0.01 of $0.00 used. Raise it in .env to continue.');
+    expect(capLine(spend({ totalUsd: 10, todayUsd: 3.01, dailyCapUsd: 3 }))).toBe("Today's spending cap reached: $3.01 of $3.00 used. Raise it in .env to continue.");
+    expect(capLine(null)).toBe('Spending cap reached. Raise it in .env to continue.');
+    // The server refuses for another reason (a phase budget): its line, which names the budget.
+    expect(capLine(spend({ totalUsd: 5, blocked: 'Spending stopped: $1.00 of this phase’s budget ($1.00) is used.' })))
+      .toBe('Spending stopped: $1.00 of this phase’s budget ($1.00) is used. Raise it in .env to continue.');
+  });
+
+  it('askErrorLine follows the copy table, with Retry only where it helps', () => {
+    expect(askErrorLine('no_key', null)).toEqual({ message: 'Add your OpenAI key to .env, then restart the dev server.', retry: false });
+    expect(askErrorLine('cap', spend({ totalUsd: 40, capUsd: 40 }))).toEqual({ message: 'Spending cap reached: $40.00 of $40.00 used. Raise it in .env to continue.', retry: false });
+    expect(askErrorLine('rate_limited', null)).toEqual({ message: 'The tutor is busy. Try again in a moment.', retry: true });
+    expect(askErrorLine('network', null)).toEqual({ message: "Couldn't reach the tutor.", retry: true });
+    expect(askErrorLine('upstream', null)).toEqual({ message: "Couldn't reach the tutor.", retry: true });
+    expect(askErrorLine('cut_off', null)).toEqual({ message: 'The answer was cut off.', retry: true });
+    expect(askErrorLine('bad_request', null)).toEqual({ message: "That question couldn't be sent.", retry: false });
+  });
+});

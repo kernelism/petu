@@ -72,6 +72,16 @@ export class Registry {
     return out;
   }
 
+  /** Segments of every drawn stroke in `t` (faded elements excluded), for exact label placement. */
+  segments(t: Target): { a: SPt; b: SPt }[] {
+    const out: { a: SPt; b: SPt }[] = [];
+    for (const e of this.byId.values()) {
+      if (e.faded || !e.strokes || !sameTarget(e.target, t)) continue;
+      for (const s of e.strokes) for (let i = 0; i + 1 < s.length; i++) out.push({ a: s[i], b: s[i + 1] });
+    }
+    return out;
+  }
+
   /** The most recent element of `kind` in `t` (plot finds its axes). */
   latest(t: Target, kind: string): ElementEntry | undefined {
     let last: ElementEntry | undefined;

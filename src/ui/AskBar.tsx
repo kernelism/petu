@@ -7,7 +7,10 @@ const isTypingTarget = (t: EventTarget | null) =>
 
 export type Transcript = { question: string; answer: string };
 
-export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcript }: {
+/** Typing this many characters counts as intent to ask (prewarm). */
+const INTENT_CHARS = 3;
+
+export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcript, blocked, onIntent }: {
   onAsk(q: string): void; onStop(): void; busy: boolean;
   /** Shown as chips above the bar while it is focused and empty. */
   suggestions?: string[];
@@ -15,12 +18,18 @@ export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcr
   restore?: { text: string; seq: number };
   /** The last finished answer: a quiet "Transcript" toggle expands it above the bar. */
   transcript?: Transcript | null;
+  /** Asking is paused (spending cap): the line shows in place of the placeholder and nothing is sent. */
+  blocked?: string;
+  /** The student is about to ask: the bar was focused, or the 3rd character was typed. */
+  onIntent?(): void;
 }) {
   const [text, setText] = useState('');
   const [focused, setFocused] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   useEffect(() => { if (restore) setText(restore.text); }, [restore?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!transcript || busy) setShowTranscript(false); }, [transcript, busy]);
+  // Nothing can be sent while blocked: the field shows the cap line instead of text that can't go anywhere.
+  useEffect(() => { if (blocked) setText(''); }, [blocked]);
   const inputRef = useRef<HTMLInputElement>(null);
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -41,7 +50,7 @@ export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcr
 
   const submit = () => {
     const q = text.trim();
-    if (!q) return;
+    if (!q || blocked) return;
     onAsk(q);
     setText('');
   };
@@ -59,15 +68,15 @@ export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcr
   };
 
   const hasText = text.trim().length > 0;
-  const showChips = focused && !hasText && !busy && !showTranscript && suggestions.length > 0;
+  const showChips = focused && !hasText && !busy && !blocked && !showTranscript && suggestions.length > 0;
   const canTranscript = !!transcript && !busy && !hasText;
 
   return (
     <form
-      className="askbar"
+      className={`askbar${blocked ? ' is-blocked' : ''}`}
       onSubmit={(e) => { e.preventDefault(); submit(); }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); inputRef.current?.focus(); } }}
-      onFocus={() => setFocused(true)}
+      onFocus={() => { if (!focused) onIntent?.(); setFocused(true); }}
       onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); }}
     >
       {showTranscript && transcript && (
@@ -96,9 +105,16 @@ export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcr
         ref={inputRef}
         className="askbar-input"
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v.trim().length >= INTENT_CHARS && text.trim().length < INTENT_CHARS) onIntent?.();
+          setText(v);
+        }}
         onKeyDown={onKeyDown}
-        placeholder={busy ? 'Answering · Esc to stop' : 'Ask about this PDF…'}
+        placeholder={busy ? 'Answering · Esc to stop' : blocked ?? 'Ask about this PDF…'}
+        // Blocked: still focusable (the line can be read, Esc and / work), but nothing can be typed or sent.
+        readOnly={!!blocked && !busy}
+        title={blocked && !busy ? blocked : undefined}
         aria-label="Ask about this PDF"
         autoComplete="off"
         spellCheck={false}
@@ -118,7 +134,7 @@ export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcr
           <button type="button" className="askbar-btn is-stop" onClick={onStop} aria-label="Stop answer">
             <Square size={12} strokeWidth={0} fill="currentColor" />
           </button>
-        ) : hasText ? (
+        ) : hasText && !blocked ? (
           <button type="submit" className="askbar-btn is-send" aria-label="Ask">
             <ArrowUp size={18} strokeWidth={2} />
           </button>

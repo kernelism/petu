@@ -40,7 +40,7 @@ describe('locateQuote', () => {
 
   it('prefers whole-word matches and picks the occurrence nearest `near`', () => {
     const r2 = [run('next x here', 50, 100, 110), run('and x there', 50, 400, 110)];
-    const top = locateQuote(r2, 'x');
+    const top = locateQuote(r2, 'x', { x: 100, y: 110 });
     expect(top).toHaveLength(1);
     expect(top[0].y).toBe(100);
     expect(top[0].x).toBeGreaterThan(90); // the standalone "x", not the x inside "next"
@@ -99,19 +99,48 @@ describe('locateQuote', () => {
     // width table: 'i' narrow, 'W' wide
     const measure = (_f: string, s: string) => [...s].reduce((a, c) => a + (c === 'i' ? 1 : c === 'W' ? 5 : 3), 0);
     const r = [{ ...run('iiii WW iiii', 0, 0, 100), font: '100px X' }];
+    const NEAR = { x: 50, y: 10 }; // quotes of ≤ 2 characters need `near`
     it('uses measured widths scaled to rect.w', () => {
-      const out = locateQuote(r, 'WW', undefined, { measure });
+      const out = locateQuote(r, 'WW', NEAR, { measure });
       // total = 4+3+10+3+4 = 24 ; prefix 'iiii ' = 7
       expect(out[0].x).toBeCloseTo(29.17, 1);
       expect(out[0].w).toBeCloseTo(41.67, 1);
     });
     it('falls back to proportional without font or measure', () => {
       const noFont = [run('iiii WW iiii', 0, 0, 100)];
-      expect(locateQuote(noFont, 'WW', undefined, { measure })[0].x).toBeCloseTo(100 * 5 / 12, 5);
-      expect(locateQuote(r, 'WW')[0].x).toBeCloseTo(100 * 5 / 12, 5);
+      expect(locateQuote(noFont, 'WW', NEAR, { measure })[0].x).toBeCloseTo(100 * 5 / 12, 5);
+      expect(locateQuote(r, 'WW', NEAR)[0].x).toBeCloseTo(100 * 5 / 12, 5);
     });
     it('falls back when measure returns garbage', () => {
-      expect(locateQuote(r, 'WW', undefined, { measure: () => 0 })[0].x).toBeCloseTo(100 * 5 / 12, 5);
+      expect(locateQuote(r, 'WW', NEAR, { measure: () => 0 })[0].x).toBeCloseTo(100 * 5 / 12, 5);
+    });
+  });
+
+  describe('G4 line index', () => {
+    // Equation glyphs, one run per glyph, in stream order unlike reading order.
+    const g = (c: string, x: number, y = 300) => run(c, x, y, 10);
+    const eq = [g('=', 148), g('x', 100), g('B', 172), g('′', 147, 296), g('−', 112), g('x', 136)];
+    it('finds a quote whose glyph runs come out of order', () => {
+      expect(locateQuote(eq, 'x − x′')).toHaveLength(1);
+      expect(locateQuote(eq, 'x − x′ = B', undefined, { aspect: 1 })).toHaveLength(1);
+    });
+    it('treats modifier primes as apostrophes', () => {
+      expect(locateQuote([run("then x' moves", 50, 100, 130)], 'xʹ', { x: 90, y: 110 })).toHaveLength(1);
+      expect(locateQuote([run("then x' moves", 50, 100, 130)], 'xʼ', { x: 90, y: 110 })).toHaveLength(1);
+      expect(normalizeText('xʹ')).toBe("x'");
+    });
+    it('gives one tight rect per line', () => {
+      const r = locateQuote([run('B', 100, 300, 10), run('⋅', 112, 300, 6), run('f', 120, 300, 8), run('far away text', 600, 300, 120)], 'B ⋅ f');
+      expect(r).toHaveLength(1);
+      expect(r[0].x).toBe(100);
+      expect(r[0].x + r[0].w).toBeCloseTo(128, 5);
+    });
+    it('needs `near` for quotes of ≤ 2 characters, and a hit within 100 units of it', () => {
+      const one = [run('a point x here', 50, 100, 140)];
+      expect(locateQuote(one, 'x')).toEqual([]);
+      expect(locateQuote(one, 'x', { x: 400, y: 110 })).toEqual([]);
+      expect(locateQuote(one, 'x', { x: 140, y: 110 })).toHaveLength(1);
     });
   });
 });
+

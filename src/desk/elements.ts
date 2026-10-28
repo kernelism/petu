@@ -9,7 +9,7 @@ import { drawHighlight } from '../ink/agent/marks';
 import { locateQuote } from '../locate/locateQuote';
 import { compile } from './expr';
 import { plotStrokes } from './plot';
-import { nudge, placeLabel } from './nudge';
+import { nudge, placeClear, placeLabel, type Seg } from './nudge';
 import { boxOf, strokeBoxes, union, type ElementEntry } from './registry';
 import { TEXT_PX, MATH_PX, own, makeText, measureText, reveal, drawDot, drawShade, emphPass, moveGroupTo, translateOf, fadeGroup, textSegments, type TextOpts, type ShadeShape, type ShadeLook } from './render';
 import { preloadMath, texToHtml, placeMath, revealMath, setMathAt } from './math';
@@ -27,6 +27,9 @@ export const FADE_TO = 0.25;
 const PAD = 6;
 /** Connector arrivals within this many CSS px of the element are obstacles for later labels. */
 const ARRIVAL_PX = 64;
+
+/** The smallest axis-aligned ellipse through a w × h rect's corners, plus 4 (never under 12). */
+export const encloseRect = (w: number, h: number) => ({ rx: Math.max(12, w / Math.SQRT2 + 4), ry: Math.max(12, h / Math.SQRT2 + 4) });
 
 const isRegion = (t: Target) => t.region != null;
 const where = (t: Target) => (t.region != null ? `region ${t.region}` : `page ${t.page}`);
@@ -121,7 +124,8 @@ function strokePlan(a: DrawAction, ctx: TargetCtx, env: BuildEnv, ink: Ink, extr
  */
 function placeText(ctx: TargetCtx, env: BuildEnv, layer: SVGGElement, text: string, o: TextOpts, anchor: SPt, dir: Parameters<typeof placeLabel>[3], clear: number, skip?: string): SRect {
   const m = measureText(layer, text, o);
-  return nudge(placeLabel(anchor, m.w, m.h, dir, clear), env.registry.obstacles(ctx.target, skip), bounds(ctx));
+  const segs: Seg[] = env.registry.segments(ctx.target); // every stroke of the target, this element's own included
+  return placeClear(anchor, m.w, m.h, dir ?? 'ne', clear, segs, env.registry.obstacles(ctx.target, skip), bounds(ctx));
 }
 
 async function writeLabel(g: SVGGElement, box: SRect, text: string, o: TextOpts, env: BuildEnv, signal: AbortSignal, k: Pace) {
@@ -170,11 +174,10 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
         box = { x: p.x, y: p.y, w: a.w, h: isRegion(ctx.target) ? a.h : (a.h * ctx.h) / 1000 };
       }
       if (a.kind === 'circle') {
-        const rx = anchored ? Math.max(12, box.w / 2 + 10) : box.w / 2;
-        const ry = anchored ? Math.max(12, box.h / 2 + 8) : box.h / 2;
+        const { rx, ry } = anchored ? encloseRect(box.w, box.h) : { rx: box.w / 2, ry: box.h / 2 };
         return strokePlan(a, ctx, env, { strokes: [circleStroke({ x: box.x + box.w / 2, y: box.y + box.h / 2 }, rx, ry, r)], closed: true, dash: 'dash' in a && a.dash });
       }
-      const pad = anchored ? 10 : 0;
+      const pad = anchored ? 5 : 0;
       return strokePlan(a, ctx, env, { strokes: [boxStroke(box.x - pad, box.y - pad, box.w + pad * 2, box.h + pad * 2, r)], closed: true });
     }
     case 'line':

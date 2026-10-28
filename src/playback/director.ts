@@ -1,5 +1,6 @@
 // src/playback/director.ts
-import { REGION_H, REGION_W, targetOf, type Action, type RawAction, type InkAction, type LayoutAction, type Target } from '../script/types';
+import { REGION_H, REGION_W, targetOf, type Action, type InkAction, type LayoutAction, type RawAction, type Target } from '../script/types';
+import { Figures, type Grounding } from '../geometry/resolve';
 import type { ViewerApi } from '../pdf/viewerApi';
 import { rectToSpace, toSpace, type SRect } from '../geometry/space';
 import { rng } from '../ink/agent/strokes';
@@ -46,7 +47,10 @@ type Deps = {
   build?: BuildElement;
   /** Debug hook: called when an action starts executing and again when it ends. */
   onTiming?(t: ActionTiming): void;
+  /** Page marks (#d3, #s2, #t12) of the context sent with the question. Default: none. */
+  grounding?: () => Grounding;
 };
+const NO_GROUNDING: Grounding = { mark: () => undefined };
 
 type LaneKind = 'scroll' | 'sketch' | 'clear' | 'reveal' | 'frame';
 type LaneEntry = { kind: LaneKind; started: Promise<void>; done: Promise<void> };
@@ -77,13 +81,28 @@ export class Director {
   /** Set by begin(): the fade ms of a desk reset deferred to the new answer's first layout or ink action. */
   private pendingReset: number | null = null;
   readonly registry = new Registry();
-  constructor(private d: Deps) {}
+  /** Named points and fitted regions of the current answer (relational geometry). */
+  readonly figures: Figures;
+  constructor(private d: Deps) {
+    this.figures = new Figures({ mark: (p, id) => (this.d.grounding?.() ?? NO_GROUNDING).mark(p, id) });
+  }
   private desk(): DeskApi | null { return this.d.desk(); }
 
-  /** Runs `a`, whose word starts at `at` (performance.now() ms; default now). */
+  /**
+   * Runs `a`, whose word starts at `at` (performance.now() ms; default now). Raw actions (names,
+   * page marks, rays, fitted regions) resolve to plain ones here: layout at once, ink when built.
+   */
   run(raw: RawAction, at: number = now()): void {
-    if (raw.kind === 'let' || 'mark' in raw || 'through' in raw) return; // T0 shim: resolved by Lane R
-    const a = raw as Action;
+    if (raw.kind === 'let') return; // definitions were taken when it was parsed (prefetch)
+    if (!this.seen.has(raw)) this.figures.note(raw); // callers that skip prefetch (tests, demos)
+    const isInk = !isLayout(raw as Action);
+    const a = (isInk ? raw : this.figures.resolve(raw)) as Action;
+    this.runResolved(a, raw, at);
+  }
+
+  private seen = new WeakSet<object>();
+
+  private runResolved(a: Action, raw: RawAction, at: number): void {
     const signal = this.ctrl.signal;
     const t: ActionTiming = { action: a, firedAt: at, queuedAt: now(), startedAt: NaN };
     if (this.pendingReset != null) this.resetFor(a, signal);
@@ -99,7 +118,7 @@ export class Director {
     if (Math.abs(at - this.stagger.at) < 1) this.stagger.n++;
     else this.stagger = { at, n: 0 };
     const startAt = at + this.stagger.n * STAGGER_MS;
-    this.track(this.ink(a, t, startAt, this.last, signal).catch((e) => console.warn('[director]', e)));
+    this.track(this.ink(a, raw, t, startAt, this.last, signal).catch((e) => console.warn('[director]', e)));
   }
 
   /** Resolves when every queued action has finished (immediately when nothing is queued). */
@@ -107,9 +126,11 @@ export class Director {
     return this.busy === 0 ? Promise.resolve() : new Promise((r) => this.idlers.push(r));
   }
 
-  /** Warms caches as soon as an action is parsed: a page's text runs, KaTeX. */
+  /** As soon as an action is parsed: takes its point definitions (lookahead), warms caches (text runs, KaTeX). */
   prefetch(raw: RawAction): void {
-    if (raw.kind === 'let' || 'mark' in raw || 'through' in raw) return; // T0 shim
+    this.seen.add(raw);
+    this.figures.note(raw);
+    if (raw.kind === 'let' || 'mark' in raw || 'through' in raw) return;
     const a = raw as Action;
     if (a.kind === 'math') { void preloadMath().catch(() => {}); return; }
     const v = this.d.viewer();
@@ -144,6 +165,7 @@ export class Director {
   begin(ms = 300): Promise<void> {
     this.stop();
     this.registry.clear();
+    this.figures.clear();
     this.pendingReset = ms;
     const e = this.enqueueLayout('clear', () => this.fadePage(ms), this.ctrl.signal);
     this.track(e.done);
@@ -294,7 +316,7 @@ export class Director {
   }
 
   /** Builds with the per-step timeout. Strings are skip reasons. */
-  private async build(a: InkAction, env: BuildEnv, signal: AbortSignal): Promise<ElementPlan | string> {
+  private async buildPlain(a: InkAction, env: BuildEnv, signal: AbortSignal): Promise<ElementPlan | string> {
     const r = await this.guarded(() => (this.d.build ?? buildElement)(a, env), signal);
     return r === 'timeout' ? 'timeout' : r;
   }
@@ -321,12 +343,20 @@ export class Director {
     if (!t || t.page == null) return undefined;
     const p = a.kind === 'line' || a.kind === 'arrow' || a.kind === 'brace' ? a.from : a.kind === 'angle' ? a.at : null;
     const v = this.d.viewer();
-    if (!p || !v) return undefined;
+    if (!p || !v || !('x' in p)) return undefined; // a name or a mark: no anchor until resolved
     const s = toSpace(p, v.spaceHeight(t.page));
     return { x: s.x - 20, y: s.y - 20, w: 40, h: 40 };
   }
 
-  private async ink(a: InkAction, t: ActionTiming, startAt: number, dep: LaneEntry | null, signal: AbortSignal) {
+  /** Resolves raw geometry on build (the fit freezes on a region's first build). A string is a skip reason. */
+  private async build(raw: RawAction, env: BuildEnv, signal: AbortSignal): Promise<ElementPlan | string> {
+    const a = this.figures.resolve(raw);
+    if (a == null) return 'nothing to draw';
+    if (typeof a === 'string') return a;
+    return this.buildPlain(a as InkAction, env, signal);
+  }
+
+  private async ink(a: InkAction, raw: RawAction, t: ActionTiming, startAt: number, dep: LaneEntry | null, signal: AbortSignal) {
     const finish = (skipped?: string | void) => {
       if (Number.isNaN(t.startedAt)) t.startedAt = now();
       this.report(t, { endedAt: now(), skipped: skipped || undefined });
@@ -338,7 +368,7 @@ export class Director {
     // Page ink resolves its anchor while layout runs (text runs are prefetched).
     let plan: ElementPlan | string | undefined;
     if (buildsEarly(a)) {
-      plan = await this.build(a, env, signal);
+      plan = await this.build(raw, env, signal);
       if (signal.aborted) return;
       if (typeof plan === 'string') return finish(plan);
     }
@@ -354,7 +384,7 @@ export class Director {
     await wait(startAt - now());
     if (signal.aborted) return;
     if (!plan) {
-      plan = await this.build(a, env, signal);
+      plan = await this.build(raw, env, signal);
       if (signal.aborted) return;
       if (typeof plan === 'string') return finish(plan);
       // A connector frames both ends together (rule 3); a late element off screen pans now.

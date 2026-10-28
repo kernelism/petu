@@ -4,7 +4,9 @@ import { Director, backlog, STAGGER_MS, ACTION_TIMEOUT_MS, LAND_MS, type ActionT
 import type { ViewerApi } from '../../src/pdf/viewerApi';
 import type { BuildElement, DeskApi, ElementPlan, RegionInfo } from '../../src/desk/types';
 import { DEFAULTS } from '../../src/settings/settings';
-import type { Action, InkAction } from '../../src/script/types';
+import type { Action, InkAction, RawAction } from '../../src/script/types';
+import type { Grounding } from '../../src/geometry/resolve';
+import { parseTag } from '../../src/script/parseTag';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -68,7 +70,7 @@ function fakeBuild(ms = 300, also = false) {
   return { build, drawStarts, aborted, builtAt };
 }
 
-function make(o: { viewer?: ViewerApi; desk?: DeskApi; build?: BuildElement } = {}) {
+function make(o: { viewer?: ViewerApi; desk?: DeskApi; build?: BuildElement; grounding?: Grounding } = {}) {
   const started = new Map<Action, number>();
   const ended = new Map<Action, ActionTiming>();
   const desk = o.desk ?? fakeDesk();
@@ -78,6 +80,7 @@ function make(o: { viewer?: ViewerApi; desk?: DeskApi; build?: BuildElement } = 
     settings: () => DEFAULTS,
     onScrolledTo: () => {},
     build: o.build ?? fakeBuild().build,
+    ...(o.grounding ? { grounding: () => o.grounding! } : {}),
     onTiming: (t) => {
       if (t.endedAt != null) ended.set(t.action, t);
       else if (!Number.isNaN(t.startedAt)) started.set(t.action, t.startedAt);
@@ -402,5 +405,81 @@ describe('Director on the desk', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(desk.reveal).toHaveBeenCalled();
     expect(fb.aborted.has(a)).toBe(false);
+  });
+});
+
+describe('Director: relational geometry (names, marks, fit)', () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  const T = (s: string) => parseTag(s) as RawAction;
+  /** A builder that records the plain actions it receives. */
+  function recBuild() {
+    const fb = fakeBuild(50);
+    const got: InkAction[] = [];
+    const build: BuildElement = (a, env) => { got.push(a); return fb.build(a, env); };
+    return { build, got };
+  }
+
+  it("a let's points resolve for ink after it", async () => {
+    const rb = recBuild();
+    const { d } = make({ build: rb.build });
+    const s = T('sketch id=s near=p1'), l = T('let on=s X=300,200'), p = T('point on=s at=X "X"');
+    for (const a of [s, l, p]) d.prefetch(a);
+    d.run(s, 0); d.run(l, 300); d.run(p, 450);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(rb.got).toHaveLength(1);
+    expect(rb.got[0]).toMatchObject({ kind: 'point', region: 's', at: { x: 300, y: 200 }, text: 'X' });
+  });
+  it('unknown names are skipped with a reason', async () => {
+    const rb = recBuild();
+    const { d, ended } = make({ build: rb.build });
+    const s = T('sketch id=s near=p1'), p = T('point on=s at=Q');
+    d.run(s, 0); d.run(p, 450);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(ended.get(p as Action)?.skipped).toBe('unknown point Q');
+    expect(rb.got).toHaveLength(0);
+  });
+  it('a fitted region freezes on its first build', async () => {
+    const rb = recBuild();
+    const { d } = make({ build: rb.build });
+    const s = T('sketch id=s near=p1 fit'), a = T('point on=s at=-1000,0'), b = T('point on=s at=1000,0');
+    for (const x of [s, a, b]) d.prefetch(x);
+    d.run(s, 0); d.run(a, 450); d.run(b, 450);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(rb.got).toHaveLength(2);
+    for (const g of rb.got as { at: { x: number; y: number } }[]) {
+      expect(g.at.x).toBeGreaterThanOrEqual(0); expect(g.at.x).toBeLessThanOrEqual(1000);
+      expect(g.at.y).toBeGreaterThanOrEqual(0); expect(g.at.y).toBeLessThanOrEqual(700);
+    }
+    const c = T('point on=s at=5000,5000');
+    d.prefetch(c); d.run(c, performance.now());
+    await vi.advanceTimersByTimeAsync(500);
+    expect(rb.got[2]).toMatchObject({ at: { x: 1000, y: 700 } });
+    expect(d.figures.figure({ region: 's' }).outOfFrame).toBe(1);
+  });
+  it('page marks resolve through deps.grounding', async () => {
+    const rb = recBuild();
+    const grounding: Grounding = { mark: (page, id) => (page === 1 && id === '#d1' ? { kind: 'dot', at: { x: 400, y: 300 } } : undefined) };
+    const { d } = make({ build: rb.build, grounding });
+    const c = T('circle p=1 mark=#d1');
+    d.prefetch(c); d.run(c, 0);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(rb.got[0]).toMatchObject({ kind: 'circle', page: 1, at: { x: 400, y: 300 } });
+  });
+  it('begin() clears names', async () => {
+    const rb = recBuild();
+    const { d, ended } = make({ build: rb.build });
+    const l = T('let p=1 A=100,100'), p1 = T('point p=1 at=A');
+    d.prefetch(l); d.prefetch(p1); d.run(l, 0); d.run(p1, 0);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(rb.got).toHaveLength(1);
+    void d.begin(0);
+    await vi.advanceTimersByTimeAsync(100);
+    const p2 = T('point p=1 at=A');
+    d.prefetch(p2); d.run(p2, performance.now());
+    await vi.advanceTimersByTimeAsync(500);
+    expect(ended.get(p2 as Action)?.skipped).toBe('unknown point A');
+    expect(rb.got).toHaveLength(1);
   });
 });

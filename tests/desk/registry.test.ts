@@ -64,3 +64,17 @@ describe('boxes', () => {
     expect(union([{ x: 0, y: 0, w: 1, h: 1 }, { x: 5, y: 5, w: 2, h: 2 }])).toEqual({ x: 0, y: 0, w: 7, h: 7 });
   });
 });
+
+describe('Registry.segments', () => {
+  it('lists consecutive stroke points of the target, skipping faded and other targets', () => {
+    const r = new Registry();
+    const strokes = [[{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }]];
+    r.define({ ...el('a'), strokes });
+    r.define({ ...el('b', 'other'), strokes });
+    r.define({ ...el('c'), strokes, faded: true });
+    r.define(el('d')); // no strokes
+    expect(r.segments({ region: 'side' })).toEqual([
+      { a: { x: 0, y: 0 }, b: { x: 10, y: 0 } }, { a: { x: 10, y: 0 }, b: { x: 10, y: 10 } },
+    ]);
+  });
+});

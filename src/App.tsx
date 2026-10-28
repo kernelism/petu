@@ -15,7 +15,7 @@ import { Desk, GLIDE_MS } from './desk/Desk';
 import type { DeskState } from './desk/types';
 import './desk/desk.css';
 import { StudentInkLayer } from './ink/student/StudentInkLayer';
-import { ink } from './ink/student/store';
+import { ink, PEN_COLORS } from './ink/student/store';
 import { EmptyState } from './ui/EmptyState';
 import { TopBar } from './ui/TopBar';
 import { SettingsPopover } from './ui/SettingsPopover';
@@ -26,7 +26,15 @@ import { FollowPill } from './ui/FollowPill';
 import { dockPlacement, dockReserve } from './ui/layout';
 import { setSafeBottom } from './desk/layout';
 import { takeSentences } from './ui/text';
-import type { Action } from './script/types';
+import type { Action, RawAction } from './script/types';
+import type { Grounding } from './geometry/resolve';
+import type { AskEvent } from './agent/protocol';
+import { AskError, askErrorLine, capLine, type AskHandlers } from './agent/client';
+import { useAgent, type MakeContext } from './agent/useAgent';
+import { ContextBuilder } from './agent/context/build';
+import { installEvalHooks, outOfFrameOf, type EvalBackend, type Recorder, type RegistryRow } from './agent/evalHooks';
+import type { ElementEntry } from './desk/registry';
+import type { PageGround } from './agent/context/types';
 
 const params = new URLSearchParams(location.search);
 const DEBUG = params.has('debug');
@@ -40,13 +48,28 @@ const DEV_SCRIPT = scriptParam ? SCRIPTS[scriptParam] ?? null : null;
 const DEV_SRC = import.meta.env.DEV ? params.get('src') ?? DEV_SCRIPT?.src ?? null : null;
 if (scriptParam && !DEV_SCRIPT) console.warn('[dev] unknown ?script=; known:', Object.keys(SCRIPTS).join(', '));
 const SUGGESTIONS = DEV_SCRIPT ? [DEV_SCRIPT.question] : DEMOS.map((d) => d.question);
+// Dev-only: ?fail=<n> makes the answer stream throw after n chunks (to review the error state).
+const FAIL_AFTER = import.meta.env.DEV && params.has('fail') ? Number(params.get('fail')) || 0 : null;
+/** Demos, dev scripts and ?fail play canned scripts; every other question goes to the agent (POST /api/ask). */
+const DEMO_PATH = !!DEV_SCRIPT || demoParam != null || FAIL_AFTER != null;
+/** Dev-only: ?eval installs window.__petu for the eval runner (src/agent/evalHooks.ts). */
+const EVAL = import.meta.env.DEV && params.has('eval');
+/** One context builder per opened document (src/agent/context/build.ts). */
+const MAKE_CONTEXT: MakeContext = (doc, name) => new ContextBuilder(doc, name);
 const SAMPLE_URL = '/fixtures/epipolar.pdf';
 const SAMPLE_NAME = 'Stereo Vision — sample.pdf';
 const CAPTION_LINGER_MS = 2200;
-const NOT_SAMPLE = 'The agent connects in the next checkpoint; open the sample deck to see a demo.';
+/** An answer that drew nothing (an off-topic reply, a short note): the caption is all there is, so it stays longer. */
+const CAPTION_LINGER_TEXT_MS = 6500;
+/** The cap line hands over to the ask bar, which keeps it. */
+const CAP_CAPTION_MS = 6000;
 const ANSWER_FAILED = 'Something went wrong.';
-// Dev-only: ?fail=<n> makes the answer stream throw after n chunks (to review the error state).
-const FAIL_AFTER = import.meta.env.DEV && params.has('fail') ? Number(params.get('fail')) || 0 : null;
+const NO_ANSWER = 'No answer came back.';
+/** No word this long after Enter: one static line under the question. */
+const STILL_THINKING_MS = 4000;
+const STILL_THINKING = 'Still thinking…';
+/** Demos and dev scripts send no page marks: every `mark=` is skipped. */
+const NO_MARKS: Grounding = { mark: () => undefined };
 
 /** A URL's file name for the top bar; a malformed escape falls back to the raw text. */
 function fileNameOf(src: string): string {
@@ -68,9 +91,33 @@ declare global {
 // ------------------------------------------------------------------------------------------------
 // ?debug: latency from Enter, plus a rolling log of actions and how long each waited in the queue.
 
-type DebugState = { chunk?: number; word?: number; action?: number; log: ActionTiming[] };
+type DoneEvent = Extract<AskEvent, { t: 'done' }>;
+type DebugState = {
+  chunk?: number; word?: number; action?: number; log: ActionTiming[];
+  /** Agent answers: the server's meta and done, and notes (dropped messages, lint). */
+  meta?: Extract<AskEvent, { t: 'meta' }>; done?: DoneEvent; notes?: string[];
+};
 
-function describe(a: Action): string {
+/** When the first ink of the answer started (the first drawing action, not layout). */
+function firstInk(log: ActionTiming[]): number | undefined {
+  let t: number | undefined;
+  for (const x of log) {
+    if (x.skipped || Number.isNaN(x.startedAt) || ['scroll', 'sketch', 'clear', 'let'].includes(x.action.kind)) continue;
+    if (t == null || x.startedAt < t) t = x.startedAt;
+  }
+  return t;
+}
+
+const money = (n?: number) => (n == null ? '—' : n < 0.1 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);
+
+function describe(a: RawAction): string {
+  if (a.kind === 'let') return `let ${a.defs.map(([n]) => n).join(' ')}`;
+  if ('mark' in a) return `${a.kind} p${a.page} ${a.mark}`;
+  if ('through' in a) return `${a.kind} ray`;
+  return describeAction(a as Action);
+}
+
+function describeAction(a: Action): string {
   if (a.kind === 'clear') return a.kind;
   if (a.kind === 'sketch') return `sketch ${a.id} p${a.page}${a.size === 'l' ? ' l' : ''}`;
   if (a.kind === 'connect') return 'connect';
@@ -84,6 +131,11 @@ function describe(a: Action): string {
 /** Compact, bottom-left, collapsed by default so it never covers the page. Click to expand. */
 function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
   const [open, setOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
+  const done = d.done;
+  const u = done?.usage;
+  const cached = u && u.input_tokens > 0 ? `${Math.round((100 * (u.input_tokens_details?.cached_tokens ?? 0)) / u.input_tokens)}%` : '—';
+  const notes = [...(done?.lint ?? []), ...(d.notes ?? [])];
   const ms = (t?: number) => (t == null ? '—' : `${Math.round(t - t0)}ms`);
   // Start relative to the word: layout that starts ahead of its word (anticipatory scrolls) is negative.
   const rel = (d: number) => { const r = Math.round(d); return r > 0 ? `+${r}` : r < 0 ? `−${-r}` : '0'; };
@@ -96,9 +148,25 @@ function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
   }
   return (
     <div className="debug" onClick={() => setOpen(false)} title="Click to collapse">
+      {d.meta && <div className="debug-row"><span>model</span><span>{d.meta.model}/{d.meta.effort}</span></div>}
+      {done && <div className="debug-row"><span>upstream TTFT</span><span>{done.ttftMs}ms</span></div>}
       <div className="debug-row"><span>first chunk</span><span>{ms(d.chunk)}</span></div>
       <div className="debug-row"><span>first word</span><span>{ms(d.word)}</span></div>
       <div className="debug-row"><span>first action</span><span>{ms(d.action)}</span></div>
+      <div className="debug-row"><span>first ink</span><span>{ms(firstInk(d.log))}</span></div>
+      {done && (
+        <>
+          <div className="debug-row"><span>$ this answer</span><span>{money(done.usd)}{done.estimated ? ' est.' : ''}</span></div>
+          <div className="debug-row"><span>$ spent / cap</span><span>{money(done.spentUsd)} / {money(done.capUsd)}</span></div>
+          <div className="debug-row"><span>cached</span><span>{cached}</span></div>
+        </>
+      )}
+      {notes.map((n, i) => <div key={`n${i}`} className="debug-row debug-note"><span>{n}</span></div>)}
+      {done?.plan && (
+        <button type="button" className="debug-plan" onClick={(e) => { e.stopPropagation(); setPlanOpen((o) => !o); }} aria-expanded={planOpen}>
+          {planOpen ? <span className="debug-plan-text">{done.plan}</span> : 'plan ▸'}
+        </button>
+      )}
       {d.log.length > 0 && (
         <div className="debug-head" title="at: word time from Enter · start: when it began, relative to its word (− = early) · run: duration">
           <span>action</span><span>at · start · run</span>
@@ -114,6 +182,46 @@ function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
       ))}
     </div>
   );
+}
+
+/** Eval replay: recorded chunks at their recorded offsets from Enter; recorded events drive the same handlers. */
+function replaySource(chunks: { t: number; d: string }[], events: AskEvent[], h: AskHandlers) {
+  return async function* (signal: AbortSignal): AsyncGenerator<string> {
+    const t0 = performance.now();
+    for (const e of events) if (e.t === 'meta') h.onMeta?.(e);
+    for (const c of chunks) {
+      const wait = c.t - (performance.now() - t0);
+      if (wait > 0) await new Promise((r) => window.setTimeout(r, wait));
+      if (signal.aborted) return;
+      yield c.d;
+    }
+    for (const e of events) {
+      if (e.t === 'done') h.onDone?.(e);
+      else if (e.t === 'error') h.onCutOff?.(e.message);
+    }
+  };
+}
+
+/** Eval ink questions: the page's largest labelled mark, as a page-coord rect (0–1000 both axes). */
+function largestLabelled(g: PageGround | undefined): { x: number; y: number; w: number; h: number } | null {
+  let best: { x: number; y: number; w: number; h: number } | null = null, area = -1;
+  for (const m of g?.marks ?? []) {
+    if (!m.label) continue;
+    const r = m.kind === 'dot' ? { x: m.at.x - 15, y: m.at.y - 15, w: 30, h: 30 }
+      : 'from' in m ? { x: Math.min(m.from.x, m.to.x), y: Math.min(m.from.y, m.to.y), w: Math.abs(m.to.x - m.from.x), h: Math.abs(m.to.y - m.from.y) }
+      : m.rect;
+    const a = Math.max(r.w, 1) * Math.max(r.h, 1);
+    if (a > area) { area = a; best = r; }
+  }
+  return best;
+}
+
+/** The current answer's drawn elements, plain, for the eval metrics. */
+function registryRows(reg: unknown): RegistryRow[] {
+  // E1: Registry has no public iterator yet (src/desk/registry.ts); read its map directly (dev-only).
+  const byId = (reg as { byId?: Map<string, ElementEntry> }).byId;
+  if (!byId) return [];
+  return [...byId.values()].map((e) => ({ id: e.id, kind: e.kind, target: e.target, bbox: e.bbox, boxes: e.boxes, strokes: e.strokes ?? [] }));
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -134,7 +242,10 @@ export default function App() {
   /** The asked question, echoed above the caption while answering. */
   const [question, setQuestion] = useState<string | undefined>();
   const [waiting, setWaiting] = useState(false);
-  const [answerError, setAnswerError] = useState(false);
+  /** "Still thinking…" once no word has come for a while. */
+  const [hint, setHint] = useState<string | undefined>();
+  /** A failed or cut-off answer: its line, and whether Retry is offered. */
+  const [answerError, setAnswerError] = useState<{ message: string; retry: boolean } | null>(null);
   const [restore, setRestore] = useState<{ text: string; seq: number } | undefined>();
   const [transcript, setTranscript] = useState<Transcript | null>(null);
   /** Whole sentences of narration for screen readers (polite live region). */
@@ -161,20 +272,31 @@ export default function App() {
   const demoStarted = useRef(false);
   const loadSeq = useRef(0);
 
+  const pageRef = useRef(1);
+  /** The marks of the pages sent with the current question (agent answers only). */
+  const groundingRef = useRef<Grounding | undefined>();
+  const thinkTimer = useRef<number>();
+  /** The eval recorder of the answer in flight. */
+  const recRef = useRef<Recorder | null>(null);
+
   const directorRef = useRef<Director>();
   if (!directorRef.current) {
     directorRef.current = new Director({
       viewer: () => viewerRef.current,
       desk: () => deskRef.current,
+      grounding: () => groundingRef.current ?? NO_MARKS,
       settings: getSettings,
       onScrolledTo: () => setPageTick((n) => n + 1),
-      onTiming: DEBUG
-        ? (t) => setDebug((d) => {
-            const log = d.log.filter((x) => x.firedAt !== t.firedAt || x.action !== t.action);
-            const next = { ...d, action: d.action ?? t.firedAt, log: [...log, t] };
-            window.__timings = next;
-            return next;
-          })
+      onTiming: DEBUG || EVAL
+        ? (t) => {
+            recRef.current?.timing(t);
+            if (DEBUG) setDebug((d) => {
+              const log = d.log.filter((x) => x.firedAt !== t.firedAt || x.action !== t.action);
+              const next = { ...d, action: d.action ?? t.firedAt, log: [...log, t] };
+              window.__timings = next;
+              return next;
+            });
+          }
         : undefined,
     });
   }
@@ -184,6 +306,11 @@ export default function App() {
   useEffect(() => () => { void doc?.destroy(); }, [doc]);
 
   const clearHide = () => window.clearTimeout(hideTimer.current);
+  const clearThink = () => { window.clearTimeout(thinkTimer.current); setHint(undefined); };
+
+  const agent = useAgent({ doc, name: fileName, enabled: !DEMO_PATH || EVAL, make: MAKE_CONTEXT });
+  const agentRef = useRef(agent);
+  agentRef.current = agent;
 
   // The dock follows the window (and the desk's column, through its state).
   useEffect(() => {
@@ -225,7 +352,8 @@ export default function App() {
     clearHide();
     setQuestion(undefined);
     setWaiting(false);
-    setAnswerError(false);
+    clearThink();
+    setAnswerError(null);
     setCaptionWords(text.split(' '));
     setCaptionVisible(true);
     hideTimer.current = window.setTimeout(() => setCaptionVisible(false), ms);
@@ -238,6 +366,7 @@ export default function App() {
     director.stop();
     deskRef.current?.follow.setAnswering(false);
     setWaiting(false);
+    clearThink();
     setBusy(false);
   }, [director]);
 
@@ -248,7 +377,7 @@ export default function App() {
     setCaptionVisible(false);
     setCaptionWords([]);
     setQuestion(undefined);
-    setAnswerError(false);
+    setAnswerError(null);
     setTranscript(null);
     setLiveText('');
   }, []);
@@ -321,93 +450,201 @@ export default function App() {
   // ---------------------------------------------------------------------------------------------
   // Answers
 
-  const onAsk = useCallback((q: string) => {
-    const demo = DEV_SCRIPT ?? pickDemo(q); // checkpoint 1: every question plays the closest demo
+  type Run = {
+    /** Eval: records chunks, events, words and sentences of this answer. */
+    rec?: Recorder;
+    /** Eval: plays recorded chunks (at their recorded offsets) instead of generating. */
+    replay?: { chunks: { t: number; d: string }[]; events?: AskEvent[] };
+  };
+
+  /** Plays one answer. Resolves when it is done, stopped or failed. */
+  const runAnswer = useCallback((q: string, run: Run = {}): Promise<void> => new Promise<void>((settle) => {
+    const toAgent = !DEMO_PATH || !!run.replay || !!run.rec;
     const t0 = performance.now();
     const old = sessionRef.current;
     sessionRef.current = null;
     old?.stop();
     clearHide();
+    clearThink();
     lastQuestion.current = q;
+    recRef.current = run.rec ?? null;
     setTranscript(null);
-    setAnswerError(false);
+    setAnswerError(null);
     // The old ink fades at the head of the director's queue while the request goes out.
     void director.begin(300);
-    if (!isSampleRef.current && !DEV_SCRIPT) { setBusy(false); flash(NOT_SAMPLE); return; }
+    groundingRef.current = undefined;
+    const ag = agentRef.current;
+    if (toAgent && ag.blocked && !run.replay) { flash(ag.blocked, CAP_CAPTION_MS); settle(); return; }
 
     setCaptionWords([]);
     setQuestion(q);
     setWaiting(true);
     setCaptionVisible(true);
     setBusy(true);
+    thinkTimer.current = window.setTimeout(() => setHint(STILL_THINKING), STILL_THINKING_MS);
     let spoken: string[] = [];
     let liveFrom = 0;
     const speak = (words: string[], final = false) => {
       const r = takeSentences(words, liveFrom, joinWords);
       liveFrom = r.from;
       const tail = final && liveFrom < words.length ? joinWords(words.slice(liveFrom)) : '';
+      for (const sentence of r.sentences) run.rec?.sentenceEnd(sentence);
+      if (tail) run.rec?.sentenceEnd(tail);
       const last = tail || r.sentences[r.sentences.length - 1];
       if (last) setLiveText(last);
     };
     if (DEBUG) { setAskT0(t0); setDebug({ log: [] }); }
     let spoke = false;
+    let drew = false;
+    let askErr: AskError | null = null;
+    let cutOff: string | null = null;
+    const page = pageRef.current;
+
+    const handlers: AskHandlers = {
+      onEvent: (e) => run.rec?.event(e),
+      onMeta: (e) => { if (DEBUG) setDebug((d) => ({ ...d, meta: e })); },
+      onNote: (m) => { if (DEBUG) { console.info('[ask] note:', m); setDebug((d) => ({ ...d, notes: [...(d.notes ?? []), m] })); } },
+      onDone: (e) => {
+        if (DEBUG) setDebug((d) => ({ ...d, done: e }));
+        void agentRef.current.refreshSpend();
+      },
+      onCutOff: (m) => { cutOff = m; },
+    };
 
     let firstChunk = true;
     let chunks = 0;
+    const inner: (signal: AbortSignal) => AsyncIterable<string> = run.replay
+      ? replaySource(run.replay.chunks, run.replay.events ?? [], handlers)
+      : toAgent
+        ? ag.source({ question: q, page, ink: () => ink.get().strokes, handlers, onGrounding: (g) => { groundingRef.current = g; } })
+        : (signal) => streamDemo(signal, (DEV_SCRIPT ?? pickDemo(q)).script); // checkpoint 1: demos play the closest script
     const source = async function* (signal: AbortSignal) {
-      for await (const c of streamDemo(signal, demo.script)) {
-        if (FAIL_AFTER != null && chunks++ >= FAIL_AFTER) throw new Error('dev: ?fail');
-        if (firstChunk && DEBUG) { firstChunk = false; const t = performance.now(); setDebug((d) => ({ ...d, chunk: t })); }
-        yield c;
+      try {
+        for await (const c of inner(signal)) {
+          if (!toAgent && FAIL_AFTER != null && chunks++ >= FAIL_AFTER) throw new Error('dev: ?fail');
+          if (firstChunk && DEBUG) { firstChunk = false; const t = performance.now(); setDebug((d) => ({ ...d, chunk: t })); }
+          run.rec?.chunk(c);
+          yield c;
+        }
+      } catch (e) {
+        if (e instanceof AskError) askErr = e;
+        throw e;
       }
     };
 
+    const finish = () => { if (recRef.current === run.rec) recRef.current = null; settle(); };
     const session: AnswerSession = new AnswerSession({
       clock: new PacedClock(() => getSettings().wpm),
       onParsed: (a) => director.prefetch(a),
-      onAction: (a, at) => { if (sessionRef.current === session) director.run(a, at); },
+      onAction: (a, at) => {
+        if (sessionRef.current !== session) return;
+        if (a.kind !== 'scroll' && a.kind !== 'clear') drew = true;
+        director.run(a, at);
+      },
       idle: () => director.idle(),
       onWord: (words) => {
         if (sessionRef.current !== session) return;
         if (DEBUG && words.length === 1) { const t = performance.now(); setDebug((d) => ({ ...d, word: t })); }
-        if (!spoke) { spoke = true; setWaiting(false); }
+        if (!spoke) { spoke = true; setWaiting(false); clearThink(); }
+        run.rec?.word(words[words.length - 1]);
         spoken = words;
         speak(words);
         setCaptionWords(words);
       },
       onState: (st: SessionState, err?: string) => {
+        if (st === 'stopped' && toAgent && spoken.length) ag.history.push(q, spoken, page);
+        if (st === 'stopped') { finish(); return; }
         if (sessionRef.current !== session) return;
         if (st === 'loading' || st === 'playing') { setBusy(true); return; }
         setBusy(false);
         setWaiting(false);
+        clearThink();
         deskRef.current?.follow.setAnswering(false);
         if (spoken.length) setTranscript({ question: q, answer: joinWords(spoken) });
+        sessionRef.current = null;
         if (st === 'done') {
-          sessionRef.current = null;
           speak(spoken, true);
-          hideTimer.current = window.setTimeout(() => setCaptionVisible(false), CAPTION_LINGER_MS);
+          if (toAgent && spoken.length) ag.history.push(q, spoken, page);
+          if (cutOff != null || !spoken.length) {
+            // Cut off (what arrived has played), or nothing came back: say so and offer Retry.
+            clearHide();
+            setCaptionWords([]);
+            setAnswerError({ message: cutOff != null ? askErrorLine('cut_off', null).message : NO_ANSWER, retry: true });
+            setCaptionVisible(true);
+            setLiveText(`${cutOff != null ? 'The answer was cut off.' : NO_ANSWER} Retry is available.`);
+          } else {
+            hideTimer.current = window.setTimeout(() => setCaptionVisible(false), drew ? CAPTION_LINGER_MS : CAPTION_LINGER_TEXT_MS);
+          }
         } else if (st === 'error') {
-          sessionRef.current = null;
           console.warn('[answer]', err);
-          // Keep the question: back in the ask bar, and a Retry in the caption.
           clearHide();
           setCaptionWords([]);
-          setAnswerError(true);
           setCaptionVisible(true);
-          setRestore((r) => ({ text: q, seq: (r?.seq ?? 0) + 1 }));
-          setLiveText(`${ANSWER_FAILED} Retry is available.`);
+          const e = askErr as AskError | null;
+          if (e?.code === 'cap') {
+            // The ask bar takes over the cap line (it stays there); the caption says it once, then fades.
+            setAnswerError({ message: capLine(ag.spend), retry: false });
+            void ag.refreshSpend().then((s) => { if (s) setAnswerError((cur) => (cur && !cur.retry ? { message: capLine(s), retry: false } : cur)); });
+            hideTimer.current = window.setTimeout(() => setCaptionVisible(false), CAP_CAPTION_MS);
+            setLiveText(capLine(ag.spend));
+          } else {
+            const line = e ? askErrorLine(e.code, ag.spend) : { message: ANSWER_FAILED, retry: true };
+            setAnswerError(line);
+            // Keep the question: back in the ask bar to edit or resend.
+            setRestore((r) => ({ text: q, seq: (r?.seq ?? 0) + 1 }));
+            setLiveText(line.retry ? `${line.message} Retry is available.` : line.message);
+          }
         }
+        finish();
       },
     });
     sessionRef.current = session;
     void session.start(source);
-  }, [director, flash]);
+  }), [director, flash]);
+
+  const onAsk = useCallback((q: string) => { void runAnswer(q); }, [runAnswer]);
 
   const onStop = useCallback(() => {
     stopAll(); // the ink stays until the next answer starts
     clearHide();
     setCaptionVisible(false);
   }, [stopAll]);
+
+  // Dev-only: the eval runner's backend (window.__petu), over the real agent path.
+  const evalReady = useRef<{ promise: Promise<void>; resolve(): void } | null>(null);
+  if (EVAL && !evalReady.current) {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => { resolve = r; });
+    evalReady.current = { promise, resolve };
+  }
+  const runRef = useRef(runAnswer);
+  runRef.current = runAnswer;
+  useEffect(() => {
+    if (!EVAL) return;
+    const marks = new Map<number, PageGround | undefined>();
+    const be: EvalBackend = {
+      ready: async () => {
+        await evalReady.current!.promise;
+        // Grounds for the shown page (warm context; the ink question's largest mark).
+        const p = pageRef.current;
+        if (!marks.has(p)) marks.set(p, (await agentRef.current.grounds(p)).find((g) => g.page === p));
+      },
+      // &nogen: replays only; a generation request is refused here, before anything is sent.
+      ask: (q, rec) => (params.has('nogen') ? Promise.reject(new Error('nogen: generation is off')) : runRef.current(q, { rec })),
+      largestMark: (page) => largestLabelled(marks.get(page)),
+      replay: (chunks, rec, events) => runRef.current(lastQuestion.current || 'replay', { rec, replay: { chunks, events } }),
+      addInk: (page, pts) => {
+        const H = viewerRef.current?.spaceHeight(page) ?? 1000;
+        ink.add({ page, tool: 'pen', color: PEN_COLORS[0], points: pts.map((p) => [p.x, (p.y / 1000) * H, 0.5] as [number, number, number]) });
+      },
+      registry: () => registryRows(director.registry),
+      outOfFrame: () => {
+        const regions = new Set(registryRows(director.registry).flatMap((r) => (r.target.region != null ? [r.target.region] : [])));
+        return outOfFrameOf(director.figures, regions);
+      },
+    };
+    installEvalHooks(be);
+  }, [director]);
 
   const onRetry = useCallback(() => {
     setRestore((r) => ({ text: '', seq: (r?.seq ?? 0) + 1 }));
@@ -423,6 +660,12 @@ export default function App() {
     desk.subscribe((s) => { setDesk(s); setPaused(desk.follow.paused()); });
     if (import.meta.env.DEV) { window.__viewer = api; window.__desk = desk; }
     setNumPages(api.numPages());
+    if (EVAL) {
+      // ?page=N: show that page, let the context warm, then tell the runner.
+      const p = Math.max(1, Math.min(api.numPages(), Number(params.get('page')) || 1));
+      void api.scrollToPage(p).then(() => { pageRef.current = p; agentRef.current.pageChanged(p); return new Promise((r) => window.setTimeout(r, 1500)); })
+        .then(() => evalReady.current?.resolve());
+    }
     const autoplay = DEV_SCRIPT ? DEV_SCRIPT.question : DEMO && isSampleRef.current ? DEMO : null;
     if (autoplay && !demoStarted.current && !params.has('noplay')) {
       demoStarted.current = true;
@@ -449,6 +692,13 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [desk?.mode]);
 
+  const onPageChange = useCallback((p: number) => {
+    setPage(p);
+    pageRef.current = p;
+    agentRef.current.pageChanged(p);
+  }, []);
+  const onIntent = useCallback(() => { if (!DEMO_PATH) agentRef.current.intent(pageRef.current); }, []);
+
   const resumeFollow = useCallback(() => { void deskRef.current?.resume(); }, []);
 
   const toggleSettings = useCallback(() => setSettingsOpen((o) => !o), []);
@@ -468,7 +718,7 @@ export default function App() {
         <PdfViewer
           doc={doc}
           onReady={onReady}
-          onPageChange={setPage}
+          onPageChange={onPageChange}
           renderOverlay={(p, H) => <StudentInkLayer page={p} spaceH={H} />}
         />
       </main>
@@ -485,13 +735,17 @@ export default function App() {
       <FollowPill visible={paused} onResume={resumeFollow} x={dock.x} />
       <SettingsPopover open={settingsOpen} onClose={closeSettings} />
       <CanvasToolbar />
-      <div ref={dockRef} className="dock" style={{ '--dock-x': `${dock.x}px`, '--dock-w': `${dock.w}px`, '--glide': `${GLIDE_MS}ms` } as CSSProperties}>
+      {/* left/width are set directly rather than through custom properties, so the dock's glide never
+          depends on var() invalidation (suspected in a Safari report of the dock staying left; not
+          reproduced in Playwright WebKit). */}
+      <div ref={dockRef} className="dock" style={{ left: `${dock.x}px`, width: `${dock.w}px`, '--glide': `${GLIDE_MS}ms` } as CSSProperties}>
         <Caption
           words={captionWords}
           visible={captionVisible}
           question={question}
           waiting={waiting}
-          error={answerError ? { message: ANSWER_FAILED, onRetry } : undefined}
+          hint={hint}
+          error={answerError ? { message: answerError.message, onRetry: answerError.retry ? onRetry : undefined } : undefined}
         />
         <AskBar
           onAsk={onAsk}
@@ -500,6 +754,8 @@ export default function App() {
           suggestions={(isSample || DEV_SCRIPT) && !captionVisible ? SUGGESTIONS : undefined}
           restore={restore}
           transcript={captionVisible ? null : transcript}
+          blocked={DEMO_PATH ? undefined : agent.blocked}
+          onIntent={onIntent}
         />
       </div>
       <div className="sr-only" role="status" aria-live="polite">{liveText}</div>

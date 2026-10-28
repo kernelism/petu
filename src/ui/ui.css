@@ -12,9 +12,10 @@
 /* ───────── Dock: caption above the ask bar, centered under the active column ───────── */
 .dock {
   position: fixed;
-  left: var(--dock-x, 50%);
+  /* App sets left and width inline (centered under the active column); these are the defaults. */
+  left: 50%;
   bottom: 18px;
-  width: var(--dock-w, min(560px, calc(100vw - 32px)));
+  width: min(560px, calc(100vw - 32px));
   transform: translateX(-50%);
   z-index: 30;
   /* Moves with the page column's glide and the B stage (same duration and easing: Desk GLIDE_MS). */
@@ -54,6 +55,10 @@
 }
 .askbar-input::placeholder { color: var(--muted); opacity: 1; }
 .askbar-input:focus-visible { outline: none; } /* the bar's ring is the focus indicator */
+/* Asking is paused (spending cap): the cap line reads in place of the placeholder, a step smaller so it fits. */
+.askbar.is-blocked { cursor: default; }
+.askbar.is-blocked .askbar-input { cursor: default; text-overflow: ellipsis; }
+.askbar.is-blocked .askbar-input::placeholder { font-size: 13px; color: var(--ink-2); letter-spacing: -0.005em; }
 .askbar-trail {
   flex: none;
   width: 28px;
@@ -212,7 +217,10 @@
 .caption-q.is-waiting { animation: caption-q-in 320ms var(--ease-out) both; }
 @keyframes caption-q-in { from { opacity: 0; } to { opacity: 1; } }
 .caption.has-error { pointer-events: auto; }
-.caption-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.caption-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 26px; }
+.caption-error-msg { min-width: 0; }
+/* Waiting longer than usual: one static line under the question. No motion. */
+.caption-hint { font-size: 13px; line-height: 20px; color: rgba(255,255,255,.66); }
 .caption-retry {
   flex: none;
   height: 26px;
@@ -690,3 +698,24 @@
 .follow-pill:hover { background: #fff; color: var(--ink); }
 .follow-pill:active { transform: translate(-50%, 0) scale(.97); }
 @media (prefers-reduced-motion: reduce) { .follow-pill { transition: none; } }
+
+/* ───────── ?debug panel: agent rows (base styles in app.css) ───────── */
+.debug-note { color: rgba(255,255,255,.6); white-space: normal; }
+.debug-plan {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  padding: 4px 0 0;
+  border: 0;
+  border-top: 1px solid rgba(255,255,255,.14);
+  background: transparent;
+  color: rgba(255,255,255,.72);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.debug-plan:hover { color: #fff; }
+.debug-plan:active { color: rgba(255,255,255,.55); }
+.debug-plan:focus-visible { outline: 1px solid #fff; outline-offset: 2px; }
+.debug-plan-text { display: block; max-height: 220px; overflow-y: auto; white-space: pre-wrap; scrollbar-width: none; }
+.debug-plan-text::-webkit-scrollbar { display: none; }

@@ -1,6 +1,7 @@
 // tests/script/parseTagV2.test.ts
 import { describe, it, expect } from 'vitest';
 import { parseTag, normalizeTex } from '../../src/script/parseTag';
+import { Figures } from '../../src/geometry/resolve';
 
 describe('parseTag v2: regions', () => {
   it('sketch reserves a region next to a page', () => {
@@ -10,11 +11,12 @@ describe('parseTag v2: regions', () => {
       expect(parseTag(bad), bad).toBeNull();
     }
   });
-  it('on=<region> targets a region in local coords, clamped to 1000 × 700 (rule 5)', () => {
+  it('on=<region> keeps world coords at parse time; the resolver clamps to 1000 × 700 (rule 5)', () => {
     expect(parseTag('line on=side from=-5,10 to=1200,900 dash em id=ray')).toEqual({
-      kind: 'line', region: 'side', from: { x: 0, y: 10 }, to: { x: 1000, y: 700 }, dash: true, em: true, id: 'ray',
+      kind: 'line', region: 'side', from: { x: -5, y: 10 }, to: { x: 1200, y: 900 }, dash: true, em: true, id: 'ray',
     });
-    expect(parseTag('circle on=side at=100,800 r=9')).toEqual({ kind: 'circle', region: 'side', at: { x: 100, y: 700 }, rx: 9, ry: 9 });
+    const f = new Figures({ mark: () => undefined });
+    expect(f.resolve(parseTag('circle on=side at=100,800 r=9')!)).toEqual({ kind: 'circle', region: 'side', at: { x: 100, y: 700 }, rx: 9, ry: 9 });
   });
   it('write, axes, plot and math are region-only', () => {
     expect(parseTag('write p=3 at=1,1 "x"')).toBeNull();

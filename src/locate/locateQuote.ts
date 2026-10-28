@@ -1,10 +1,12 @@
 import type { PageRect } from '../geometry/space';
+import { textLines } from '../agent/context/textLines';
 
 /** `font` is a CSS font string used only to measure relative glyph widths. */
 export type TextRun = { text: string; rect: PageRect; font?: string };
 /** Width of `s` in `font`, in any consistent unit (only ratios are used). */
 export type Measure = (font: string, s: string) => number;
-export type LocateOpts = { measure?: Measure };
+/** `aspect` = page h / w (default 1): the line index compares gaps in x units. */
+export type LocateOpts = { measure?: Measure; aspect?: number };
 
 let canvasMeasure: Measure | null | undefined;
 /** A cached 2D-canvas measurer, or null where no canvas exists (jsdom, node). */
@@ -29,7 +31,7 @@ function normChar(c: string): string {
   if (c === '\u00AD') return '';
   if (LIG[c]) return LIG[c];
   const n = c.normalize('NFKC');
-  if (/[‘’′`´]/.test(n)) return "'";
+  if (/[‘’′`´ʹʼ]/.test(n)) return "'";
   if (/[“”″]/.test(n)) return '"';
   if (/[‐‑‒–—−]/.test(n)) return '-';
   if (/\s/.test(n)) return ' ';
@@ -80,6 +82,24 @@ function buildIndex(runs: TextRun[]) {
   return { text, map };
 }
 
+/**
+ * Whole-word hits ignoring spaces, for when the quote and the page disagree only on spacing
+ * ("B⋅f" vs "B ⋅ f": equation glyphs sit at gaps near the space threshold).
+ */
+function compactHits(text: string, q: string): [number, number][] {
+  const cq = q.replace(/ /g, '');
+  if (!cq) return [];
+  let compact = '';
+  const at: number[] = [];
+  for (let i = 0; i < text.length; i++) if (text[i] !== ' ') { compact += text[i]; at.push(i); }
+  const out: [number, number][] = [];
+  for (let i = compact.indexOf(cq); i >= 0; i = compact.indexOf(cq, i + 1)) {
+    const s = at[i], e = at[i + cq.length - 1] + 1;
+    if (!isWordChar(text[s - 1]) && !isWordChar(text[e])) out.push([s, e]);
+  }
+  return out;
+}
+
 function bigrams(s: string): Map<string, number> {
   const m = new Map<string, number>();
   const t = s.replace(/ /g, '');
@@ -110,29 +130,52 @@ function fuzzy(text: string, q: string): [number, number] | null {
   return best;
 }
 
+const ordered = new WeakMap<TextRun[], Map<number, TextRun[]>>();
+/** The page's runs in line-index order, cached per runs array (a page's runs are cached upstream). */
+function lineOrder(runs: TextRun[], aspect: number): TextRun[] {
+  let by = ordered.get(runs);
+  if (!by) ordered.set(runs, (by = new Map()));
+  let out = by.get(aspect);
+  if (!out) by.set(aspect, (out = textLines(runs, aspect).flatMap((l) => l.runs)));
+  return out;
+}
+
+/** A short quote's hit must sit this close (model units) to its `near`. */
+const NEAR_MAX = 100;
+
 const isWordChar = (c: string | undefined) => !!c && /[\p{L}\p{N}]/u.test(c);
 
 /**
  * Finds `quote` in the page's text runs. Returns one rect per line, in model coords, or [].
  * Exact matches on word boundaries win; among several, the one nearest `near` (or the first).
  */
-export function locateQuote(runs: TextRun[], quote: string, near?: { x: number; y: number }, opts: LocateOpts = {}): PageRect[] {
+export function locateQuote(pageRuns: TextRun[], quote: string, near?: { x: number; y: number }, opts: LocateOpts = {}): PageRect[] {
   const q = normalizeText(quote).replace(/-/g, '').replace(/ {2,}/g, ' ').trim();
-  if (!q || !runs.length) return [];
+  if (!q || !pageRuns.length) return [];
+  // Quotes of ≤ 2 characters ("x", "C′") are too ambiguous without a position.
+  const short = Array.from(normalizeText(quote).replace(/ /g, '')).length <= 2;
+  if (short && !near) return [];
+  // Search the same line index the model reads: runs of each line in x order, lines in reading
+  // order (equation glyphs and sub/superscripts come out as listed).
+  const runs = lineOrder(pageRuns, opts.aspect ?? 1);
+  if (!runs.length) return [];
   const { text, map } = buildIndex(runs);
   const hits: number[] = [];
   for (let i = text.indexOf(q); i >= 0; i = text.indexOf(q, i + 1)) hits.push(i);
   const whole = hits.filter((i) => !isWordChar(text[i - 1]) && !isWordChar(text[i + q.length]));
   const candidates = (whole.length ? whole : q.length >= 12 ? hits : []).map((i) => [i, i + q.length] as [number, number]);
+  if (!candidates.length) candidates.push(...compactHits(text, q));
   if (!candidates.length) {
     const f = fuzzy(text, q);
     if (f) candidates.push(f);
   }
   if (!candidates.length) return [];
-  const results = candidates.map((range) => rectsFor(runs, map, range, opts.measure ?? defaultMeasure()));
-  if (!near || results.length === 1) return results[0];
+  const results = candidates.map((range) => rectsFor(runs, map, range, opts.measure ?? defaultMeasure())).filter((r) => r.length);
+  if (!results.length) return [];
+  if (!near) return results[0];
   const dist = (rs: PageRect[]) => Math.hypot(rs[0].x + rs[0].w / 2 - near.x, rs[0].y + rs[0].h / 2 - near.y);
-  return results.reduce((best, r) => (dist(r) < dist(best) ? r : best));
+  const best = results.reduce((b, r) => (dist(r) < dist(b) ? r : b));
+  return short && dist(best) > NEAR_MAX ? [] : best;
 }
 
 function rectsFor(runs: TextRun[], map: Slot[], range: [number, number], measure: Measure | null): PageRect[] {

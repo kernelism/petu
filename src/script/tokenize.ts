@@ -11,6 +11,8 @@ export type Tokens = {
   quotes: string[];
   /** Bare words after the name, lowercased (`em`, `dash`). */
   flags: Set<string>;
+  /** key=value pairs with keys as written (`{{let O=… o=…}}` names are case-sensitive). */
+  rawArgs: Record<string, string>;
 };
 
 const POINT = /^-?\d*\.?\d+,-?\d*\.?\d+$/;
@@ -38,7 +40,7 @@ export function tokenize(body: string): Tokens | null {
     }
     raw.push(tok);
   }
-  const out: Tokens = { name: '', args: {}, quotes: [], flags: new Set() };
+  const out: Tokens = { name: '', args: {}, quotes: [], flags: new Set(), rawArgs: {} };
   let lastKey = '';
   for (const t of raw) {
     if (t[0] in QUOTES) { out.quotes.push(unquote(t)); lastKey = ''; continue; }
@@ -47,10 +49,11 @@ export function tokenize(body: string): Tokens | null {
     if (eq > 0 && (q < 0 || eq < q)) {
       lastKey = t.slice(0, eq).toLowerCase();
       out.args[lastKey] = unquote(t.slice(eq + 1));
+      out.rawArgs[t.slice(0, eq)] = out.args[lastKey];
       continue;
     }
     if (!out.name) { out.name = t.toLowerCase(); continue; }
-    if (lastKey === 'pts' && POINT.test(t)) { out.args.pts += ` ${t}`; continue; }
+    if (lastKey === 'pts' && (POINT.test(t) || /^[A-Za-z#(]/.test(t) && !/^(em|dash|outline|fit)$/i.test(t))) { out.args.pts += ` ${t}`; continue; }
     out.flags.add(t.toLowerCase());
     lastKey = '';
   }

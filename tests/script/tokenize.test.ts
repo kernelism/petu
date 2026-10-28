@@ -20,6 +20,14 @@ describe('tokenize', () => {
     expect(tokenize('curve on=side pts=1,2 30,40 5.5,6 dash')!.args.pts).toBe('1,2 30,40 5.5,6');
     expect([...tokenize('curve on=side pts=1,2 30,40 dash')!.flags]).toEqual(['dash']);
   });
+  it('rawArgs keeps keys as written (let names are case-sensitive)', () => {
+    expect(tokenize('let on=s O=1,2 o=3,4')!.rawArgs).toEqual({ on: 's', O: '1,2', o: '3,4' });
+  });
+  it('pts continues over names and constructions, but not flags', () => {
+    const t = tokenize('shade on=s pts=O X mid(A,B) em')!;
+    expect(t.args.pts).toBe('O X mid(A,B)');
+    expect([...t.flags]).toEqual(['em']);
+  });
   it('keeps backslashes in math', () => {
     expect(tokenize('math on=side at=1,2 "\\frac{B f}{z}"')!.quotes).toEqual(['\\frac{B f}{z}']);
   });
