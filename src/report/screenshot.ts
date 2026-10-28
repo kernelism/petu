@@ -83,6 +83,15 @@ export async function screenshot(opts: { scale?: number; doc?: Document } = {}):
   g.fillStyle = bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' ? bg : '#f6f5f2';
   g.fillRect(0, 0, W, H);
 
+  // Surfaces drawn by CSS alone (the board's paper): their background, under their content.
+  for (const el of doc.querySelectorAll<HTMLElement>('.desk-board')) {
+    const clip = clipOf(el, view);
+    const c = getComputedStyle(el).backgroundColor;
+    if (!clip || !c || c === 'rgba(0, 0, 0, 0)') continue;
+    g.fillStyle = c;
+    g.fillRect(clip.x, clip.y, clip.w, clip.h);
+  }
+
   // Outermost SVGs and every canvas, in document order (≈ paint order for this app's layers).
   const els = [...doc.querySelectorAll('canvas, svg')].filter((el) => !(el.tagName.toLowerCase() === 'svg' && el.parentElement?.closest('svg')) && !el.closest(CHROME.join(',')) && el !== out);
   for (const el of els) {

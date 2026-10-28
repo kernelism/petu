@@ -42,6 +42,11 @@ npm run eval -- … --replay <runId> --fake-judge   # offline: full judge path w
 node --experimental-strip-types scripts/eval/calibrate.ts dump|compare <runId> [--n 8]   # hand-vs-judge
 ```
 
+**Bug reports**: the founder presses Report (top bar flag, Shift+R; dev server only). Each one is
+`.petu/reports/<stamp>-<slug>/{report.json,screenshot.png}` (`src/report/`, `server/report.ts`,
+`POST /api/report` behind `guard`); read them with `npm run reports` (list) and `npm run reports -- <id>|last`
+(digest: scout, stage-2 script, every action with timing and skip reason, board sections).
+
 **Eval v3** (`scripts/eval/`): question set **q2** (`q2.ts`, 40 questions written by an agent that
 saw only the PDFs: 34 course + 6 on the synthetic decks, 20 dev / 20 test stratified by deck) and
 rubric **r3** (`judge.ts`: understanding, illustration, deck, craft, economy, plus defect flags such
@@ -130,7 +135,7 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   The dock shows a faint static "…" while thinking and after the last word if the stream pauses.
   `?debug` shows scout verdict, opener, stage-2 first text and the handoff gap.
 - `server/` — `plugin.ts` (routes: `/api/ask`, `/api/scout`, `/api/prewarm`, `/api/spend`, `/api/judge` (eval
-  token), `/api/dev-pdf/`), `env.ts` (the only reader of the key and `PETU_*` knobs), `openai.ts`
+  token), `/api/report`, `/api/dev-pdf/`), `env.ts` (the only reader of the key and `PETU_*` knobs), `openai.ts`
   (request builder: explicit cache breakpoints after the system prompt (12h) and the page block
   (30m), `prompt_cache_key` per document; one retry before the first text), `sse.ts`,
   `scriptFilter.ts` (strips the private `<plan>` and markdown/TeX from narration), `lint.ts`,
