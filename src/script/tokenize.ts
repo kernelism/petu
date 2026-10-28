@@ -13,6 +13,8 @@ export type Tokens = {
   flags: Set<string>;
   /** key=value pairs with keys as written (`{{let O=… o=…}}` names are case-sensitive). */
   rawArgs: Record<string, string>;
+  /** Keys (as written) given more than once: ambiguous, so the caller never picks one. */
+  dupKeys: Set<string>;
 };
 
 const POINT = /^-?\d*\.?\d+,-?\d*\.?\d+$/;
@@ -20,7 +22,7 @@ const POINT = /^-?\d*\.?\d+,-?\d*\.?\d+$/;
 /**
  * Splits a tag body into name, args, quotes and flags. Quoted spans ("…" or “…”) may contain
  * spaces anywhere, including inside a value (`from=p3:"image 1"`). Bare points right after
- * `pts=` continue the list (`pts=1,2 3,4 5,6` → args.pts = "1,2 3,4 5,6"). A repeated key returns null.
+ * `pts=` continue the list (`pts=1,2 3,4 5,6` → args.pts = "1,2 3,4 5,6"). A repeated key is listed in dupKeys.
  */
 export function tokenize(body: string): Tokens | null {
   const raw: string[] = [];
@@ -40,15 +42,15 @@ export function tokenize(body: string): Tokens | null {
     }
     raw.push(tok);
   }
-  const out: Tokens = { name: '', args: {}, quotes: [], flags: new Set(), rawArgs: {} };
+  const out: Tokens = { name: '', args: {}, quotes: [], flags: new Set(), rawArgs: {}, dupKeys: new Set() };
   let lastKey = '';
   for (const t of raw) {
     if (t[0] in QUOTES) { out.quotes.push(unquote(t)); lastKey = ''; continue; }
     const eq = t.indexOf('=');
     const q = t.search(/["“]/);
     if (eq > 0 && (q < 0 || eq < q)) {
-      // A key given twice (`from=D to=C to=E`) is ambiguous: the tag is malformed, never guessed.
-      if (Object.prototype.hasOwnProperty.call(out.rawArgs, t.slice(0, eq))) return null;
+      // A key given twice (`from=D to=C to=E`) is ambiguous: noted, never guessed (parseTag decides).
+      if (Object.prototype.hasOwnProperty.call(out.rawArgs, t.slice(0, eq))) out.dupKeys.add(t.slice(0, eq));
       lastKey = t.slice(0, eq).toLowerCase();
       out.args[lastKey] = unquote(t.slice(eq + 1));
       out.rawArgs[t.slice(0, eq)] = out.args[lastKey];

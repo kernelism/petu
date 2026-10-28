@@ -64,7 +64,7 @@ function end(s: string | undefined, near: Pt | undefined): RawEnd | undefined {
 export function parseTag(body: string): RawAction | null {
   const t = tokenize(body);
   if (!t) return null;
-  const { name, args, quotes, flags, rawArgs } = t;
+  const { name, args, quotes, flags, rawArgs, dupKeys } = t;
   const quote = quotes[0]?.trim() || undefined;
 
   // {{let}}: its own keys are point names (case-sensitive, so `P=` is a point, not a page): the
@@ -77,6 +77,7 @@ export function parseTag(body: string): RawAction | null {
     const parsed: [string, PtArg][] = [];
     for (const [k, v] of Object.entries(rawArgs)) {
       if (k === 'on' || (on === undefined && k === 'p')) continue;
+      if (dupKeys.has(k)) { console.warn('[script] let: name defined twice, dropped:', k); continue; } // ambiguous: never pick one
       const n = eid(k), p = parsePtArg(v, lit);
       if (!n || !p) return null; // one bad definition fails the tag: never half a figure
       parsed.push([n, p]);
@@ -84,6 +85,9 @@ export function parseTag(body: string): RawAction | null {
     if (!parsed.length || flags.size || quotes.length) return null;
     return on !== undefined ? { kind: 'let', region: on, defs: parsed } : { kind: 'let', page: page!, defs: parsed };
   }
+
+  // Any other tag with a repeated key (`line from=D to=C to=E`) is ambiguous: malformed.
+  if (dupKeys.size) return null;
 
   // Tags without a target.
   switch (name) {

@@ -1,5 +1,5 @@
 // tests/script/parseTagAgent.test.ts
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { parseTag } from '../../src/script/parseTag';
 import { ScriptParser } from '../../src/script/parser';
 import { Figures } from '../../src/geometry/resolve';
@@ -70,5 +70,18 @@ describe('parseTag agent: connector ends on page marks', () => {
   it('rejects malformed marks', () => {
     expect(parseTag('connect from=p4:#3 to=side:X')).toBeNull();
     expect(parseTag('connect from=p4:#d3.c to=side:X')).toBeNull();
+  });
+});
+
+describe('parseTag: a key given twice', () => {
+  it('is malformed on a drawing tag (never guess which value was meant)', () => {
+    expect(parseTag('line on=s from=D to=C to=E')).toBeNull();
+  });
+  it('drops only the twice-defined name from a let, keeping the rest of the figure', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const a = parseTag('let on=s C=0,0 I=150,-100 H=1,1 H=2,2');
+    expect(a && a.kind === 'let' && a.defs.map(([n]) => n)).toEqual(['C', 'I']);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
