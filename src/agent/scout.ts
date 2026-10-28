@@ -63,11 +63,12 @@ const FIND_CHARS = 80;
 export const SCOUT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['opener', 'pages', 'plan'],
+  required: ['opener', 'pages', 'find', 'plan'],
   // Property order is output order: the opener first, so it can be spoken while the rest is written.
   properties: {
     opener: { type: 'string', description: 'The first one or two sentences of the spoken answer, with tags that point only at the visible page.' },
-    pages: { type: 'array', items: { type: 'integer' }, description: 'At most 6 page numbers from the digest, in teaching order.' },
+    pages: { type: 'array', items: { type: 'integer' }, description: 'At most 6 page numbers of the document, in teaching order.' },
+    find: { type: 'array', items: { type: 'string' }, description: 'At most 3 labels or short phrases to look up (e.g. a figure, table or equation number the answer needs); usually empty.' },
     plan: { type: 'string', description: 'At most 80 words.' },
   },
 } as const;
