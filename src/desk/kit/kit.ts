@@ -695,6 +695,27 @@ async function refreshScatter(b: Block, store: KitStore, ms: number, ctl: Ctl | 
   await tween(Math.min(ms, 200), (k) => fresh.forEach((el) => el.setAttribute('opacity', String(k))), ctl);
 }
 
+/** A convex polygon clipped to a data box (Sutherland–Hodgman). */
+export function clipPoly(ps: C.Pt[], d: { x0: number; x1: number; y0: number; y1: number }): C.Pt[] {
+  const edges: [(p: C.Pt) => boolean, (a: C.Pt, b: C.Pt) => C.Pt][] = [
+    [(p) => p.x >= d.x0, (a, b) => ({ x: d.x0, y: a.y + ((b.y - a.y) * (d.x0 - a.x)) / (b.x - a.x) })],
+    [(p) => p.x <= d.x1, (a, b) => ({ x: d.x1, y: a.y + ((b.y - a.y) * (d.x1 - a.x)) / (b.x - a.x) })],
+    [(p) => p.y >= d.y0, (a, b) => ({ x: a.x + ((b.x - a.x) * (d.y0 - a.y)) / (b.y - a.y), y: d.y0 })],
+    [(p) => p.y <= d.y1, (a, b) => ({ x: a.x + ((b.x - a.x) * (d.y1 - a.y)) / (b.y - a.y), y: d.y1 })],
+  ];
+  let out = ps;
+  for (const [inside, cut] of edges) {
+    const src = out;
+    out = [];
+    src.forEach((cur, i) => {
+      const prev = src[(i + src.length - 1) % src.length];
+      if (inside(cur)) { if (!inside(prev)) out.push(cut(prev, cur)); out.push(cur); }
+      else if (inside(prev)) out.push(cut(prev, cur));
+    });
+  }
+  return out;
+}
+
 /** The segment of line l inside the scatter's data box (data coords); null when it misses it. */
 function clipLine(l: C.Line, d: { x0: number; x1: number; y0: number; y1: number }): [C.Pt, C.Pt] | null {
   const ps: C.Pt[] = [];
@@ -769,8 +790,9 @@ async function band(v: Extract<KitVerb, { kind: 'band' }>, env: BuildEnv, store:
       const big = Math.hypot(d.x1 - d.x0, d.y1 - d.y0) * 4;
       const foot = C.footOn({ x: (d.x0 + d.x1) / 2, y: (d.y0 + d.y1) / 2 }, l);
       const dir = { x: -l.b, y: l.a };
-      const corner = (s: number, o: number) => toPlot(sc, { x: foot.x + dir.x * s * big + l.a * o * v.w, y: foot.y + dir.y * s * big + l.b * o * v.w });
-      const poly = [corner(-1, 1), corner(1, 1), corner(1, -1), corner(-1, -1)];
+      const corner = (s: number, o: number) => ({ x: foot.x + dir.x * s * big + l.a * o * v.w, y: foot.y + dir.y * s * big + l.b * o * v.w });
+      // The strip clipped to the plot in data space (its box then measures as what shows).
+      const poly = clipPoly([corner(-1, 1), corner(1, 1), corner(1, -1), corner(-1, -1)], d).map((q) => toPlot(sc, q));
       const accent = env.settings.inkColor;
       (f.el.band as SVGElement | undefined)?.remove();
       const bandEl = svg(se.layer, 'polygon', { points: poly.map((p) => `${p.x},${p.y}`).join(' '), fill: f.em ? accent : c.ink, 'fill-opacity': f.em ? 0.12 : 0.06 });
@@ -1430,6 +1452,8 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
         }
         first();
         paintTable(t, c, accent, null);
+        // The newest point goes back to ink with the row highlight.
+        for (const d of store.dependents(t.id)) if (d.kind === 'scatter' && d.el.scatter) (d.el.scatter as ScatterEls).pts.forEach((el) => { if (!el.hasAttribute('data-off')) setAttrs(el, ptLook(d, c)); });
         await tween(ctl.ff ? 0 : 260, (k) => hl.setAttribute('opacity', String(1 - k)), ctl);
         hl.remove();
         (cb.el.text as SVGElement | undefined)?.setAttribute('opacity', '0.5');

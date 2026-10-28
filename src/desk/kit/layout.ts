@@ -50,7 +50,11 @@ export function place(w: number, h: number, pad: Pad, spec: PlaceSpec, anchor: P
   }
   if (anchor && spec.below) {
     const span = spec.op ? s.opW + s.gap : s.gap;
-    const y = anchor.rect.y + anchor.rect.h + span + pad.t;
+    // Under the anchor, and under anything placed since that sits in the way (a calc line under it).
+    const x0 = Math.max(s.margin + pad.l, anchor.body.x) - pad.l, x1 = x0 + pad.l + w + pad.r;
+    const inWay = region.filter((r) => r !== anchor && r.rect.y >= anchor.rect.y + anchor.rect.h - 1 && r.rect.x < x1 && r.rect.x + r.rect.w > x0);
+    const floor = Math.max(anchor.rect.y + anchor.rect.h, ...inWay.map((r) => r.rect.y + r.rect.h));
+    const y = floor + span + pad.t;
     const op = spec.op ? { x: anchor.body.x + Math.min(w, anchor.body.w) / 2, y: anchor.rect.y + anchor.rect.h + span / 2, glyph: spec.op } : undefined;
     return at(Math.max(s.margin + pad.l, anchor.body.x), y, op);
   }
