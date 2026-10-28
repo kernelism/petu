@@ -78,13 +78,15 @@ export const SCRIPTS: Record<string, Demo & { src: string }> = {
    * that grows and a normalized score that doesn't; 3 data with outliers, two candidate lines, a band
    * and a live count; 4 a demand table whose elasticity column fills row by row, with a reference
    * line; 5 a thrown ball: a table filling heights and speeds, points and bars following it; 6 two
-   * dice: a 6×6 grid of sums, the cells of one sum counted.
+   * dice: a 6×6 grid of sums, the cells of one sum counted; 7 at scale: a noisy 24×24 image (view=image,
+   * seeded noise) smoothed by a 1/9 mean kernel into an output image; 8 a cooling cup: noisy readings as a
+   * line, their running average on the same axes, and the law plotted from named constants.
    */
   kit: {
     src: '/fixtures/econ.pdf',
     question: 'Visual kit check',
     script:
-      `{{scroll p=1}} Six small lessons, drawn by the engine. ` +
+      `{{scroll p=1}} Eight small lessons, drawn by the engine. ` +
       `{{sketch id=f near=p1}} Take a patch {{grid on=f id=img vals=10,10,10,90,90,90;10,10,10,90,90,90;10,10,10,90,90,90;10,10,10,90,90,90;10,10,10,90,90,90 shade "image patch"}} with a dark-to-bright edge down its middle. ` +
       `The kernel {{grid on=f id=k vals=-1,0,1;-1,0,1;-1,0,1 right=img op=⊛ "kernel"}} weighs the right column against the left. ` +
       `{{grid on=f id=o over=img slide=k right=k op== "output"}} The output starts empty. ` +
@@ -115,7 +117,15 @@ export const SCRIPTS: Record<string, Demo & { src: string }> = {
       `{{bars on=m id=vb vals=tb.c labels=tb.a right=tr "v"}} through zero at the top, then negative on the way down. ` +
       `{{sketch id=p near=p1}} Last, two dice. {{grid on=p id=s size=6x6 fn="r+c" rows=1,2,3,4,5,6 cols=1,2,3,4,5,6 "sum of two dice"}} Each cell is a sum, all thirty-six equally likely. ` +
       `{{emph id=s where="x==4"}} A four is a short diagonal: {{calc on=p of=s fn="x==4" reduce=count right=s "P(sum = 4)"}} three cells. ` +
-      `{{emph id=s where="x==7"}} A seven runs corner to corner: {{calc on=p of=s fn="x==7" reduce=count below=s "P(sum = 7)"}} six cells, the most of any sum.`,
+      `{{emph id=s where="x==7"}} A seven runs corner to corner: {{calc on=p of=s fn="x==7" reduce=count below=s "P(sum = 7)"}} six cells, the most of any sum. ` +
+      `{{sketch id=n near=p1}} Now at scale: {{grid on=n id=ni size=24x24 fn="(c>12)*100+30*randn()" view=image "noisy edge"}} a noisy image with an edge down the middle, ` +
+      `{{grid on=n id=nk vals=1/9,1/9,1/9;1/9,1/9,1/9;1/9,1/9,1/9 right=ni op=⊛ "mean"}} a three by three mean, ` +
+      `{{grid on=n id=no over=ni slide=nk right=nk op== "smoothed"}} and its output as a picture. {{step id=no[1,1]}} One window is just an average, ` +
+      `{{sweep id=no dur=4}} and over the whole image the speckle melts while the edge stays. ` +
+      `{{sketch id=c near=p1}} Last, a cup of tea cooling: {{const room=20 hot=90 k=0.1}} it starts at ninety degrees, in a room at twenty: ` +
+      `{{bars on=c id=temp size=1x40 fn="room+(hot-room)*exp(-k*c)+3*randn()" view=line "thermometer"}} forty noisy readings, a minute apart, ` +
+      `{{bars on=c id=avg over=temp win=1x5 reduce=mean axes=temp "5-minute average"}} and their running average on the same axes. ` +
+      `{{plot on=c id=law fn="room+(hot-room)*exp(-k*x)" domain=0,40 axes=temp "the law" em}} The cooling law runs right through it.`,
   },
   /**
    * Toolkit check (not a teaching demo): every v2 element once, in one board section for the sample

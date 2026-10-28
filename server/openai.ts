@@ -74,7 +74,7 @@ export const TIMEOUTS: Timeouts = { headersMs: 15_000, idleMs: 20_000, callMs: 6
 const URL_ = 'https://api.openai.com/v1/responses';
 export const JUDGE_MODEL = 'gpt-6.1-sol';
 /** r3 rubric (5 criteria + defect flags + notes) needs more room than r2; the reservation uses this too. */
-const JUDGE_MAX_OUTPUT = 1600;
+import { JUDGE_MAX_OUTPUT } from './limits';
 
 /** Shared by every document: the system block's cache is reused across PDFs. */
 export const cacheKey = () => `petu-${PROMPT_VERSION}`;
