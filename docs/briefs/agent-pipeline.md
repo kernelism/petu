@@ -27,6 +27,7 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 | `src/agent/prewarm.ts` | Prewarm on ask-bar intent (focus or 3rd char), dedupe 25 min; system block on document open. |
 | `src/agent/context/build.ts` | `ContextBuilder`: `digest()`, `visible()`, `build()` (stage 2), `pagePrefix()` (prewarm), `groundPage()` (pdf.js → `PageGround`). |
 | `src/agent/context/*` | `textLines` (`t7 436 415–470: …`), `marks` (`#d #s #a #b #i #g #e`, ≤ 60/page), `operatorList`, `format` (listings), `digest` (≤ 48k chars), `search`, `outline`, `image` (JPEG, `MAX_PATCHES`), `ink` (student ink summary + crop). |
+| `src/agent/context/{tiers,docmap,labels,candidates,printed,memory}.ts` | The tiered scout context (`?ctx=new`, `PETU_CTX=new` for evals; default old). `tiers`: small ≤ 60 pages = digest; medium ≤ 400 = card + map + digest; huge = card + map + the visible section card. `docmap`: every bookmark with page ranges (6k-token cap, deepest level dropped from the back) or detected headings; `printed`: printed-vs-PDF page offset (page labels or running headers on a fixed sample); `labels`: Figure/Table/Example/Appendix/eq. (3.4)/section → page; `candidates`: per question ≤ 8 pages (named labels and printed pages, ±2 neighbours, BM25 top 5) and the scout's `find` resolver; `memory`: append-only SESSION block. `ContextBuilder.scout()` returns all of it; the cached blocks never depend on index progress. `npm run ctx-bench` measures it offline. |
 | `src/agent/evalHooks.ts` | `?eval` only: `window.__petu` for the runner. |
 | `scripts/ground.ts` | `npm run ground -- <pdf> <page…>`: prints exactly what the model sees. No API call. |
 
@@ -61,7 +62,10 @@ JSON, upstream error or cap → stage 2 on the scout plan. Esc aborts it (booked
 
 `prompt_cache_key` = `petu-<PROMPT_VERSION>` shared by **all documents** (scout: `petu-scout-<SCOUT_VERSION>`).
 Scout prefix = `SCOUT_SYSTEM`, digest (30m), visible listing with "listing only, no image" (30m) — byte-identical
-to what prewarm sends. `PETU_EXPLICIT_CACHE=0` → implicit caching, prewarm off.
+to what prewarm sends. New mode: digest-or-map (30m) → section card (30m, huge) → visible listing (30m; a scan or
+outlined-math page: its image at detail low instead) → SESSION memory (30m) → tail: CANDIDATES + printed-page note,
+previous exchange, question. The scout may name any page and an optional `find` list (s2.3), resolved locally
+(labels, then BM25) into extra stage-2 pages before stage 2 is built. Stage 2's `docText` is the map on the huge tier. `PETU_EXPLICIT_CACHE=0` → implicit caching, prewarm off.
 
 ## Spend: ledger, phases, caps
 
