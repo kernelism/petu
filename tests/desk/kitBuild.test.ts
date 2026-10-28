@@ -49,7 +49,7 @@ describe('kit blocks on the board', () => {
     expect(mid(k)).toBeCloseTo(mid(img));
     expect(mid(o)).toBeCloseTo(mid(img));
     expect(texts(layers.agent, '[data-kit] text').filter((t) => t === '⊛' || t === '=')).toEqual(['⊛', '=']);
-    const outTexts = () => [...o.g!.querySelectorAll('text')].map((t) => t.textContent).filter((t) => t !== '=');
+    const outTexts = () => [...o.g!.querySelectorAll('text')].map((t) => t.textContent).filter((t) => t !== '=' && t !== 'o'); // its caption is its id
     expect(outTexts().every((t) => t === '')).toBe(true);
     await tag(e, 'step id=o[1,1]');
     await settle(e);
@@ -130,6 +130,69 @@ describe('kit blocks on the board', () => {
     expect(await tag(e, 'arrow on=s from=a[1,1] to=a[3,3]')).toMatch(/outside/);
     expect(await tag(e, 'emph id=zz[1,1]')).toMatch(/unknown block/);
     expect(layers.agent.querySelectorAll('path').length).toBeGreaterThan(0);
+  });
+
+  it('a named block without a caption is captioned with its name; a single letter is a variable, in math italic', async () => {
+    const { e, layers } = env();
+    await tag(e, 'bars on=s id=u vals=1,2,3');
+    await tag(e, 'bars on=s id=v vals=3,5,7 right=u');
+    await tag(e, 'grid on=s id=sq_diff zip=u,v fn="(x-y)^2" below=u');
+    await tag(e, 'grid on=s vals=1,2');
+    await tag(e, 'bars on=s id=w vals=1,2 "given"');
+    const all = [...layers.agent.querySelectorAll('[data-kit] text')];
+    const cap = (s: string) => all.filter((t) => t.textContent === s);
+    expect(cap('u')).toHaveLength(1);
+    expect(cap('v')).toHaveLength(1);
+    expect(cap('u')[0].getAttribute('font-style')).toBe('italic');
+    expect(cap('sq diff')).toHaveLength(1);
+    expect(cap('sq diff')[0].getAttribute('font-style')).toBeNull();
+    expect(cap('given')).toHaveLength(1);
+    expect(cap('w')).toHaveLength(0);
+    // an anonymous block stays unlabelled
+    expect(all.some((t) => /^_k/.test(t.textContent ?? ''))).toBe(false);
+  });
+
+  it('a computed block right of its source gets → by default; a plain neighbour gets no glyph; op= wins', async () => {
+    const { e } = env();
+    await tag(e, 'bars on=s id=u vals=1,2,3');
+    await tag(e, 'bars on=s id=v vals=3,5,7 right=u');
+    await tag(e, 'bars on=s id=d zip=u,v fn="(x-y)^2" right=v');
+    await tag(e, 'bars on=s id=c map=u fn="x-mean" below=u');
+    await tag(e, 'bars on=s id=n map=c fn="x/norm" right=c op==');
+    await tag(e, 'bars on=s id=m map=n fn="2*x" right=n op=none');
+    await tag(e, 'bars on=s id=q map=u fn="x+1" right=m');
+    const st = kitStore(e.registry);
+    const glyph = (id: string) => st.get(id)!.placed.op?.glyph;
+    expect(glyph('v')).toBeUndefined();
+    expect(glyph('d')).toBe('→');
+    expect(glyph('c')).toBeUndefined(); // below: no default
+    expect(glyph('n')).toBe('=');
+    expect(glyph('m')).toBeUndefined();
+    expect(glyph('q')).toBeUndefined(); // right of a block it is not computed from
+  });
+
+  it('map and zip take any block as source: bars with a grid, a table column, a column grid with bars', async () => {
+    const { e } = env();
+    await tag(e, 'bars on=s id=u vals=1,2,3');
+    await tag(e, 'grid on=s id=g vals=3,5,7');
+    await tag(e, 'grid on=s id=col vals=1;1;1');
+    await tag(e, 'table on=s id=t cols=a,b vals=1,10;2,20;3,30');
+    const st = kitStore(e.registry);
+    await tag(e, 'bars on=s id=d zip=u,g fn="y-x"');
+    expect(st.get('d')!.vals).toEqual([[2, 3, 4]]);
+    await tag(e, 'grid on=s id=e zip=u,t.b fn="x*y"');
+    expect(st.get('e')!.vals).toEqual([[10, 40, 90]]);
+    await tag(e, 'bars on=s id=f map=t.a fn="x^2"');
+    expect(st.get('f')!.vals).toEqual([[1, 4, 9]]);
+    expect(st.get('f')!.deps).toEqual(['t']);
+    await tag(e, 'bars on=s id=h zip=u,col fn="x+y"');
+    expect(st.get('h')!.vals).toEqual([[2, 3, 4]]);
+    await tag(e, 'bars on=s id=k map=col fn="x*5"'); // a column lies down as bars
+    expect(st.get('k')!.vals).toEqual([[5, 5, 5]]);
+    // a set on the input still flows through
+    await tag(e, 'set id=u fn="x+1"');
+    await settle(e);
+    expect(st.get('d')!.vals![0]).toEqual([1, 2, 3]);
   });
 
   it('a block taller than the section grows it', async () => {

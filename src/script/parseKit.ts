@@ -49,8 +49,9 @@ function place(args: Args, P: (s?: string) => PtArg | undefined): Record<string,
     out[k] = r;
   }
   if (args.op != null) {
-    const g = GLYPHS[args.op.trim()];
-    if (!g || (out.right == null && out.below == null)) return null;
+    // op=none: no glyph (a computed block beside its source otherwise gets →).
+    const g = args.op.trim().toLowerCase() === 'none' ? '' : GLYPHS[args.op.trim()];
+    if (g == null || (out.right == null && out.below == null)) return null;
     out.op = g;
   }
   if (args.at != null) {
@@ -69,6 +70,9 @@ export const colRef = (s?: string): [string, number] | null => {
   return m ? [normName(m[1]), m[2].charCodeAt(0) - 97] : null;
 };
 
+/** A source block for map= / zip=: a block id, or a table column `t.c` (normalised to `t.c`). */
+const srcRef = (s?: string) => { const cr = colRef(s); return cr ? `${cr[0]}.${String.fromCharCode(97 + cr[1])}` : eid(s); };
+
 /** vals= / map= fn= / zip= fn= / over= (slide= | win= reduce=|fn=) / size= fn=: where a block's values come from. */
 function source(args: Args, flags: Set<string>): KitSource | null {
   const given = ['vals', 'map', 'zip', 'over', 'size'].filter((k) => args[k] != null);
@@ -80,9 +84,9 @@ function source(args: Args, flags: Set<string>): KitSource | null {
     return R >= 1 && C >= 1 && R <= MAX_DIM && C <= MAX_DIM ? { gen: [R, C], fn } : null;
   }
   if (args.vals != null) { const cr = colRef(args.vals); if (cr) return { col: cr }; const v = parseVals(args.vals); return v ? { vals: v } : null; }
-  if (args.map != null) { const m = eid(args.map), fn = fnOk(args.fn); return m && fn ? { map: m, fn } : null; }
+  if (args.map != null) { const m = srcRef(args.map), fn = fnOk(args.fn); return m && fn ? { map: m, fn } : null; }
   if (args.zip != null) {
-    const ids = args.zip.split(',').map((x) => eid(x.trim()));
+    const ids = args.zip.split(',').map((x) => srcRef(x.trim()));
     const fn = fnOk(args.fn);
     return ids.length === 2 && ids[0] && ids[1] && fn ? { zip: [ids[0], ids[1]], fn } : null;
   }

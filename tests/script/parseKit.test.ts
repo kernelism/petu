@@ -23,6 +23,13 @@ describe('kit blocks', () => {
     expect(P('grid on=s id=z zip=a,b fn="(x-y)^2"')).toMatchObject({ src: { zip: ['a', 'b'] } });
     expect(P('grid on=s id=z size=6x6 fn="r+c"')).toMatchObject({ src: { gen: [6, 6], fn: 'r+c' } });
     expect(P('bars on=s id=w vals=t.c labels=t.a')).toMatchObject({ src: { col: ['t', 2] }, labelsFrom: ['t', 0] });
+    // any block is a source: a table column directly, no re-declared copy
+    expect(P('bars on=s id=z map=t.b fn="x/2"')).toMatchObject({ src: { map: 't.b' } });
+    expect(P('grid on=s id=z zip=u,t.c fn="x-y"')).toMatchObject({ src: { zip: ['u', 't.c'] } });
+  });
+  it('op=none: placed beside, no glyph', () => {
+    expect(P('bars on=s id=z map=u fn="x+1" right=u op=none')).toMatchObject({ right: 'u', op: '' });
+    expect(P('bars on=s id=z map=u fn="x+1" op=none')).toBeNull();
   });
   it('table, scatter (literal or a table’s columns), calc, fit', () => {
     expect(P('table on=s id=t cols=P,Q,|ε| vals=10,50;8,60')).toMatchObject({ kind: 'table', heads: ['P', 'Q', '|ε|'], vals: [[10, 50], [8, 60]] });

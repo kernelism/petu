@@ -16,6 +16,7 @@
 import type { SRect } from '../../geometry/space';
 import type { InkAction, KitBlock, KitSource, KitVerb, Pt, RefAction, Target } from '../../script/types';
 import { blockPart, isBlockRef, type BlockPart } from '../../script/pointExpr';
+import { colRef } from '../../script/parseKit';
 import type { BuildEnv, ElementPlan, Pace, TargetCtx } from '../types';
 import type { Registry } from '../registry';
 import { token } from '../../ink/agent/tokens';
@@ -175,7 +176,14 @@ type Env = { store: KitStore; registry: Registry };
 
 /** The full values of a computed or literal source. A string is a skip reason. */
 export function computeSource(src: KitSource, get: (id: string) => Block | undefined): { full: C.Mat; deps: string[]; win?: { spec: C.WinSpec; over: string; kernel?: string } } | string {
-  const valsOf = (id: string) => { const b = get(id); return b?.vals ? b.vals : null; };
+  // Any block with values is a source (a grid, bars, a table); `t.c` is a table's column, as a row.
+  const valsOf = (id: string): C.Mat | null => {
+    const cr = colRef(id);
+    if (cr) { const t = get(cr[0]); return t?.kind === 'table' && cr[1] < t.vals![0].length ? [t.vals!.map((r) => r[cr[1]])] : null; }
+    const b = get(id);
+    return b?.vals ? b.vals : null;
+  };
+  const dep = (id: string) => colRef(id)?.[0] ?? id;
   if ('vals' in src) return { full: src.vals.map((r) => r.slice()), deps: [] };
   if ('gen' in src) {
     const fn = C.compileFn(src.fn, ['r', 'c']);
@@ -192,15 +200,17 @@ export function computeSource(src: KitSource, get: (id: string) => Block | undef
     const a = valsOf(src.map);
     if (!a) return `unknown block ${src.map}`;
     const fn = C.compileFn(src.fn);
-    return fn ? { full: C.mapMat(a, fn), deps: [src.map] } : 'bad fn';
+    return fn ? { full: C.mapMat(a, fn), deps: [dep(src.map)] } : 'bad fn';
   }
   if ('zip' in src) {
-    const a = valsOf(src.zip[0]), b = valsOf(src.zip[1]);
-    if (!a || !b) return `unknown block ${!a ? src.zip[0] : src.zip[1]}`;
+    const a = valsOf(src.zip[0]), b0 = valsOf(src.zip[1]);
+    if (!a || !b0) return `unknown block ${!a ? src.zip[0] : src.zip[1]}`;
     const fn = C.compileFn(src.fn);
     if (!fn) return 'bad fn';
+    // Two vectors of one length zip whatever their kinds (bars are a row, a column is a column).
+    const b = asShapeOf(b0, a);
     const z = C.zipMat(a, b, fn);
-    return z ? { full: z, deps: [...src.zip] } : 'zip: blocks differ in shape';
+    return z ? { full: z, deps: src.zip.map(dep) } : 'zip: blocks differ in shape';
   }
   const input = valsOf(src.over);
   if (!input) return `unknown block ${src.over}`;
@@ -221,6 +231,32 @@ export function computeSource(src: KitSource, get: (id: string) => Block | undef
   if (!full) return 'window larger than the grid';
   return { full, deps: [src.over, ...(src.slide ? [src.slide] : [])], win: { spec, over: src.over, kernel: src.slide } };
 }
+
+/** A vector `v` laid out like vector `like` (row ↔ column) when they have one length; otherwise `v`. */
+function asShapeOf(v: C.Mat, like: C.Mat): C.Mat {
+  const [R, Cn] = C.shape(v), [r, c] = C.shape(like);
+  if (R === r && Cn === c) return v;
+  const flat = v.flat();
+  if ((R === 1 || Cn === 1) && (r === 1 || c === 1) && flat.length === r * c) return r === 1 ? [flat] : flat.map((x) => [x]);
+  return v;
+}
+
+/** Bars draw any vector: a column (a grid's) lies down as a row. */
+const asRow = (m: C.Mat): C.Mat => (m.length > 1 && m.every((r) => r.length === 1) ? [m.map((r) => r[0])] : m);
+
+/** Ids a computed source reads from (a table column counts as its table). */
+function sourceIds(src: KitSource): string[] {
+  const t = (id: string) => colRef(id)?.[0] ?? id;
+  if ('map' in src) return [t(src.map)];
+  if ('zip' in src) return src.zip.map(t);
+  if ('over' in src) return [src.over, ...(src.slide ? [src.slide] : [])];
+  return [];
+}
+
+/** A block's default caption: its own id, when the model named it (anonymous ids stay unlabelled). */
+const idCaption = (id?: string) => (id && !id.startsWith('_') ? id.replace(/_/g, ' ') : undefined);
+/** A single-letter name (u, v, x′) is a variable: set in math italic, as on a board. */
+export const isVarName = (s: string) => /^[A-Za-z][′']*$/.test(s);
 
 // ------------------------------------------------------------------------------------------------
 // Building: placement happens here (on the block's word), drawing in plan.draw.
@@ -265,6 +301,11 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
   const anchor = await anchorOf(store, a);
   // A neighbour that was skipped: the block still draws, in the default place (one skip never cascades).
   if ((a.right || a.below) && !anchor) { console.warn('[kit] unknown neighbour, placed below:', a.right ?? a.below); a = { ...a, right: undefined, below: undefined, op: undefined }; }
+  // Defaults: a grid or bars is named on the board (its id, when it has no caption; tables and plots
+  // name themselves by their headers and axes), and a computed block placed right of its own source
+  // reads as "source → result" unless op= says otherwise.
+  if ((a.kind === 'grid' || a.kind === 'bars') && !a.caption && idCaption(a.id)) a = { ...a, caption: idCaption(a.id) };
+  if ((a.kind === 'grid' || a.kind === 'bars') && a.right && a.op == null && anchor && sourceIds(a.src).includes(anchor.id)) a = { ...a, op: '→' };
   const others = store.inRegion(region).map((b) => b.placed);
   const spacing = { gap: m.gap, opW: m.opW, margin: m.margin, top: m.top, width: 1000 };
   const P = (w: number, h: number, pad: Pad) => place(w, h, pad, { right: a.right, below: a.below, op: a.op, at: a.at as Pt | undefined }, anchor?.placed, others, spacing);
@@ -273,6 +314,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
   if (a.kind === 'grid' || a.kind === 'bars') {
     const got = computeSource(a.src, (x) => store.get(x));
     if (typeof got === 'string') return got;
+    if (a.kind === 'bars' && !got.win) got.full = asRow(got.full);
     const [R, Cn] = C.shape(got.full);
     if (a.kind === 'bars' && R !== 1) return 'bars need one row';
     const strs = fmtAll(got.full, a.dp);
@@ -437,6 +479,14 @@ async function appear(el: SVGElement, ms: number, k: Pace) {
   await tween(ms * k.speed, (t) => el.setAttribute('opacity', String(t)), undefined, easeOut);
 }
 
+/** A block's caption under it; a variable's name (u, v) in math italic, a shade darker. */
+function caption(g: Element, x: number, y: number, cap: string, m: Metrics, c: ReturnType<typeof col>) {
+  const v = isVarName(cap);
+  const t = kitText(g, x, y, cap, { size: v ? m.label * 1.2 : m.label, fill: v ? c.ink2 : c.muted });
+  if (v) { t.setAttribute('font-style', 'italic'); t.setAttribute('font-family', 'KaTeX_Math, "STIX Two Math", "Cambria Math", "Times New Roman", serif'); }
+  return t;
+}
+
 function drawOp(g: SVGGElement, b: Block, c: ReturnType<typeof col>) {
   const o = b.placed.op!;
   const t = kitText(g, o.x, o.y, o.glyph, { size: b.m.num * 1.45, fill: c.ink2 });
@@ -475,7 +525,7 @@ async function drawGrid(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: P
   const rows = b.el.rows as string[] | undefined, cols = b.el.cols as string[] | undefined, cap = b.el.caption as string | undefined;
   rows?.forEach((s, r) => kitText(labels, body.x - m.label * 0.6, body.y + (r + 0.5) * cs, s, { size: m.label, fill: c.muted, anchor: 'end' }));
   cols?.forEach((s, q) => kitText(labels, body.x + (q + 0.5) * cs, body.y - m.label * 0.85, s, { size: m.label, fill: c.muted }));
-  if (cap) kitText(labels, body.x + body.w / 2, body.y + body.h + m.label * 1.2, cap, { size: m.label, fill: c.muted });
+  if (cap) caption(labels, body.x + body.w / 2, body.y + body.h + m.label * 1.2, cap, m, c);
   const numG = svg(g, 'g');
   for (let r = 0; r < R; r++) {
     texts.push([]);
@@ -568,7 +618,7 @@ async function drawBars(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: P
   const negs = b.group!.neg > 0;
   const below = body.y + body.h + (negs ? m.label * 1.4 : 0);
   labels?.forEach((s, i) => kitText(labG, body.x + (i + 0.5) * b.cs!, below + m.label * 0.95, s, { size: m.label, fill: c.muted }));
-  if (cap) kitText(labG, body.x + body.w / 2, below + (labels ? m.label * 2.5 : m.label * 1.1), cap, { size: m.label, fill: c.muted });
+  if (cap) caption(labG, body.x + body.w / 2, below + (labels ? m.label * 2.5 : m.label * 1.1), cap, m, c);
   b.el.bars = { bars, vals, ghosts, base, emBars: new Set() } satisfies BarEls;
   if (b.ghost) drawGhosts(b, b.ghost, c);
   await appear(labG, 160, k);
@@ -660,7 +710,7 @@ async function drawScatter(b: Block, c: ReturnType<typeof col>, k: Pace) {
   const xl = b.el.xLabel as string | undefined, yl = b.el.yLabel as string | undefined, cap = b.el.caption as string | undefined;
   if (xl) kitText(axes, body.x + body.w, body.y + body.h + m.label * 2.3, xl, { size: m.label, fill: c.ink2, anchor: 'end' });
   if (yl) kitText(axes, body.x, body.y - m.label * 1.1, yl, { size: m.label, fill: c.ink2, anchor: 'start' });
-  if (cap) kitText(axes, body.x + body.w / 2, body.y + body.h + m.label * (xl ? 3.7 : 2.4), cap, { size: m.label, fill: c.muted });
+  if (cap) caption(axes, body.x + body.w / 2, body.y + body.h + m.label * (xl ? 3.7 : 2.4), cap, m, c);
   const clipId = `kit-clip-${++clips}`;
   const cp = svg(svg(g, 'defs'), 'clipPath', { id: clipId });
   svg(cp, 'rect', { x: body.x, y: body.y, width: body.w, height: body.h });
@@ -1316,7 +1366,7 @@ async function drawTable(b: Block, c: ReturnType<typeof col>, k: Pace) {
   const heads = tb.heads.map((h, j) => kitText(head, tb.xs[j] + tb.ws[j] / 2, body.y - tb.hh / 2, h, { size: m.label, fill: c.ink2 }));
   svg(head, 'line', { x1: body.x, x2: body.x + body.w, y1: body.y - px(b, 1), y2: body.y - px(b, 1), stroke: c.edge, ...hair(1) });
   const cap = b.el.caption as string | undefined;
-  if (cap) kitText(head, body.x + body.w / 2, body.y + body.h + m.label * 1.2, cap, { size: m.label, fill: c.muted });
+  if (cap) caption(head, body.x + body.w / 2, body.y + body.h + m.label * 1.2, cap, m, c);
   const rows = svg(g, 'g');
   const texts: SVGTextElement[][] = [];
   for (let r = 0; r < R; r++) {
@@ -1357,6 +1407,7 @@ async function refreshDeps(ids: string[], store: KitStore, ms: number, ctl: Ctl 
     if (d.kind === 'calc' || d.kind === 'fit' || !d.src) continue;
     const got = computeSource(d.src, (x) => store.get(x));
     if (typeof got === 'string') continue;
+    if (d.kind === 'bars' && !d.win) got.full = asRow(got.full);
     if (!d.win && 'col' in d.src) { /* a table column: shows what has filled */ }
     else d.full = got.full;
     const shown = d.win ? got.full.map((row, r) => row.map((x, q) => (d.win!.filled[r][q] ? x : NaN))) : got.full;

@@ -94,6 +94,7 @@ export type WinReduce = 'sum' | 'mean' | 'max' | 'min';
 /** Where a block's values come from: literals, or an operation the engine computes. */
 export type KitSource =
   | { vals: number[][] }
+  /** map= / zip= read any block with values (grid, bars, table) or a table column `t.c`. */
   | { map: string; fn: string }
   | { zip: [string, string]; fn: string }
   /** A window sliding over block `over`: weights from block `slide` (sum of products), a reduction, or a fn of the window's cells (a b c … row-major). */
