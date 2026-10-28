@@ -36,4 +36,9 @@ export interface ViewerApi {
    * keeping the reading position. Resolves once the new layout is in place (safe for scroll math).
    */
   glideColumn(width: number, ms: number): Promise<void>;
+  /**
+   * After the column changed width: if the current page fits whole between the chrome, glides it
+   * to centered (so a narrowed column doesn't leave it pinned high with a neighbour in view).
+   */
+  frameCurrent?(): Promise<void>;
 }

@@ -51,10 +51,9 @@ export function EmptyState({ onFile, onSample, error }: { onFile(f: File): void;
     <div className={`empty${dragging ? ' is-dragging' : ''}`}>
       <div className="empty-card">
         <FileText className="empty-icon" size={28} strokeWidth={1.5} aria-hidden="true" />
-        <h1 className="empty-title">Drop a PDF to start</h1>
-        <p className="empty-sub">or choose a file</p>
+        <h1 className="empty-title">Ask about a PDF and see the answer drawn on the page.</h1>
         <button type="button" className="btn-primary" onClick={() => inputRef.current?.click()}>
-          Choose PDF
+          Open a PDF
         </button>
         <input
           ref={inputRef}

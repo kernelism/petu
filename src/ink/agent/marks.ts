@@ -7,7 +7,7 @@ export type InkStyle = 'live' | 'hand' | 'clean';
 const LABEL = {
   live: { size: 17, family: '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif', weight: 600 },
   clean: { size: 15, family: '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif', weight: 600 },
-  hand: { size: 21, family: '"Bradley Hand", "Segoe Print", "Comic Sans MS", cursive', weight: 700 },
+  hand: { size: 21, family: '"Bradley Hand", "Segoe Print", cursive', weight: 700 },
 };
 
 export function drawLabel(g: SVGGElement, at: SPt, text: string, style: InkStyle, color: string): Promise<void> {
@@ -38,15 +38,19 @@ export function drawLabel(g: SVGGElement, at: SPt, text: string, style: InkStyle
   return new Promise((r) => setTimeout(r, 260));
 }
 
-/** One rect per line behind the text. Sweeps left to right, line by line (~550ms total). */
-export async function drawHighlight(g: SVGGElement, rects: SRect[], color: string, opacity = 0.5): Promise<void> {
+/**
+ * One rect per line behind the text. Sweeps left to right, line by line (~550ms total).
+ * `speed` (0.35–1) compresses the sweep when the ink is behind the narration, like strokes.
+ */
+export async function drawHighlight(g: SVGGElement, rects: SRect[], color: string, opacity = 0.5, speed = 1): Promise<void> {
   const total = rects.reduce((s, r) => s + r.w, 0) || 1;
+  const k = Math.min(1, Math.max(0.35, speed));
   for (const r of rects) {
     const el = document.createElementNS(SVG, 'rect');
     const pad = r.h * 0.12;
     Object.entries({ x: r.x - pad, y: r.y, width: r.w + pad * 2, height: r.h, rx: Math.min(4, r.h * 0.2), fill: color, opacity })
       .forEach(([k, v]) => el.setAttribute(k, String(v)));
-    const ms = Math.max(160, Math.round(550 * (r.w / total)));
+    const ms = Math.round(Math.max(160, 550 * (r.w / total)) * k);
     el.style.transformBox = 'fill-box';
     el.style.transformOrigin = 'left center';
     el.style.transform = 'scaleX(0)';

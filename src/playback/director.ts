@@ -310,7 +310,7 @@ export class Director {
         if (!rects.length) { console.warn('[director] quote not found', a.quote); return 'quote not found'; }
         const sr = rects.map((x) => rectToSpace(x, H));
         const y = rects[0].y + rects[0].h / 2;
-        if (a.kind === 'highlight') return { y, draw: () => drawHighlight(own(L.highlight), sr, s.highlightColor) };
+        if (a.kind === 'highlight') return { y, draw: (_sig, k) => drawHighlight(own(L.highlight), sr, s.highlightColor, 0.5, k.speed) };
         return { y, draw: ink(sr.map((x) => lineStroke({ x: x.x, y: x.y + x.h + 2 }, { x: x.x + x.w, y: x.y + x.h + 2 }, r))) };
       }
       case 'circle':

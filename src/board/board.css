@@ -4,7 +4,6 @@
   top: 72px;
   right: 24px;
   width: var(--board-w);
-  max-height: calc(100vh - 72px - 168px); /* clears the top bar above, the caption and ask bar below */
   display: flex;
   flex-direction: column;
   background: #FDFCF9;
@@ -13,17 +12,17 @@
   font-family: var(--font);
   box-sizing: border-box;
   z-index: 10;
-  opacity: 0;
   visibility: hidden;
-  transform: translateX(32px);
-  transition: opacity var(--glide), transform var(--glide), visibility 0s linear 420ms;
+  /* Closed: parked just off the right edge, exactly one column-glide away. The sheet stays opaque and
+     slides in lockstep with the PDF column's right edge (same distance, duration and curve), so the
+     24px gap between them holds through the glide and nothing ghosts over the still-wide page. */
+  transform: translateX(calc(var(--board-w) + 48px));
+  transition: transform var(--glide), visibility 0s linear 420ms;
 }
 .board.is-open {
-  opacity: 1;
   visibility: visible;
   transform: none;
-  /* The fade trails the slide a little, so the sheet appears as the PDF column makes room. */
-  transition: opacity 300ms ease-out 120ms, transform var(--glide), visibility 0s;
+  transition: transform var(--glide), visibility 0s;
 }
 .board-head {
   flex: none;
@@ -52,8 +51,9 @@
   cursor: pointer;
   transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out), transform 120ms var(--ease-out);
 }
-.board-close:hover { background: var(--hover); color: var(--ink); }
-.board-close:active { background: var(--press); transform: scale(.94); }
+.board-close:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.board-close:active:not(:disabled) { background: var(--press); transform: scale(.94); }
+.board-close:disabled { color: rgba(0,0,0,.2); cursor: default; }
 .board-body {
   flex: 1;
   min-height: 0;
@@ -62,10 +62,10 @@
   justify-content: center;
   padding: 0 16px 16px;
 }
-/* Exactly 1000 × 700, letterboxed: as wide as the panel allows, unless the height runs out first. */
+/* Exactly 1000 × 700. --sheet-w (src/ui/layout.ts) fills the panel's width; the panel hugs its height. */
 .board-sheet {
   position: relative;
-  width: min(100%, calc((100vh - 72px - 168px - 56px) * 10 / 7));
+  width: var(--sheet-w, 100%);
   aspect-ratio: 10 / 7;
 }
 .board-layer, .board-overlay {

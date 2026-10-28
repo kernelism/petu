@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from 'react';
 import type { InkStyle } from '../ink/agent/marks';
 
-export type Settings = { inkStyle: InkStyle; inkColor: string; highlightColor: string; wpm: number };
-export const DEFAULTS: Settings = { inkStyle: 'live', inkColor: '#F2600C', highlightColor: '#FFD60A', wpm: 170 };
+/** shortcuts: single-key drawing shortcuts (D, P, H, E). */
+export type Settings = { inkStyle: InkStyle; inkColor: string; highlightColor: string; wpm: number; shortcuts: boolean };
+export const DEFAULTS: Settings = { inkStyle: 'live', inkColor: '#F2600C', highlightColor: '#FFD60A', wpm: 170, shortcuts: true };
 export const INK_COLORS = ['#F2600C', '#E5484D', '#0A84FF', '#30A46C', '#8E4EC6'];
 export const HIGHLIGHT_COLORS = ['#FFD60A', '#7EE787', '#7CC4FF', '#FF9ECF'];
 

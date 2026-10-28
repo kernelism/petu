@@ -17,17 +17,20 @@ type Props = {
   spaceH: number;
   register(page: number, handle: SlotHandle | null): void;
   renderOverlay?(page: number, spaceH: number): ReactNode;
+  /** The page at the reading line (the stage can set its neighbours back while the board is open). */
+  current?: boolean;
 };
 
 /**
  * One page: always mounted, absolutely positioned, a white sheet until the viewer swaps a rendered
  * canvas into `canvasHost`. Layers, bottom to top: canvas, highlights, overlay slot, agent ink.
  */
-function PageSlotImpl({ page, top, width, height, spaceH, register, renderOverlay }: Props) {
+function PageSlotImpl({ page, top, width, height, spaceH, register, renderOverlay, current = false }: Props) {
   const parts = useRef<Partial<SlotHandle>>({});
   const tryRegister = () => {
     const p = parts.current;
-    if (p.el && p.canvasHost && p.highlight && p.agent) register(page, p as SlotHandle);
+    // A snapshot: the parts object mutates as refs detach, and the viewer must keep the elements it observed.
+    if (p.el && p.canvasHost && p.highlight && p.agent) register(page, { ...p } as SlotHandle);
   };
   // Callback refs: register once every piece is attached, unregister when the root detaches.
   const elRef = useCallback((n: HTMLDivElement | null) => {
@@ -46,7 +49,7 @@ function PageSlotImpl({ page, top, width, height, spaceH, register, renderOverla
   return (
     <div
       ref={elRef}
-      className="pv-page"
+      className={current ? 'pv-page is-current' : 'pv-page'}
       data-page={page}
       style={{ top, width, height, marginLeft: -width / 2 }}
     >

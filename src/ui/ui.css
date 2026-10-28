@@ -1,6 +1,6 @@
 /* UI shell. Depends on src/styles/tokens.css. Motion: 120–200ms, --ease-out. */
 
-.askbar, .caption, .pagepill, .topbar, .popover, .toolbar, .tb-tip, .empty {
+.askbar, .caption, .topbar, .popover, .toolbar, .tb-tip, .empty {
   font-family: var(--font);
   box-sizing: border-box;
 }
@@ -9,13 +9,21 @@
 :where(.askbar, .popover, .toolbar, .topbar, .empty) button { font: inherit; color: inherit; }
 :where(.askbar, .tb-tip) kbd { font-family: var(--font); }
 
+/* ───────── Dock: caption above the ask bar, centered under the active column ───────── */
+.dock {
+  position: fixed;
+  left: var(--dock-x, 50%);
+  bottom: 18px;
+  width: var(--dock-w, min(560px, calc(100vw - 32px)));
+  transform: translateX(-50%);
+  z-index: 30;
+  transition: left 240ms var(--ease-out), width 240ms var(--ease-out);
+}
+
 /* ───────── Ask bar ───────── */
 .askbar {
-  position: fixed;
-  left: 50%;
-  bottom: 18px;
-  transform: translateX(-50%);
-  width: min(560px, calc(100vw - 32px));
+  position: relative;
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -27,8 +35,9 @@
   cursor: text;
   transition: box-shadow 160ms var(--ease-out);
 }
+/* Focus: the bar lifts and its hairline darkens to a visible 1px ring (≥3:1 on the page). */
 .askbar:focus-within {
-  box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 10px 32px rgba(0,0,0,.16), 0 0 0 0.5px rgba(0,0,0,.14);
+  box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 10px 32px rgba(0,0,0,.16), 0 0 0 1px rgba(0,0,0,.46);
 }
 .askbar-input {
   flex: 1;
@@ -43,7 +52,7 @@
   letter-spacing: -0.01em;
 }
 .askbar-input::placeholder { color: var(--muted); opacity: 1; }
-.askbar-input:focus-visible { outline: none; } /* the bar's lifted shadow is the focus indicator */
+.askbar-input:focus-visible { outline: none; } /* the bar's ring is the focus indicator */
 .askbar-trail {
   flex: none;
   width: 28px;
@@ -122,45 +131,118 @@
 .askbar-chip:hover { background: #fff; color: var(--ink); box-shadow: 0 0 0 0.5px rgba(0,0,0,.12), 0 4px 14px rgba(0,0,0,.11); }
 .askbar-chip:active { transform: scale(.97); background: #F5F5F7; }
 
+/* Transcript: a quiet text toggle inside the bar, expanding to the last answer above it. */
+.askbar-transcript {
+  flex: none;
+  height: 24px;
+  margin-right: -4px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px !important;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 120ms var(--ease-out), background-color 120ms var(--ease-out);
+}
+.askbar-transcript:hover { color: var(--ink); background: var(--hover); }
+.askbar-transcript:active { background: var(--press); }
+.transcript {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 10px);
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  padding: 14px 18px 16px;
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--shadow-float), 0 0 0 0.5px var(--hairline);
+  cursor: auto;
+  user-select: text;
+  animation: askbar-chips-in 160ms var(--ease-out);
+}
+.transcript-q { margin: 0 0 8px; font-size: 13px; line-height: 1.4; color: var(--muted); }
+.transcript-a { margin: 0; font-size: 15px; line-height: 1.55; color: var(--ink); letter-spacing: -0.005em; }
+
 @keyframes ui-pop-in { from { opacity: 0; transform: scale(.85); } to { opacity: 1; transform: none; } }
 
 /* ───────── Caption ───────── */
 .caption {
-  position: fixed;
-  left: 50%;
-  bottom: 76px;
-  width: min(560px, calc(100vw - 32px));
+  --cap-size: 15px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
   padding: 10px 14px;
   border-radius: 12px;
   background: var(--caption-bg);
   color: var(--caption-fg);
-  font-size: 15px;
+  font-size: var(--cap-size);
   line-height: 1.45;
   letter-spacing: -0.005em;
   pointer-events: none;
   user-select: none;
-  z-index: 29;
   opacity: 0;
   visibility: hidden;
-  transform: translate(-50%, 6px);
+  transform: translateY(6px);
   transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out), visibility 0s linear 200ms;
 }
 .caption.is-visible {
   opacity: 1;
   visibility: visible;
-  transform: translate(-50%, 0);
+  transform: none;
   transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out), visibility 0s;
 }
+@media (min-width: 1800px) { .caption { --cap-size: 16px; } }
+/* The asked question, one quiet line above the narration. */
+.caption-q {
+  margin-bottom: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: rgba(255,255,255,.52);
+}
+.caption-q:only-child { margin-bottom: 0; }
+/* Waiting for the first word: a soft light passes through the question. No dots, no spinner. */
+.caption-q.is-waiting {
+  color: transparent;
+  background: linear-gradient(100deg, rgba(255,255,255,.42) 40%, rgba(255,255,255,.9) 50%, rgba(255,255,255,.42) 60%) 0 0 / 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: caption-shimmer 1.6s linear infinite;
+}
+@keyframes caption-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.caption.has-error { pointer-events: auto; }
+.caption-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.caption-retry {
+  flex: none;
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: rgba(255,255,255,.14);
+  color: #fff;
+  font: 500 13px var(--font);
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out);
+}
+.caption-retry:hover { background: rgba(255,255,255,.22); }
+.caption-retry:active { background: rgba(255,255,255,.3); }
+.caption-retry:focus-visible { outline-color: #fff; }
 .caption-viewport {
   /* exactly two lines; older lines leave through the top */
-  max-height: calc(15px * 1.45 * 2);
+  max-height: calc(var(--cap-size) * 1.45 * 2);
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
   overflow: hidden;
 }
 .caption-viewport.has-overflow {
-  height: calc(15px * 1.45 * 2);
+  height: calc(var(--cap-size) * 1.45 * 2);
   -webkit-mask-image: linear-gradient(to bottom, transparent, #000 35%);
   mask-image: linear-gradient(to bottom, transparent, #000 35%);
 }
@@ -171,30 +253,18 @@
 .caption-word { animation: caption-word-in 120ms var(--ease-out) both; }
 @keyframes caption-word-in { from { opacity: 0; } to { opacity: 1; } }
 
-/* ───────── Page pill ───────── */
-.pagepill {
-  position: fixed;
-  top: 16px;
-  left: 50%;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(28,28,30,.78);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 16px;
-  letter-spacing: 0.01em;
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-  z-index: 25;
-  opacity: 0;
-  transform: translate(-50%, -6px);
-  transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
+/* Screen-reader only (the narration's live region). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
-.pagepill:empty { display: none; }
-.pagepill.is-visible { opacity: 1; transform: translate(-50%, 0); transition-duration: 160ms; }
 
 /* ───────── Shared buttons ───────── */
 .icon-btn {
@@ -270,7 +340,10 @@
 .empty.is-dragging .empty-card { opacity: 0; }
 .empty-icon { color: var(--muted); margin-bottom: 14px; }
 .empty-title {
-  margin: 0;
+  max-width: 340px;
+  margin: 0 0 22px;
+  text-wrap: balance;
+  line-height: 1.3;
   font-size: 19px;
   font-weight: 600;
   letter-spacing: -0.02em;
@@ -281,7 +354,7 @@
   font-size: 14px;
   color: var(--muted);
 }
-.empty .btn-quiet { margin-top: 10px; }
+.empty .btn-quiet { margin-top: 10px; color: var(--ink-2); }
 .empty-error {
   min-height: 18px;
   margin: 10px 0 0;
@@ -356,7 +429,26 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.topbar-of { color: var(--muted); font-weight: 400; margin: 0 1px; }
+.topbar-of { color: var(--muted); font-weight: 400; margin: 0 4px; }
+.topbar-num { display: inline-block; }
+/* The agent moved to a page: the number lifts once, briefly. */
+.topbar-num.is-tick { animation: topbar-tick 180ms var(--ease-out); }
+@keyframes topbar-tick { from { transform: translateY(-3px); opacity: .35; } to { transform: none; opacity: 1; } }
+.topbar-toggle {
+  height: 26px;
+  margin-right: 4px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12.5px !important;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+.topbar-toggle:hover { background: var(--hover); color: var(--ink); }
+.topbar-toggle:active { background: var(--press); }
 
 /* ───────── Settings popover ───────── */
 .popover {
@@ -384,6 +476,33 @@
   color: var(--muted);
   letter-spacing: 0.005em;
 }
+.pop-row-inline { flex-direction: row; align-items: center; justify-content: space-between; }
+.switch {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0,0,0,.14);
+  cursor: pointer;
+  transition: background-color 160ms var(--ease-out);
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0,0,0,.2);
+  transition: transform 160ms var(--ease-out);
+}
+.switch.is-on { background: var(--ink); }
+.switch.is-on::after { transform: translateX(14px); }
 .pop-label-split { display: flex; justify-content: space-between; align-items: baseline; }
 .pop-value { color: var(--ink); font-variant-numeric: tabular-nums; }
 
@@ -547,6 +666,9 @@
   transition: opacity 120ms var(--ease-out), transform 120ms var(--ease-out);
 }
 .tb-tip.is-visible { opacity: 1; transform: translate(0, -50%); }
+/* The first-load hint leaves slowly, so it reads as settling away rather than vanishing. */
+.tb-hint { transition-duration: 400ms; }
+.tb-hint.is-visible { transition-duration: 200ms; }
 .tb-tip-key {
   padding: 1px 5px;
   border-radius: 4px;
@@ -557,6 +679,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .askbar-btn, .popover, .caption-word, .askbar-chips { animation: none; }
-  .caption, .caption-text, .pagepill, .dropveil, .tb-fold, .tb-tip { transition-duration: 0s; }
+  .askbar-btn, .popover, .caption-word, .askbar-chips, .transcript, .topbar-num.is-tick { animation: none; }
+  .caption-q.is-waiting { animation: none; color: rgba(255,255,255,.52); background: none; }
+  .dock, .caption, .caption-text, .dropveil, .tb-fold, .tb-tip, .switch, .switch::after { transition-duration: 0s; }
 }

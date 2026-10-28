@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { X } from 'lucide-react';
 import type { ViewerApi } from '../pdf/viewerApi';
 import type { SPt } from '../geometry/space';
@@ -18,7 +18,7 @@ const CHARS_PER_SEC = 34;
 const WRITE_MAX_MS = 900;
 const FADE_MS = 250;
 const SYSTEM = '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
-const HAND = '"Bradley Hand", "Segoe Print", "Comic Sans MS", cursive';
+const HAND = '"Bradley Hand", "Segoe Print", cursive';
 
 
 const frame = () => new Promise<number>((r) => requestAnimationFrame(r));
@@ -71,13 +71,36 @@ async function writeText(g: SVGGElement, at: SPt, text: string, size: 's' | 'm' 
   clip.remove();
 }
 
-type Props = { open: boolean; onClose(): void };
+type Props = {
+  open: boolean;
+  onClose(): void;
+  /** While the agent is drawing on the board, it can't be closed from under it. */
+  closeDisabled?: boolean;
+  /** Called when the board gains its first mark or loses its last one. */
+  onContent?(has: boolean): void;
+};
 
 /** The board: a blank 1000 × 700 sheet beside the PDF. Always mounted so it can be measured and drawn on. */
-export const Board = forwardRef<BoardHandle, Props>(function Board({ open, onClose }, ref) {
+export const Board = forwardRef<BoardHandle, Props>(function Board({ open, onClose, closeDisabled = false, onContent }, ref) {
   const hlRef = useRef<SVGGElement>(null);
   const agRef = useRef<SVGGElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const onContentRef = useRef(onContent);
+  onContentRef.current = onContent;
+
+  useEffect(() => {
+    const hl = hlRef.current, ag = agRef.current;
+    if (!hl || !ag) return;
+    let has = false;
+    const check = () => {
+      const now = !!(hl.firstChild || ag.firstChild);
+      if (now !== has) { has = now; onContentRef.current?.(now); }
+    };
+    const mo = new MutationObserver(check);
+    mo.observe(hl, { childList: true });
+    mo.observe(ag, { childList: true });
+    return () => mo.disconnect();
+  }, []);
 
   useImperativeHandle(ref, () => ({
     layers: () => (hlRef.current && agRef.current ? { highlight: hlRef.current, agent: agRef.current } : null),
@@ -91,7 +114,14 @@ export const Board = forwardRef<BoardHandle, Props>(function Board({ open, onClo
     <aside className={`board${open ? ' is-open' : ''}`} aria-label="Board" aria-hidden={!open}>
       <header className="board-head">
         <span className="board-title">Board</span>
-        <button type="button" className="board-close" onClick={onClose} aria-label="Close board">
+        <button
+          type="button"
+          className="board-close"
+          onClick={onClose}
+          disabled={closeDisabled}
+          aria-label="Close board"
+          title={closeDisabled ? 'Drawing on the board…' : 'Close board'}
+        >
           <X size={15} strokeWidth={2} />
         </button>
       </header>

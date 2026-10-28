@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type FocusEvent, type PointerEvent, type ReactNode } from 'react';
 import { Check, Eraser, Highlighter, Pencil, PenLine, Trash2, Undo2 } from 'lucide-react';
 import { ink, PEN_COLORS, useInk, type Tool } from '../ink/student/store';
+import { getSettings, useSettings } from '../settings/settings';
 import './ui.css';
 
 const ICON = { size: 18, strokeWidth: 1.75 } as const;
@@ -13,8 +14,30 @@ const isTypingTarget = (t: EventTarget | null) =>
 
 type Tip = { label: string; keys?: string; el: HTMLElement };
 
+const HINT_KEY = 'pdf-tutor.drawHintSeen';
+const HINT_MS = 4000;
+const hintSeen = () => { try { return localStorage.getItem(HINT_KEY) === '1'; } catch { return true; } };
+const markHintSeen = () => { try { localStorage.setItem(HINT_KEY, '1'); } catch { /* private mode */ } };
+
+/** Single-key shortcuts act only while drawing, or while the page (stage/board) or this toolbar has focus. */
+const keysActive = (canvasOn: boolean) => {
+  if (canvasOn) return true;
+  const a = document.activeElement;
+  return !!a && a !== document.body && !!a.closest('.stage, .board, .toolbar');
+};
+
 export function CanvasToolbar() {
   const { canvasOn, tool, color, strokes, undo } = useInk();
+  const { shortcuts } = useSettings();
+  // One-time hint beside the pencil on first load; fades after HINT_MS or on first use.
+  const [hint, setHint] = useState(() => !hintSeen());
+  const pencilRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!hint) return;
+    const t = window.setTimeout(() => { setHint(false); markHintSeen(); }, HINT_MS);
+    return () => window.clearTimeout(t);
+  }, [hint]);
+  useEffect(() => { if (canvasOn && hint) { setHint(false); markHintSeen(); } }, [canvasOn, hint]);
   const [tip, setTip] = useState<Tip | null>(null);
   const tipTimer = useRef<number>();
   const tipHiddenAt = useRef(0);
@@ -36,10 +59,11 @@ export function CanvasToolbar() {
       }
       if (mod || e.altKey) return;
       const on = ink.get().canvasOn;
-      if (k === 'd') { ink.setCanvas(!on); }
-      else if (k === 'p') { ink.setTool('pen'); }
-      else if (k === 'h') { ink.setTool('highlighter'); }
-      else if (k === 'e') { ink.setTool('eraser'); }
+      const letters = getSettings().shortcuts && keysActive(on);
+      if (letters && k === 'd') { ink.setCanvas(!on); }
+      else if (letters && k === 'p') { ink.setTool('pen'); }
+      else if (letters && k === 'h') { ink.setTool('highlighter'); }
+      else if (letters && k === 'e') { ink.setTool('eraser'); }
       else if (e.key === 'Escape' && on && !document.querySelector('.popover')) { ink.setCanvas(false); }
       else return;
       e.preventDefault();
@@ -54,6 +78,7 @@ export function CanvasToolbar() {
     return () => { window.removeEventListener('resize', onResize); window.clearTimeout(tipTimer.current); };
   }, []);
   useEffect(() => setTip(null), [canvasOn]);
+  useEffect(() => relayout((n) => n + 1), []); // place the first-load hint once the pencil is laid out
 
   // One shared tooltip, placed to the right of the hovered/focused button. Like macOS, once a tip
   // is showing, moving to a neighbour shows its tip immediately.
@@ -78,6 +103,8 @@ export function CanvasToolbar() {
     };
   };
   const tipRect = tip?.el.isConnected ? tip.el.getBoundingClientRect() : null;
+  const pencilRect = pencilRef.current?.isConnected ? pencilRef.current.getBoundingClientRect() : null;
+  const key = (k: string) => (shortcuts ? k : undefined);
 
   const toolBtn = (t: Tool, label: string, key: string, icon: ReactNode) => (
     <button
@@ -85,7 +112,7 @@ export function CanvasToolbar() {
       className={`tb-btn${tool === t ? ' is-active' : ''}`}
       aria-pressed={tool === t}
       onClick={() => ink.setTool(t)}
-      {...tipProps(label, key)}
+      {...tipProps(label, shortcuts ? key : undefined)}
     >
       {icon}
     </button>
@@ -99,7 +126,7 @@ export function CanvasToolbar() {
         role="toolbar" aria-label="Drawing tools" aria-orientation="vertical">
         <div className="tb-fold tb-fold-closed" aria-hidden={canvasOn}>
           <div className="tb-fold-inner">
-            <button type="button" className="tb-btn" tabIndex={canvasOn ? -1 : 0} onClick={() => ink.setCanvas(true)} {...tipProps('Draw', 'D')}>
+            <button ref={pencilRef} type="button" className="tb-btn" tabIndex={canvasOn ? -1 : 0} onClick={() => ink.setCanvas(true)} {...tipProps('Draw', key('D'))}>
               <Pencil {...ICON} />
             </button>
           </div>
@@ -134,6 +161,15 @@ export function CanvasToolbar() {
             </button>
           </div>
         </div>
+      </div>
+      {/* The one-time hint uses the tooltip's look, so a hover tip later reads as the same thing. */}
+      <div
+        className={`tb-tip tb-hint${hint && !tip && pencilRect ? ' is-visible' : ''}`}
+        style={pencilRect ? { top: pencilRect.top + pencilRect.height / 2, left: pencilRect.right + 10 } : undefined}
+        aria-hidden="true"
+      >
+        Draw
+        {shortcuts && <kbd className="tb-tip-key">D</kbd>}
       </div>
       <div
         className={`tb-tip${tip && tipRect ? ' is-visible' : ''}`}

@@ -5,13 +5,22 @@ import './ui.css';
 const isTypingTarget = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 
-export function AskBar({ onAsk, onStop, busy, suggestions = [] }: {
+export type Transcript = { question: string; answer: string };
+
+export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcript }: {
   onAsk(q: string): void; onStop(): void; busy: boolean;
   /** Shown as chips above the bar while it is focused and empty. */
   suggestions?: string[];
+  /** Puts `text` back into the field (after a failed answer); a new `seq` restores again. */
+  restore?: { text: string; seq: number };
+  /** The last finished answer: a quiet "Transcript" toggle expands it above the bar. */
+  transcript?: Transcript | null;
 }) {
   const [text, setText] = useState('');
   const [focused, setFocused] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
+  useEffect(() => { if (restore) setText(restore.text); }, [restore?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!transcript || busy) setShowTranscript(false); }, [transcript, busy]);
   const inputRef = useRef<HTMLInputElement>(null);
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -43,13 +52,15 @@ export function AskBar({ onAsk, onStop, busy, suggestions = [] }: {
       submit();
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      if (busy) onStop();
+      if (showTranscript) setShowTranscript(false);
+      else if (busy) onStop();
       else e.currentTarget.blur();
     }
   };
 
   const hasText = text.trim().length > 0;
-  const showChips = focused && !hasText && !busy && suggestions.length > 0;
+  const showChips = focused && !hasText && !busy && !showTranscript && suggestions.length > 0;
+  const canTranscript = !!transcript && !busy && !hasText;
 
   return (
     <form
@@ -59,6 +70,12 @@ export function AskBar({ onAsk, onStop, busy, suggestions = [] }: {
       onFocus={() => setFocused(true)}
       onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); }}
     >
+      {showTranscript && transcript && (
+        <section className="transcript" aria-label="Transcript" onMouseDown={(e) => e.stopPropagation()}>
+          <p className="transcript-q">{transcript.question}</p>
+          <p className="transcript-a">{transcript.answer}</p>
+        </section>
+      )}
       {showChips && (
         <div className="askbar-chips" role="group" aria-label="Suggested questions">
           {suggestions.map((q) => (
@@ -86,6 +103,16 @@ export function AskBar({ onAsk, onStop, busy, suggestions = [] }: {
         autoComplete="off"
         spellCheck={false}
       />
+      {canTranscript && (
+        <button
+          type="button"
+          className="askbar-transcript"
+          aria-expanded={showTranscript}
+          onClick={() => setShowTranscript((o) => !o)}
+        >
+          {showTranscript ? 'Hide transcript' : 'Transcript'}
+        </button>
+      )}
       <div className="askbar-trail">
         {busy ? (
           <button type="button" className="askbar-btn is-stop" onClick={onStop} aria-label="Stop answer">

@@ -110,6 +110,18 @@ export function SettingsPopover({ open, onClose }: { open: boolean; onClose(): v
           onChange={(e) => setSettings({ wpm: Number(e.target.value) })}
         />
       </section>
+
+      <section className="pop-row pop-row-inline">
+        <label className="pop-label" htmlFor="pop-keys">Keyboard shortcuts</label>
+        <button
+          id="pop-keys"
+          type="button"
+          role="switch"
+          aria-checked={s.shortcuts}
+          className={`switch${s.shortcuts ? ' is-on' : ''}`}
+          onClick={() => setSettings({ shortcuts: !s.shortcuts })}
+        />
+      </section>
     </div>
   );
 }

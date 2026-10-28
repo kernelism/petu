@@ -1,7 +1,7 @@
 /* App shell. The stage is the PDF column: the full window, or the left column while the board is open. */
 :root {
-  /* Board column: ≈45% of the window, never under 380px. The stage takes the rest, with 24px gutters. */
-  --board-w: max(calc(45vw - 36px), 380px);
+  /* Board column width; App sets the real value (and --sheet-w) from src/ui/layout.ts. */
+  --board-w: max(calc(50vw - 48px), 380px);
   --glide: 420ms cubic-bezier(.2,.8,.2,1);
 }
 .stage {
@@ -13,13 +13,17 @@
   transition: left var(--glide), right var(--glide);
 }
 .stage.has-board {
-  left: 24px;
+  left: 48px; /* STAGE_LEFT in src/ui/layout.ts: pages stay clear of the canvas toolbar */
   right: calc(var(--board-w) + 48px);
 }
 .stage > .pv-scroll { position: absolute; }
+/* With the board open the PDF column is narrow and short slides show their neighbours; set those
+   back so the page being explained reads as the one in frame. */
+.stage .pv-page { transition: opacity 240ms var(--ease-out, ease-out); }
+.stage.has-board .pv-page:not(.is-current) { opacity: .4; }
 
 @media (prefers-reduced-motion: reduce) {
-  .stage { transition: none; }
+  .stage, .board, .board.is-open, .stage .pv-page { transition: none; }
 }
 
 /* ───────── ?debug ───────── */

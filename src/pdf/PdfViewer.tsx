@@ -246,6 +246,13 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
   overlayRef.current = renderOverlay;
   const stableOverlay = useCallback((p: number, H: number) => overlayRef.current?.(p, H), []);
   const [center, setCenter] = useState(1);
+  /**
+   * The page the agent last steered to (a scroll or reveal), until the reader scrolls themselves.
+   * It is the page "in frame": at the end of a document the reading line can sit on the page above it.
+   */
+  const [focus, setFocus] = useState<number | null>(null);
+  const focusRef = useRef<number | null>(null);
+  const setFocusPage = useCallback((p: number | null) => { focusRef.current = p; setFocus(p); }, []);
 
   // Seed page sizes from page 1.
   useEffect(() => {
@@ -299,10 +306,15 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
 
   const register = useCallback((page: number, h: SlotHandle | null) => {
     const prev = slots.current.get(page);
-    if (prev && prev !== h) ioRef.current?.unobserve(prev.el);
-    if (h) { slots.current.set(page, h); ioRef.current?.observe(h.el); }
+    // unobserve() throws on a non-Element, so only hand it a real one.
+    if (prev && prev !== h && prev.el instanceof Element) ioRef.current?.unobserve(prev.el);
+    if (h) { slots.current.set(page, h); if (h.el instanceof Element) ioRef.current?.observe(h.el); }
     else slots.current.delete(page);
   }, []);
+
+  // The page indicator names the page in frame: the agent's focus page, else the reading line's.
+  const shownPage = focus ?? center;
+  useEffect(() => { cbRef.current.onPageChange(shownPage); }, [shownPage]);
 
   const ready = layout !== null;
 
@@ -340,7 +352,6 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       setCenter(cur);
       renderer.sweep();
       renderer.pump();
-      cbRef.current.onPageChange(cur);
     };
     let raf = 0;
     const onScroll = () => {
@@ -350,9 +361,13 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       if (!raf) raf = requestAnimationFrame(() => { raf = 0; publishCurrent(); });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
+    // The reader taking over (wheel, touch, keys) ends the agent's focus page.
+    const onUserScroll = () => { if (focusRef.current != null) setFocusPage(null); };
+    el.addEventListener('wheel', onUserScroll, { passive: true });
+    el.addEventListener('touchstart', onUserScroll, { passive: true });
+    el.addEventListener('keydown', onUserScroll);
     currentRef.current = computeCurrent();
     setCenter(currentRef.current);
-    cbRef.current.onPageChange(currentRef.current);
 
     // Re-render at a new DPR when the window moves between displays.
     let mq: MediaQueryList | null = null;
@@ -409,6 +424,14 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
         publishCurrent();
       }
     };
+    /** Whether `page` fits whole between the top bar and the caption. */
+    const fits = (page: number) => layoutRef.current!.heights[page - 1] <= el.clientHeight - SAFE_TOP - SAFE_BOTTOM;
+    /** Scroll top that shows `page` whole, centered in the room between the chrome (or its top aligned when it doesn't fit). */
+    const framedTop = (page: number) => {
+      const L = layoutRef.current!;
+      const room = el.clientHeight - SAFE_TOP - SAFE_BOTTOM;
+      return L.tops[page - 1] - SAFE_TOP - Math.max(0, (room - L.heights[page - 1]) / 2);
+    };
     /** The comfortable band for ink: clear of the chrome, and of the outer 15% when `strict`. */
     const inBand = (at: number, strict: boolean) => {
       const top = el.scrollTop, h = el.clientHeight;
@@ -437,21 +460,22 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       textRuns: (page) => textRuns(clampPage(page)),
       scrollToPage: async (page, y) => {
         page = clampPage(page);
+        setFocusPage(page);
         await ensureSize(page);
-        if (y != null) { await glideTo(page, () => contentY(page, y) - el.clientHeight * SCROLL_ANCHOR); return; }
-        // No target point: show the whole page. If it fits between the top bar and the caption,
-        // center it there (a slide stays fully visible while it is explained); else align its top.
-        await glideTo(page, () => {
-          const L = layoutRef.current!;
-          const room = el.clientHeight - SAFE_TOP - SAFE_BOTTOM;
-          return L.tops[page - 1] - SAFE_TOP - Math.max(0, (room - L.heights[page - 1]) / 2);
-        });
+        // A page that fits between the top bar and the caption is framed whole and centered there,
+        // whatever point on it is targeted (a slide stays fully visible while it is explained, and a
+        // narrow column next to the board doesn't leave it pinned high with its neighbour in view).
+        if (y != null && !fits(page)) { await glideTo(page, () => contentY(page, y) - el.clientHeight * SCROLL_ANCHOR); return; }
+        await glideTo(page, () => framedTop(page));
       },
       ensureVisible: async (page, y = 0) => {
         page = clampPage(page);
         await ensureSize(page);
+        setFocusPage(page);
         if (inBand(contentY(page, y), true)) return false;
-        await glideTo(page, () => contentY(page, y) - el.clientHeight * SCROLL_ANCHOR, REVEAL_MAX_MS);
+        // Already framed whole: the target is on screen, just near an edge of a centered page.
+        if (fits(page) && Math.abs(el.scrollTop - Math.max(0, framedTop(page))) < 2 && inBand(contentY(page, y), false)) return false;
+        await glideTo(page, () => (fits(page) ? framedTop(page) : contentY(page, y) - el.clientHeight * SCROLL_ANCHOR), REVEAL_MAX_MS);
         return true;
       },
       isVisible: (page, y = 0) => inBand(contentY(clampPage(page), y), false),
@@ -467,6 +491,12 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       },
       ensureSize: async (page) => { if (page >= 1 && page <= doc.numPages) await ensureSize(page); },
       cancelScroll: () => glide?.abort(),
+      frameCurrent: async () => {
+        const page = focusRef.current ?? currentRef.current;
+        if (!layoutRef.current || !fits(page)) return;
+        if (Math.abs(el.scrollTop - Math.max(0, framedTop(page))) < 2) return;
+        await glideTo(page, () => framedTop(page), REVEAL_MAX_MS);
+      },
       glideColumn: (width, ms) => new Promise<void>((done) => {
         if (prefersReducedMotion()) ms = 0;
         glideRef.current?.finish();
@@ -516,6 +546,9 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       glide?.abort();
       if (glideRef.current) { window.clearTimeout(glideRef.current.timer); glideRef.current.done(); glideRef.current = null; }
       el.removeEventListener('scroll', onScroll);
+      el.removeEventListener('wheel', onUserScroll);
+      el.removeEventListener('touchstart', onUserScroll);
+      el.removeEventListener('keydown', onUserScroll);
       if (raf) cancelAnimationFrame(raf);
       mq?.removeEventListener('change', onDpr);
       io.disconnect();
@@ -523,7 +556,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       renderer.destroy();
       rendererRef.current = null;
     };
-  }, [doc, ready, saveAnchor]);
+  }, [doc, ready, saveAnchor, setFocusPage]);
 
   // After a resize settles, re-render visible pages at the new width (CSS scales them meanwhile).
   useEffect(() => {
@@ -547,6 +580,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
               spaceH={1000 * aspectsRef.current![i]}
               register={register}
               renderOverlay={renderOverlay && Math.abs(i + 1 - center) <= OVERLAY_RADIUS ? stableOverlay : undefined}
+              current={i + 1 === (focus ?? center)}
             />
           ))}
         </div>

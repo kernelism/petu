@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import './styles/tokens.css';
 import './app.css';
 import { loadPdf, type PdfDoc } from './pdf/loadPdf';
@@ -17,9 +17,10 @@ import { EmptyState } from './ui/EmptyState';
 import { TopBar } from './ui/TopBar';
 import { SettingsPopover } from './ui/SettingsPopover';
 import { CanvasToolbar } from './ui/CanvasToolbar';
-import { PagePill } from './ui/PagePill';
-import { Caption } from './ui/Caption';
-import { AskBar } from './ui/AskBar';
+import { Caption, joinWords } from './ui/Caption';
+import { AskBar, type Transcript } from './ui/AskBar';
+import { boardGeometry, dockPlacement, type Column } from './ui/layout';
+import { takeSentences } from './ui/text';
 import { BOARD_PAGE, type Action } from './script/types';
 
 const params = new URLSearchParams(location.search);
@@ -43,9 +44,18 @@ const SAMPLE_URL = '/fixtures/epipolar.pdf';
 const SAMPLE_NAME = 'Stereo Vision — sample.pdf';
 const CAPTION_LINGER_MS = 2200;
 const NOT_SAMPLE = 'The agent connects in the next checkpoint; open the sample deck to see a demo.';
+const ANSWER_FAILED = 'Something went wrong.';
+// Dev-only: ?fail=<n> makes the answer stream throw after n chunks (to review the error state).
+const FAIL_AFTER = import.meta.env.DEV && params.has('fail') ? Number(params.get('fail')) || 0 : null;
 
-// Review aid: ?style=live|hand|clean picks the drawing style.
-const styleParam = params.get('style');
+/** A URL's file name for the top bar; a malformed escape falls back to the raw text. */
+function fileNameOf(src: string): string {
+  const raw = src.split(/[?#]/)[0].split('/').pop() || 'document.pdf';
+  try { return decodeURIComponent(raw); } catch { return raw; }
+}
+
+// Dev-only review aid: ?style=live|hand|clean picks the drawing style.
+const styleParam = import.meta.env.DEV ? params.get('style') : null;
 if (styleParam === 'live' || styleParam === 'hand' || styleParam === 'clean') setSettings({ inkStyle: styleParam });
 
 const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
@@ -71,6 +81,8 @@ function describe(a: Action): string {
 function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
   const [open, setOpen] = useState(false);
   const ms = (t?: number) => (t == null ? '—' : `${Math.round(t - t0)}ms`);
+  // Start relative to the word: layout that starts ahead of its word (anticipatory scrolls) is negative.
+  const rel = (d: number) => { const r = Math.round(d); return r > 0 ? `+${r}` : r < 0 ? `−${-r}` : '0'; };
   if (!open) {
     return (
       <button type="button" className="debug debug-pill" onClick={() => setOpen(true)} aria-label="Show timing details">
@@ -83,12 +95,16 @@ function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
       <div className="debug-row"><span>first chunk</span><span>{ms(d.chunk)}</span></div>
       <div className="debug-row"><span>first word</span><span>{ms(d.word)}</span></div>
       <div className="debug-row"><span>first action</span><span>{ms(d.action)}</span></div>
-      {d.log.length > 0 && <div className="debug-head"><span>action</span><span>at · wait · run</span></div>}
+      {d.log.length > 0 && (
+        <div className="debug-head" title="at: word time from Enter · start: when it began, relative to its word (− = early) · run: duration">
+          <span>action</span><span>at · start · run</span>
+        </div>
+      )}
       {d.log.slice(-8).map((t, i) => (
         <div key={i} className={`debug-row${t.skipped ? ' is-skipped' : ''}`} title={t.skipped}>
           <span className="debug-act">{describe(t.action)}</span>
           <span>
-            {Math.round(t.firedAt - t0)} · {Math.round(t.startedAt - t.firedAt)} · {t.endedAt == null ? '…' : t.skipped ? 'skip' : Math.round(t.endedAt - t.startedAt)}
+            {Math.round(t.firedAt - t0)} · {Number.isNaN(t.startedAt) ? '…' : rel(t.startedAt - t.firedAt)} · {t.endedAt == null ? '…' : t.skipped ? 'skip' : Math.round(t.endedAt - t.startedAt)}
           </span>
         </div>
       ))}
@@ -106,8 +122,20 @@ export default function App() {
   const [numPages, setNumPages] = useState(0);
   const [captionWords, setCaptionWords] = useState<string[]>([]);
   const [captionVisible, setCaptionVisible] = useState(false);
-  const [pill, setPill] = useState<{ page: number | null; seq: number }>({ page: null, seq: 0 });
+  const [pageTick, setPageTick] = useState(0);
   const [boardOpen, setBoardOpen] = useState(false);
+  const [boardHasContent, setBoardHasContent] = useState(false);
+  /** The column the agent is working in; the dock sits under it while the board is open. */
+  const [column, setColumn] = useState<Column>('pdf');
+  const [viewport, setViewport] = useState({ w: window.innerWidth, h: window.innerHeight });
+  /** The asked question, echoed above the caption while answering. */
+  const [question, setQuestion] = useState<string | undefined>();
+  const [waiting, setWaiting] = useState(false);
+  const [answerError, setAnswerError] = useState(false);
+  const [restore, setRestore] = useState<{ text: string; seq: number } | undefined>();
+  const [transcript, setTranscript] = useState<Transcript | null>(null);
+  /** Whole sentences of narration for screen readers (polite live region). */
+  const [liveText, setLiveText] = useState('');
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | undefined>();
@@ -130,15 +158,22 @@ export default function App() {
     if (boardOpenRef.current === open) return;
     boardOpenRef.current = open;
     const W = window.innerWidth;
-    const target = open ? W - 72 - Math.max(0.45 * W - 36, 380) : W; // see --board-w in app.css
+    const target = open ? boardGeometry(W, window.innerHeight).stageW : W; // the .stage width (app.css)
     const v = viewerRef.current;
-    glideDone.current = v ? v.glideColumn(target, animate ? BOARD_GLIDE_MS : 0) : Promise.resolve();
+    // Once the column has its new width, the page in frame is re-framed whole in it (when it fits).
+    glideDone.current = v
+      ? v.glideColumn(target, animate ? BOARD_GLIDE_MS : 0).then(() => viewerRef.current?.frameCurrent?.())
+      : Promise.resolve();
     setBoardOpen(open);
   }, []);
   const sessionRef = useRef<AnswerSession | null>(null);
   const isSampleRef = useRef(false);
   isSampleRef.current = isSample;
   const hideTimer = useRef<number>();
+  const autoplayTimer = useRef<number>();
+  /** Timers that move the dock to an action's column on its word. */
+  const columnTimers = useRef(new Set<number>());
+  const lastQuestion = useRef('');
   const demoStarted = useRef(false);
   const loadSeq = useRef(0);
 
@@ -147,7 +182,7 @@ export default function App() {
     directorRef.current = new Director({
       viewer: () => viewerRef.current && withBoard(viewerRef.current, boardRef.current),
       settings: getSettings,
-      onScrolledTo: (page) => setPill((p) => ({ page, seq: p.seq + 1 })),
+      onScrolledTo: () => setPageTick((n) => n + 1),
       // Opening is idempotent: a second board action during the glide waits only for what's left of it.
       openBoard: () => { setBoard(true); return glideDone.current; },
       board: () => boardRef.current,
@@ -168,10 +203,29 @@ export default function App() {
   useEffect(() => () => { void doc?.destroy(); }, [doc]);
 
   const clearHide = () => window.clearTimeout(hideTimer.current);
+  const clearColumnTimers = () => { columnTimers.current.forEach((t) => window.clearTimeout(t)); columnTimers.current.clear(); };
+
+  // Board and dock geometry follow the window (src/ui/layout.ts is the one source of truth).
+  useEffect(() => {
+    const apply = () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      const g = boardGeometry(w, h);
+      document.documentElement.style.setProperty('--board-w', `${g.boardW}px`);
+      document.documentElement.style.setProperty('--sheet-w', `${g.sheetW}px`);
+      setViewport({ w, h });
+    };
+    apply();
+    window.addEventListener('resize', apply);
+    return () => window.removeEventListener('resize', apply);
+  }, []);
+  useEffect(() => () => { window.clearTimeout(autoplayTimer.current); clearColumnTimers(); }, []);
 
   /** Shows a one-off line in the caption, then fades it. */
   const flash = useCallback((text: string, ms = 4000) => {
     clearHide();
+    setQuestion(undefined);
+    setWaiting(false);
+    setAnswerError(false);
     setCaptionWords(text.split(' '));
     setCaptionVisible(true);
     hideTimer.current = window.setTimeout(() => setCaptionVisible(false), ms);
@@ -183,8 +237,25 @@ export default function App() {
     s?.stop();
     director.stop();
     gateRef.current = null;
+    clearColumnTimers();
+    setWaiting(false);
     setBusy(false);
   }, [director]);
+
+  /** Wipes the agent's marks from the board (both layers) and the answer UI, for a new or closed document. */
+  const resetAnswerUi = useCallback(() => {
+    window.clearTimeout(autoplayTimer.current);
+    clearHide();
+    setCaptionVisible(false);
+    setCaptionWords([]);
+    setQuestion(undefined);
+    setAnswerError(false);
+    setTranscript(null);
+    setLiveText('');
+    const L = boardRef.current?.layers();
+    L?.agent.replaceChildren();
+    L?.highlight.replaceChildren();
+  }, []);
 
   // ---------------------------------------------------------------------------------------------
   // Documents
@@ -195,12 +266,9 @@ export default function App() {
       const d = await loadPdf(src);
       if (seq !== loadSeq.current) { void d.destroy(); return; }
       stopAll();
-      clearHide();
-      setCaptionVisible(false);
-      setCaptionWords([]);
+      resetAnswerUi();
       ink.reset();
       setBoard(false, false);
-      boardRef.current?.layers()?.agent.replaceChildren();
       viewerRef.current = null;
       setLoadError(undefined);
       setDoc(d);
@@ -213,27 +281,10 @@ export default function App() {
       console.warn('[open]', e);
       setLoadError("Couldn't open that PDF.");
     }
-  }, [stopAll, setBoard]);
+  }, [stopAll, setBoard, resetAnswerUi]);
 
   const openSample = useCallback(() => open(SAMPLE_URL, SAMPLE_NAME, true), [open]);
   const openFile = useCallback(async (f: File) => open(await f.arrayBuffer(), f.name, false), [open]);
-
-  const closeDoc = useCallback(() => {
-    loadSeq.current++;
-    stopAll();
-    clearHide();
-    setCaptionVisible(false);
-    setCaptionWords([]);
-    setSettingsOpen(false);
-    ink.reset();
-    setBoard(false, false);
-    boardRef.current?.layers()?.agent.replaceChildren();
-    viewerRef.current = null;
-    setDoc(null);
-    setFileName('');
-    setIsSample(false);
-    setLoadError(undefined);
-  }, [stopAll, setBoard]);
 
   // A failed load while a document is open is reported in the caption (the drop zone isn't shown).
   useEffect(() => {
@@ -283,13 +334,28 @@ export default function App() {
     old?.stop();
     gateRef.current = null;
     clearHide();
+    clearColumnTimers();
+    lastQuestion.current = q;
+    setTranscript(null);
+    setAnswerError(false);
     // The old ink fades at the head of the director's queue while the request goes out.
     void director.begin(300);
     if (!isSampleRef.current && !DEV_SCRIPT) { setBusy(false); flash(NOT_SAMPLE); return; }
 
     setCaptionWords([]);
+    setQuestion(q);
+    setWaiting(true);
     setCaptionVisible(true);
     setBusy(true);
+    let spoken: string[] = [];
+    let liveFrom = 0;
+    const speak = (words: string[], final = false) => {
+      const r = takeSentences(words, liveFrom, joinWords);
+      liveFrom = r.from;
+      const tail = final && liveFrom < words.length ? joinWords(words.slice(liveFrom)) : '';
+      const last = tail || r.sentences[r.sentences.length - 1];
+      if (last) setLiveText(last);
+    };
     if (DEBUG) { setAskT0(t0); setDebug({ log: [] }); }
 
     // An open board stays only if this answer uses it. The decision waits for the first word (so a
@@ -311,8 +377,10 @@ export default function App() {
     const gate = gateRef.current;
 
     let firstChunk = true;
+    let chunks = 0;
     const source = async function* (signal: AbortSignal) {
       for await (const c of streamDemo(signal, demo.script)) {
+        if (FAIL_AFTER != null && chunks++ >= FAIL_AFTER) throw new Error('dev: ?fail');
         if (firstChunk && DEBUG) { firstChunk = false; const t = performance.now(); setDebug((d) => ({ ...d, chunk: t })); }
         streamed += c.length;
         yield c;
@@ -325,24 +393,48 @@ export default function App() {
     const session: AnswerSession = new AnswerSession({
       clock: new PacedClock(() => getSettings().wpm),
       onParsed: (a) => { if (usesBoard(a)) boardSeen = true; director.prefetch(a); },
-      onAction: (a) => { if (sessionRef.current === session) director.run(a); },
+      onAction: (a, at) => {
+        if (sessionRef.current !== session) return;
+        director.run(a, at);
+        // The dock moves to the action's column on its word, not when it is queued.
+        const col: Column | null = usesBoard(a) ? 'board' : a.kind === 'clear' ? null : 'pdf';
+        if (col) {
+          const t = window.setTimeout(() => {
+            columnTimers.current.delete(t);
+            if (sessionRef.current === session) setColumn(col);
+          }, Math.max(0, at - performance.now()));
+          columnTimers.current.add(t);
+        }
+      },
+      idle: () => director.idle(),
       onWord: (words) => {
         if (sessionRef.current !== session) return;
         if (DEBUG && words.length === 1) { const t = performance.now(); setDebug((d) => ({ ...d, word: t })); }
-        if (!spoke) { spoke = true; decide(); }
+        if (!spoke) { spoke = true; setWaiting(false); decide(); }
+        spoken = words;
+        speak(words);
         setCaptionWords(words);
       },
       onState: (st: SessionState, err?: string) => {
         if (sessionRef.current !== session) return;
         if (st === 'loading' || st === 'playing') { setBusy(true); return; }
         setBusy(false);
+        setWaiting(false);
+        if (spoken.length) setTranscript({ question: q, answer: joinWords(spoken) });
         if (st === 'done') {
           sessionRef.current = null;
+          speak(spoken, true);
           hideTimer.current = window.setTimeout(() => setCaptionVisible(false), CAPTION_LINGER_MS);
         } else if (st === 'error') {
           sessionRef.current = null;
           console.warn('[answer]', err);
-          flash("Something went wrong. Ask again to retry.", 4000);
+          // Keep the question: back in the ask bar, and a Retry in the caption.
+          clearHide();
+          setCaptionWords([]);
+          setAnswerError(true);
+          setCaptionVisible(true);
+          setRestore((r) => ({ text: q, seq: (r?.seq ?? 0) + 1 }));
+          setLiveText(`${ANSWER_FAILED} Retry is available.`);
         }
       },
     });
@@ -356,6 +448,11 @@ export default function App() {
     setCaptionVisible(false);
   }, [stopAll]);
 
+  const onRetry = useCallback(() => {
+    setRestore((r) => ({ text: '', seq: (r?.seq ?? 0) + 1 }));
+    if (lastQuestion.current) onAsk(lastQuestion.current);
+  }, [onAsk]);
+
   const onReady = useCallback((api: ViewerApi) => {
     viewerRef.current = api;
     if (import.meta.env.DEV) window.__viewer = api;
@@ -363,17 +460,23 @@ export default function App() {
     const autoplay = DEV_SCRIPT ? DEV_SCRIPT.question : DEMO && isSampleRef.current ? DEMO : null;
     if (autoplay && !demoStarted.current && !params.has('noplay')) {
       demoStarted.current = true;
-      window.setTimeout(() => onAsk(autoplay), 800);
+      window.clearTimeout(autoplayTimer.current);
+      autoplayTimer.current = window.setTimeout(() => onAsk(autoplay), 800);
     }
   }, [onAsk]);
 
   // Dev-only review autoplay: ?src= opens that PDF, ?demo= the sample deck (plays once, see onReady).
   useEffect(() => {
-    if (DEV_SRC) void open(DEV_SRC, decodeURIComponent(DEV_SRC.split('/').pop() ?? 'document.pdf'), false);
+    if (DEV_SRC) void open(DEV_SRC, fileNameOf(DEV_SRC), false);
     else if (DEMO) void openSample();
   }, [open, openSample]);
 
-  const closeBoard = useCallback(() => setBoard(false), [setBoard]);
+  /** The agent is drawing on the board: it can't be closed from under it. */
+  const boardLocked = busy && boardOpen && column === 'board';
+  const boardLockedRef = useRef(false);
+  boardLockedRef.current = boardLocked;
+  const closeBoard = useCallback(() => { if (!boardLockedRef.current) setBoard(false); }, [setBoard]);
+  const showBoard = useCallback(() => setBoard(true), [setBoard]);
 
   // Esc closes the board when nothing is playing (while playing, Esc stops the answer first).
   useEffect(() => {
@@ -390,6 +493,8 @@ export default function App() {
   const toggleSettings = useCallback(() => setSettingsOpen((o) => !o), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
+  const dock = dockPlacement(viewport.w, viewport.h, boardOpen, column);
+
   if (!doc) return <EmptyState onFile={openFile} onSample={openSample} error={loadError} />;
 
   return (
@@ -403,13 +508,36 @@ export default function App() {
           renderOverlay={(p, H) => <StudentInkLayer page={p} spaceH={H} />}
         />
       </main>
-      <Board ref={boardRef} open={boardOpen} onClose={closeBoard} />
-      <TopBar fileName={fileName} page={page} numPages={numPages || doc.numPages} onOpenSettings={toggleSettings} onClose={closeDoc} />
+      <Board ref={boardRef} open={boardOpen} onClose={closeBoard} closeDisabled={boardLocked} onContent={setBoardHasContent} />
+      <TopBar
+        fileName={fileName}
+        page={page}
+        numPages={numPages || doc.numPages}
+        pageTick={pageTick}
+        onOpenSettings={toggleSettings}
+        onOpenFile={(f) => void openFile(f)}
+        onShowBoard={boardHasContent && !boardOpen ? showBoard : undefined}
+      />
       <SettingsPopover open={settingsOpen} onClose={closeSettings} />
       <CanvasToolbar />
-      <PagePill page={pill.page} seq={pill.seq} />
-      <Caption words={captionWords} visible={captionVisible} />
-      <AskBar onAsk={onAsk} onStop={onStop} busy={busy} suggestions={(isSample || DEV_SCRIPT) && !captionVisible ? SUGGESTIONS : undefined} />
+      <div className="dock" style={{ '--dock-x': `${dock.x}px`, '--dock-w': `${dock.w}px` } as CSSProperties}>
+        <Caption
+          words={captionWords}
+          visible={captionVisible}
+          question={question}
+          waiting={waiting}
+          error={answerError ? { message: ANSWER_FAILED, onRetry } : undefined}
+        />
+        <AskBar
+          onAsk={onAsk}
+          onStop={onStop}
+          busy={busy}
+          suggestions={(isSample || DEV_SCRIPT) && !captionVisible ? SUGGESTIONS : undefined}
+          restore={restore}
+          transcript={captionVisible ? null : transcript}
+        />
+      </div>
+      <div className="sr-only" role="status" aria-live="polite">{liveText}</div>
       <div className={`dropveil${dragging ? ' is-visible' : ''}`} aria-hidden="true">
         <div className="dropveil-label">Drop to open</div>
       </div>
