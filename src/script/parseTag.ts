@@ -79,7 +79,9 @@ export function parseTag(body: string): RawAction | null {
       if (k === 'on' || (on === undefined && k === 'p')) continue;
       if (dupKeys.has(k)) { console.warn('[script] let: name defined twice, dropped:', k); continue; } // ambiguous: never pick one
       const n = eid(k), p = parsePtArg(v, lit);
-      if (!n || !p) return null; // one bad definition fails the tag: never half a figure
+      // A bad definition drops that name only: whatever is built from it is skipped later (unknown
+      // point), while the rest of the figure still draws. Failing the whole let lost every point.
+      if (!n || !p) { console.warn('[script] let: bad definition dropped:', `${k}=${v}`); continue; }
       parsed.push([n, p]);
     }
     if (!parsed.length || flags.size || quotes.length) return null;

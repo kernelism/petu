@@ -84,4 +84,10 @@ describe('parseTag: a key given twice', () => {
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
+  it('drops only a bad definition from a let (a P2 answer wrote along(M,0,-100,1) and lost its whole sketch)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const a = parseTag('let on=s A=0,0 B=240,0 M=mid(A,B) N=along(M,0,-100,1)');
+    expect(a && a.kind === 'let' && a.defs.map(([n]) => n)).toEqual(['A', 'B', 'M']);
+    warn.mockRestore();
+  });
 });
