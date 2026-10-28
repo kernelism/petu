@@ -35,7 +35,7 @@ const demoParam = import.meta.env.DEV ? params.get('demo') : null;
 const DEMO = demoParam === '1' ? DEMO_QUESTION : demoParam === 'side' || demoParam === 'board' ? DEMO_SIDE_QUESTION : demoParam === 'plane' ? DEMO_PLANE_QUESTION : null;
 // Dev-only: ?src=<pdf url>&script=<name> opens that PDF and plays a named script (src/demo/scripts.ts).
 // ?script=<name> alone uses that script's own PDF.
-const scriptParam = import.meta.env.DEV ? params.get('script') : null;
+const scriptParam = import.meta.env.DEV ? params.get('script') ?? (params.has('scriptfile') ? 'file' : null) : null;
 const DEV_SCRIPT = scriptParam ? SCRIPTS[scriptParam] ?? null : null;
 const DEV_SRC = import.meta.env.DEV ? params.get('src') ?? DEV_SCRIPT?.src ?? null : null;
 if (scriptParam && !DEV_SCRIPT) console.warn('[dev] unknown ?script=; known:', Object.keys(SCRIPTS).join(', '));
