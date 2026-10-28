@@ -311,7 +311,8 @@ async function ref(a: RefAction, env: BuildEnv): Promise<ElementPlan | string> {
   const accent = env.settings.inkColor;
   switch (a.kind) {
     case 'emph':
-      return { target: e.target, bbox: e.bbox, draw: (signal) => emphPass(e, accent, ctx.scale(), signal) };
+      // A connector's strokes are in desk px (scale 1), not its region's units.
+      return { target: e.target, bbox: e.bbox, draw: (signal) => emphPass(e, accent, e.kind === 'connect' ? 1 : ctx.scale(), signal) };
     case 'fade':
       return {
         target: e.target, bbox: e.bbox,
@@ -380,8 +381,14 @@ async function connect(a: Extract<InkAction, { kind: 'connect' }>, env: BuildEnv
   return {
     target: from.t, bbox: from.r, also: { target: to.t, bbox: to.r },
     draw: async (signal, k) => {
-      const h = env.desk.addConnector(from, to);
+      const reg = to.t.region != null ? to : from;
+      // The region's ink so far: the connector arrives the way that crosses least of it.
+      const h = env.desk.addConnector(from, to, env.registry.obstacles(reg.t));
       if (typeof h === 'string') return h;
+      // Registered under its id so fade/emph reach it. It lives in desk (or stage) px, not in either
+      // end's target space, so it is revealed through its region end and is never a label obstacle.
+      // `h.stroke` is the Desk's own array, kept current on every re-route (emph re-traces the live path).
+      env.registry.define({ id: a.id, kind: 'connect', target: reg.t, bbox: reg.r, boxes: [], anchor: { x: reg.r.x + reg.r.w / 2, y: reg.r.y + reg.r.h / 2 }, group: h.group, strokes: [h.stroke] });
       await drawStrokes(h.group, [h.stroke], {
         color: env.settings.inkColor, width: 1.6, opacity: 0.75, dash: '5 5', scale: h.scale, signal,
         mode: k.fadeMs != null || env.settings.inkStyle === 'clean' || prefersReducedMotion() ? 'fade' : 'trace', fadeMs: k.fadeMs, speed: k.speed,

@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   column, computeLayout, placeAll, regionRects, lanesFor, gapsFor, stageLayout, inView, fitTogether, frameTop, regionWidth,
-  MAX_PAGE_W, C_MIN_PAGE_W, GAP_X, TOOLBAR_CLEAR, EDGE, SAFE_TOP, SAFE_BOTTOM, GAP_Y, type RegionReq,
+  MAX_PAGE_W, MIN_PAGE_W, C_MIN_PAGE_W, GAP_X, TOOLBAR_CLEAR, COLUMN_AIR, EDGE, SAFE_TOP, SAFE_BOTTOM, GAP_Y, type RegionReq,
 } from '../../src/desk/layout';
 
 const slides = (n: number) => new Float64Array(n).fill(9 / 16);
@@ -30,6 +30,20 @@ describe('column', () => {
     expect(c.pageX).toBeGreaterThanOrEqual(TOOLBAR_CLEAR); // never under the canvas toolbar
     const wide = column(2560, { left: 0, right: lane });
     expect(wide.pageW).toBe(MAX_PAGE_W);
+  });
+  it('gives the off-center column some air beside the toolbar, but never at the cost of C fitting', () => {
+    const lane = regionWidth('m', 1440) + GAP_X;
+    const c = column(1440, { left: 0, right: lane });
+    expect(c.pageX).toBeGreaterThanOrEqual(TOOLBAR_CLEAR + COLUMN_AIR);
+    expect(c.pageW).toBeGreaterThanOrEqual(C_MIN_PAGE_W);
+    // A window where the page only just fits beside the lane: the air gives way first.
+    for (let W = 1000; W <= 1300; W += 7) {
+      const l = regionWidth('m', W) + GAP_X;
+      const room = W - EDGE - TOOLBAR_CLEAR - l;
+      const k = column(W, { left: 0, right: l });
+      expect(k.pageW).toBe(Math.max(MIN_PAGE_W, Math.min(MAX_PAGE_W, room - Math.max(0, Math.min(COLUMN_AIR, room - C_MIN_PAGE_W)))));
+      if (room >= C_MIN_PAGE_W) expect(k.pageW).toBeGreaterThanOrEqual(C_MIN_PAGE_W);
+    }
   });
   it('keeps a left lane clear of the toolbar', () => {
     const lane = regionWidth('s', 1440) + GAP_X;

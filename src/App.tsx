@@ -1,5 +1,5 @@
 // src/App.tsx
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import './styles/tokens.css';
 import './app.css';
 import { loadPdf, type PdfDoc } from './pdf/loadPdf';
@@ -23,7 +23,8 @@ import { CanvasToolbar } from './ui/CanvasToolbar';
 import { Caption, joinWords } from './ui/Caption';
 import { AskBar, type Transcript } from './ui/AskBar';
 import { FollowPill } from './ui/FollowPill';
-import { dockPlacement } from './ui/layout';
+import { dockPlacement, dockReserve } from './ui/layout';
+import { setSafeBottom } from './desk/layout';
 import { takeSentences } from './ui/text';
 import type { Action } from './script/types';
 
@@ -191,6 +192,33 @@ export default function App() {
     return () => window.removeEventListener('resize', apply);
   }, []);
   useEffect(() => () => { window.clearTimeout(autoplayTimer.current); deskRef.current?.destroy(); }, []);
+
+  // Framing keeps pages and regions clear of the dock at its tallest (question + two narration
+  // lines over the ask bar), measured from the live elements, so the caption never covers them.
+  const dockRef = useRef<HTMLDivElement>(null);
+  const hasDoc = doc != null;
+  useLayoutEffect(() => {
+    const dock = dockRef.current;
+    if (!dock) return;
+    const measure = () => {
+      const bar = dock.querySelector<HTMLElement>('.askbar'), cap = dock.querySelector<HTMLElement>('.caption');
+      if (!bar || !cap) return;
+      const cs = getComputedStyle(cap), ds = getComputedStyle(dock);
+      const line = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.45;
+      setSafeBottom(dockReserve({
+        bottom: parseFloat(ds.bottom) || 0,
+        askbar: bar.offsetHeight,
+        capPad: (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0),
+        capLine: line,
+      }));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    const bar = dock.querySelector('.askbar');
+    if (bar) ro.observe(bar);
+    window.addEventListener('resize', measure);
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, [hasDoc]);
 
   /** Shows a one-off line in the caption, then fades it. */
   const flash = useCallback((text: string, ms = 4000) => {
@@ -432,7 +460,8 @@ export default function App() {
 
   return (
     <>
-      <main className={`stage${desk?.sketching && desk.mode === 'c' ? ' is-sketching' : ''}`}>
+      {/* Neighbouring pages step back only while an answer is drawing beside a page and the student follows it. */}
+      <main className={`stage${desk?.sketching && desk.mode === 'c' && desk.following && busy ? ' is-sketching' : ''}`}>
         <PdfViewer
           doc={doc}
           onReady={onReady}
@@ -453,7 +482,7 @@ export default function App() {
       <FollowPill visible={paused} onResume={resumeFollow} x={dock.x} />
       <SettingsPopover open={settingsOpen} onClose={closeSettings} />
       <CanvasToolbar />
-      <div className="dock" style={{ '--dock-x': `${dock.x}px`, '--dock-w': `${dock.w}px` } as CSSProperties}>
+      <div ref={dockRef} className="dock" style={{ '--dock-x': `${dock.x}px`, '--dock-w': `${dock.w}px` } as CSSProperties}>
         <Caption
           words={captionWords}
           visible={captionVisible}

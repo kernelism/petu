@@ -111,6 +111,24 @@ describe('buildElement', () => {
     await run(p);
     expect(desk.addConnector).toHaveBeenCalledOnce();
   });
+  it('a connector with an id registers it, so it can be faded and emphasized', async () => {
+    const { e, desk } = env();
+    await run(await buildElement({ kind: 'point', region: 'side', at: { x: 271, y: 410 }, id: 'x' }, e));
+    await run(await buildElement({ kind: 'connect', from: { page: 3, quote: 'hello' }, to: { region: 'side', ref: 'x' }, id: 'wire' }, e));
+    const w = e.registry.get('wire')!;
+    expect(w.kind).toBe('connect');
+    expect(w.target).toEqual({ region: 'side' }); // revealed through its region end
+    expect(w.boxes).toEqual([]); // not an obstacle for labels (it lives in desk px, not region space)
+    const group = vi.mocked(desk.addConnector).mock.results[0].value.group as SVGGElement;
+    expect(w.group).toBe(group);
+    await run(await buildElement({ kind: 'fade', ref: 'wire' }, e));
+    expect(group.style.opacity).toBe('0.25');
+    const svg = document.createElementNS(SVG, 'svg');
+    svg.appendChild(group);
+    const em = await buildElement({ kind: 'emph', ref: 'wire' }, e);
+    expect(typeof em).not.toBe('string');
+    await run(em);
+  });
   it('math placed near the right edge ends fully inside the region (rule 5)', async () => {
     const { e, layers } = env();
     const p = await buildElement({ kind: 'math', region: 'side', at: { x: 950, y: 690 }, tex: 'x - x\' = \\frac{Bf}{z}', size: 'l' }, e);

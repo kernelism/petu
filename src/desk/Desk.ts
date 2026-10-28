@@ -4,7 +4,7 @@ import type { PageLayers } from '../pdf/viewerApi';
 import { REGION_H, REGION_W, type Target } from '../script/types';
 import type { Stroke } from '../ink/agent/strokes';
 import { Follow } from './follow';
-import { routeConnector, edgeFor } from './route';
+import { routeConnector, edgeFor, maskBlocker } from './route';
 import {
   column, lanesFor, gapsFor, placeAll, regionRects, stageLayout, inView, fitTogether, frameTop,
   type Placed, type RegionReq,
@@ -21,7 +21,8 @@ const WIRE_PAD = 8;
 const WHOLE_REGION = { x: 0, y: 0, w: REGION_W, h: REGION_H };
 
 type Region = { req: RegionReq; mode: RegionMode; el: HTMLDivElement; layers: PageLayers };
-type Wire = { page: ConnectorEnd; region: ConnectorEnd; reversed: boolean; svg: SVGSVGElement; group: SVGGElement };
+/** `stroke` is the handle's own array, rewritten in place on every re-route (emph re-traces the current path). */
+type Wire = { page: ConnectorEnd; region: ConnectorEnd; reversed: boolean; svg: SVGSVGElement; group: SVGGElement; stroke: Stroke; avoid: SRect[] };
 type Where = { frame: 'desk' | 'stage'; rect: DeskRect };
 
 const toD = (s: Stroke) => s.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');
@@ -121,7 +122,12 @@ export class Desk implements DeskApi {
     const live = () => ep === this.epoch && this.regions.get(spec.id) === r;
     // Rule 1: a C region is framed as it is placed. When it lands off screen, the scroll glides
     // alongside the column glide (ending before the column commits), so its first ink needs no pan.
-    const offScreen = () => live() && r.mode !== 'b' && this.mode === 'c' && this.follow.following() && !this.isVisible({ region: spec.id }, WHOLE_REGION);
+    // Framed with its page when both fit: the page being explained stays whole and clear of the caption.
+    const offScreen = () => {
+      if (!live() || r.mode === 'b' || this.mode !== 'c' || !this.follow.following()) return false;
+      const f = this.regionFrame(spec.id);
+      return !f || !inView(f, this.view());
+    };
     const along = () => (offScreen() ? this.frameRegion(spec.id, GLIDE_MS) : Promise.resolve());
     await this.relayout(GLIDE_MS, before, along);
     if (live() && r.mode === 'b' && this.follow.following()) await this.enterB(spec.id, spec.page, before);
@@ -228,7 +234,7 @@ export class Desk implements DeskApi {
     await this.host.scrollToPage(page, y);
   }
 
-  addConnector(from: ConnectorEnd, to: ConnectorEnd): ConnectorHandle | string {
+  addConnector(from: ConnectorEnd, to: ConnectorEnd, avoid: SRect[] = []): ConnectorHandle | string {
     const reversed = from.t.region != null;
     const page = reversed ? to : from, region = reversed ? from : to;
     if (page.t.page == null || region.t.region == null || !this.regions.has(region.t.region)) return 'connector needs a page and a region';
@@ -236,9 +242,10 @@ export class Desk implements DeskApi {
     svg.setAttribute('class', 'desk-wire');
     svg.setAttribute('aria-hidden', 'true');
     const group = svg.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
-    const w: Wire = { page, region, reversed, svg, group };
+    const w: Wire = { page, region, reversed, svg, group, stroke: [], avoid };
     const stroke = this.route(w);
     if (!stroke) return 'connector end off screen';
+    w.stroke = stroke;
     this.wires.push(w);
     return { group, stroke, scale: 1 };
   }
@@ -277,6 +284,19 @@ export class Desk implements DeskApi {
 
   // ---------------------------------------------------------------------------------------------
 
+  /** What placing C region `id` frames: the region and its page together when they fit the band, else the region. */
+  private regionFrame(id: string): DeskRect | null {
+    const reg = this.regions.get(id);
+    const w = reg ? this.where({ region: id }, WHOLE_REGION) : null;
+    if (!reg || !w || w.frame !== 'desk') return w?.rect ?? null;
+    const L = this.host.layout();
+    if (!L) return w.rect;
+    const i = reg.req.page - 1, page = { x: L.pageX, y: L.tops[i], w: L.pageW, h: L.heights[i] };
+    if (!fitTogether([page, w.rect], this.host.viewport().H)) return w.rect;
+    const y = Math.min(page.y, w.rect.y);
+    return { x: Math.min(page.x, w.rect.x), y, w: 1, h: Math.max(page.y + page.h, w.rect.y + w.rect.h) - y };
+  }
+
   private view() { return { top: this.host.scrollTop(), H: this.host.viewport().H, max: this.host.maxScroll() }; }
   private stageNow(page: number) { const { W, H } = this.host.viewport(); return stageLayout(W, H, this.host.aspect(page)); }
   private placed(): Placed[] { return [...this.regions.values()].map((r) => ({ ...r.req, mode: r.mode })); }
@@ -288,8 +308,8 @@ export class Desk implements DeskApi {
   private frameRegion(id: string, maxMs: number): Promise<void> {
     let last = NaN;
     return this.host.glideTo(() => {
-      const w = this.regions.has(id) ? this.where({ region: id }, WHOLE_REGION) : null;
-      if (w) last = frameTop(w.rect, this.view());
+      const f = this.regionFrame(id);
+      if (f) last = frameTop(f, this.view());
       return Number.isNaN(last) ? this.host.scrollTop() : last;
     }, maxMs);
   }
@@ -345,7 +365,7 @@ export class Desk implements DeskApi {
       const s = this.route(w);
       // An end that can't be placed now (its page is off the card, its region not on the stage): hide the wire.
       w.svg.style.display = s ? '' : 'none';
-      if (s) w.group.querySelector('path')?.setAttribute('d', toD(s));
+      if (s) { w.group.querySelector('path')?.setAttribute('d', toD(s)); w.stroke.splice(0, w.stroke.length, ...s); }
     }
     this.emit();
   }
@@ -380,7 +400,10 @@ export class Desk implements DeskApi {
     const page = p.frame === 'stage'
       ? this.stageNow(w.page.t.page!).card
       : { x: L.pageX, y: L.tops[w.page.t.page! - 1], w: L.pageW, h: L.heights[w.page.t.page! - 1] };
-    let s = routeConnector(p.rect, q.rect, edgeFor(reg.mode, page));
+    // Around the page's printed content (its rendered canvas), when known: never across a figure if a clear band exists.
+    const mask = this.host.contentMask?.(w.page.t.page!) ?? null;
+    const avoid = w.avoid.map((b) => this.where(w.region.t, b)?.rect).filter((r): r is DeskRect => !!r);
+    let s = routeConnector(p.rect, q.rect, edgeFor(reg.mode, page), { page, blocked: mask ? maskBlocker(mask, page) : undefined, avoid });
     if (w.reversed) s = s.slice().reverse();
     const xs = s.map((v) => v.x), ys = s.map((v) => v.y);
     const box = { x: Math.min(...xs) - WIRE_PAD, y: Math.min(...ys) - WIRE_PAD, w: Math.max(...xs) - Math.min(...xs) + 2 * WIRE_PAD, h: Math.max(...ys) - Math.min(...ys) + 2 * WIRE_PAD };

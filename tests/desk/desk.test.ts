@@ -1,7 +1,7 @@
 // tests/desk/desk.test.ts
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Desk, type DeskHost } from '../../src/desk/Desk';
-import { column, computeLayout, type Lanes } from '../../src/desk/layout';
+import { column, computeLayout, regionWidth, GAP_X, SAFE_BOTTOM, SAFE_TOP, type Lanes } from '../../src/desk/layout';
 import { Director } from '../../src/playback/director';
 import { DEFAULTS } from '../../src/settings/settings';
 import type { ViewerApi } from '../../src/pdf/viewerApi';
@@ -155,6 +155,18 @@ describe('Desk', () => {
     await d.resume();
     expect(d.following()).toBe(true);
     expect(h.glideTo).toHaveBeenCalledOnce();
+  });
+  it('placing a region frames its page with it, clear of the caption, when both fit', async () => {
+    const h = fakeHost(1280, 713);
+    const d = new Desk(h, stage);
+    // Page 2 sits low: the region beside it would be in view, but the page's bottom under the dock.
+    h.s.lanes = { left: 0, right: regionWidth('m', 1280) + GAP_X }; // the column already beside its lane
+    const L0 = h.layout()!;
+    h.s.top = L0.tops[1] + L0.heights[1] - (713 - SAFE_BOTTOM + 20); // page bottom 20px under the dock line
+    await d.addRegion(spec('side', 2));
+    const L = h.layout()!;
+    expect(L.tops[1] + L.heights[1]).toBeLessThanOrEqual(h.s.top + 713 - SAFE_BOTTOM + 1);
+    expect(L.tops[1]).toBeGreaterThanOrEqual(h.s.top + SAFE_TOP - 1);
   });
   it('a connector is routed on the desk and re-routed on relayout', async () => {
     const h = fakeHost();

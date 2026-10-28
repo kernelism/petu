@@ -5,11 +5,13 @@ import type { PdfDoc } from './loadPdf';
 import type { PageLayers, ViewerApi } from './viewerApi';
 import type { TextRun } from '../locate/locateQuote';
 import { getTextRuns } from './textRuns';
+import { canvasMask } from './contentMask';
+import type { ContentMask } from '../desk/route';
 import { animateScrollTo } from './scroll';
 import { prefersReducedMotion } from '../ink/agent/animate';
 import { ink } from '../ink/student/store';
 import { PageSlot, type SlotHandle } from './PageSlot';
-import { column, computeLayout, pageAt, SAFE_TOP, SAFE_BOTTOM, TOP_PAD, type Lanes, type PageLayout } from '../desk/layout';
+import { column, computeLayout, pageAt, SAFE_TOP, safeBottom, TOP_PAD, type Lanes, type PageLayout } from '../desk/layout';
 import { ScrollOwner, isScrollKey } from '../desk/follow';
 import type { DeskHost, StageRect } from '../desk/types';
 import './viewer.css';
@@ -50,11 +52,13 @@ type Layout = PageLayout;
 /** key = what the shown canvas was rendered at; taskKey = what an in-flight render targets ('' if none). */
 type PageState = { canvas: HTMLCanvasElement | null; key: string; task: RenderTask | null; taskKey: string };
 
-class PageRenderer {
+export class PageRenderer {
   near = new Set<number>();
   /** Pages wanted regardless of the viewport (destinations of programmatic scrolls), refcounted. */
   pinned = new Map<number, number>();
   private states = new Map<number, PageState>();
+  /** Content masks, per page (resolution-independent, so they outlive the canvas they came from). */
+  private masks = new Map<number, ContentMask | null>();
   private inflight = 0;
   private dead = false;
   /** Target render width in CSS px. Lags the live layout width during a resize (debounced). */
@@ -97,6 +101,8 @@ class PageRenderer {
   }
 
   pump() {
+    // A document destroyed under us (unmount, HMR) can't render: stop, or a failing render would re-pump forever.
+    if (!this.dead && docGone(this.doc)) this.dead = true;
     if (this.dead || this.renderW <= 0) return;
     const key = this.key();
     const cur = this.current();
@@ -124,7 +130,7 @@ class PageRenderer {
     this.inflight++;
     let canvas: HTMLCanvasElement | null = null;
     try {
-      const page = await this.doc.getPage(p);
+      const page = await pageOf(this.doc, p);
       const base = page.getViewport({ scale: 1 });
       this.onAspect(p, base.height / base.width);
       // The state may have been released (and recreated) while we waited: never write into a stale one.
@@ -152,7 +158,10 @@ class PageRenderer {
       s.key = key;
       canvas = null;
     } catch (err) {
-      if ((err as { name?: string })?.name !== 'RenderingCancelledException') console.warn(`page ${p} render failed`, err);
+      if ((err as { name?: string })?.name !== 'RenderingCancelledException') {
+        // Not retried at this size (a page that can't render would otherwise re-render in a loop).
+        if (!this.dead) { console.warn(`page ${p} render failed`, err); if (this.states.get(p) === s && s.taskKey === key) s.key = key; }
+      }
     } finally {
       if (canvas) zap(canvas);
       if (s.taskKey === key) { s.task = null; s.taskKey = ''; }
@@ -161,20 +170,41 @@ class PageRenderer {
     }
   }
 
+  /** Where page `p` has content, from its rendered canvas; null until it has one. */
+  mask(p: number): ContentMask | null {
+    if (this.masks.has(p)) return this.masks.get(p)!;
+    const c = this.states.get(p)?.canvas;
+    if (!c || this.dead) return null;
+    const m = canvasMask(c);
+    this.masks.set(p, m);
+    return m;
+  }
+
   release(p: number) {
     const s = this.states.get(p);
     if (!s) return;
     s.task?.cancel();
     if (s.canvas) { s.canvas.remove(); zap(s.canvas); }
     this.states.delete(p);
-    // Drop the page's operator list and decoded images; getPage re-fetches cheaply later.
-    void this.doc.getPage(p).then((pg) => pg.cleanup()).catch(() => {});
+    // Drop the page's operator list and decoded images; getPage re-fetches cheaply later. A torn-down
+    // viewer (or a document already destroyed: unmount, HMR) has nothing left to clean.
+    if (this.dead || docGone(this.doc)) return;
+    void pageOf(this.doc, p).then((pg) => pg.cleanup()).catch(() => {});
   }
 
   destroy() {
     this.dead = true;
     for (const p of [...this.states.keys()]) this.release(p);
+    this.masks.clear();
   }
+}
+
+/** Whether the document has been destroyed (its pages can no longer be fetched). */
+const docGone = (doc: PdfDoc) => !!(doc as { loadingTask?: { destroyed?: boolean } }).loadingTask?.destroyed;
+/** doc.getPage, but a destroyed document rejects instead of throwing synchronously. */
+function pageOf(doc: PdfDoc, p: number): ReturnType<PdfDoc['getPage']> {
+  if (docGone(doc)) return Promise.reject(new Error('document destroyed'));
+  try { return doc.getPage(p); } catch (e) { return Promise.reject(e); }
 }
 
 /** Releases a canvas backing store immediately (Safari otherwise holds it until GC). */
@@ -235,12 +265,12 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
   // Seed page sizes from page 1.
   useEffect(() => {
     let live = true;
-    void doc.getPage(1).then((p) => {
+    void pageOf(doc, 1).then((p) => {
       if (!live) return;
       const vp = p.getViewport({ scale: 1 });
       aspectsRef.current = new Float64Array(doc.numPages).fill(vp.height / vp.width);
       setAspectsVersion((v) => v + 1);
-    }).catch((e) => console.warn('[viewer] could not read page 1', e));
+    }).catch((e) => { if (!docGone(doc)) console.warn('[viewer] could not read page 1', e); }); // gone: unmount or HMR
     return () => { live = false; };
   }, [doc]);
 
@@ -368,7 +398,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     const textRuns = (page: number) => {
       let r = runsCache.get(page);
       if (!r) {
-        r = doc.getPage(page).then((p) => getTextRuns(p));
+        r = pageOf(doc, page).then((p) => getTextRuns(p));
         r.catch(() => runsCache.delete(page));
         runsCache.set(page, r);
       }
@@ -378,7 +408,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     const clampPage = (p: number) => Math.max(1, Math.min(doc.numPages, Math.round(p)));
     /** Makes sure `page`'s true size is in the layout (and committed to the DOM) before scroll math. */
     const ensureSize = async (page: number) => {
-      const p = await doc.getPage(page);
+      const p = await pageOf(doc, page);
       const vp = p.getViewport({ scale: 1 });
       const arr = aspectsRef.current!;
       if (Math.abs(arr[page - 1] - vp.height / vp.width) >= 1e-4) {
@@ -409,18 +439,18 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       }
     };
     /** Whether `page` fits whole between the top bar and the caption. */
-    const fits = (page: number) => layoutRef.current!.heights[page - 1] <= el.clientHeight - SAFE_TOP - SAFE_BOTTOM;
+    const fits = (page: number) => layoutRef.current!.heights[page - 1] <= el.clientHeight - SAFE_TOP - safeBottom();
     /** Scroll top that shows `page` whole, centered in the room between the chrome (or its top aligned when it doesn't fit). */
     const framedTop = (page: number) => {
       const L = layoutRef.current!;
-      const room = el.clientHeight - SAFE_TOP - SAFE_BOTTOM;
+      const room = el.clientHeight - SAFE_TOP - safeBottom();
       return L.tops[page - 1] - SAFE_TOP - Math.max(0, (room - L.heights[page - 1]) / 2);
     };
     /** The comfortable band for ink: clear of the chrome, and of the outer 15% when `strict`. */
     const inBand = (at: number, strict: boolean) => {
       const top = el.scrollTop, h = el.clientHeight;
       const lo = strict ? Math.max(h * VISIBLE_BAND, SAFE_TOP) : SAFE_TOP;
-      const hi = strict ? Math.max(h * VISIBLE_BAND, SAFE_BOTTOM) : SAFE_BOTTOM;
+      const hi = strict ? Math.max(h * VISIBLE_BAND, safeBottom()) : safeBottom();
       return at >= top + lo && at <= top + h - hi;
     };
 
@@ -648,6 +678,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       onScroll: sub(subs.scroll),
       onUserIntent: sub(subs.intent),
       onCardClick: sub(subs.card),
+      contentMask: (page) => renderer.mask(clampPage(page)),
     };
     cbRef.current.onReady(api);
 

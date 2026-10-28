@@ -56,37 +56,109 @@ export function measureText(layer: SVGGElement, text: string, o: TextOpts): { w:
   return b && b.width > 0 ? { w: b.width, h: b.height } : estimateTextBox(text, o.size);
 }
 
-let clipSeq = 0;
-/** Reveals `g` left to right through a growing clip (writing), or fades it in (clean style, reduced motion, backlog). */
-export async function reveal(g: SVGGElement, box: SRect, chars: number, o: { style: InkStyle; signal?: AbortSignal } & Pace): Promise<void> {
-  if (o.style === 'clean' || o.fadeMs != null || prefersReducedMotion()) {
+/** Each glyph (or word) fades in over this, one after another: never half a glyph on screen. */
+export const UNIT_FADE_MS = 110;
+/** Text longer than this is written word by word. */
+export const WORDS_FROM = 40;
+
+/**
+ * The units a text is written in: whole characters (code points), or whole words for long text.
+ * Spaces ride with the unit before them, so no unit is blank and nothing collapses between tspans.
+ */
+export function textUnits(text: string): string[] {
+  const chars = Array.from(text);
+  const out: string[] = [];
+  if (chars.length > WORDS_FROM) {
+    for (const m of text.matchAll(/\S+\s*|\s+/g)) out.push(m[0]);
+  } else {
+    for (const c of chars) {
+      if (/\s/.test(c) && out.length) out[out.length - 1] += c;
+      else out.push(c);
+    }
+  }
+  return out;
+}
+
+/** Start times of `n` units fading in over `fade` ms, spread so the last one lands at `dur`. */
+export function unitStarts(n: number, dur: number, fade: number): number[] {
+  if (n <= 1) return [0];
+  const span = Math.max(0, dur - fade);
+  return Array.from({ length: n }, (_, i) => (span * i) / (n - 1));
+}
+
+type Unit = { el: HTMLElement | SVGElement; prop: 'opacity' | 'fillOpacity' };
+
+/** Splits every svg text in `g` into one tspan per unit; returns the units and how to undo the split. */
+function splitTexts(g: SVGGElement): { units: Unit[]; undo(): void } {
+  const units: Unit[] = [];
+  const undo: (() => void)[] = [];
+  for (const t of g.querySelectorAll('text')) {
+    const text = t.textContent ?? '';
+    t.textContent = '';
+    for (const u of textUnits(text)) {
+      const span = document.createElementNS(SVG, 'tspan');
+      span.textContent = u;
+      t.appendChild(span);
+      units.push({ el: span, prop: 'fillOpacity' }); // opacity doesn't apply to tspans
+    }
+    undo.push(() => { t.textContent = text; });
+  }
+  return { units, undo: () => undo.forEach((f) => f()) };
+}
+
+/** Typeset math's smallest pieces (glyph runs, fraction rules, radicals), in writing order (left to right). */
+function mathUnits(g: SVGGElement): Unit[] {
+  const leaves: HTMLElement[] = [];
+  const walk = (el: Element) => {
+    const kids = el.children;
+    if (el.namespaceURI === SVG && el.tagName.toLowerCase() === 'svg') { leaves.push(el as HTMLElement); return; }
+    if (!kids.length) { leaves.push(el as HTMLElement); return; } // glyph runs, and empty spans that draw (fraction rules)
+    for (const k of kids) walk(k);
+  };
+  for (const fo of g.querySelectorAll('foreignObject')) for (const k of fo.children) walk(k);
+  const x = leaves.map((el) => { const r = el.getBoundingClientRect?.(); return r && r.width + r.height > 0 ? r.left : NaN; });
+  const order = leaves.map((_, i) => i);
+  if (x.every((v) => !Number.isNaN(v))) order.sort((a, b) => x[a] - x[b] || a - b);
+  return order.map((i) => ({ el: leaves[i], prop: 'opacity' as const }));
+}
+
+/**
+ * Writes `g` in at writing pace: whole glyphs (whole words for long text, typeset pieces for math)
+ * appear one after another, each with a short fade, so no frame shows a half-cut letter. Or fades
+ * it in (clean style, reduced motion, backlog). Same total time as before: `chars` at
+ * CHARS_PER_SEC, 220ms to WRITE_MAX_MS, × speed.
+ */
+export async function reveal(g: SVGGElement, _box: SRect, chars: number, o: { style: InkStyle; signal?: AbortSignal } & Pace): Promise<void> {
+  const fadeIn = async () => {
     const ms = o.fadeMs ?? FADE_MS;
     g.style.opacity = '0';
     g.style.transition = `opacity ${ms}ms ease-out`;
     await frame();
     g.style.opacity = '1';
     if (!o.signal?.aborted) await wait(ms);
-    return;
-  }
-  const id = `dk${++clipSeq}`;
-  const clip = document.createElementNS(SVG, 'clipPath');
-  clip.setAttribute('id', id);
-  const r = document.createElementNS(SVG, 'rect');
-  set(r, { x: box.x - 6, y: box.y - 12, height: box.h + 24, width: 0 });
-  clip.appendChild(r);
-  g.insertBefore(clip, g.firstChild);
-  g.setAttribute('clip-path', `url(#${id})`);
-  const full = box.w + 12;
+  };
+  if (o.style === 'clean' || o.fadeMs != null || prefersReducedMotion()) return fadeIn();
+  const split = splitTexts(g);
+  const units = [...split.units, ...mathUnits(g)];
+  if (!units.length) { split.undo(); return fadeIn(); }
   const dur = Math.min(WRITE_MAX_MS, Math.max(220, (chars / CHARS_PER_SEC) * 1000)) * o.speed;
+  const fade = Math.min(UNIT_FADE_MS * o.speed, dur / 2);
+  const starts = unitStarts(units.length, dur, fade);
+  const setOp = (u: Unit, v: number) => { (u.el.style as unknown as Record<string, string>)[u.prop] = v >= 1 ? '' : String(v); };
+  units.forEach((u) => setOp(u, 0));
   const t0 = performance.now();
+  let from = 0; // units before this are fully in
   for (;;) {
-    const k = o.signal?.aborted ? 1 : Math.min(1, (performance.now() - t0) / dur);
-    r.setAttribute('width', String(full * k));
-    if (k >= 1) break;
+    const t = o.signal?.aborted ? Infinity : performance.now() - t0;
+    for (let i = from; i < units.length && starts[i] <= t; i++) {
+      const v = Math.min(1, (t - starts[i]) / Math.max(1, fade));
+      setOp(units[i], v);
+      if (v >= 1 && i === from) from++;
+    }
+    if (from >= units.length) break;
     await frame();
   }
-  g.removeAttribute('clip-path');
-  clip.remove();
+  split.undo();
 }
 
 /** A filled dot that pops in (scale 0 → 1, 140ms). */

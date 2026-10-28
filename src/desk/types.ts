@@ -6,6 +6,7 @@ import type { Settings } from '../settings/settings';
 import type { Rng, Stroke } from '../ink/agent/strokes';
 import type { InkAction, Place, Pt, RegionSize, Target } from '../script/types';
 import type { Registry } from './registry';
+import type { ContentMask } from './route';
 
 /**
  * Desk px: CSS px in the scroll content box (.pv-sizer), x from its left edge, y from its top.
@@ -107,7 +108,8 @@ export interface DeskApi {
   frameBoth(a: ConnectorEnd, b: ConnectorEnd, before?: BeforeMove): Promise<void>;
   /** {{scroll}}: leaves B, then frames the page (or y on it) like ViewerApi.scrollToPage. */
   scrollToPage(page: number, y?: number): Promise<void>;
-  addConnector(from: ConnectorEnd, to: ConnectorEnd): ConnectorHandle | string;
+  /** `avoid`: ink already in the region end's target (its own space); the connector arrives the way that crosses least of it. */
+  addConnector(from: ConnectorEnd, to: ConnectorEnd, avoid?: SRect[]): ConnectorHandle | string;
   /** Rule 6: false while the student has taken over the view. */
   following(): boolean;
   /** Stops a pan in flight (a stopped answer must not keep moving the view). */
@@ -152,4 +154,6 @@ export interface DeskHost {
   /** The student scrolled or zoomed (wheel, touch, scroll keys, ctrl+wheel, pinch, a foreign scroll). */
   onUserIntent(cb: () => void): () => void;
   onCardClick(cb: () => void): () => void;
+  /** Where `page` has printed content (null until it has rendered): connectors route around it. */
+  contentMask?(page: number): ContentMask | null;
 }

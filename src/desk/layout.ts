@@ -25,14 +25,22 @@ export const GAP_X = 32;
 export const EDGE = 24;
 /** Left content edge when a left lane exists: the canvas toolbar (16 + 44) plus 16. */
 export const TOOLBAR_CLEAR = 76;
+/** Extra air between the toolbar and an off-center column, taken only from room the page doesn't need to fit C. */
+export const COLUMN_AIR = 24;
 /** Between stacked regions, and around a region below its page. */
 export const GAP_Y = 24;
 /** Window chrome over the scroller: top bar above, caption + ask bar below. */
 export const SAFE_TOP = 64;
+/** The least the bottom chrome covers; the app raises it to the caption dock's measured height (setSafeBottom). */
 export const SAFE_BOTTOM = 156;
 export const REGION_ASPECT = 0.7;
 
-export const band = (H: number) => Math.max(0, H - SAFE_TOP - SAFE_BOTTOM);
+let safeBottomPx = SAFE_BOTTOM;
+/** The bottom chrome framing keeps clear of: the dock (caption + ask bar) at its tallest, measured by the app. */
+export const safeBottom = () => safeBottomPx;
+export function setSafeBottom(px: number): void { safeBottomPx = Math.max(SAFE_BOTTOM, Math.ceil(px)); }
+
+export const band = (H: number) => Math.max(0, H - SAFE_TOP - safeBottomPx);
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 /** A region's width in CSS px (C mode). Height is 0.7 × width. `l` is always B. */
@@ -48,8 +56,10 @@ export function column(W: number, lanes: Lanes): Column {
     return { pageW, pageX: (W - pageW) / 2 };
   }
   // With lanes the column moves off center, so it must clear the canvas toolbar on the left.
-  const lo = TOOLBAR_CLEAR;
   const hi = W - (lanes.right ? EDGE : SIDE / 2);
+  // Air beside the toolbar comes out of slack only: a page that just fits C keeps its width.
+  const air = Math.max(0, Math.min(COLUMN_AIR, hi - TOOLBAR_CLEAR - lanes.left - lanes.right - C_MIN_PAGE_W));
+  const lo = TOOLBAR_CLEAR + air;
   const room = hi - lo;
   const pageW = Math.max(MIN_PAGE_W, Math.min(MAX_PAGE_W, room - lanes.left - lanes.right));
   const start = lo + Math.max(0, (room - lanes.left - pageW - lanes.right) / 2);
@@ -177,7 +187,7 @@ export type View = { top: number; H: number; max: number };
 
 /** Whether a desk rect is on screen clear of the chrome. A rect taller than the band counts when its top is in the band's top 15%. */
 export function inView(r: DeskRect, v: View): boolean {
-  const lo = v.top + SAFE_TOP, hi = v.top + v.H - SAFE_BOTTOM;
+  const lo = v.top + SAFE_TOP, hi = v.top + v.H - safeBottomPx;
   if (r.h <= hi - lo) return r.y >= lo - 1 && r.y + r.h <= hi + 1;
   return r.y >= lo - 1 && r.y <= lo + (hi - lo) * 0.15;
 }

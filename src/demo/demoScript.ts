@@ -44,8 +44,9 @@ export const DEMO_SCRIPT =
  *            (719,448), dotted in accent.
  *   payoff   (580,170), size l, in the empty top right, clear of the farthest sight line
  * Elements (6): cameras + baseline, image 1 + x, ray, three points, sight lines, l' + its dots.
- * The connector leaves x horizontally (the Desk's router), so it crosses the slide's image 2; at x's
- * height there is no clear path. place=left was tried: it then crosses all three sight lines and l'.
+ * The Desk's router takes the connector from x down to the clear band under the two images (image 2
+ * sits at x's height), across the page edge, and up into the sketch's x from below (its own line and
+ * label sit to the left). place=left was tried: it then crosses all three sight lines and l'.
  */
 export const DEMO_SIDE_QUESTION = 'Sketch it from the side';
 export const DEMO_SIDE_SCRIPT =
