@@ -48,9 +48,9 @@ export const JUDGE_INPUT_TOKENS_R3 = 16000;
 /** The scout's worst case per answer (stage 1, gpt-6.1-terra): system + deck digest + visible listing + question. */
 export const SCOUT_MODEL = 'gpt-6.1-terra';
 export const SCOUT_INPUT_TOKENS = 8000;
-/** The storyboard's worst case per answer (gpt-6.1-terra; the same grounding as the answer). PETU_STORYBOARD=0 runs skip it. */
+/** The storyboard's worst case per answer (gpt-6.1-terra; the same grounding as the answer). Counted only when PETU_STORYBOARD=1. */
 export const STORYBOARD_MODEL = 'gpt-6.1-terra';
-const storyboardWorst = () => (process.env.PETU_STORYBOARD === '0' ? 0 : worstCaseUsd(process.env.PETU_STORYBOARD_MODEL || STORYBOARD_MODEL, ASSUMED_INPUT_TOKENS, STORYBOARD_MAX_OUTPUT));
+const storyboardWorst = () => (process.env.PETU_STORYBOARD !== '1' ? 0 : worstCaseUsd(process.env.PETU_STORYBOARD_MODEL || STORYBOARD_MODEL, ASSUMED_INPUT_TOKENS, STORYBOARD_MAX_OUTPUT));
 
 export function plannedWorstUsd(c: Config, answers: number, judged: number, rubric: 'r2' | 'r3' = 'r2'): number {
   return answers * (worstCaseUsd(c.model, ASSUMED_INPUT_TOKENS, ASSUMED_MAX_OUTPUT, !!c.fast) + worstCaseUsd(SCOUT_MODEL, SCOUT_INPUT_TOKENS, SCOUT_MAX_OUTPUT) + storyboardWorst()) +

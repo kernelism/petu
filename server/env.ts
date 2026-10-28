@@ -42,7 +42,8 @@ export { SCOUT_MAX_OUTPUT } from './limits';
 import { SCOUT_MAX_OUTPUT, STORYBOARD_MAX_OUTPUT } from './limits';
 /**
  * The storyboard (spec "Board v2" 5): a reasoning model designs the lesson while the opener plays.
- * PETU_STORYBOARD=0 turns it off (stage 2 then runs on the scout's plan, as before).
+ * Off by default until it lands within the opener: the first live runs (2026-10-28) timed out at 12s
+ * at effort low and none, a 20–24s handoff gap. PETU_STORYBOARD=1 turns it on for a run.
  */
 export const DEFAULT_STORYBOARD_MODEL = 'gpt-6.1-terra';
 export const DEFAULT_STORYBOARD_EFFORT: Effort = 'low';
@@ -98,7 +99,7 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   if (!PRICES[storyModel]) throw new Error(`petu: PETU_STORYBOARD_MODEL "${storyModel}" has no price in server/prices.ts`);
   const storyEffort = oneOf('PETU_STORYBOARD_EFFORT', EFFORTS, DEFAULT_STORYBOARD_EFFORT);
   if (storyEffort === 'none' && NO_NONE.has(storyModel)) throw new Error(`petu: ${storyModel} does not accept reasoning effort none; set PETU_STORYBOARD_EFFORT=low`);
-  const storyOn = oneOf('PETU_STORYBOARD', ['0', '1'] as const, '1') === '1';
+  const storyOn = oneOf('PETU_STORYBOARD', ['0', '1'] as const, '0') === '1';
 
   const phase = oneOf('PETU_PHASE', PHASES, 'founder');
   const phaseUsd = Object.fromEntries(PHASES.map((p) => [p, num(`PETU_CAP_${p.toUpperCase()}`, PHASE_CAPS[p])])) as Record<Phase, number>;
@@ -118,7 +119,7 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
     key: get('OPENAI_API_KEY')?.trim() ?? '',
     model: { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) },
     scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, fast: str('PETU_SCOUT_FAST') === '1', explicitCache },
-    storyboard: storyOn ? { model: storyModel, effort: storyEffort, maxOutput: STORYBOARD_MAX_OUTPUT, fast: false, explicitCache } : null,
+    storyboard: storyOn ? { model: storyModel, effort: storyEffort, maxOutput: STORYBOARD_MAX_OUTPUT, fast: false, explicitCache, ...(str('PETU_STORYBOARD_TIMEOUT_MS') ? { timeoutMs: num('PETU_STORYBOARD_TIMEOUT_MS', 12_000) } : {}) } : null,
     phase, caps,
     priorUsd: num('PETU_PRIOR_USD', 0.0076),
     pdfDirs,

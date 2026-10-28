@@ -52,7 +52,9 @@ import { STORYBOARD_SCHEMA, parseStoryboard, storyboardText, type Storyboard } f
 export type Effort = 'none' | 'low' | 'medium' | 'high';
 export type ModelConfig = { model: string; effort: Effort; maxOutput: number; fast: boolean; verbosity?: 'low' | 'medium'; explicitCache: boolean;
   /** Vision detail for the scout's other pages (the visible page is always high). Default high. */
-  pageDetail?: 'low' | 'high' };
+  pageDetail?: 'low' | 'high';
+  /** A deadline for the whole call (the storyboard: PETU_STORYBOARD_TIMEOUT_MS; default STORYBOARD_TIMEOUT_MS). */
+  timeoutMs?: number };
 export type Deps = {
   key: string; ledger: Ledger; phase: Phase; fetch: typeof fetch;
   now?: () => number;
@@ -219,7 +221,7 @@ export async function storyboard(r: Pick<AskRequest, 'question' | 'history'> & {
   const onAbort = () => up.abort();
   signal?.addEventListener('abort', onAbort);
   let timedOut = false, usage: Usage | undefined, complete = false, text = '', failed = '';
-  const deadline = setTimeout(() => { timedOut = true; up.abort(); }, Math.min(STORYBOARD_TIMEOUT_MS, T.callMs));
+  const deadline = setTimeout(() => { timedOut = true; up.abort(); }, Math.min(cfg.timeoutMs ?? STORYBOARD_TIMEOUT_MS, T.callMs));
   try {
     const res = await d.fetch(URL_, { method: 'POST', signal: up.signal, headers: headers(d.key), body: JSON.stringify(body) });
     if (!res.ok || !res.body) {
