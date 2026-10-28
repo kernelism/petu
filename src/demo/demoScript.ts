@@ -1,48 +1,63 @@
-/** Hand-written script for public/fixtures/epipolar.pdf (page 3). Exercises every action type. */
-export const DEMO_QUESTION = 'Why does stereo matching only search along a line?';
-
-// Model coords = fixture (top-left, 800x560 pt) coords with x / 0.8 and y / 0.56.
-//   circle near  (320,445) -> label "x" at (256,249)
-//   ray line     (238,813) -> (313,332): camera C (190,455) up through point x (232,265) to (250,186)
-//   epipolar line(600,550) -> (803,454): svg (480,308) -> (642,254), inside image 2, clear of "image 2" text
-//   label        (650,640) -> svg (520,358), just under image 2
-//   label        (578,946) -> svg (462,530), right of the equation baseline
-//   arrow        (900,518) -> (802,455): from the right of image 2 to the end of the epipolar line
-export const DEMO_SCRIPT =
-  `{{scroll p=3}} Here's the idea. Take this {{circle p=3 "x" near=320,445}} point x in the left image. ` +
-  `From the camera's view, {{highlight p=3 "A point x in image 1 back-projects to a ray in 3D"}} x could have come from anywhere ` +
-  `{{line p=3 from=238,813 to=313,332}} along this ray. Now project that whole ray into the right image, ` +
-  `{{highlight p=3 "That ray projects to a line l' in image 2: the epipolar line"}} and it lands ` +
-  `{{line p=3 from=600,550 to=803,454}} on a single line: {{label p=3 at=650,640 "epipolar line l'"}} the epipolar line. ` +
-  `That's exactly what this equation says. {{box p=3 "x'T F x = 0"}} x-prime must sit on the line ` +
-  `{{label p=3 at=578,946 "x' lies on l' = Fx"}} F x. So instead of searching the entire image ` +
-  `{{underline p=3 "the search becomes 1-D"}} for the match, we only search along ` +
-  `{{arrow p=3 from=900,518 to=802,455}} this one line.`;
+/**
+ * Hand-written scripts. They follow the spec's "Explanation quality" rules and double as the
+ * reference examples for the checkpoint 2 prompt: takeaway first, one new element per sentence
+ * (setup → key move → consequence), label right after drawing, the slide's own notation, at most
+ * ~6 drawn elements, accent only on the takeaway, and a payoff timed to the last sentence.
+ * Each tag sits right before the word it belongs to (an action fires on the first word after it).
+ */
 
 /**
- * Mixed demo: circle on the PDF, then redraw the setup from the side on the board.
- * Board space is 1000 × 700; model y = space y / 0.7. Space coords of the sketch:
- *   cameras  C (240,500), C' (740,500), r 9; labels centered below at y 548
- *   ray      from C toward (500,80); points on it R1 (357,311), R2 (461,143), dots r 6
- *   image plane 2 (= l', the epipolar line): (564,477) → (686,331), 150 from C' facing the ray;
- *            the projections C'→R1 and C'→R2 cross it at (602,432) and (646,379)
- *   label l' (716,300), clear of the l' line's end; title (225,52) and summary line (225,630) share
- *   the diagram's left edge
- * Lines start at the camera circles' edge, not their centers, so the dots stay clean.
+ * PDF-only demo on public/fixtures/epipolar.pdf, page 3 (800 × 560 pt; model = pt x / 0.8, y / 0.56).
+ * Measured on a render of the page:
+ *   point x: dot (290,473), its label "x" (320,445) → one circle around both: at (305,459), r 30
+ *   camera C dot (237,812) → ray from its edge up through the x dot to (313,330), under the bullets
+ *   image 2 spans x 587–812, y 348–616 → l' from (598,548) to (796,456), clear of the "image 2" text
+ *   label "l'" just under the line's end at (786,482), inside image 2
+ * Elements (6): circle x, ray, highlight bullet 1, l' line, l' label, highlight bullet 3 (payoff).
+ */
+export const DEMO_QUESTION = 'Why does stereo matching only search along a line?';
+export const DEMO_SCRIPT =
+  `{{scroll p=3}} Because the match can only be on one line in the second image. ` +
+  `Take this point {{circle p=3 at=305,459 r=30}} x in image 1. ` +
+  `On its own, x gives a direction from camera C, not a distance, ` +
+  `{{line p=3 from=239,800 to=313,330}} so the real point could be anywhere along this ray. ` +
+  `That's what {{highlight p=3 "A point x in image 1 back-projects to a ray in 3D"}} back-projects to a ray means. ` +
+  `A straight ray still looks straight from the other camera, so in image 2 it shows up as a line, ` +
+  `{{line p=3 from=598,548 to=796,456}} this one: {{label p=3 at=786,482 "l'"}} the epipolar line, l-prime. ` +
+  `{{highlight p=3 "So the match x' must lie on l', and the search becomes 1-D"}} So the match x-prime must lie on l-prime, ` +
+  `and we search one line instead of the whole image.`;
+
+/**
+ * Mixed demo: point at x on the PDF, then sketch the setup from the side on the board.
+ * Board space is 1000 × 700; model y = space y / 0.7. Space coords of the sketch (true geometry, f 190):
+ *   cameras  C (160,600), C' (840,600), r 9; baseline between their edges; labels below at y 642
+ *   image 1  y 410 from x 40 to 290 (C looks straight up); x = where the ray crosses it (271,410)
+ *   ray      C → (480,50); three candidate points on it: (304,353) (378,226) (448,105), r 7
+ *   sight    lines from each point to C' (stopping at the circles' edges)
+ *   l'       image 2 of C' (looking up-left) cut by this slice: the line through e' (415,600), where
+ *            the baseline meets it, up to (765,425). The sight lines cross it at (619,498) (678,469)
+ *            (719,448), dotted in accent. Labels l' (778,408), e' (402,640)
+ *   payoff   (580,170), size l, in the empty top right, clear of the farthest sight line
+ * Elements (6): cameras + baseline, image 1 + x, ray, three points, sight lines, l' + its dots.
  */
 export const DEMO_BOARD_QUESTION = 'Sketch it from the side';
 export const DEMO_BOARD_SCRIPT =
-  `{{scroll p=3}} Here's our point {{circle p=3 "x" near=320,445}} x. Now look at it from the side. ` +
-  `{{board}} {{write on=board at=225,74 "Side view" size=s}} Camera C {{circle on=board at=240,714 r=9}} {{write on=board at=229,783 "C"}} ` +
-  `and camera C-prime, {{circle on=board at=740,714 r=9}} {{write on=board at=727,783 "C'"}} ` +
-  `joined by the baseline. {{line on=board from=249,714 to=731,714}} ` +
-  `The point x could lie anywhere on this ray. {{line on=board from=245,703 to=500,114}} ` +
-  `Take one point on it {{circle on=board at=357,444 r=6}} and project it into C-prime, {{line on=board from=732,709 to=362,448}} ` +
-  `then a farther one. {{circle on=board at=461,204 r=6}} {{line on=board from=734,704 to=465,211}} ` +
-  `Both land on one line in the second image: {{line on=board from=564,681 to=686,473 em}} ` +
-  `the epipolar line, {{write on=board at=716,429 "l'"}} l-prime. ` +
-  `So every point on the ray {{write on=board at=225,900 "every point on the ray → a point on l'"}} maps onto l', ` +
-  `{{circle on=board "l'" near=726,429 em}} and that's the only place to search.`;
+  `{{scroll p=3}} From the side, it's clear why the match for {{circle p=3 at=305,459 r=30}} x sits on one line. ` +
+  `{{board}} Here's {{circle on=board at=160,857 r=9}} camera {{write on=board at=150,917 "C"}} C, ` +
+  `{{circle on=board at=840,857 r=9}} camera {{write on=board at=827,917 "C′"}} C-prime, ` +
+  `{{line on=board from=169,857 to=831,857}} and the baseline. ` +
+  `{{line on=board from=40,586 to=290,586}} Image 1 {{write on=board at=40,624 "image 1" size=s}} sits in front of C, ` +
+  `{{circle on=board at=271,586 r=6}} with our point {{write on=board at=236,551 "x"}} x on it. ` +
+  `C can't tell how far away the real point is, {{line on=board from=166,844 to=480,71}} so it could be anywhere on this ray. ` +
+  `Say {{circle on=board at=304,504 r=7}} here, {{circle on=board at=378,323 r=7}} here, or {{circle on=board at=448,150 r=7}} here. ` +
+  `C-prime sees each one {{line on=board from=311,509 to=831,851}} along {{line on=board from=384,330 to=832,848}} its own ` +
+  `{{line on=board from=453,159 to=834,846}} line of sight. ` +
+  `Everything here lies in one flat slice, and image 2 cuts that slice in a single line: ` +
+  `{{line on=board from=415,857 to=765,607 em}} this one, {{write on=board at=778,583 "l′"}} l-prime. ` +
+  `All three land on it, {{circle on=board at=619,711 r=6 em}} here, {{circle on=board at=678,670 r=6 em}} here, ` +
+  `{{circle on=board at=719,640 r=6 em}} and here. ` +
+  `It starts at {{write on=board at=402,914 "e′"}} e-prime, where C itself lands. ` +
+  `So wherever the real point is, {{write on=board at=580,243 "x′ must be on l′" size=l}} x-prime must be on l-prime.`;
 
 export type Demo = { question: string; script: string };
 export const DEMOS: Demo[] = [
