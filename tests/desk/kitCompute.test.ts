@@ -10,6 +10,7 @@ describe('values', () => {
     expect(C.parseVals('1 2; −3 4')).toEqual([[1, 2], [-3, 4]]);
     expect(C.parseVals('1,2;3')).toBeNull();
     expect(C.parseVals('1,x')).toBeNull();
+    expect(C.parseVals('1/9,1/9;-1/4,2^3')).toEqual([[1 / 9, 1 / 9], [-0.25, 8]]);
     expect(C.parseVals(Array(13).fill('1').join(','))).toBeNull();
   });
   it('formats with a true minus, no trailing zeros, ~2 decimals', () => {

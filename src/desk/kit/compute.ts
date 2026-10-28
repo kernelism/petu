@@ -14,11 +14,18 @@ export const MAX_DIM = 12;
 /** "1,2,3;4,5,6" or "1 2 3; 4 5 6" → rows. Null unless every row has the same length (≤ 12×12) and every cell is a finite number. */
 export function parseVals(s: string | undefined): Mat | null {
   if (!s) return null;
-  const rows = s.split(';').map((r) => r.trim()).filter(Boolean).map((r) => r.split(/[\s,]+/).filter(Boolean).map((v) => Number(v.replace(/−/g, '-'))));
+  const rows = s.split(';').map((r) => r.trim()).filter(Boolean).map((r) => r.split(/[\s,]+/).filter(Boolean).map(cellValue));
   if (!rows.length || rows.length > MAX_DIM) return null;
   const n = rows[0].length;
   if (!n || n > MAX_DIM || rows.some((r) => r.length !== n || r.some((v) => !Number.isFinite(v)))) return null;
   return rows;
+}
+
+/** One literal cell: a number, or a constant written as arithmetic (1/9, -1/4, 2^3, sqrt(2)). */
+function cellValue(v: string): number {
+  const n = Number(v.replace(/−/g, '-'));
+  if (Number.isFinite(n) || v.length > 16) return n;
+  try { return compileVars(v, [])({}); } catch { return NaN; }
 }
 
 export const flat = (m: Mat) => m.flat();

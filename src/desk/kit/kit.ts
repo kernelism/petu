@@ -251,7 +251,8 @@ function newBlock(id: string, kind: Block['kind'], region: string, placed: Place
 }
 
 /** Builds a kit block tag into a plan. A string is a skip reason. */
-export async function buildBlock(a: KitBlock & { region?: string; page?: number; id?: string; em?: boolean }, ctx: TargetCtx, env: BuildEnv): Promise<ElementPlan | string> {
+export async function buildBlock(a0: KitBlock & { region?: string; page?: number; id?: string; em?: boolean }, ctx: TargetCtx, env: BuildEnv): Promise<ElementPlan | string> {
+  let a = a0;
   if (a.region == null) return 'kit blocks live on the board';
   const store = kitStore(env.registry);
   const region = regionOf(ctx.target);
@@ -260,7 +261,8 @@ export async function buildBlock(a: KitBlock & { region?: string; page?: number;
   const id = a.id ?? store.anonId();
   if (a.id && store.get(a.id)) return 'duplicate id';
   const anchor = await anchorOf(store, a);
-  if ((a.right || a.below) && !anchor) return `unknown block ${a.right ?? a.below}`;
+  // A neighbour that was skipped: the block still draws, in the default place (one skip never cascades).
+  if ((a.right || a.below) && !anchor) { console.warn('[kit] unknown neighbour, placed below:', a.right ?? a.below); a = { ...a, right: undefined, below: undefined, op: undefined }; }
   const others = store.inRegion(region).map((b) => b.placed);
   const spacing = { gap: m.gap, opW: m.opW, margin: m.margin, top: m.top, width: 1000 };
   const P = (w: number, h: number, pad: Pad) => place(w, h, pad, { right: a.right, below: a.below, op: a.op, at: a.at as Pt | undefined }, anchor?.placed, others, spacing);

@@ -2,7 +2,7 @@
 import { EXAMPLES } from './examples.ts';
 
 /** Bump on any change: the eval records it with every run, and it is part of the cache prefix. */
-export const PROMPT_VERSION = 'p4.4';
+export const PROMPT_VERSION = 'p4.5';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -70,7 +70,7 @@ Just before a sketch tag, write a short plan inside <plan>…</plan>: the given 
 A graph of one quantity against another: an axes tag, then a plot tag. A curve's pts run in order along it (a wave through chosen points: left to right); a curve that doubles back on itself is skipped. One value per key: a bent path is several lines.
 Look: main shapes plain; rays and sight lines weight=secondary; construction lines dash; surfaces {{shade on=s pts=O L P outline}}. Label a point as you draw it, {{point on=s at=P "P" dir=s}}; a line by naming it aloud, or {{label id=ray "light" dir=n}} on a line drawn with id=ray. em is the accent colour: keep it for what the student should leave with. {{emph id=ray}} draws attention back to something already drawn; {{fade id=ray}} dims what no longer matters.
 When the board redraws or extends something on a page, tie them: {{connect from=p4:#d3 to=s:X}} from a page mark, or {{connect from=p4:"words on the page" to=s:ray}} from words.
-WORKED NUMBERS. When the idea is a computation (values in a table or matrix, a vector, data points, a rule applied case by case), use the kit blocks below instead of strokes: the engine lays them out and computes every number. Never write a computed number yourself, on the board or in a tag; name the operation and let the engine show its result, then say what it means. Pick example values that make the effect visible; when the page gives values, use the page's. Show the input, the operation and the output side by side, then let the computation happen on the board: step through the first case or two while you explain them, then sweep the rest while you say what the pattern shows.`;
+WORKED NUMBERS. When the idea is a computation (values in a table or matrix, a vector, data points, a rule applied case by case), use the kit blocks below instead of strokes: the engine lays them out and computes every number. Never write a computed number yourself, on the board or in a tag; name the operation and let the engine show its result; in words, say what the result means (it jumps, it doubles, it stays put) rather than reciting the numbers. Pick example values that make the effect visible; when the page gives values, use the page's. Show the input, the operation and the output side by side, then let the computation happen on the board: step through the first case or two while you explain them, then sweep the rest while you say what the pattern shows.`;
 
 const GRAMMAR = `TAGS (key=value, "quoted text", bare flags; A, B, C are x,y, a name, a #mark or a construction)
 {{scroll p=4}}  {{scroll p=4 y=600}}
@@ -86,7 +86,7 @@ const GRAMMAR = `TAGS (key=value, "quoted text", bare flags; A, B, C are x,y, a 
 {{connect from=p4:#d3 to=s:X}}  {{connect from=p4:"quote" to=s:ray}}  {{emph id=ray}}  {{fade id=ray}}
 {{box on=s center=A size=200,120}}  {{write on=s center=A "label" size=m}} (centred on A)
 KIT (no fit or let needed; blocks place themselves; parts count from 1: g[2,3], g[1:2,1:3], v[4], t[3] is a table row)
-{{grid on=s id=g vals=0,0,9;0,0,9 shade cols=a,b,c "caption"}}  {{bars on=s id=v vals=3,-1,2 labels=a,b,c}}
+{{grid on=s id=g vals=0,0,9;0,0,9 shade cols=a,b,c "caption"}} (a value may be a fraction: 1/9)  {{bars on=s id=v vals=3,-1,2 labels=a,b,c}}
 {{table on=s id=t cols=x,y,z vals=1,10;2,20}} (z has no values yet)  {{scatter on=s id=d pts=1,2 2,3.5 4,3 x="hours" y="score"}}
 right=g or below=g places a block beside another, op=⊛ (or · × = → − + ÷) between them
 {{grid on=s id=o over=g slide=k right=k op==}} k's weights slide over g, each cell a sum of products (same keeps g's size, flip flips k)
