@@ -27,8 +27,8 @@ function fakeViewer(over: Partial<ViewerApi> = {}): ViewerApi {
 function fakeDesk(over: Partial<DeskApi> = {}): DeskApi {
   const regions = new Map<string, RegionInfo>();
   return {
-    reset: vi.fn(async (_ms: number, _opts?: { keepLanes?: boolean }) => { regions.clear(); }),
-    addRegion: vi.fn(async (s) => { await wait(420); const r = { ...s, mode: 'right' as const, layers: { highlight: g(), agent: g() }, scale: () => 0.5 }; regions.set(s.id, r); return r; }),
+    reset: vi.fn(async (_ms: number, ) => { regions.clear(); }),
+    addRegion: vi.fn(async (s) => { await wait(420); const r = { ...s, layers: { highlight: g(), agent: g() }, scale: () => 0.5 }; regions.set(s.id, r); return r; }),
     region: (id) => regions.get(id) ?? null,
     reveal: vi.fn(async () => { await wait(400); return true; }),
     isVisible: () => true,
@@ -39,7 +39,7 @@ function fakeDesk(over: Partial<DeskApi> = {}): DeskApi {
     following: () => true,
     cancel: vi.fn(),
     abort: vi.fn(),
-    state: () => ({ mode: 'c', following: true, sketching: false, column: { x: 0, w: 860 } }),
+    state: () => ({ split: 'none', stacked: false, following: true, sketching: false, column: { x: 0, w: 860 } }),
     subscribe: () => () => {},
     ...over,
   };
@@ -91,7 +91,7 @@ function make(o: { viewer?: ViewerApi; desk?: DeskApi; build?: BuildElement; gro
 
 const line = (x = 0): InkAction => ({ kind: 'line', page: 1, from: { x, y: 0 }, to: { x: 900, y: 900 } });
 const rline = (region = 'side'): InkAction => ({ kind: 'line', region, from: { x: 0, y: 0 }, to: { x: 100, y: 100 } });
-const sketch: Action = { kind: 'sketch', id: 'side', page: 1, size: 'm', place: 'auto' };
+const sketch: Action = { kind: 'sketch', id: 'side', page: 1, size: 'm' };
 
 describe('Director timing (unchanged guarantees)', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
@@ -332,18 +332,18 @@ describe('Director on the desk', () => {
     expect(desk.reset).toHaveBeenCalledWith(300);
     expect(order).toEqual(['reset', 'scroll']);
   });
-  it('a first sketch keeps the lanes: it resets with keepLanes right before placing its region', async () => {
+  it('a first sketch resets the desk right before adding its section', async () => {
     const order: string[] = [];
     const desk = fakeDesk({
       reset: vi.fn(async () => { order.push('reset'); }),
-      addRegion: vi.fn(async (s) => { order.push('add'); return { ...s, mode: 'right' as const, layers: { highlight: g(), agent: g() }, scale: () => 0.5 }; }),
+      addRegion: vi.fn(async (s) => { order.push('add'); return { ...s, layers: { highlight: g(), agent: g() }, scale: () => 0.5 }; }),
     });
     const { d } = make({ desk });
     void d.begin(300);
     d.run(sketch, 0);
     await vi.advanceTimersByTimeAsync(1000);
     expect(desk.reset).toHaveBeenCalledOnce();
-    expect(desk.reset).toHaveBeenCalledWith(300, { keepLanes: true });
+    expect(desk.reset).toHaveBeenCalledWith(300);
     expect(order).toEqual(['reset', 'add']);
   });
   it('an answer that ends or is stopped without actions leaves the desk as is', async () => {
@@ -361,14 +361,13 @@ describe('Director on the desk', () => {
     d.stop();
     expect(desk.abort).toHaveBeenCalled();
   });
-  it('a sketch near a page past the end is skipped (M1)', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { d, ended, desk } = make();
-    const s: Action = { kind: 'sketch', id: 'x', page: 9, size: 'm', place: 'auto' };
-    d.run(s, 0);
-    await vi.advanceTimersByTimeAsync(100);
-    expect(ended.get(s)?.skipped).toBe('page out of range');
-    expect(desk.addRegion).not.toHaveBeenCalled();
+  it('a sketch near a page past the end (or with no near=) explains the slide in view', async () => {
+    const { d, desk } = make();
+    d.run({ kind: 'sketch', id: 'x', page: 9, size: 'm' }, 0);
+    d.run({ kind: 'sketch', id: 'y', size: 'l' }, 0);
+    await vi.advanceTimersByTimeAsync(1500);
+    const pages = vi.mocked(desk.addRegion).mock.calls.map((c) => c[0].page);
+    expect(pages).toEqual([1, 1]);
   });
   it('ink in flight is not cut short by a frame step that does not move the view (M2)', async () => {
     const fb = fakeBuild(700);

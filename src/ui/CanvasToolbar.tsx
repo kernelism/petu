@@ -80,7 +80,7 @@ export function CanvasToolbar() {
   useEffect(() => setTip(null), [canvasOn]);
   useEffect(() => relayout((n) => n + 1), []); // place the first-load hint once the pencil is laid out
 
-  // One shared tooltip, placed to the right of the hovered/focused button. Like macOS, once a tip
+  // One shared tooltip, placed under the hovered/focused button. Like macOS, once a tip
   // is showing, moving to a neighbour shows its tip immediately.
   const tipProps = (label: string, keys?: string) => {
     const show = (el: HTMLElement, delay: number) => {
@@ -123,7 +123,7 @@ export function CanvasToolbar() {
       <div
         className={`toolbar${canvasOn ? ' is-open' : ''}`}
         onTransitionEnd={() => relayout((n) => n + 1)}
-        role="toolbar" aria-label="Drawing tools" aria-orientation="vertical">
+        role="toolbar" aria-label="Drawing tools" aria-orientation="horizontal">
         <div className="tb-fold tb-fold-closed" aria-hidden={canvasOn}>
           <div className="tb-fold-inner">
             <button ref={pencilRef} type="button" className="tb-btn" tabIndex={canvasOn ? -1 : 0} onClick={() => ink.setCanvas(true)} {...tipProps('Draw', key('D'))}>
@@ -165,7 +165,7 @@ export function CanvasToolbar() {
       {/* The one-time hint uses the tooltip's look, so a hover tip later reads as the same thing. */}
       <div
         className={`tb-tip tb-hint${hint && !tip && pencilRect ? ' is-visible' : ''}`}
-        style={pencilRect ? { top: pencilRect.top + pencilRect.height / 2, left: pencilRect.right + 10 } : undefined}
+        style={pencilRect ? { top: pencilRect.bottom + 10, left: Math.max(pencilRect.left + pencilRect.width / 2, 48) } : undefined}
         aria-hidden="true"
       >
         Draw
@@ -173,7 +173,7 @@ export function CanvasToolbar() {
       </div>
       <div
         className={`tb-tip${tip && tipRect ? ' is-visible' : ''}`}
-        style={tipRect ? { top: tipRect.top + tipRect.height / 2, left: tipRect.right + 10 } : undefined}
+        style={tipRect ? { top: tipRect.bottom + 10, left: Math.max(tipRect.left + tipRect.width / 2, 48) } : undefined}
         aria-hidden="true"
       >
         {tip?.label}

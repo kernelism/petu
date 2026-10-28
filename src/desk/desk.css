@@ -1,26 +1,70 @@
 /* src/desk/desk.css */
-/* The desk: sketch regions and connectors. C: inside .pv-sizer (scrolls with the pages). B: the fixed stage. */
-.desk-layer { position: absolute; inset: 0; pointer-events: none; }
-.desk-region { position: absolute; opacity: 0; transition: opacity 180ms var(--ease-out, ease-out); pointer-events: none; }
+/* The board (spec "Lessons v3" L): a surface beside the slides, its sections stacked inside it, and
+   the connectors' overlay above both. Desk.ts positions everything; this is the look and the motion. */
+.desk-stage { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+
+/* A surface like a page: paper, the page's radius and shadow, plus a hairline edge. */
+.desk-board {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: var(--surface, #fff);
+  border-radius: 6px;
+  box-shadow: 0 0 0 0.5px var(--hairline), 0 1px 2px rgba(0, 0, 0, 0.08), 0 10px 30px rgba(0, 0, 0, 0.07);
+  pointer-events: none;
+  opacity: 0;
+  /* Closed: just past the window's right edge (stacked: a little below), so opening is one slide in. */
+  transform: translateX(calc(100% + var(--m, 32px)));
+  transition: transform var(--glide, 420ms) cubic-bezier(.2, .8, .2, 1), opacity var(--glide, 420ms) cubic-bezier(.2, .8, .2, 1);
+}
+.desk-board.is-stacked { transform: translateY(48px); }
+.desk-board.is-open { opacity: 1; transform: none; pointer-events: auto; }
+/* The split's ratio changing (a size=l sketch): the board widens with the slide column's glide. */
+.desk-board.is-resizing {
+  transition: transform var(--glide, 420ms) cubic-bezier(.2, .8, .2, 1), opacity var(--glide, 420ms) cubic-bezier(.2, .8, .2, 1),
+    left var(--glide, 420ms) cubic-bezier(.2, .8, .2, 1), width var(--glide, 420ms) cubic-bezier(.2, .8, .2, 1);
+}
+/* Its content scrolls inside it, with no visible scrollbar; wheel, trackpad and keys still scroll. */
+.desk-board-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.desk-board-scroll::-webkit-scrollbar { display: none; }
+.desk-board-content { position: relative; width: 100%; }
+.desk-board-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out, ease-out), color 120ms var(--ease-out, ease-out), transform 120ms var(--ease-out, ease-out);
+}
+.desk-board-close:hover { background: var(--hover); color: var(--ink); }
+.desk-board-close:active { background: var(--press); transform: scale(.94); }
+
+/* One section per sketch: 1000 × 700 units, scaled uniformly into the board's width. */
+.desk-region { position: absolute; opacity: 0; transition: opacity 180ms var(--ease-out, ease-out); }
 .desk-region.is-shown { opacity: 1; }
 .desk-region-layer { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .desk-region-hl { mix-blend-mode: multiply; }
-.desk-wire { position: absolute; overflow: visible; pointer-events: none; }
-.desk-stage { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
-.desk-stage:not(.is-b) > .desk-region, .desk-stage:not(.is-b) > .desk-wire, .desk-stage > .desk-region:not(.is-active) { opacity: 0; }
-.desk-card-back {
-  position: absolute; pointer-events: auto; border: 0; background: transparent; padding: 4px 6px; border-radius: 6px;
-  font: 500 12px/1.3 var(--font); color: var(--muted); cursor: pointer;
-  opacity: 0; visibility: hidden;
-  transition: opacity 200ms var(--ease-out, ease-out), visibility 0s linear 200ms, background-color 120ms var(--ease-out, ease-out), color 120ms var(--ease-out, ease-out);
+
+/* Connectors run from a page anchor to a board element, above both. A wire whose end is out of view fades out. */
+.desk-wires { position: absolute; inset: 0; pointer-events: none; }
+.desk-wire { position: absolute; overflow: visible; pointer-events: none; transition: opacity 160ms var(--ease-out, ease-out); }
+.desk-wire.is-hidden { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .desk-board, .desk-board.is-resizing, .desk-region, .desk-wire { transition: none; }
 }
-/* Fades in once the card has landed under it (Desk.showBack). */
-.desk-stage.is-b > .desk-card-back.is-shown {
-  opacity: 1; visibility: visible;
-  transition: opacity 200ms var(--ease-out, ease-out), visibility 0s, background-color 120ms var(--ease-out, ease-out), color 120ms var(--ease-out, ease-out);
-}
-.desk-card-back:hover { background: var(--hover); color: var(--ink); }
-.desk-card-back:active { background: var(--press); }
-@media (prefers-reduced-motion: reduce) { .desk-region, .desk-card-back { transition: none; } }
-/* In B the scroller is the card: C regions and wires riding on it would shrink beside the card, under the stage. */
-.pv-scroll.is-b .desk-layer { opacity: 0; }

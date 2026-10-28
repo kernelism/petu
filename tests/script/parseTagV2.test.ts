@@ -4,10 +4,12 @@ import { parseTag, normalizeTex } from '../../src/script/parseTag';
 import { Figures } from '../../src/geometry/resolve';
 
 describe('parseTag v2: regions', () => {
-  it('sketch reserves a region next to a page', () => {
-    expect(parseTag('sketch id=side near=p3 size=s place=right')).toEqual({ kind: 'sketch', id: 'side', page: 3, size: 's', place: 'right' });
-    expect(parseTag('sketch id=Side near=3')).toEqual({ kind: 'sketch', id: 'side', page: 3, size: 'm', place: 'auto' });
-    for (const bad of ['sketch near=p3', 'sketch id=s', 'sketch id=s near=p0', 'sketch id=s near=p3 size=xl', 'sketch id=s near=p3 place=up', 'sketch id=9x near=p3']) {
+  it('sketch appends a board section; near= names its slide, place= is accepted and ignored', () => {
+    expect(parseTag('sketch id=side near=p3 size=s place=right')).toEqual({ kind: 'sketch', id: 'side', page: 3, size: 's' });
+    expect(parseTag('sketch id=Side near=3')).toEqual({ kind: 'sketch', id: 'side', page: 3, size: 'm' });
+    expect(parseTag('sketch id=s size=l')).toEqual({ kind: 'sketch', id: 's', size: 'l' }); // the slide in view
+    expect(parseTag('sketch id=s near=p0 place=up')).toEqual({ kind: 'sketch', id: 's', size: 'm' }); // ignored, not malformed
+    for (const bad of ['sketch near=p3', 'sketch id=s near=p3 size=xl', 'sketch id=9x near=p3']) {
       expect(parseTag(bad), bad).toBeNull();
     }
   });

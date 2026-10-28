@@ -3,8 +3,8 @@
 A tutor that explains a PDF by performing on it.
 
 Open a PDF and ask a question. The tutor answers in narrated captions while it scrolls to the
-right page, highlights the lines it's talking about, and draws to explain — on the page, on the
-desk beside it, or on a full-screen canvas for bigger diagrams. Every mark lands on the word that
+right page, highlights the lines it's talking about, and draws to explain — on the page, or on a
+board that opens beside the slides (the slides move to the left; close the board with × or Esc). Every mark lands on the word that
 refers to it, and the diagram builds up as the explanation goes.
 
 > Status: pre-alpha. Checkpoint 2 (the AI agent) works end to end on your own PDFs through a
@@ -102,8 +102,8 @@ Instead of a screen recording, send:
 | URL | What it shows |
 |---|---|
 | `/?demo=1` | Highlights and drawing directly on the page |
-| `/?demo=side` | The tutor sketches beside the page, with a connector to the slide |
-| `/?demo=plane` | Full-screen canvas; the page becomes a reference card |
+| `/?demo=side` | The board opens beside the slides; a sketch with a connector to the slide |
+| `/?demo=plane` | A bigger sketch: the board takes 0.6 of the window |
 | `/?script=relational` | The agent's geometry grammar (names, constructions) on the sample page |
 | `/?script=toolkit` | Every drawing tool once (dev) |
 
@@ -141,7 +141,7 @@ See [AGENTS.md](AGENTS.md) for architecture, contracts, plan and scope.
 ## Roadmap
 
 1. ~~Viewer, student canvas, playback engine, captions~~
-2. ~~Desk canvas (sketch beside the page, full-screen takeover) and drawing toolkit~~
+2. ~~Desk canvas and drawing toolkit~~ (now: slides left, board right)
 3. ~~Agent: OpenAI-backed answers streamed into the engine, with a spend cap~~
 4. Polish: settings, history, error states
 5. Voice

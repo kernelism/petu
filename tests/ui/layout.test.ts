@@ -4,29 +4,25 @@ import { dockPlacement, dockReserve, DOCK_MAX } from '../../src/ui/layout';
 import { band, inView, frameTop, setSafeBottom, safeBottom, SAFE_BOTTOM, SAFE_TOP } from '../../src/desk/layout';
 import type { DeskState } from '../../src/desk/types';
 
-const c = (x: number, w: number): DeskState => ({ mode: 'c', following: true, sketching: x !== 290, column: { x, w } });
+const c = (x: number, w: number): DeskState => ({ split: x !== 290 ? 'normal' : 'none', stacked: false, following: true, sketching: x !== 290, column: { x, w } });
 
 describe('dockPlacement', () => {
   it('centers in the window before the desk reports', () => {
     expect(dockPlacement(1440, null)).toEqual({ x: 720, w: DOCK_MAX });
   });
-  it('centers under the page column (the window center without lanes)', () => {
+  it('centres under the page column while reading, under the slide column in a split', () => {
     expect(dockPlacement(1440, c(290, 860))).toEqual({ x: 720, w: DOCK_MAX });
-    expect(dockPlacement(1440, c(76, 790)).x).toBe(76 + 395);
+    expect(dockPlacement(1440, c(36, 666)).x).toBe(36 + 333);
   });
-  it('centers under the canvas on the stage', () => {
-    const s: DeskState = { ...c(76, 790), mode: 'b', canvas: { x: 76, y: 64, w: 1340, h: 680 }, card: 3 };
-    expect(dockPlacement(1440, s).x).toBe(76 + 670);
-  });
-  it('keeps 16px from a narrow column edge', () => {
-    expect(dockPlacement(600, c(32, 536)).w).toBe(536 - 32);
+  it('is never wider than its column', () => {
+    expect(dockPlacement(1000, c(25, 462)).w).toBe(462);
   });
 });
 
 describe('dockReserve', () => {
-  it('reserves the dock at its tallest: ask bar, gap, a question line and two narration lines, plus clearance', () => {
-    // 18 from the window bottom, a 52px ask bar, 6px gap, caption padding 20, question 18+4, two 21.75px lines, 12 clear.
-    expect(dockReserve({ bottom: 18, askbar: 52, capPad: 20, capLine: 21.75 })).toBeCloseTo(173.5);
+  it('reserves the dock at its tallest: ask bar, the caption on it (no gap), a question line and two narration lines, plus clearance', () => {
+    // 18 from the window bottom, a 52px ask bar, caption padding 20, question 18+4, two 21.75px lines, 12 clear.
+    expect(dockReserve({ bottom: 18, askbar: 52, capPad: 20, capLine: 21.75 })).toBeCloseTo(167.5);
   });
   it('framing uses the measured reserve (never less than SAFE_BOTTOM)', () => {
     try {

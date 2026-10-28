@@ -1,4 +1,6 @@
 :root {
+  /* The window's outer margin and the gutter between the slides and the board (layout.ts margin()). */
+  --m: clamp(16px, 2.5vw, 40px);
   --canvas-bg: #E9E7E1;
   --surface: #FFFFFF;
   --ink: #1D1D1F;
