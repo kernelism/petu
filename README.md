@@ -74,10 +74,21 @@ effort, caps, output limit) are listed in `.env.example`.
 
 ### Reporting a bug
 
-Include the question, the PDF and page number, and a screenshot with `&debug` open (the skipped
-actions and their reasons are the most useful part). `npm run ground -- file.pdf 12` prints the
-text lines and figure marks exactly as sent to the model; it reads the PDF locally and makes no
-API call.
+Press the flag in the top bar (or **Shift+R**) right when something looks wrong, type an optional
+one-line note, and press Enter. The dev server saves everything an engineer needs to
+`.petu/reports/<time>-<slug>/`: `report.json` (the question, the scout's opener/pages/plan, the full
+script, every action with its timing, every skipped action and why, latency, cost, the board's
+sections, the window size and browser) and `screenshot.png` (the window as it was when you pressed
+it). Nothing else to copy or describe: tell the engineer the time, or let them run
+
+```bash
+npm run reports            # recent reports, one line each
+npm run reports -- last    # a compact digest of the latest (or pass an id / id prefix)
+```
+
+Reports keep the PDF's name, hash and page only — never its content — and never the API key.
+`npm run ground -- file.pdf 12` prints the text lines and figure marks exactly as sent to the model;
+it reads the PDF locally and makes no API call.
 
 ## Demos (no API key needed)
 

@@ -9,6 +9,7 @@
 //                              { scope: 'system' } → the shared system block (document open; ≤ 1 per 11.5h)
 //   GET  /api/spend            → SpendSummary (+ phase, phaseCapUsd, byPhase, byModel, n)
 //   POST /api/judge            eval only; header x-petu-eval: <.petu/eval-token> → JudgeResult
+//   POST /api/report           { report, png? } → saved under .petu/reports/ (server/report.ts)
 //   GET  /api/dev-pdf/<n>.pdf  <n>.pdf from the first PETU_PDF_DIRS directory that has it
 //
 // Every /api/* request must come from the app itself (`guard`): a loopback Host (no rebound DNS
@@ -30,6 +31,7 @@ import { createHash } from 'node:crypto';
 import { CacheStats } from './cacheStats';
 import { worstCaseUsd } from './prices';
 import { loadPetuEnv, type PetuEnv } from './env';
+import { routeReport } from './report';
 
 export const BODY_LIMIT = 12 * 1024 * 1024;
 const PREWARM_TTL_MS = 25 * 60 * 1000;
@@ -91,6 +93,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
       if (path === '/api/prewarm') return await routePrewarm(req, res);
       if (path === '/api/spend') return routeSpend(req, res);
       if (path === '/api/judge') return await routeJudge(req, res);
+      if (path === '/api/report') return await routeReport(req, res, o.root, env.key);
       if (path.startsWith('/api/dev-pdf/')) return routePdf(req, res, path.slice('/api/dev-pdf/'.length));
     } catch (e) {
       console.error(`petu: ${path} failed: ${env.key ? String(e).split(env.key).join('***') : String(e)}`.slice(0, 300));

@@ -35,6 +35,8 @@ import { ContextBuilder, groundPage } from './agent/context/build';
 import { installEvalHooks, outOfFrameOf, type EvalBackend, type Recorder, type RegistryRow } from './agent/evalHooks';
 import type { Registry } from './desk/registry';
 import { groundingOf, type PageGround } from './agent/context/types';
+import { AnswerLog, boardOf, buildReport } from './report/capture';
+import { screenshot } from './report/screenshot';
 
 const params = new URLSearchParams(location.search);
 const DEBUG = params.has('debug');
@@ -312,6 +314,8 @@ export default function App() {
   const thinkTimer = useRef<number>();
   /** The eval recorder of the answer in flight. */
   const recRef = useRef<Recorder | null>(null);
+  /** The current (or last) answer's record, for the Report button (src/report/capture.ts). */
+  const logRef = useRef<AnswerLog | null>(null);
 
   const directorRef = useRef<Director>();
   if (!directorRef.current) {
@@ -321,17 +325,16 @@ export default function App() {
       grounding: () => groundingRef.current ?? NO_MARKS,
       settings: getSettings,
       onScrolledTo: () => setPageTick((n) => n + 1),
-      onTiming: DEBUG || EVAL
-        ? (t) => {
-            recRef.current?.timing(t);
-            if (DEBUG) setDebug((d) => {
-              const log = d.log.filter((x) => x.firedAt !== t.firedAt || x.action !== t.action);
-              const next = { ...d, action: d.action ?? t.firedAt, log: [...log, t] };
-              window.__timings = next;
-              return next;
-            });
-          }
-        : undefined,
+      onTiming: (t) => {
+        logRef.current?.timing(t);
+        recRef.current?.timing(t);
+        if (DEBUG) setDebug((d) => {
+          const log = d.log.filter((x) => x.firedAt !== t.firedAt || x.action !== t.action);
+          const next = { ...d, action: d.action ?? t.firedAt, log: [...log, t] };
+          window.__timings = next;
+          return next;
+        });
+      },
     });
   }
   const director = directorRef.current;
@@ -560,9 +563,11 @@ export default function App() {
     let askErr: AskError | null = null;
     let cutOff: string | null = null;
     const page = pageRef.current;
+    const log = new AnswerLog(q, page, toAgent ? 'agent' : 'script', t0);
+    logRef.current = log;
 
     const handlers: AskHandlers = {
-      onEvent: (e) => run.rec?.event(e),
+      onEvent: (e) => { log.event(e); run.rec?.event(e); },
       onMeta: (e) => { if (DEBUG) setDebug((d) => ({ ...d, meta: e })); },
       onScout: (e) => { if (DEBUG) setDebug((d) => ({ ...d, scout: e })); },
       onHandoff: (e) => {
@@ -608,6 +613,7 @@ export default function App() {
           if (!toAgent && FAIL_AFTER != null && chunks++ >= FAIL_AFTER) throw new Error('dev: ?fail');
           if (firstChunk && DEBUG) { firstChunk = false; const t = performance.now(); setDebug((d) => ({ ...d, chunk: t })); }
           run.rec?.chunk(c);
+          log.chunk(c);
           yield c;
         }
       } catch (e) {
@@ -637,11 +643,13 @@ export default function App() {
         setPausing(false);
         pauseTimer.current = window.setTimeout(() => { if (sessionRef.current === session && streamOpen) setPausing(true); }, Math.max(0, clock.endsAt() - clock.now()) + PAUSE_GRACE_MS);
         run.rec?.word(words[words.length - 1]);
+        log.words(words);
         spoken = words;
         speak(words);
         setCaptionWords(words);
       },
       onState: (st: SessionState, err?: string) => {
+        log.state(st, err);
         if (st === 'stopped' && toAgent && spoken.length) ag.history.push(q, spoken, page);
         if (st === 'stopped') { finish(); return; }
         if (sessionRef.current !== session) return;
@@ -799,6 +807,34 @@ export default function App() {
   const toggleSettings = useCallback(() => setSettingsOpen((o) => !o), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
+  // Report (top bar flag, Shift+R): the state now, plus a PNG of the window; the note comes after.
+  const captureReport = useCallback(async () => {
+    const d = docRef.current;
+    const dk = deskRef.current;
+    const board = dk ? boardOf(dk.state(), director.registry.entries(), (id) => dk.region(id)) : null;
+    const body = buildReport({
+      note: '',
+      doc: { name: fileName, hash: d?.fingerprints?.[0] ?? null, page: pageRef.current, numPages: d?.numPages ?? 0 },
+      answer: logRef.current,
+      board,
+      viewport: { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio || 1 },
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      language: navigator.language,
+      search: location.search,
+      path: location.pathname,
+      settings: getSettings() as unknown as Record<string, unknown>,
+    });
+    let png: string | undefined;
+    try { png = await screenshot(); } catch (e) { console.warn('[report] screenshot failed', e); }
+    return async (note: string) => {
+      const r = await fetch('/api/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ report: { ...body, note: note.trim().slice(0, 2000) }, ...(png ? { png } : {}) }) });
+      const j = await r.json().catch(() => null) as { dir?: string; error?: string } | null;
+      if (!r.ok || !j?.dir) throw new Error(j?.error ?? `HTTP ${r.status}`);
+      return j.dir;
+    };
+  }, [director, fileName]);
+
   const dock = dockPlacement(viewportW, desk);
 
   if (!doc) return <EmptyState onFile={openFile} onSample={openSample} error={loadError} />;
@@ -827,6 +863,7 @@ export default function App() {
         pageTick={pageTick}
         onOpenSettings={toggleSettings}
         onOpenFile={(f) => void openFile(f)}
+        report={import.meta.env.DEV ? captureReport : undefined}
       />
       <FollowPill visible={paused} onResume={resumeFollow} x={dock.x} />
       <SettingsPopover open={settingsOpen} onClose={closeSettings} />

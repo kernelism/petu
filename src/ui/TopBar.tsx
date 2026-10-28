@@ -1,5 +1,6 @@
 import { useRef } from 'react';
 import { FolderOpen, Settings } from 'lucide-react';
+import { ReportButton, type Capture } from './ReportButton';
 import './ui.css';
 
 type Props = {
@@ -11,9 +12,11 @@ type Props = {
   onOpenSettings(): void;
   /** Opens another PDF in place of this one (nothing is closed until a file is picked). */
   onOpenFile(f: File): void;
+  /** The Report control (flag; Shift+R): captures the app's state for a bug report. */
+  report?: Capture;
 };
 
-export function TopBar({ fileName, page, numPages, pageTick, onOpenSettings, onOpenFile }: Props) {
+export function TopBar({ fileName, page, numPages, pageTick, onOpenSettings, onOpenFile, report }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <div className="topbar">
@@ -24,6 +27,7 @@ export function TopBar({ fileName, page, numPages, pageTick, onOpenSettings, onO
         <span key={pageTick} className={pageTick ? 'topbar-num is-tick' : 'topbar-num'}>{page}</span>
         <span className="topbar-of">/</span>{numPages}
       </span>
+      {report && <ReportButton capture={report} />}
       <button type="button" className="icon-btn" onClick={onOpenSettings} aria-label="Settings" title="Settings" data-settings-anchor="">
         <Settings size={18} strokeWidth={1.75} />
       </button>
