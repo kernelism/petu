@@ -6,7 +6,7 @@ import type { Stroke } from '../ink/agent/strokes';
 import { Follow } from './follow';
 import { routeConnector, edgeFor, maskBlocker } from './route';
 import {
-  column, lanesFor, gapsFor, placeAll, regionRects, stageLayout, inView, fitTogether, frameTop,
+  column, lanesFor, gapsFor, placeAll, regionRects, stageLayout, inView, fitTogether, frameTop, frameInk,
   type Placed, type RegionReq,
 } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskMode, DeskRect, DeskState, Lanes, RegionInfo, RegionMode, RegionSpec } from './types';
@@ -40,9 +40,13 @@ export class Desk implements DeskApi {
   private active: string | null = null;
   private card: number | null = null;
   private lanes: Lanes = { left: 0, right: 0 };
+  /** The column a glide in flight is heading to: the state names it from the glide's start, so the dock and the neighbour dim move with it. */
+  private heading: { x: number; w: number } | null = null;
   private gaps: ReadonlyMap<number, number> = new Map();
   /** The last place the answer was looked at, for "Back to answer". */
   private last: { t: Target; r: SRect } | null = null;
+  /** Page ink of this answer, most recent first: framing the next mark keeps these in view when they fit. */
+  private inked: { page: number; r: SRect }[] = [];
   /**
    * Bumped by reset() and abort(). Every async move captures it and bails after each await when it
    * changed, so a stopped or replaced answer's move in flight never lands (enters B, pans) later.
@@ -89,7 +93,7 @@ export class Desk implements DeskApi {
     const L = this.host.layout();
     const { W, H } = this.host.viewport();
     const sketching = [...this.regions.values()].some((r) => r.mode !== 'b');
-    const s: DeskState = { mode: this.mode, following: this.follow.following(), sketching, column: { x: L?.pageX ?? 0, w: L?.pageW ?? W } };
+    const s: DeskState = { mode: this.mode, following: this.follow.following(), sketching, column: this.heading ?? { x: L?.pageX ?? 0, w: L?.pageW ?? W } };
     if (this.mode === 'b' && this.card != null) { s.canvas = stageLayout(W, H, this.host.aspect(this.card)).canvas; s.card = this.card; }
     return s;
   }
@@ -140,7 +144,13 @@ export class Desk implements DeskApi {
     return live() ? this.region(spec.id) ?? 'desk reset' : 'desk reset';
   }
 
-  async reveal(t: Target, r: SRect, before?: BeforeMove): Promise<boolean> {
+  noteInk(t: Target, r: SRect): void {
+    if (t.page == null) return;
+    this.inked.unshift({ page: t.page, r });
+    if (this.inked.length > 8) this.inked.length = 8;
+  }
+
+  async reveal(t: Target, r: SRect, before?: BeforeMove, anchor?: SRect): Promise<boolean> {
     const ep = this.epoch;
     this.last = { t, r };
     if (!this.follow.following()) return false;
@@ -155,9 +165,11 @@ export class Desk implements DeskApi {
       if (ep !== this.epoch || this.mode !== 'b') return false;
       const page = t.page;
       this.card = page;
+      this.back.classList.remove('is-shown');
       this.placeBack(page);
       this.position(); // the region refits for the new card's aspect; wires re-route or hide
       await this.host.setCard({ page, rect: this.stageNow(page).card }, CARD_SWAP_MS);
+      this.showBack(page);
       return true;
     }
     if (this.mode === 'b') await this.exitB(before);
@@ -166,8 +178,20 @@ export class Desk implements DeskApi {
     if (!w) return false;
     await before?.();
     if (ep !== this.epoch) return false;
-    await this.host.glideTo(() => frameTop(this.where(t, r)?.rect ?? { x: 0, y: NaN, w: 0, h: 0 }, this.view()), 450);
+    await this.host.glideTo(() => this.inkFrame(t, r, anchor), 450);
     return true;
+  }
+
+  /** Scroll top for revealing `r`: page ink with its labels and the answer's earlier ink on that page (frameInk); else centered. */
+  private inkFrame(t: Target, r: SRect, anchor?: SRect): number {
+    const rect = this.where(t, r)?.rect ?? { x: 0, y: NaN, w: 0, h: 0 };
+    if (t.page == null) return frameTop(rect, this.view());
+    const ctx = this.inked
+      .filter((k) => k.page === t.page && k.r !== r)
+      .map((k) => this.where({ page: k.page }, k.r)?.rect)
+      .filter((x): x is DeskRect => !!x);
+    const a = anchor ? this.where(t, anchor)?.rect : undefined;
+    return frameInk(rect, ctx, this.view(), a);
   }
 
   isVisible(t: Target, r: SRect): boolean {
@@ -258,6 +282,7 @@ export class Desk implements DeskApi {
    */
   async reset(ms: number, opts: { keepLanes?: boolean } = {}): Promise<void> {
     this.epoch++;
+    this.inked = [];
     this.follow.setAnswering(true);
     const els: Element[] = [...[...this.regions.values()].map((r) => r.el), ...this.wires.map((w) => w.svg)];
     this.regions.clear();
@@ -344,7 +369,14 @@ export class Desk implements DeskApi {
     }
     this.lanes = lanes;
     this.gaps = gaps;
-    await Promise.all([this.host.setColumn(lanes, gaps, ms), along?.()]);
+    const col = column(W, lanes);
+    const heading = (this.heading = { x: col.pageX, w: col.pageW });
+    if (ms > 0) this.emit();
+    try {
+      await Promise.all([this.host.setColumn(lanes, gaps, ms), along?.()]);
+    } finally {
+      if (this.heading === heading) this.heading = null;
+    }
   }
 
   /** Puts every frame and wire where the current layout says. */
@@ -427,9 +459,16 @@ export class Desk implements DeskApi {
     this.active = id;
     this.card = page;
     this.stage.classList.add('is-b');
+    this.back.classList.remove('is-shown');
     this.placeBack(page);
     this.position();
     await this.host.setCard({ page, rect: this.stageNow(page).card }, swap ? CARD_SWAP_MS : GLIDE_MS);
+    this.showBack(page);
+  }
+
+  /** The card's label fades in once the card has landed (never ahead of it, at its final spot). */
+  private showBack(page: number) {
+    if (this.mode === 'b' && this.card === page) this.back.classList.add('is-shown');
   }
 
   /** "Page N · Back to page", under the card. */
@@ -445,6 +484,7 @@ export class Desk implements DeskApi {
     this.mode = 'c';
     this.active = null;
     this.card = null;
+    this.back.classList.remove('is-shown');
     this.stage.classList.remove('is-b');
     this.position();
     await this.host.setCard(null, GLIDE_MS);

@@ -1,10 +1,11 @@
 // src/script/parseTag.ts
-import { REGION_H, type Action, type Compass, type End, type Pt, type Target } from './types';
+import { REGION_H, type Action, type Compass, type End, type Pt, type Target, type Weight } from './types';
 import { tokenize, unquote } from './tokenize';
 
 /** Region and element ids: a letter, then letters, digits, - or _. Case-insensitive (stored lowercased). */
 const ID = /^[a-z][a-z0-9_-]{0,23}$/;
 const COMPASS = new Set(['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']);
+const WEIGHTS = new Set<Weight>(['primary', 'secondary', 'faint']);
 const MAX_R = 500;
 export const MAX_FN_CHARS = 120;
 
@@ -113,6 +114,11 @@ export function parseTag(body: string): Action | null {
   const Y = inRegion ? REGION_H : 1000; // region-local y is 0–700 (rule 5)
   const mark = { ...(id(args.id) ? { id: id(args.id) } : {}), ...(flags.has('em') ? { em: true } : {}) };
   const dash = flags.has('dash') ? { dash: true } : {};
+  // Line hierarchy on stroked kinds: `weight=primary|secondary|faint`; anything else is malformed.
+  const wRaw = args.weight?.toLowerCase();
+  if (wRaw !== undefined && !WEIGHTS.has(wRaw as Weight)) return null;
+  const weight = wRaw ? { weight: wRaw as Weight } : {};
+  const outline = flags.has('outline') ? { outline: true } : {};
   const near = pt(args.near, Y);
   const anchor = quote ? { quote, ...(near ? { near } : {}) } : null;
   const at = pt(args.at, Y);
@@ -131,22 +137,22 @@ export function parseTag(body: string): Action | null {
     }
     case 'highlight':
     case 'underline':
-      return anchor ? { kind: name, ...target, ...anchor, ...mark } : null;
+      return anchor ? { kind: name, ...target, ...anchor, ...(name === 'underline' ? weight : {}), ...mark } : null;
     case 'circle': {
-      if (anchor) return { kind: 'circle', ...target, ...anchor, ...dash, ...mark };
+      if (anchor) return { kind: 'circle', ...target, ...anchor, ...dash, ...weight, ...mark };
       const r = radii();
-      return at && r ? { kind: 'circle', ...target, at, ...r, ...dash, ...mark } : null;
+      return at && r ? { kind: 'circle', ...target, at, ...r, ...dash, ...weight, ...mark } : null;
     }
     case 'line':
     case 'arrow': {
       const from = pt(args.from, Y), to = pt(args.to, Y);
-      return from && to ? { kind: name, ...target, from, to, ...dash, ...mark } : null;
+      return from && to ? { kind: name, ...target, from, to, ...dash, ...weight, ...mark } : null;
     }
     case 'box': {
-      if (anchor) return { kind: 'box', ...target, ...anchor, ...mark };
+      if (anchor) return { kind: 'box', ...target, ...anchor, ...weight, ...mark };
       const s = pair(args.size);
       if (!at || !s || !(s[0] > 0 && s[1] > 0)) return null;
-      return { kind: 'box', ...target, at, w: Math.min(s[0], 1000 - at.x), h: Math.min(s[1], Y - at.y), ...mark };
+      return { kind: 'box', ...target, at, w: Math.min(s[0], 1000 - at.x), h: Math.min(s[1], Y - at.y), ...weight, ...mark };
     }
     case 'label':
       return at && quote ? { kind: 'label', ...target, at, text: quote, ...mark } : null;
@@ -159,36 +165,36 @@ export function parseTag(body: string): Action | null {
     }
     case 'curve': {
       const p = pts(args.pts, Y, 2);
-      return p ? { kind: 'curve', ...target, pts: p, ...dash, ...mark } : null;
+      return p ? { kind: 'curve', ...target, pts: p, ...dash, ...weight, ...mark } : null;
     }
     case 'shade': {
       const p = pts(args.pts, Y, 3);
-      if (p) return { kind: 'shade', ...target, pts: p, ...mark };
+      if (p) return { kind: 'shade', ...target, pts: p, ...outline, ...mark };
       const r = radii();
-      return at && r ? { kind: 'shade', ...target, at, ...r, ...mark } : null;
+      return at && r ? { kind: 'shade', ...target, at, ...r, ...outline, ...mark } : null;
     }
     case 'angle': {
       const from = pt(args.from, Y), to = pt(args.to, Y), r = num(args.r);
       if (!at || !from || !to || (r !== undefined && !(r > 0))) return null;
-      return { kind: 'angle', ...target, at, from, to, ...(r ? { r: Math.min(r, MAX_R) } : {}), ...(quote ? { text: quote } : {}), ...mark };
+      return { kind: 'angle', ...target, at, from, to, ...(r ? { r: Math.min(r, MAX_R) } : {}), ...(quote ? { text: quote } : {}), ...weight, ...mark };
     }
     case 'brace': {
       const from = pt(args.from, Y), to = pt(args.to, Y);
-      return from && to ? { kind: 'brace', ...target, from, to, ...(quote ? { text: quote } : {}), ...mark } : null;
+      return from && to ? { kind: 'brace', ...target, from, to, ...(quote ? { text: quote } : {}), ...weight, ...mark } : null;
     }
     case 'axes': {
       const s = pair(args.size);
       if (!inRegion || !at || !s || !(s[0] > 0 && s[1] > 0)) return null;
       return {
         kind: 'axes', ...target, at, w: Math.min(s[0], 1000 - at.x), h: Math.min(s[1], at.y),
-        ...(args.x ? { xLabel: args.x } : {}), ...(args.y ? { yLabel: args.y } : {}), ...mark,
+        ...(args.x ? { xLabel: args.x } : {}), ...(args.y ? { yLabel: args.y } : {}), ...weight, ...mark,
       };
     }
     case 'plot': {
       const fn = args.fn?.trim(), domain = pair(args.domain), range = pair(args.range), axes = id(args.axes);
       if (!inRegion || !fn || fn.length > MAX_FN_CHARS || !domain || !(domain[1] > domain[0])) return null;
       if (range && !(range[1] > range[0])) return null;
-      return { kind: 'plot', ...target, fn, domain, ...(range ? { range } : {}), ...(axes ? { axes } : {}), ...dash, ...mark };
+      return { kind: 'plot', ...target, fn, domain, ...(range ? { range } : {}), ...(axes ? { axes } : {}), ...dash, ...weight, ...mark };
     }
     case 'math':
       return inRegion && at && quote && textSize ? { kind: 'math', ...target, at, tex: normalizeTex(quote), size: textSize, ...mark } : null;

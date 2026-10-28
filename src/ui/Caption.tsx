@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { primes } from './text';
+import { countLines, windowStart } from './captionWindow';
 import './ui.css';
 
 const PUNCT_ONLY = /^[\p{P}…]+$/u;
@@ -23,37 +24,84 @@ type Props = {
   visible: boolean;
   /** The asked question, echoed as a quiet line above the narration while answering. */
   question?: string;
-  /** Between Enter and the first word: the echoed question shimmers. */
+  /** Between Enter and the first word: the echoed question waits, muted. */
   waiting?: boolean;
   /** A failed answer: the message plus a Retry control (the caption takes pointer events then). */
   error?: { message: string; onRetry(): void };
 };
 
+/** The cross-fade between reading windows (ui.css .caption-text / .caption-leaving). */
+const SWAP_MS = 180;
+/** Text width the measure may be off by (canvas vs layout rounding, letter-spacing). */
+const SLACK = 2;
+
+/** Measures text in the caption's font, cached per string. */
+function makeMeasure(el: HTMLElement): (s: string) => number {
+  const cs = getComputedStyle(el);
+  const ctx = document.createElement('canvas').getContext('2d');
+  if (!ctx) return (s) => s.length * (parseFloat(cs.fontSize) || 15) * 0.55;
+  ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  if ('letterSpacing' in ctx && cs.letterSpacing !== 'normal') (ctx as { letterSpacing: string }).letterSpacing = cs.letterSpacing;
+  const cache = new Map<string, number>();
+  return (s) => {
+    let w = cache.get(s);
+    if (w == null) { w = ctx.measureText(s).width; cache.set(s, w); }
+    return w;
+  };
+}
+
 export function Caption({ words, visible, question, waiting = false, error }: Props) {
   const tokens = groupWords(words);
-  const textRef = useRef<HTMLDivElement>(null);
-  const lastH = useRef(0);
-  const [overflow, setOverflow] = useState(false);
+  const viewRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  // The window: where it starts, how many tokens it has seen, and for which width.
+  const win = useRef({ start: 0, n: 0, width: 0 });
+  const [start, setStart] = useState(0);
+  const [leaving, setLeaving] = useState<{ key: number; text: string[] } | null>(null);
+  /** Two lines tall from the first time the answer needs them, so the dock doesn't breathe. */
+  const [tall, setTall] = useState(false);
+  const measureRef = useRef<((s: string) => number) | null>(null);
 
-  // When a new line is added the text block grows upward; slide it up instead of jumping (FLIP).
+  const hasText = tokens.length > 0 && !error;
   useLayoutEffect(() => {
-    const el = textRef.current;
-    if (!el) { lastH.current = 0; return; }
-    const line = parseFloat(getComputedStyle(el).lineHeight) || 15 * 1.45;
-    const h = el.offsetHeight;
-    const dh = h - lastH.current;
-    lastH.current = h;
-    setOverflow(h > line * 2 + 2);
-    if (dh > line / 2 && h > line * 1.5) {
-      el.style.transition = 'none';
-      el.style.transform = `translateY(${dh}px)`;
-      void el.offsetHeight;
-      el.style.transition = '';
-      el.style.transform = '';
+    const el = viewRef.current;
+    if (!el) return;
+    const apply = () => { measureRef.current = makeMeasure(el); setWidth(el.clientWidth); };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hasText]);
+
+  useLayoutEffect(() => {
+    const measure = measureRef.current;
+    const w = win.current;
+    if (!tokens.length) {
+      w.start = 0; w.n = 0;
+      setStart(0); setTall(false); setLeaving(null);
+      return;
     }
-  }, [tokens.length, tokens[tokens.length - 1]]);
+    if (!measure || width <= 0) return;
+    const avail = width - SLACK;
+    let fresh = false;
+    if (w.width !== avail || tokens.length < w.n) { w.start = 0; w.n = 0; w.width = avail; fresh = true; }
+    const before = w.start;
+    for (let i = w.n; i < tokens.length; i++) w.start = windowStart(tokens, w.start, i, avail, measure);
+    const shownBefore = tokens.slice(before, w.n);
+    w.n = tokens.length;
+    if (w.start !== before && !fresh && shownBefore.length) setLeaving({ key: before, text: shownBefore });
+    setStart(w.start);
+    if (countLines(tokens.slice(w.start), avail, measure) >= 2) setTall(true);
+  }, [tokens.length, tokens[tokens.length - 1], width]);
+
+  useLayoutEffect(() => {
+    if (!leaving) return;
+    const t = window.setTimeout(() => setLeaving(null), SWAP_MS + 40);
+    return () => window.clearTimeout(t);
+  }, [leaving]);
 
   const shown = visible && (tokens.length > 0 || !!question || !!error);
+  const visibleTokens = tokens.slice(Math.min(start, tokens.length));
   return (
     <div className={`caption${shown ? ' is-visible' : ''}${error ? ' has-error' : ''}`} aria-hidden={!shown}>
       {question && (
@@ -65,9 +113,14 @@ export function Caption({ words, visible, question, waiting = false, error }: Pr
           <button type="button" className="caption-retry" onClick={error.onRetry} tabIndex={shown ? 0 : -1}>Retry</button>
         </div>
       ) : tokens.length > 0 && (
-        <div className={`caption-viewport${overflow ? ' has-overflow' : ''}`}>
-          <div className="caption-text" ref={textRef}>
-            {tokens.map((t, i) => (
+        <div className={`caption-viewport${tall ? ' is-tall' : ''}`} ref={viewRef}>
+          {leaving && (
+            <div className="caption-text caption-leaving" key={`l${leaving.key}`} aria-hidden="true">
+              {leaving.text.join(' ')}
+            </div>
+          )}
+          <div className={`caption-text${start > 0 ? ' is-next' : ''}`} key={start}>
+            {visibleTokens.map((t, i) => (
               <span key={i} className="caption-word">{t} </span>
             ))}
           </div>

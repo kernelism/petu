@@ -1,7 +1,7 @@
 // tests/desk/layout.test.ts
 import { describe, it, expect } from 'vitest';
 import {
-  column, computeLayout, placeAll, regionRects, lanesFor, gapsFor, stageLayout, inView, fitTogether, frameTop, regionWidth,
+  column, computeLayout, placeAll, regionRects, lanesFor, gapsFor, stageLayout, inView, fitTogether, frameTop, frameInk, band, INK_PAD, regionWidth,
   MAX_PAGE_W, MIN_PAGE_W, C_MIN_PAGE_W, GAP_X, TOOLBAR_CLEAR, COLUMN_AIR, EDGE, SAFE_TOP, SAFE_BOTTOM, GAP_Y, type RegionReq,
 } from '../../src/desk/layout';
 
@@ -140,5 +140,41 @@ describe('framing', () => {
   });
   it('frameTop stays put for a rect that is not finite (a page past the end)', () => {
     expect(frameTop({ x: 0, y: NaN, w: 1, h: 10 }, { ...v, top: 1234 })).toBe(1234);
+  });
+});
+
+describe('frameInk (page ink framing)', () => {
+  const v = { top: 0, H: 800, max: 10000 };
+  const inBand = (r: { y: number; h: number }, top: number) =>
+    r.y >= top + SAFE_TOP - 0.5 && r.y + r.h <= top + v.H - SAFE_BOTTOM + 0.5;
+  it('frames the ink with room for its labels around it', () => {
+    const r = { x: 0, y: 2000, w: 10, h: 200 };
+    const t = frameInk(r, [], v);
+    expect(inBand({ y: r.y - INK_PAD, h: r.h + 2 * INK_PAD }, t)).toBe(true);
+  });
+  it('keeps the earlier ink on the page in view with the new one when they fit together', () => {
+    const ray = { x: 0, y: 2200, w: 10, h: 280 }; // drawn first, low on the page
+    const hl = { x: 0, y: 1900, w: 300, h: 20 }; // the next highlight, above it
+    const t = frameInk(hl, [ray], v);
+    expect(inBand(hl, t)).toBe(true);
+    expect(inBand(ray, t)).toBe(true);
+  });
+  it('drops context (oldest first) that would not fit with the target', () => {
+    const recent = { x: 0, y: 2100, w: 10, h: 100 };
+    const old = { x: 0, y: 3000, w: 10, h: 100 };
+    const hl = { x: 0, y: 1900, w: 300, h: 20 };
+    const t = frameInk(hl, [recent, old], v);
+    expect(inBand(hl, t)).toBe(true);
+    expect(inBand(recent, t)).toBe(true);
+    expect(inBand(old, t)).toBe(false);
+  });
+  it('a box taller than the band keeps its anchor in the band, never under the dock', () => {
+    const tall = { x: 0, y: 2000, w: 10, h: band(v.H) + 300 };
+    const anchor = { x: 0, y: tall.y + tall.h - 10, w: 10, h: 10 }; // the line starts at the bottom
+    const t = frameInk(tall, [], v, anchor);
+    expect(inBand(anchor, t)).toBe(true);
+  });
+  it('is clamped to the scroll range', () => {
+    expect(frameInk({ x: 0, y: 10, w: 1, h: 10 }, [], v)).toBe(0);
   });
 });

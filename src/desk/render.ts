@@ -4,11 +4,12 @@ import type { InkStyle } from '../ink/agent/marks';
 import { drawStrokes, prefersReducedMotion } from '../ink/agent/animate';
 import { lineStroke } from '../ink/agent/strokes';
 import { estimateTextBox } from './nudge';
+import { token } from '../ink/agent/tokens';
 import type { ElementEntry } from './registry';
 import type { Pace } from './types';
 
 const SVG = 'http://www.w3.org/2000/svg';
-/** Neutral ink for the setup in regions (rule 6); `em` uses the accent ink color. */
+/** Neutral ink for the setup in regions (rule 6); `em` uses the accent ink color. Mirrors --ink. */
 export const DESK_INK = '#1D1D1F';
 const SYSTEM = '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
 const HAND = '"Bradley Hand", "Segoe Print", cursive';
@@ -18,6 +19,8 @@ const HAND = '"Bradley Hand", "Segoe Print", cursive';
  */
 export const TEXT_PX = { label: 15, s: 14, m: 17, l: 22 } as const;
 export const MATH_PX = { s: 17, m: 22, l: 28 } as const;
+/** Math symbols set inside text are this much larger than the text: KaTeX_Math reads small beside a sans. */
+export const SYMBOL_SCALE = 1.22;
 /** Letters reveal at this pace; one text never takes longer than WRITE_MAX_MS. */
 export const CHARS_PER_SEC = 34;
 export const WRITE_MAX_MS = 900;
@@ -29,18 +32,89 @@ const set = (el: Element, attrs: Record<string, string | number>) => Object.entr
 
 export const own = (parent: SVGGElement): SVGGElement => parent.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
 
-export type TextOpts = { size: number; style: InkStyle; color: string; run?: boolean };
+/**
+ * size: target units. weight: the words' font weight (default --ink-label-weight). symColor: the
+ * color of math symbols in the text (default `color`).
+ */
+export type TextOpts = { size: number; style: InkStyle; color: string; run?: boolean; weight?: number; symColor?: string };
 
-/** A text element with its left edge at at.x and its vertical middle at at.y (target units). */
+/** One piece of a text: plain words, or a math symbol (base letter + primes, optional subscript). */
+export type TextSeg = { text: string; math?: false } | { text: string; math: true; sub?: string };
+
+/** One letter (Latin or Greek), up to two primes, an optional subscript (`_1`, `_L`, `₁`). */
+const SYMBOL = /^([A-Za-z\u0391-\u03A9\u03B1-\u03C9])(['′″]{0,2})(?:_([A-Za-z0-9]{1,3})|([₀-₉]{1,2}))?$/u;
+/** In running text these single letters are English words, not symbols. */
+const WORDS = new Set(['a', 'A', 'I']);
+
+/**
+ * Splits text into plain runs and math symbols (x, x′, C, O′, l′, θ, x_L). A whole text that is
+ * one symbol is always math; in running text, "a", "A" and "I" stay words. Trailing punctuation
+ * stays plain. ASCII primes become ′.
+ */
+export function textSegments(text: string): TextSeg[] {
+  const parts = text.split(/(\s+)/);
+  const alone = parts.filter((p) => p.trim()).length === 1;
+  const out: TextSeg[] = [];
+  const plain = (t: string) => {
+    if (!t) return;
+    const last = out[out.length - 1];
+    if (last && !last.math) last.text += t; else out.push({ text: t });
+  };
+  for (const p of parts) {
+    const m = /^(\(?)(.*?)([,.;:!?)]*)$/u.exec(p)!;
+    const sym = SYMBOL.exec(m[2]);
+    if (!p.trim() || !sym || (!alone && WORDS.has(m[2]))) { plain(p); continue; }
+    plain(m[1]);
+    const primes = sym[2].replace(/''/g, '″').replace(/'/g, '′');
+    const sub = sym[3] ?? (sym[4] ? sym[4].replace(/[₀-₉]/g, (c) => String(c.charCodeAt(0) - 0x2080)) : undefined);
+    out.push({ text: sym[1] + primes, math: true, ...(sub ? { sub } : {}) });
+    plain(m[3]);
+  }
+  return out;
+}
+
+/**
+ * A text element with its left edge at at.x and its vertical middle at at.y (target units).
+ * Math symbols in it are set in KaTeX's math italic (one tspan each, plus one per subscript);
+ * plain text stays a single text node. The hand style is all handwriting.
+ */
 export function makeText(g: SVGGElement, at: SPt, text: string, o: TextOpts): SVGTextElement {
   const t = document.createElementNS(SVG, 'text');
   const hand = o.style === 'hand';
+  const segs = hand ? [{ text } as TextSeg] : textSegments(text);
+  const mixed = segs.some((x) => x.math);
   set(t, {
-    x: at.x, y: at.y, 'font-size': o.size * (hand ? 1.12 : 1), 'font-family': hand ? HAND : SYSTEM,
-    'font-weight': hand ? 700 : 560, fill: o.color, 'dominant-baseline': 'middle',
+    x: at.x, 'font-size': o.size * (hand ? 1.12 : 1), 'font-family': hand ? HAND : SYSTEM,
+    'font-weight': hand ? 600 : (o.weight ?? (Number(token('--ink-label-weight')) || 450)), fill: o.color,
   });
+  // Mixed fonts align on one alphabetic baseline (a per-font "middle" would step between faces);
+  // 0.34 em below the middle puts the box's center on at.y.
+  if (mixed) t.setAttribute('y', String(at.y + o.size * 0.34));
+  else set(t, { y: at.y, 'dominant-baseline': 'middle' });
   if (o.run) t.setAttribute('data-run', '');
-  t.textContent = text;
+  if (!mixed) { t.textContent = text; g.appendChild(t); return t; }
+  const font = token('--font-math');
+  const span = (txt: string, attrs: Record<string, string | number>) => {
+    const s = document.createElementNS(SVG, 'tspan');
+    set(s, attrs);
+    s.textContent = txt;
+    t.appendChild(s);
+  };
+  let shift = 0; // a subscript's dy, undone by the next span
+  let after = false; // italic overhang: words after a symbol start a hair later
+  for (const sg of segs) {
+    const back: Record<string, number> = { ...(shift ? { dy: -shift } : {}), ...(after ? { dx: o.size * 0.08 } : {}) };
+    shift = 0;
+    after = !!sg.math;
+    if (!sg.math) { span(sg.text, back); continue; }
+    const sym = { 'font-family': font, 'font-style': 'italic', 'font-weight': 400, fill: o.symColor ?? o.color };
+    span(sg.text, { ...sym, 'font-size': o.size * SYMBOL_SCALE, ...back });
+    if (sg.sub) {
+      shift = o.size * 0.28;
+      const digits = /^[0-9]+$/.test(sg.sub);
+      span(sg.sub, { ...sym, ...(digits ? { 'font-style': 'normal', 'font-family': 'KaTeX_Main, ' + font } : {}), 'font-size': o.size * SYMBOL_SCALE * 0.72, dy: shift });
+    }
+  }
   g.appendChild(t);
   return t;
 }
@@ -65,10 +139,10 @@ export const WORDS_FROM = 40;
  * The units a text is written in: whole characters (code points), or whole words for long text.
  * Spaces ride with the unit before them, so no unit is blank and nothing collapses between tspans.
  */
-export function textUnits(text: string): string[] {
+export function textUnits(text: string, words = Array.from(text).length > WORDS_FROM): string[] {
   const chars = Array.from(text);
   const out: string[] = [];
-  if (chars.length > WORDS_FROM) {
+  if (words) {
     for (const m of text.matchAll(/\S+\s*|\s+/g)) out.push(m[0]);
   } else {
     for (const c of chars) {
@@ -88,20 +162,28 @@ export function unitStarts(n: number, dur: number, fade: number): number[] {
 
 type Unit = { el: HTMLElement | SVGElement; prop: 'opacity' | 'fillOpacity' };
 
-/** Splits every svg text in `g` into one tspan per unit; returns the units and how to undo the split. */
+/**
+ * Splits every svg text in `g` into one tspan per unit; returns the units and how to undo the split.
+ * A text set in pieces (math symbols, subscripts) splits each piece in place, keeping its font.
+ */
 function splitTexts(g: SVGGElement): { units: Unit[]; undo(): void } {
   const units: Unit[] = [];
   const undo: (() => void)[] = [];
   for (const t of g.querySelectorAll('text')) {
-    const text = t.textContent ?? '';
-    t.textContent = '';
-    for (const u of textUnits(text)) {
-      const span = document.createElementNS(SVG, 'tspan');
-      span.textContent = u;
-      t.appendChild(span);
-      units.push({ el: span, prop: 'fillOpacity' }); // opacity doesn't apply to tspans
+    const whole = t.textContent ?? '';
+    const holders: Element[] = t.children.length ? [...t.children] : [t];
+    const words = Array.from(whole).length > WORDS_FROM;
+    for (const h of holders) {
+      const text = h.textContent ?? '';
+      h.textContent = '';
+      for (const u of textUnits(text, words)) {
+        const span = document.createElementNS(SVG, 'tspan');
+        span.textContent = u;
+        h.appendChild(span);
+        units.push({ el: span, prop: 'fillOpacity' }); // opacity doesn't apply to tspans
+      }
+      undo.push(() => { h.textContent = text; });
     }
-    undo.push(() => { t.textContent = text; });
   }
   return { units, undo: () => undo.forEach((f) => f()) };
 }
@@ -178,12 +260,18 @@ export async function drawDot(g: SVGGElement, c: SPt, r: number, color: string, 
 }
 
 export type ShadeShape = { pts: SPt[] } | { c: SPt; rx: number; ry: number };
-/** A translucent fill that fades in under the ink (goes in the target's highlight layer). */
-export async function drawShade(g: SVGGElement, s: ShadeShape, color: string, opacity: number, k: Pace, signal?: AbortSignal): Promise<void> {
+/** A shade's fill, and its 1px hairline (non-scaling) when `stroke` is set. */
+export type ShadeLook = { fill: string; fillOpacity: number; stroke?: string; strokeOpacity?: number };
+/** A fill that fades in under the ink. */
+export async function drawShade(g: SVGGElement, s: ShadeShape, look: ShadeLook, k: Pace, signal?: AbortSignal): Promise<void> {
   const el = 'pts' in s ? document.createElementNS(SVG, 'polygon') : document.createElementNS(SVG, 'ellipse');
   if ('pts' in s) el.setAttribute('points', s.pts.map((p) => `${p.x},${p.y}`).join(' '));
   else set(el, { cx: s.c.x, cy: s.c.y, rx: s.rx, ry: s.ry });
-  set(el, { fill: color, 'fill-opacity': opacity });
+  set(el, { fill: look.fill, 'fill-opacity': look.fillOpacity });
+  if (look.stroke) {
+    set(el, { stroke: look.stroke, 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke', 'stroke-linejoin': 'round' });
+    if (look.strokeOpacity != null) el.setAttribute('stroke-opacity', String(look.strokeOpacity));
+  }
   const ms = Math.round(k.fadeMs ?? 320 * k.speed);
   el.style.opacity = '0';
   el.style.transition = `opacity ${ms}ms ease-out`;
@@ -200,7 +288,7 @@ export async function drawShade(g: SVGGElement, s: ShadeShape, color: string, op
 export async function emphPass(e: ElementEntry, color: string, scale: number, signal?: AbortSignal): Promise<void> {
   const g = own(e.group.parentNode as SVGGElement);
   const strokes = e.strokes?.length ? e.strokes : [lineStroke({ x: e.bbox.x, y: e.bbox.y + e.bbox.h + 3 }, { x: e.bbox.x + e.bbox.w, y: e.bbox.y + e.bbox.h + 3 }, null)];
-  await drawStrokes(g, strokes, { color, width: 7, opacity: 0.45, scale, signal, mode: prefersReducedMotion() ? 'fade' : 'trace', speed: 0.6 });
+  await drawStrokes(g, strokes, { color, width: 5, opacity: 0.4, scale, signal, mode: prefersReducedMotion() ? 'fade' : 'trace', speed: 0.6 });
   g.style.transition = 'opacity 450ms ease-out';
   g.style.opacity = '0';
   await wait(signal?.aborted ? 0 : 450);

@@ -304,11 +304,22 @@ export class Director {
   }
 
   /** Rule 1/2: pans through the layout lane when the box is off screen; resolves once it shows. Not while the student drives (rule 6). */
-  private async reveal(desk: DeskApi, t: Target, r: SRect, signal: AbortSignal) {
+  private async reveal(desk: DeskApi, t: Target, r: SRect, signal: AbortSignal, anchor?: SRect) {
     if (!desk.following() || desk.isVisible(t, r)) return;
     // Visibility is re-checked by the desk when the step runs, and ink lands only if the view then moves.
-    const e = this.enqueueLayout('reveal', async () => { await desk.reveal(t, r, this.land); }, signal);
+    const e = this.enqueueLayout('reveal', async () => { await desk.reveal(t, r, this.land, anchor); }, signal);
     await Promise.race([e.done, e.started.then(() => (signal.aborted ? false : desk.whenVisible(t, r)))]);
+  }
+
+  /** Page ink that starts from a point (a line's start, an angle's vertex): what a box too tall for the view keeps in it. */
+  private anchorOf(a: InkAction): SRect | undefined {
+    const t = targetOf(a);
+    if (!t || t.page == null) return undefined;
+    const p = a.kind === 'line' || a.kind === 'arrow' || a.kind === 'brace' ? a.from : a.kind === 'angle' ? a.at : null;
+    const v = this.d.viewer();
+    if (!p || !v) return undefined;
+    const s = toSpace(p, v.spaceHeight(t.page));
+    return { x: s.x - 20, y: s.y - 20, w: 40, h: 40 };
   }
 
   private async ink(a: InkAction, t: ActionTiming, startAt: number, dep: LaneEntry | null, signal: AbortSignal) {
@@ -333,7 +344,7 @@ export class Director {
 
     if (dep) await this.afterLayout(dep, desk, target, box, signal);
     if (signal.aborted) return;
-    if (target && box) await this.reveal(desk, target, box, signal);
+    if (target && box) await this.reveal(desk, target, box, signal, this.anchorOf(a));
     if (signal.aborted) return;
 
     await wait(startAt - now());
@@ -347,11 +358,12 @@ export class Director {
         const p = plan;
         const e = this.enqueueLayout('frame', async () => { await desk.frameBoth({ t: p.target, r: p.bbox }, { t: p.also!.target, r: p.also!.bbox }, this.land); }, signal);
         if (desk.following()) await e.done;
-      } else await this.reveal(desk, plan.target, plan.bbox, signal);
+      } else await this.reveal(desk, plan.target, plan.bbox, signal, this.anchorOf(a));
       if (signal.aborted) return;
     }
     if (typeof plan !== 'object') return finish('no plan');
     const p = plan;
+    desk.noteInk?.(p.target, p.bbox);
     const k = backlog(now() - t.firedAt);
     this.report(t, { startedAt: now() });
     const own = new AbortController();

@@ -7,7 +7,7 @@
 .stage > .pv-scroll { position: absolute; }
 /* While an answer sketches beside a page, set the neighbouring pages back so the page being explained
    reads as the one in frame. They come back when the answer ends or the student scrolls (App.tsx). */
-.stage .pv-page { transition: opacity 360ms var(--ease-out, ease-out); }
+.stage .pv-page { transition: opacity var(--glide, 420ms) var(--ease-out, ease-out); }
 .stage.is-sketching .pv-page:not(.is-current) { opacity: .5; }
 
 @media (prefers-reduced-motion: reduce) {

@@ -31,37 +31,50 @@ export type End =
 export type Mark = { id?: string; em?: boolean };
 
 /**
+ * Line hierarchy for stroked elements: `primary` (main geometry), `secondary` (rays, sight lines,
+ * axes, dimension marks), `faint` (construction). Absent: the renderer's per-kind default
+ * (dash → faint; axes, angle, brace → secondary; everything else → primary).
+ */
+export type Weight = 'primary' | 'secondary' | 'faint';
+type W = { weight?: Weight };
+
+/**
  * Anchored forms (`quote`) are preferred on pages: they resolve against the text layer, so they are
  * pixel-exact. `near` disambiguates repeated text. Radii (`r`, `rx`, `ry`) are in x units.
  */
 export type Shape =
   | { kind: 'highlight'; quote: string; near?: Pt }
-  | { kind: 'underline'; quote: string; near?: Pt }
-  | { kind: 'circle'; at: Pt; rx: number; ry: number; dash?: boolean }
-  | { kind: 'circle'; quote: string; near?: Pt; dash?: boolean }
-  | { kind: 'line'; from: Pt; to: Pt; dash?: boolean }
-  | { kind: 'arrow'; from: Pt; to: Pt; dash?: boolean }
+  | ({ kind: 'underline'; quote: string; near?: Pt } & W)
+  | ({ kind: 'circle'; at: Pt; rx: number; ry: number; dash?: boolean } & W)
+  | ({ kind: 'circle'; quote: string; near?: Pt; dash?: boolean } & W)
+  | ({ kind: 'line'; from: Pt; to: Pt; dash?: boolean } & W)
+  | ({ kind: 'arrow'; from: Pt; to: Pt; dash?: boolean } & W)
   /** at = top-left corner; w in x units, h in y units. */
-  | { kind: 'box'; at: Pt; w: number; h: number }
-  | { kind: 'box'; quote: string; near?: Pt }
+  | ({ kind: 'box'; at: Pt; w: number; h: number } & W)
+  | ({ kind: 'box'; quote: string; near?: Pt } & W)
   | { kind: 'label'; at: Pt; text: string }
   /** Region only. at = left edge, vertical middle. */
   | { kind: 'write'; at: Pt; text: string; size: TextSize }
   /** A dot, plus an optional label placed toward `dir` (default ne) and nudged off other elements. */
   | { kind: 'point'; at: Pt; text?: string; dir?: Compass }
   /** Catmull-Rom curve through 2+ points. */
-  | { kind: 'curve'; pts: Pt[]; dash?: boolean }
-  /** Translucent fill under the ink: a polygon (3+ points) or an ellipse. */
-  | { kind: 'shade'; pts: Pt[] }
-  | { kind: 'shade'; at: Pt; rx: number; ry: number }
+  | ({ kind: 'curve'; pts: Pt[]; dash?: boolean } & W)
+  /**
+   * A fill under the ink: a polygon (3+ points) or an ellipse. In a region: an opaque light sheet
+   * (overlaps never muddy); `outline` adds a 1px hairline (a sheet like the slide's boxes); `em` is
+   * a ~10% accent tint instead, without outline unless `outline` is given too. On a page: a light
+   * multiply tint, so the slide shows through.
+   */
+  | { kind: 'shade'; pts: Pt[]; outline?: boolean }
+  | { kind: 'shade'; at: Pt; rx: number; ry: number; outline?: boolean }
   /** Arc between the rays at→from and at→to (the smaller sweep). r in x units, default 30. */
-  | { kind: 'angle'; at: Pt; from: Pt; to: Pt; r?: number; text?: string }
+  | ({ kind: 'angle'; at: Pt; from: Pt; to: Pt; r?: number; text?: string } & W)
   /** Curly brace from `from` to `to`; its tip points to the left of the direction from → to. */
-  | { kind: 'brace'; from: Pt; to: Pt; text?: string }
+  | ({ kind: 'brace'; from: Pt; to: Pt; text?: string } & W)
   /** Region only. at = origin (bottom-left); the x axis runs w right, the y axis h up. */
-  | { kind: 'axes'; at: Pt; w: number; h: number; xLabel?: string; yLabel?: string }
+  | ({ kind: 'axes'; at: Pt; w: number; h: number; xLabel?: string; yLabel?: string } & W)
   /** Region only. Plots fn(x) over domain into the axes `axes` (default: the latest axes in the region). */
-  | { kind: 'plot'; fn: string; domain: [number, number]; range?: [number, number]; axes?: string; dash?: boolean }
+  | ({ kind: 'plot'; fn: string; domain: [number, number]; range?: [number, number]; axes?: string; dash?: boolean } & W)
   /** Region only. KaTeX. at = left edge, vertical middle. */
   | { kind: 'math'; at: Pt; tex: string; size: TextSize };
 

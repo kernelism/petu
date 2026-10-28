@@ -88,6 +88,7 @@ export async function drawStrokes(g: SVGGElement, strokes: Stroke[], o: InkOpts)
   const tip = document.createElementNS(SVG, 'circle');
   tip.setAttribute('r', String((o.width * 1.15) / o.scale));
   tip.setAttribute('fill', o.color);
+  if (o.opacity != null) tip.setAttribute('fill-opacity', String(o.opacity)); // a faint stroke's pen is faint too
   tip.style.transition = 'opacity 160ms ease-out';
   for (let k = 0; k < strokes.length; k++) {
     const s = strokes[k];

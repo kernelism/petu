@@ -17,7 +17,8 @@
   width: var(--dock-w, min(560px, calc(100vw - 32px)));
   transform: translateX(-50%);
   z-index: 30;
-  transition: left 240ms var(--ease-out), width 240ms var(--ease-out);
+  /* Moves with the page column's glide and the B stage (same duration and easing: Desk GLIDE_MS). */
+  transition: left var(--glide, 420ms) var(--ease-out), width var(--glide, 420ms) var(--ease-out);
 }
 
 /* ───────── Ask bar ───────── */
@@ -207,15 +208,9 @@
   color: rgba(255,255,255,.52);
 }
 .caption-q:only-child { margin-bottom: 0; }
-/* Waiting for the first word: a soft light passes through the question. No dots, no spinner. */
-.caption-q.is-waiting {
-  color: transparent;
-  background: linear-gradient(100deg, rgba(255,255,255,.42) 40%, rgba(255,255,255,.9) 50%, rgba(255,255,255,.42) 60%) 0 0 / 250% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  animation: caption-shimmer 1.6s linear infinite;
-}
-@keyframes caption-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+/* Waiting for the first word: the question settles in, muted. No shimmer, no dots, no spinner. */
+.caption-q.is-waiting { animation: caption-q-in 320ms var(--ease-out) both; }
+@keyframes caption-q-in { from { opacity: 0; } to { opacity: 1; } }
 .caption.has-error { pointer-events: auto; }
 .caption-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .caption-retry {
@@ -234,22 +229,24 @@
 .caption-retry:active { background: rgba(255,255,255,.3); }
 .caption-retry:focus-visible { outline-color: #fff; }
 .caption-viewport {
-  /* exactly two lines; older lines leave through the top */
-  max-height: calc(var(--cap-size) * 1.45 * 2);
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
+  /* The reading window: one sentence (or clause) at a time, up to two lines; ui/captionWindow.ts. */
+  position: relative;
+  height: calc(var(--cap-size) * 1.45);
   overflow: hidden;
+  transition: height 200ms var(--ease-out);
 }
-.caption-viewport.has-overflow {
-  height: calc(var(--cap-size) * 1.45 * 2);
-  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 35%);
-  mask-image: linear-gradient(to bottom, transparent, #000 35%);
+.caption-viewport.is-tall { height: calc(var(--cap-size) * 1.45 * 2); }
+.caption-text { position: relative; }
+/* A new window cross-fades over the old one: a short opacity change, no slide. */
+.caption-text.is-next { animation: caption-swap-in 180ms var(--ease-out) both; }
+.caption-leaving {
+  position: absolute;
+  inset: 0 0 auto 0;
+  pointer-events: none;
+  animation: caption-swap-out 180ms var(--ease-out) both;
 }
-.caption-text {
-  flex: none;
-  transition: transform 180ms var(--ease-out);
-}
+@keyframes caption-swap-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes caption-swap-out { from { opacity: 1; } to { opacity: 0; } }
 .caption-word { animation: caption-word-in 120ms var(--ease-out) both; }
 @keyframes caption-word-in { from { opacity: 0; } to { opacity: 1; } }
 
@@ -664,8 +661,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .askbar-btn, .popover, .caption-word, .askbar-chips, .transcript, .topbar-num.is-tick { animation: none; }
-  .caption-q.is-waiting { animation: none; color: rgba(255,255,255,.52); background: none; }
-  .dock, .caption, .caption-text, .dropveil, .tb-fold, .tb-tip, .switch, .switch::after { transition-duration: 0s; }
+  .caption-q.is-waiting, .caption-text.is-next, .caption-leaving { animation: none; }
+  .caption-leaving { display: none; }
+  .dock, .caption, .caption-viewport, .dropveil, .tb-fold, .tb-tip, .switch, .switch::after { transition-duration: 0s; }
 }
 
 /* ───────── Follow pill (rule 6): the student took over the view during an answer ───────── */

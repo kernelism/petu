@@ -99,8 +99,14 @@ export interface DeskApi {
   /** Places a region (rules 7, 8). Resolves once it is drawable. A string is a skip reason. */
   addRegion(spec: RegionSpec, before?: BeforeMove): Promise<RegionInfo | string>;
   region(id: string): RegionInfo | null;
-  /** Rule 1/2: moves the view (scroll, card swap, C↔B) so the target-space rect is on screen. Resolves whether it moved. */
-  reveal(t: Target, r: SRect, before?: BeforeMove): Promise<boolean>;
+  /**
+   * Rule 1/2: moves the view (scroll, card swap, C↔B) so the target-space rect is on screen. Resolves whether it moved.
+   * Page ink is framed with the answer's earlier ink on that page when they fit (see noteInk); `anchor`
+   * (target space) is the part a box taller than the band keeps in view, e.g. the point a line starts from.
+   */
+  reveal(t: Target, r: SRect, before?: BeforeMove, anchor?: SRect): Promise<boolean>;
+  /** Ink is landing at this target-space rect: later page framing keeps it in view when it fits. */
+  noteInk?(t: Target, r: SRect): void;
   isVisible(t: Target, r: SRect): boolean;
   /** Resolves true as soon as the rect is on screen (mid-glide is fine), false after maxMs (default 1200). */
   whenVisible(t: Target, r: SRect, maxMs?: number): Promise<boolean>;

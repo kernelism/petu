@@ -205,3 +205,39 @@ export function frameTop(r: DeskRect, v: { H: number; max: number; top?: number 
   const t = r.h <= b ? r.y - SAFE_TOP - (b - r.h) / 2 : r.y - SAFE_TOP;
   return clamp(t, 0, Math.max(0, v.max));
 }
+
+/** Air kept around page ink when it is framed: a line's endpoint labels and a circle's letter sit just outside its box. */
+export const INK_PAD = 40;
+
+const union = (a: DeskRect, b: DeskRect): DeskRect => {
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+};
+
+/**
+ * Scroll top that frames page ink `r` in the band between the top bar and the dock: padded for its
+ * labels (as room allows, after the context), together with as much of `ctx` (earlier ink on the same page, most recent first) as fits,
+ * so pointing at a bullet doesn't push the drawing it explains under the caption. A box taller than
+ * the band keeps `anchor` (the part it starts from) in the band, as much of the box with it as fits.
+ */
+export function frameInk(r: DeskRect, ctx: DeskRect[], v: { H: number; max: number; top?: number }, anchor?: DeskRect): number {
+  if (!Number.isFinite(r.y) || !Number.isFinite(r.h)) return v.top ?? 0;
+  const b = band(v.H);
+  if (r.h > b) {
+    if (!anchor || !Number.isFinite(anchor.y)) return frameTop(r, v);
+    const a = { ...anchor, h: Math.min(anchor.h, b) };
+    // Top-aligned on the box, but never so far that the anchor drops under the dock (or above the bar).
+    const t = clamp(r.y - SAFE_TOP, a.y + a.h - SAFE_TOP - b, a.y - SAFE_TOP);
+    return clamp(t, 0, Math.max(0, v.max));
+  }
+  let u = r;
+  for (const c of ctx) {
+    if (!Number.isFinite(c.y) || !Number.isFinite(c.h)) continue;
+    const next = union(u, c);
+    if (next.h > b) break;
+    u = next;
+  }
+  // Then the air around it, as much as is left.
+  const pad = Math.min(INK_PAD, (b - u.h) / 2);
+  return frameTop({ ...u, y: u.y - pad, h: u.h + 2 * pad }, v);
+}

@@ -11,7 +11,7 @@ import { PacedClock } from './playback/clock';
 import { getSettings, setSettings } from './settings/settings';
 import { DEMOS, DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
-import { Desk } from './desk/Desk';
+import { Desk, GLIDE_MS } from './desk/Desk';
 import type { DeskState } from './desk/types';
 import './desk/desk.css';
 import { StudentInkLayer } from './ink/student/StudentInkLayer';
@@ -461,7 +461,10 @@ export default function App() {
   return (
     <>
       {/* Neighbouring pages step back only while an answer is drawing beside a page and the student follows it. */}
-      <main className={`stage${desk?.sketching && desk.mode === 'c' && desk.following && busy ? ' is-sketching' : ''}`}>
+      <main
+        className={`stage${desk?.sketching && desk.mode === 'c' && desk.following && busy ? ' is-sketching' : ''}`}
+        style={{ '--glide': `${GLIDE_MS}ms` } as CSSProperties}
+      >
         <PdfViewer
           doc={doc}
           onReady={onReady}
@@ -482,7 +485,7 @@ export default function App() {
       <FollowPill visible={paused} onResume={resumeFollow} x={dock.x} />
       <SettingsPopover open={settingsOpen} onClose={closeSettings} />
       <CanvasToolbar />
-      <div ref={dockRef} className="dock" style={{ '--dock-x': `${dock.x}px`, '--dock-w': `${dock.w}px` } as CSSProperties}>
+      <div ref={dockRef} className="dock" style={{ '--dock-x': `${dock.x}px`, '--dock-w': `${dock.w}px`, '--glide': `${GLIDE_MS}ms` } as CSSProperties}>
         <Caption
           words={captionWords}
           visible={captionVisible}
