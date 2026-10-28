@@ -78,10 +78,9 @@ async function main(): Promise<void> {
     };
   } else steps.push({ name: 'replay-stress', ok: true, skipped: true, ms: 0, detail: 'no `replay-stress` script yet' });
 
-  const { ok, text } = summarize(steps);
+  const { ok, text } = summarize(steps, Date.now() - t0);
   if (ok) record?.();
   console.log(`\n${text}`);
-  console.log(`wall ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   process.exit(ok ? 0 : 1);
 }
 

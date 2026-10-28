@@ -30,6 +30,27 @@ npm run decks        # regenerate the synthetic eval decks public/fixtures/{econ
 
 Every change ends green on `npx tsc --noEmit && npx vitest run && npm run build`.
 
+**Before merging, run `npm run gate`** (instead of hand-written screenshot scripts): typecheck,
+tests and build in parallel, then the gallery diff, then `replay-stress` when that script exists
+(its skip rate must not rise vs the last value recorded by a passing gate). Pass/fail summary, non-zero
+exit on failure, no API calls. Declare intended visual changes: `npm run gate -- --expect side,kit@end`
+(a scene, `scene@moment`, `scene@moment.browser`, or `*` wildcards); review them in the contact sheet.
+
+```bash
+npm run gallery                      # stills of every demo/script, Chromium + WebKit, 1440×900 + 2560×1440, diffed vs the baseline
+npm run gallery -- --baseline        # make this run the baseline (do it on main)
+npm run gallery -- --only side,kit --browsers webkit --sizes 1440x900
+```
+
+The gallery (`scripts/gallery/`) starts its own dev server on a free port and drives Playwright
+(`playwright-core` looked up as the eval does; `PLAYWRIGHT_DIR` overrides, Chromium = system Chrome)
+on a fake clock: time advances in 200ms steps and stands still while real-time work runs (fetches,
+the pdf.js worker, CSS transitions, smooth scrolls), so a moment (`scenes.ts`: ms after the answer
+starts, or after it ends) is the same frame every run. Runs land in `<main checkout>/.petu/gallery/<run>/`
+(shared by all worktrees; `PETU_GALLERY_DIR` overrides) with `index.html`: changed shots first,
+baseline | current | diff side by side. A shot changes when > 0.05% of its pixels (and > 100) differ
+after antialiasing tolerance. Mid-answer moments can jitter by a few hundred pixels; end states are exact.
+
 Agent and eval tools:
 
 ```bash

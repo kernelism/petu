@@ -41,7 +41,8 @@ export function parseSkipRate(out: string): number | null {
   return m[2] === '%' || v > 1 ? v / 100 : v;
 }
 
-export function summarize(steps: StepResult[]): { ok: boolean; text: string } {
+/** `wallMs`: the gate's wall time (steps overlap, so their sum overstates it). */
+export function summarize(steps: StepResult[], wallMs?: number): { ok: boolean; text: string } {
   const ok = steps.every((s) => s.ok || s.skipped);
   const w = Math.max(...steps.map((s) => s.name.length));
   const lines = steps.map((s) => {
@@ -51,6 +52,6 @@ export function summarize(steps: StepResult[]): { ok: boolean; text: string } {
       ? `\n${s.detail.split('\n').map((l) => `        ${l}`).join('\n')}` : '';
     return head + detail;
   });
-  const total = steps.reduce((a, s) => a + s.ms, 0);
+  const total = wallMs ?? steps.reduce((a, s) => a + s.ms, 0);
   return { ok, text: `${lines.join('\n')}\n\nGATE ${ok ? 'PASSED' : 'FAILED'} (${(total / 1000).toFixed(1)}s)` };
 }
