@@ -216,14 +216,14 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const cfg = CONFIGS[args.config];
   const phase = process.env.PETU_PHASE ?? 'dev';
-  const QUESTIONS = QSETS[args.qset];
-  const QSET = qsetId(QUESTIONS, args.qset);
+  const QUESTIONS: Question[] = args.ask ? [...QSETS[args.qset], { id: 'X1', split: 'dev', deck: args.ask.deck, page: args.ask.page, pick: 'hand', type: 'narrow', question: args.ask.question }] : QSETS[args.qset];
+  const QSET = qsetId(QSETS[args.qset], args.qset);
   const rubric = RUBRICS[args.rubric];
-  const errs = validateSet(QUESTIONS);
+  const errs = validateSet(QSETS[args.qset]);
   if (errs.length) throw new Error(`question set invalid: ${errs.join('; ')}`);
   await freeze(EVAL_DIR, args.qset);
   if (args.finish && args.replay) throw new Error('--finish and --replay are exclusive');
-  let qs = selectQuestions(args, cfg);
+  let qs = selectQuestions(args, cfg, QUESTIONS);
   // --finish completes a run that already generated (e.g. a crash in the judge step): it makes no new
   // answers, so it is not a new use of the test split.
   if (args.finish) qs = qs.filter((q) => existsSync(join(RUNS, args.finish!, q.id, 'result.json')));
@@ -232,7 +232,7 @@ async function main(): Promise<void> {
   const judge = wantsJudge(args, cfg);
 
   const date = new Date().toISOString().slice(0, 10);
-  const tag = args.config + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '') + (args.rubric !== 'r3' ? `-${args.rubric}` : '');
+  const tag = args.config + (args.ask ? '-ask' : '') + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '') + (args.rubric !== 'r3' ? `-${args.rubric}` : '');
   let runId = args.finish ?? runIdOf(date, tag, PROMPT_VERSION, QSET);
   if (!args.finish) for (let i = 2; existsSync(join(RUNS, runId)); i++) runId = `${runIdOf(date, tag, PROMPT_VERSION, QSET)}-${i}`;
   const dir = join(RUNS, runId);

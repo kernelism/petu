@@ -23,10 +23,12 @@ export type Args = {
   rubric: RubricVersion;
   /** Offline check of the judge path: build every request, answer it with a fixed fake judgement (no server call, $0). */
   fakeJudge: boolean;
+  /** --ask <deck>:<page>:<question>: one ad-hoc question (id X1, dev), e.g. to reproduce a founder report. */
+  ask: { deck: string; page: number; question: string } | null;
 };
 
 export function parseArgs(argv: string[]): Args {
-  const a: Args = { split: 'dev', config: 'terra-none', only: null, n: 1, replay: null, finish: null, judge: null, webkit: false, parallel: 4, prewarmMs: 0, qset: DEFAULT_QSET, rubric: DEFAULT_RUBRIC, fakeJudge: false };
+  const a: Args = { split: 'dev', config: 'terra-none', only: null, n: 1, replay: null, finish: null, judge: null, webkit: false, parallel: 4, prewarmMs: 0, qset: DEFAULT_QSET, rubric: DEFAULT_RUBRIC, fakeJudge: false, ask: null };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const val = () => { const v = argv[++i]; if (v == null) throw new Error(`${k} needs a value`); return v; };
@@ -44,6 +46,7 @@ export function parseArgs(argv: string[]): Args {
       case '--prewarm': a.prewarmMs = 4000; break;
       case '--qset': { const v = val(); if (!(v in QSETS)) throw new Error(`bad --qset ${v} (have: ${Object.keys(QSETS).join(', ')})`); a.qset = v as QSetName; break; }
       case '--rubric': { const v = val(); if (!(v in RUBRICS)) throw new Error(`bad --rubric ${v} (have: ${Object.keys(RUBRICS).join(', ')})`); a.rubric = v as RubricVersion; break; }
+      case '--ask': { const m = /^([\w-]+):(\d+):(.+)$/s.exec(val()); if (!m) throw new Error('--ask needs <deck>:<page>:<question>'); a.ask = { deck: m[1], page: Number(m[2]), question: m[3] }; a.only = ['X1']; break; }
       case '--parallel': a.parallel = Math.min(4, Math.max(1, Math.floor(Number(val())))); break;
       default: throw new Error(`unknown flag ${k}`);
     }

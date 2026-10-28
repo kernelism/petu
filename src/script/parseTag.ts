@@ -16,7 +16,8 @@ const clamp = (n: number, hi: number) => Math.min(hi, Math.max(0, n));
 /** Region ids (`sketch id=`, `on=`): lowercased. */
 const id = (s?: string) => (s && ID.test(s.toLowerCase()) ? s.toLowerCase() : undefined);
 /** Element ids double as point names: case-sensitive (X and x are different points), ' → ′. */
-const eid = (s?: string) => { const n = s ? normName(s) : ''; return n && NAME.test(n) ? n : undefined; };
+/** An element id; a hyphen reads as an underscore (id=row-column is row_column everywhere). */
+const eid = (s?: string) => { const n = s ? normName(s.trim().replace(/-/g, '_')) : ''; return n && NAME.test(n) ? n : undefined; };
 const MARK_ID = /^#[a-z]\d{1,3}$/;
 /** An element id, or a part of a kit block (`g[2,3]`, `v[1:3]`). */
 const rid = (s?: string) => (s && isBlockRef(s) ? s : eid(s));

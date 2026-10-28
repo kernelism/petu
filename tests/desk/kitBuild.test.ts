@@ -222,6 +222,62 @@ describe('kit blocks on the board', () => {
     expect(st.get('t')!.vals!.map((r) => r[3])).toEqual([100, 160, 180]);
   });
 
+  it('view=image: a generated noisy image, shaded pixels and no numerals; a window sweeps it into an image', async () => {
+    const { e, layers } = env();
+    await tag(e, 'grid on=s id=img size=24x24 fn="(c>12)*100+20*randn()" view=image');
+    await tag(e, 'grid on=s id=k vals=1/9,1/9,1/9;1/9,1/9,1/9;1/9,1/9,1/9 right=img op=⊛');
+    expect(await tag(e, 'grid on=s id=o over=img slide=k right=k op==')).not.toBeTypeOf('string');
+    const st = kitStore(e.registry);
+    const img = st.get('img')!, o = st.get('o')!;
+    expect(img.view).toBe('image');
+    expect(o.view).toBe('image'); // 22×22: past 12, an image by default
+    expect(texts(layers.agent, '[data-kit="grid"] text').filter((t) => /\d/.test(t ?? '')).length).toBeLessThan(12); // only the kernel's numerals
+    expect(layers.agent.querySelectorAll('[data-kit="grid"] rect').length).toBeGreaterThan(24 * 24);
+    // the kernel keeps its literal fractions; a computed output never shows one
+    expect(texts(layers.agent, '[data-kit="grid"] text')).toContain('1/9');
+    // same noise on a rebuild (seeded by the id)
+    const again = env();
+    await tag(again.e, 'grid on=s id=img size=24x24 fn="(c>12)*100+20*randn()" view=image');
+    expect(kitStore(again.e.registry).get('img')!.vals).toEqual(img.vals);
+    await tag(e, 'sweep id=o dur=0.5');
+    await new Promise((r) => setTimeout(r, 1200));
+    await settle(e);
+    expect(o.win!.filled.flat().every(Boolean)).toBe(true);
+    expect(o.vals![0][0]).toBeCloseTo(o.full![0][0], 9);
+    const calc = texts(layers.agent, '[data-kit="calc"] text').join(' ');
+    expect(calc).not.toMatch(/\d+\/3\b/);
+  });
+
+  it('view=line: a vector as a curve; a second line shares its axes; set moves it and leaves a ghost', async () => {
+    const { e, layers } = env();
+    await tag(e, 'bars on=s id=y size=1x40 fn="sin(c/5)+0.3*randn()" view=line "noisy"');
+    await tag(e, 'bars on=s id=sm over=y win=1x5 reduce=mean axes=y "smoothed"');
+    const st = kitStore(e.registry);
+    const y = st.get('y')!, sm = st.get('sm')!;
+    expect(y.view).toBe('line');
+    expect(sm.plot).toBe(y.plot);
+    expect(sm.vals![0].length).toBe(36);
+    expect(sm.xs![0]).toBe(3); // a window's value sits at its centre
+    expect(layers.agent.querySelectorAll('[data-kit="bars"] path').length).toBeGreaterThanOrEqual(4);
+    const lbl = texts(layers.agent, '[data-kit="bars"] text');
+    expect(lbl).toContain('noisy');
+    expect(lbl).toContain('smoothed');
+    // a long vector is a line by default; a short one stays bars
+    await tag(e, 'bars on=s id=z size=1x30 fn="c"');
+    expect(st.get('z')!.view).toBe('line');
+    await tag(e, 'bars on=s id=w vals=1,2,3');
+    expect(st.get('w')!.view).toBeUndefined();
+    // a part of a line is its point; set tweens and widens the plot
+    await tag(e, 'bars on=s id=d vals=3,5,4 labels=1,2,4 view=line');
+    expect(st.get('d')!.xs).toEqual([1, 2, 4]);
+    expect(typeof (await tag(e, 'emph id=d[2]'))).not.toBe('string');
+    await tag(e, 'set id=d fn="x*3"');
+    await settle(e);
+    expect(st.get('d')!.vals).toEqual([[9, 15, 12]]);
+    expect(st.get('d')!.plot!.dom.y1).toBeGreaterThan(15);
+    expect(await tag(e, 'bars on=s id=q vals=1,2 axes=nope')).toMatch(/no line nope/);
+  });
+
   it('a letter past the width falls back to a header of that name (cols=x,y: t.y is y)', async () => {
     const { e } = env();
     await tag(e, 'table on=s id=t cols=x,y vals=1,2;3,4');

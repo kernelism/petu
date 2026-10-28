@@ -93,7 +93,8 @@ export type KitPlace<P = Pt> = { right?: string; below?: string; op?: string; at
 export type WinReduce = 'sum' | 'mean' | 'max' | 'min';
 /** Where a block's values come from: literals, or an operation the engine computes. */
 export type KitSource =
-  | { vals: number[][] }
+  /** Literal values; `frac` when the model wrote fractions (1/9), shown as written. */
+  | { vals: number[][]; frac?: boolean }
   /** map= / zip= read any block with values (grid, bars, table) or a table column `t.c`. */
   | { map: string; fn: string }
   | { zip: [string, string]; fn: string }
@@ -107,12 +108,14 @@ export type KitSource =
 export type ColRef = [string, number, string?];
 export type KitReduce = 'sum' | 'mean' | 'max' | 'min' | 'norm' | 'count' | 'dot' | 'cos';
 export type KitBlock<P = Pt> =
-  | ({ kind: 'grid'; src: KitSource; rows?: string[]; cols?: string[]; shade?: 'heat' | 'image'; dp?: number; caption?: string } & KitPlace<P>)
-  | ({ kind: 'bars'; src: KitSource; labels?: string[]; labelsFrom?: ColRef; ghost?: string; dp?: number; caption?: string } & KitPlace<P>)
+  /** view=image: cells as shaded pixels, no numerals (implied past 12 rows or columns). */
+  | ({ kind: 'grid'; src: KitSource; rows?: string[]; cols?: string[]; shade?: 'heat' | 'image'; view?: 'image'; dp?: number; caption?: string } & KitPlace<P>)
+  /** view=line: the values as a curve on axes (implied past 16 values); axes=v draws onto line v's axes (an overlay). */
+  | ({ kind: 'bars'; src: KitSource; labels?: string[]; labelsFrom?: ColRef; ghost?: string; view?: 'line'; axes?: string; dp?: number; caption?: string } & KitPlace<P>)
   /** Data points, literal or two of a table's columns (x, y: 0-based), which appear as the rows fill. */
   | ({ kind: 'scatter'; data?: Pt[]; cols?: { id: string; x: number; y: number; xName?: string; yName?: string }; xLabel?: string; yLabel?: string; caption?: string } & KitPlace<P>)
   /** A table: a header per column, rows of values; `col` adds computed columns that fill row by row. */
-  | ({ kind: 'table'; vals: number[][]; heads: string[]; dp?: number; caption?: string } & KitPlace<P>)
+  | ({ kind: 'table'; vals: number[][]; heads: string[]; frac?: boolean; dp?: number; caption?: string } & KitPlace<P>)
   /** A live calculation line: a reduction of one block (two for dot / cos), its expansion and result. */
   | ({ kind: 'calc'; of: string[]; reduce: KitReduce; fn?: string; label?: string; dp?: number } & KitPlace<P>)
   /** A line through a scatter's data: least squares, or through two of its points (`pick`, 1-based). */

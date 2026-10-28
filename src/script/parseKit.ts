@@ -15,7 +15,7 @@
 import type { ColRef, KitBlock, KitReduce, KitSource, KitVerb, WinReduce, Pt } from './types';
 import type { PtArg } from './pointExpr';
 import { isBlockRef, NAME, normName } from './pointExpr';
-import { parseVals, MAX_DIM } from '../desk/kit/compute';
+import { parseVals, MAX_DIM, MAX_IMG } from '../desk/kit/compute';
 
 const MAX_FN = 120;
 const MAX_LABEL = 40;
@@ -27,7 +27,8 @@ const GLYPHS: Record<string, string> = {
   '↓': '↓', '⊛': '⊛', '*': '⊛', '·': '·', '.': '·', '×': '×', x: '×', '=': '=', '→': '→', '->': '→', '−': '−', '-': '−', '+': '+', '÷': '÷', '/': '÷', '≈': '≈',
 };
 
-const eid = (s?: string) => { const n = s ? normName(s) : ''; return n && NAME.test(n) ? n : undefined; };
+/** An element id; a hyphen reads as an underscore (id=row-column is row_column everywhere). */
+const eid = (s?: string) => { const n = s ? normName(s.trim().replace(/-/g, '_')) : ''; return n && NAME.test(n) ? n : undefined; };
 const num = (s?: string) => (s === undefined || s === '' ? undefined : Number.isFinite(Number(s.replace(/−/g, '-'))) ? Number(s.replace(/−/g, '-')) : undefined);
 const list = (s?: string) => {
   if (s == null) return undefined;
@@ -87,9 +88,9 @@ function source(args: Args, flags: Set<string>): KitSource | null {
     const z = /^(\d{1,2})x(\d{1,2})$/i.exec(args.size), fn = fnOk(args.fn);
     if (!z || !fn) return null;
     const R = Number(z[1]), C = Number(z[2]);
-    return R >= 1 && C >= 1 && R <= MAX_DIM && C <= MAX_DIM ? { gen: [R, C], fn } : null;
+    return R >= 1 && C >= 1 && R <= MAX_IMG && C <= MAX_IMG ? { gen: [R, C], fn } : null;
   }
-  if (args.vals != null) { const cr = colRef(args.vals); if (cr) return { col: cr }; const v = parseVals(args.vals); return v ? { vals: v } : null; }
+  if (args.vals != null) { const cr = colRef(args.vals); if (cr) return { col: cr }; const v = parseVals(args.vals); return v ? { vals: v, ...(args.vals.includes('/') ? { frac: true } : {}) } : null; }
   if (args.map != null) { const m = srcRef(args.map), fn = fnOk(args.fn); return m && fn ? { map: m, fn } : null; }
   if (args.zip != null) {
     const ids = args.zip.split(',').map((x) => srcRef(x.trim()));
@@ -149,24 +150,31 @@ export function parseKitBlock(name: string, args: Args, quotes: string[], flags:
       if (!src || rows === null || cols === null) return null;
       const sh = args.shade != null ? args.shade.toLowerCase() : flags.has('shade') ? 'heat' : undefined;
       if (sh != null && sh !== 'heat' && sh !== 'image') return null;
-      return { kind: 'grid', src, ...(rows ? { rows } : {}), ...(cols ? { cols } : {}), ...(sh ? { shade: sh as 'heat' | 'image' } : {}), ...dp, ...caption, ...pl } as KitBlock<PtArg>;
+      const view = args.view?.toLowerCase();
+      if (view != null && view !== 'image' && view !== 'numbers') return null;
+      return { kind: 'grid', src, ...(rows ? { rows } : {}), ...(cols ? { cols } : {}), ...(sh ? { shade: sh as 'heat' | 'image' } : {}), ...(view === 'image' ? { view } : {}), ...dp, ...caption, ...pl } as KitBlock<PtArg>;
     }
     case 'table': {
       const v = parseVals(args.vals);
       const heads = list(args.cols);
       if (!v || !heads || heads.length < v[0].length) return null;
-      return { kind: 'table', vals: v, heads, ...dp, ...caption, ...pl } as KitBlock<PtArg>;
+      return { kind: 'table', vals: v, heads, ...(args.vals!.includes('/') ? { frac: true } : {}), ...dp, ...caption, ...pl } as KitBlock<PtArg>;
     }
     case 'bars': {
       const src = source(args, flags);
+      const view = args.view?.toLowerCase();
+      if (view != null && view !== 'line' && view !== 'bars') return null;
+      const axes = args.axes != null ? eid(args.axes) : undefined;
+      if (args.axes != null && !axes) return null;
+      const lv = { ...(view === 'line' || axes ? { view: 'line' } : {}), ...(axes ? { axes } : {}) };
       const lf = colRef(args.labels);
-      if (lf) { if (!src) return null; return { kind: 'bars', src, labelsFrom: lf, ...(args.ghost && eid(args.ghost) ? { ghost: eid(args.ghost) } : {}), ...dp, ...caption, ...pl } as KitBlock<PtArg>; }
+      if (lf) { if (!src) return null; return { kind: 'bars', src, labelsFrom: lf, ...(args.ghost && eid(args.ghost) ? { ghost: eid(args.ghost) } : {}), ...lv, ...dp, ...caption, ...pl } as KitBlock<PtArg>; }
       const labels = list(args.labels);
       const ghost = args.ghost != null ? eid(args.ghost) : undefined;
       if (!src || labels === null || (args.ghost != null && !ghost)) return null;
       if ('vals' in src && src.vals.length !== 1) return null; // a vector: one row
       if ('gen' in src && src.gen[0] !== 1) return null;
-      return { kind: 'bars', src, ...(labels ? { labels } : {}), ...(ghost ? { ghost } : {}), ...dp, ...caption, ...pl } as KitBlock<PtArg>;
+      return { kind: 'bars', src, ...(labels ? { labels } : {}), ...(ghost ? { ghost } : {}), ...lv, ...dp, ...caption, ...pl } as KitBlock<PtArg>;
     }
     case 'scatter': {
       const two = args.pts?.split(',');

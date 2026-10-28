@@ -52,6 +52,8 @@ export function metrics(scale: number, bodyPx: number): Metrics {
 
 type Win = { over: string; kernel?: string; spec: C.WinSpec; geo: { R: number; C: number; pr: number; pc: number; stride: number }; filled: boolean[][]; pos: [number, number] | null; calc: string | null; rect: Box | null; cur: [number, number] | null };
 type Group = { pos: number; neg: number; members: Block[] };
+/** Axes shared by line blocks (the first is the host; axes=v overlays onto v's). */
+type Plot = { host: Block; dom: { x0: number; x1: number; y0: number; y1: number }; members: Block[]; axes: SVGGElement | null };
 
 export type Block = {
   id: string;
@@ -75,8 +77,16 @@ export type Block = {
   win?: Win;
   group?: Group;
   ghost?: number[];
+  /** image: a grid drawn as shaded pixels, no numerals; line: bars drawn as a curve on axes. */
+  view?: 'image' | 'line';
+  /** line: each value's x (numeric labels, the source's xs, else 1…n); the plot it is drawn on (its own, or its host's). */
+  xs?: number[];
+  plot?: Plot;
   // table: column lefts and widths, row height (units); which computed cells are filled
   tab?: { heads: string[]; xs: number[]; ws: number[]; rh: number; hh: number; filled: boolean[][] };
+  /** table: how many columns the model wrote (literal), and whether it wrote fractions. */
+  litCols?: number;
+  litFrac?: boolean;
   // scatter (data rows may be NaN until a table's rows fill)
   data?: C.Pt[];
   cols?: { id: string; x: number; y: number };
@@ -175,7 +185,9 @@ export function shadeOf(v: number, mode: 'heat' | 'image' | undefined, lo: numbe
 type Env = { store: KitStore; registry: Registry };
 
 /** The full values of a computed or literal source. A string is a skip reason. */
-export function computeSource(src: KitSource, get: (id: string) => Block | undefined): { full: C.Mat; deps: string[]; win?: { spec: C.WinSpec; over: string; kernel?: string } } | string {
+export function computeSource(src: KitSource, get: (id: string) => Block | undefined, seed?: string): { full: C.Mat; deps: string[]; win?: { spec: C.WinSpec; over: string; kernel?: string } } | string {
+  // Noise (rand(), randn()) is seeded by the block's id: the same numbers on every build and replay.
+  const rand = seed ? C.seededRand(seed) : undefined;
   // Any block with values is a source (a grid, bars, a table); `t.c` is a table's column, as a row.
   const valsOf = (id: string): C.Mat | null => {
     const cr = colRef(id);
@@ -186,7 +198,7 @@ export function computeSource(src: KitSource, get: (id: string) => Block | undef
   const dep = (id: string) => colRef(id)?.[0] ?? id;
   if ('vals' in src) return { full: src.vals.map((r) => r.slice()), deps: [] };
   if ('gen' in src) {
-    const fn = C.compileFn(src.fn, ['r', 'c']);
+    const fn = C.compileFn(src.fn, ['r', 'c'], rand);
     if (!fn) return 'bad fn';
     return { full: Array.from({ length: src.gen[0] }, (_, r) => Array.from({ length: src.gen[1] }, (_, c) => fn({ r: r + 1, c: c + 1 }))), deps: [] };
   }
@@ -199,13 +211,13 @@ export function computeSource(src: KitSource, get: (id: string) => Block | undef
   if ('map' in src) {
     const a = valsOf(src.map);
     if (!a) return `unknown block ${src.map}`;
-    const fn = C.compileFn(src.fn);
+    const fn = C.compileFn(src.fn, C.MAP_VARS, rand);
     return fn ? { full: C.mapMat(a, fn), deps: [dep(src.map)] } : 'bad fn';
   }
   if ('zip' in src) {
     const a = valsOf(src.zip[0]), b0 = valsOf(src.zip[1]);
     if (!a || !b0) return `unknown block ${!a ? src.zip[0] : src.zip[1]}`;
-    const fn = C.compileFn(src.fn);
+    const fn = C.compileFn(src.fn, C.MAP_VARS, rand);
     if (!fn) return 'bad fn';
     // Two vectors of one length zip whatever their kinds (bars are a row, a column is a column).
     const b = asShapeOf(b0, a);
@@ -219,7 +231,8 @@ export function computeSource(src: KitSource, get: (id: string) => Block | undef
   if (src.slide) {
     const w = valsOf(src.slide);
     if (!w) return `unknown block ${src.slide}`;
-    spec = { kind: 'weights', w, ...(src.flip ? { flip: true } : {}), ...extra };
+    const ks = get(src.slide)?.src;
+    spec = { kind: 'weights', w, ...(src.flip ? { flip: true } : {}), ...(ks && 'vals' in ks && ks.frac ? { frac: true } : {}), ...extra };
   } else if (src.reduce) spec = { kind: 'reduce', kr: src.win![0], kc: src.win![1], op: src.reduce, ...extra };
   else {
     const n = src.win![0] * src.win![1];
@@ -313,9 +326,10 @@ function eventual(src: KitSource, shown: C.Mat, get: (id: string) => Block | und
   if ('col' in src) { const t = get(src.col[0]); if (t?.full && src.col[1] >= 0) return [t.full.map((r) => r[src.col[1]])]; }
   return shown;
 }
-const fmtAll = (m: C.Mat, dp?: number) => m.flat().map((v) => C.fmt(v, dp, C.fractions(m.flat())));
-/** Fractions for a block only when all its values read well that way (C.fractions). */
-const fracOf = (b: Block) => C.fractions([...(b.full ?? b.vals ?? []).flat(), ...(b.vals ?? []).flat()]);
+const fmtAll = (m: C.Mat, dp?: number, frac = false) => m.flat().map((v) => C.fmt(v, dp, frac));
+/** Fractions only for values the model wrote as fractions (literal 1/9 weights), never for computed ones. */
+const litFrac = (src?: KitSource) => !!src && 'vals' in src && !!src.frac;
+const fracOf = (b: Block) => litFrac(b.src) && !b.win && C.fractions((b.vals ?? []).flat());
 
 function anchorOf(store: KitStore, a: { right?: string; below?: string }): Promise<Block | undefined> {
   const id = a.right ?? a.below;
@@ -360,21 +374,25 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
   const c = col();
   let b: Block;
   if (a.kind === 'grid' || a.kind === 'bars') {
-    const got = computeSource(a.src, (x) => store.get(x));
+    const got = computeSource(a.src, (x) => store.get(x), id);
     if (typeof got === 'string') return got;
     if (a.kind === 'bars' && !got.win) got.full = asRow(got.full);
     const [R, Cn] = C.shape(got.full);
     if (a.kind === 'bars' && R !== 1) return 'bars need one row';
-    const strs = fmtAll(got.full, a.dp);
+    // Too many cells for numerals: a grid shows as an image, a vector as a line.
+    const image = a.kind === 'grid' && (a.view === 'image' || R > C.MAX_DIM || Cn > C.MAX_DIM);
+    const line = a.kind === 'bars' && (a.view === 'line' || Cn > 16);
+    const strs = image ? [] : fmtAll(got.full, a.dp, litFrac(a.src));
     const wide = Math.max(0, ...strs.map((s) => textWidth(s, m.numPx)));
     // Square cells, room for three digits at least, so a composition's cells come out one size.
-    let cellPx = Math.max(m.numPx * 2.5, wide + m.numPx * 0.8);
-    if (anchor?.cellPx && anchor.kind === a.kind) cellPx = Math.max(cellPx, anchor.cellPx);
+    // An image's pixels share a side of about 13 numerals' height.
+    let cellPx = image ? Math.min(m.numPx * 2.5, (m.numPx * 13) / Math.max(R, Cn)) : Math.max(m.numPx * 2.5, wide + m.numPx * 0.8);
+    if (anchor?.cellPx && anchor.kind === a.kind) cellPx = image ? (anchor.view === 'image' ? anchor.cellPx : cellPx) : anchor.view === 'image' ? cellPx : Math.max(cellPx, anchor.cellPx);
     const cs = m.u(cellPx);
     const filled = got.win ? got.full.map((r) => r.map(() => false)) : null;
     const vals = filled ? got.full.map((r) => r.map(() => NaN)) : got.full.map((r) => r.slice());
     if (a.kind === 'grid') {
-      const rows = a.rows?.slice(0, R), cols = a.cols?.slice(0, Cn);
+      const rows = image ? undefined : a.rows?.slice(0, R), cols = image ? undefined : a.cols?.slice(0, Cn);
       const pad: Pad = {
         l: rows ? m.u(Math.max(...rows.map((r) => textWidth(r, m.labelPx))) + m.labelPx * 0.8) : 0,
         t: cols ? m.label * 1.6 : 0, r: 0,
@@ -392,8 +410,12 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
         }
       }
       b = newBlock(id, 'grid', region, placed, m, got.deps);
-      Object.assign(b, { src: a.src, full: got.full, vals, dp: a.dp, cs, cellPx, shade: a.shade, em: a.em });
+      Object.assign(b, { src: a.src, full: got.full, vals, dp: a.dp, cs, cellPx, shade: image ? a.shade ?? 'image' : a.shade, em: a.em, ...(image ? { view: 'image' } : {}) });
       b.el.rows = rows; b.el.cols = cols; b.el.caption = a.caption;
+    } else if (line) {
+      const made = await makeLine(a as Extract<KitBlock, { kind: 'bars' }>, got, id, region, m, P, store);
+      if (typeof made === 'string') return made;
+      b = made;
     } else {
       const slot = cs, H = cs * 3.2;
       const ev = eventual(a.src, got.full, (x) => store.get(x));
@@ -420,7 +442,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
         if (gb?.vals && gb.vals[0].length === Cn) { b.ghost = gb.vals[0].slice(); const e = ext(b.ghost); b.group.pos = Math.max(b.group.pos, e.pos); b.group.neg = Math.max(b.group.neg, e.neg); }
       }
     }
-    if (got.win) {
+    if (got.win && !line) {
       const input = store.get(got.win.over)!;
       const geo = C.winGeometry(input.vals!.length, input.vals![0].length, got.win.spec)!;
       b.win = { over: got.win.over, kernel: got.win.kernel, spec: got.win.spec, geo, filled: filled!, pos: null, calc: null, rect: null, cur: null };
@@ -434,7 +456,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     b = newBlock(id, 'table', region, placed, m, []);
     const xs: number[] = [];
     ws.reduce((x, w) => { xs.push(x); return x + w; }, placed.body.x);
-    Object.assign(b, { vals, full: vals.map((r) => r.slice()), dp: a.dp, em: a.em, src: { vals } });
+    Object.assign(b, { vals, full: vals.map((r) => r.slice()), dp: a.dp, em: a.em, src: { vals }, litCols: a.vals[0].length, litFrac: !!a.frac });
     b.tab = { heads: a.heads.slice(), xs, ws, rh, hh, filled: vals.map((r) => r.map((v) => Number.isFinite(v))) };
     b.el.caption = a.caption;
   } else if (a.kind === 'scatter') {
@@ -553,10 +575,13 @@ type GridEls = { cells: SVGRectElement[][]; texts: SVGTextElement[][]; over: SVG
 
 function rangeOf(b: Block): [number, number] {
   const xs = (b.win ? b.full! : b.vals!).flat().filter(Number.isFinite);
+  // An image spans its own range (dark = its lowest value), so its contrast is what the values make.
+  if (b.view === 'image') return xs.length ? [Math.min(...xs), Math.max(...xs)] : [0, 1];
   return xs.length ? [Math.min(0, ...xs), Math.max(...xs)] : [0, 1];
 }
 
 async function drawGrid(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: Pace) {
+  if (b.view === 'image') return drawImage(b, c, k);
   const g = b.g!, { body } = b.placed, cs = b.cs!, m = b.m;
   const [R, Cn] = C.shape(b.vals!);
   const frame = svg(g, 'g');
@@ -597,6 +622,32 @@ async function drawGrid(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: P
   const row = Math.min(70, 420 / Math.max(1, R)) * k.speed;
   await Promise.all(texts.map((ts, r) => pause(r * row).then(() => tween(160 * k.speed, (t) => ts.forEach((x) => x.setAttribute('opacity', String(t)))))));
   void env;
+}
+
+/**
+ * A grid as an image: one shaded square per cell (a hair of overlap, so no seams), no grid lines and
+ * no numerals; a light frame and the caption. Its numerals exist (detached) so every verb works the same.
+ */
+async function drawImage(b: Block, c: ReturnType<typeof col>, k: Pace) {
+  const g = b.g!, { body } = b.placed, cs = b.cs!, m = b.m;
+  const [R, Cn] = C.shape(b.vals!);
+  const frame = svg(g, 'g');
+  const [lo, hi] = rangeOf(b);
+  const ov = px(b, 0.5);
+  const cells: SVGRectElement[][] = [], texts: SVGTextElement[][] = [];
+  for (let r = 0; r < R; r++) {
+    cells.push([]); texts.push([]);
+    for (let q = 0; q < Cn; q++) {
+      cells[r].push(svg(frame, 'rect', { x: body.x + q * cs, y: body.y + r * cs, width: cs + ov, height: cs + ov, fill: shadeOf(b.vals![r][q], b.shade, lo, hi, c).fill }));
+      texts[r].push(document.createElementNS('http://www.w3.org/2000/svg', 'text'));
+    }
+  }
+  svg(frame, 'rect', { x: body.x, y: body.y, width: body.w, height: body.h, fill: 'none', stroke: c.edge, ...hair(1) });
+  const cap = b.el.caption as string | undefined;
+  if (cap) caption(frame, body.x + body.w / 2, body.y + body.h + m.label * 1.2, cap, m, c);
+  const over = svg(g, 'g', { class: 'kit-over' });
+  b.el.grid = { cells, texts, over } satisfies GridEls;
+  await appear(frame, 320, k);
 }
 
 /** Shows grid values (tweened from what is shown now over `ms`). Blank (NaN) cells stay empty. */
@@ -657,6 +708,7 @@ function barRect(b: Block, i: number, v: number): Box {
 const baseY = (b: Block) => { const gr = b.group!, span = gr.pos + gr.neg || 1; return b.placed.body.y + gr.pos * (b.placed.body.h / span); };
 
 async function drawBars(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: Pace) {
+  if (b.view === 'line') return drawLine(b, c, env, k);
   const g = b.g!, { body } = b.placed, m = b.m, n = b.vals![0].length;
   const ghosts = svg(g, 'g');
   const base = svg(g, 'line', { x1: body.x - px(b, 6), x2: body.x + body.w + px(b, 6), y1: baseY(b), y2: baseY(b), stroke: c.edge, ...hair(1) });
@@ -693,6 +745,7 @@ function drawGhosts(b: Block, ghost: number[], c: ReturnType<typeof col>) {
 
 /** Tweens bars (and their value labels) to `next`; the group rescales when needed, and its other members follow. */
 async function setBarVals(b: Block, next: C.Mat, ms: number, ctl: Ctl | undefined, c: ReturnType<typeof col>) {
+  if (b.view === 'line') return setLineVals(b, next, ms, ctl, c);
   const els = b.el.bars as BarEls | undefined;
   const prev = b.vals![0].slice();
   b.vals = next.map((r) => r.slice());
@@ -733,6 +786,184 @@ function barBox(b: Block, c0: number, c1: number): Box {
   for (let i = c0; i <= c1; i++) rs.push(barRect(b, i, b.vals![0][i]));
   const u = union(rs);
   return u.h > 0 ? u : { ...u, y: u.y - b.m.label, h: b.m.label * 2 };
+}
+
+// ------------------------------------------------------------------------------------------------
+// line: a vector drawn as a curve on axes (view=line, or past 16 values). Lines on one plot share
+// its axes (axes=v): before vs after, demand vs supply, a signal and its smoothing.
+
+type LineEls = { path: SVGPathElement; ghost: SVGPathElement; dots: SVGCircleElement[]; label: SVGTextElement | null; rings: SVGGElement };
+
+/** x of each value: numeric labels, else the source's own xs (a map keeps them; a window's output sits at its windows' centres), else 1…n. */
+function lineXs(a: Extract<KitBlock, { kind: 'bars' }>, n: number, store: KitStore, win?: { spec: C.WinSpec; over: string }): number[] {
+  const lf = a.labelsFrom && a.labelsFrom[1] >= 0 ? store.get(a.labelsFrom[0]) : undefined;
+  const labs = lf?.full ? lf.full.map((r) => r[a.labelsFrom![1]]) : a.labels?.map(Number);
+  if (labs && labs.length >= n && labs.slice(0, n).every(Number.isFinite)) return labs.slice(0, n);
+  const srcId = sourceIds(a.src)[0];
+  const sb = srcId ? store.get(srcId) : undefined;
+  const base = sb?.xs ?? (sb?.vals ? sb.vals.flat().map((_, i) => i + 1) : undefined);
+  if (base && win) {
+    const [, kc] = C.winSize(win.spec), g = C.winGeometry(1, base.length, win.spec);
+    if (g) return Array.from({ length: n }, (_, i) => {
+      const at = i * g.stride - g.pc + (kc - 1) / 2, lo = Math.max(0, Math.min(base.length - 1, Math.floor(at))), hi = Math.min(base.length - 1, lo + 1);
+      return base[lo] + (base[hi] - base[lo]) * (at - Math.floor(at));
+    });
+  }
+  if (base && base.length === n) return base.slice();
+  return Array.from({ length: n }, (_, i) => i + 1);
+}
+
+const padDom = (lo: number, hi: number) => { const d = hi - lo || Math.abs(hi) || 1; return [lo - d * 0.06, hi + d * 0.06] as const; };
+function domOf(members: { xs: number[]; ys: number[] }[]): Plot['dom'] {
+  const xs = members.flatMap((m) => m.xs), ys = members.flatMap((m) => m.ys.filter(Number.isFinite));
+  const [y0, y1] = padDom(Math.min(...ys), Math.max(...ys));
+  return { x0: Math.min(...xs), x1: Math.max(...xs), y0, y1 };
+}
+function linePt(pl: Plot, x: number, y: number): { x: number; y: number } {
+  const { body } = pl.host.placed, d = pl.dom;
+  return { x: body.x + ((x - d.x0) / (d.x1 - d.x0 || 1)) * body.w, y: body.y + body.h - ((y - d.y0) / (d.y1 - d.y0 || 1)) * body.h };
+}
+
+async function makeLine(a: Extract<KitBlock, { kind: 'bars' }>, got: { full: C.Mat; deps: string[]; win?: { spec: C.WinSpec; over: string } }, id: string, region: string, m: Metrics, P: (w: number, h: number, pad: Pad) => Placed, store: KitStore): Promise<Block | string> {
+  const ys = asRow(got.full)[0];
+  if (ys.filter(Number.isFinite).length < 2) return 'a line needs two values';
+  const xs = lineXs(a, ys.length, store, got.win);
+  const host = a.axes ? await store.wait(a.axes) : undefined;
+  if (a.axes && !host?.plot) return `no line ${a.axes} to share axes with`;
+  let b: Block;
+  if (host?.plot) {
+    const pl = host.plot;
+    b = newBlock(id, 'bars', region, { body: { ...host.placed.body }, rect: { ...host.placed.rect } }, m, got.deps);
+    b.plot = pl;
+    pl.members.push(b);
+    // The plot widens to hold the new line (its axes and lines redraw when it is drawn).
+    pl.dom = domOf(pl.members.map((x) => ({ xs: x === b ? xs : x.xs!, ys: x === b ? ys : x.full![0] })));
+  } else {
+    const w = m.cell * 7, h = m.cell * 4.2;
+    const dom = domOf([{ xs, ys }]);
+    const tickW = Math.max(...C.ticks(dom.y0, dom.y1).map((t) => textWidth(C.fmt(t), m.labelPx)));
+    // Room on the right for each line's name at its end.
+    const pad: Pad = { l: m.u(tickW + m.labelPx * 0.9), t: m.label * 0.8, r: m.label * 5, b: m.label * 1.9 };
+    b = newBlock(id, 'bars', region, P(w, h, pad), m, got.deps);
+    b.plot = { host: b, dom, members: [b], axes: null };
+  }
+  Object.assign(b, { src: a.src, full: [ys.slice()], vals: [ys.slice()], dp: a.dp, em: (a as { em?: boolean }).em, view: 'line', xs, group: { pos: 0, neg: 0, members: [] } });
+  b.group!.members.push(b);
+  b.el.caption = a.caption;
+  return b;
+}
+
+/** (Re)draws a plot's axes and ticks. */
+function drawPlotAxes(pl: Plot, c: ReturnType<typeof col>) {
+  const h = pl.host, { body } = h.placed, m = h.m, d = pl.dom;
+  pl.axes?.remove();
+  const ax = svg(h.g!, 'g');
+  h.g!.insertBefore(ax, h.g!.firstChild);
+  svg(ax, 'path', { d: `M${body.x} ${body.y - px(h, 4)}V${body.y + body.h}H${body.x + body.w + px(h, 4)}`, fill: 'none', stroke: c.edge, ...hair(1) });
+  for (const t of C.ticks(d.x0, d.x1, 5)) {
+    const x = linePt(pl, t, d.y0).x;
+    svg(ax, 'line', { x1: x, x2: x, y1: body.y + body.h, y2: body.y + body.h + px(h, 4), stroke: c.edge, ...hair(1) });
+    kitText(ax, x, body.y + body.h + m.label * 0.95, C.fmt(t), { size: m.label, fill: c.muted });
+  }
+  for (const t of C.ticks(d.y0, d.y1)) {
+    const y = linePt(pl, d.x0, t).y;
+    svg(ax, 'line', { x1: body.x - px(h, 4), x2: body.x, y1: y, y2: y, stroke: c.edge, ...hair(1) });
+    kitText(ax, body.x - px(h, 7), y, C.fmt(t), { size: m.label, fill: c.muted, anchor: 'end' });
+  }
+  if (d.y0 < 0 && d.y1 > 0) { const y = linePt(pl, d.x0, 0).y; svg(ax, 'line', { x1: body.x, x2: body.x + body.w, y1: y, y2: y, stroke: c.line, ...hair(1) }); }
+  pl.axes = ax;
+}
+
+/** The path through a line's first `upto` values (fractional: the last segment partly drawn). */
+function linePath(b: Block, ys: number[], upto = ys.length): string {
+  const pl = b.plot!, xs = b.xs!;
+  let d = '', pen = false;
+  const whole = Math.floor(upto);
+  for (let i = 0; i < Math.min(ys.length, Math.ceil(upto)); i++) {
+    if (!Number.isFinite(ys[i])) { pen = false; continue; }
+    let x = xs[i], y = ys[i];
+    if (i >= whole && i > 0 && Number.isFinite(ys[i - 1])) { const f = upto - whole; x = xs[i - 1] + (xs[i] - xs[i - 1]) * f; y = ys[i - 1] + (ys[i] - ys[i - 1]) * f; }
+    const p = linePt(pl, x, y);
+    d += `${pen ? 'L' : 'M'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
+    pen = true;
+  }
+  return d;
+}
+
+/** Puts a line's path, dots and end label where its values say (on its plot's current axes). */
+function paintLine(b: Block, ys: number[], c: ReturnType<typeof col>, upto = ys.length) {
+  const e = b.el.line as LineEls | undefined;
+  if (!e) return;
+  e.path.setAttribute('d', linePath(b, ys, upto));
+  e.ghost.setAttribute('d', b.ghost ? linePath(b, b.ghost) : '');
+  e.dots.forEach((dot, i) => {
+    const ok = Number.isFinite(ys[i]) && i < upto;
+    const p = ok ? linePt(b.plot!, b.xs![i], ys[i]) : { x: 0, y: 0 };
+    setAttrs(dot, { cx: p.x, cy: p.y, opacity: ok ? 1 : 0 });
+  });
+  if (e.label) {
+    let k = ys.length - 1;
+    while (k > 0 && !Number.isFinite(ys[k])) k--;
+    const p = linePt(b.plot!, b.xs![k], ys[k]);
+    setAttrs(e.label, { x: p.x + b.m.label * 0.5, y: p.y, opacity: upto >= ys.length ? 1 : 0 });
+  }
+  void c;
+}
+
+/** A plot's lines, newest in ink, earlier ones (unless em) set back in the muted tone. */
+function lineColor(b: Block, c: ReturnType<typeof col>, accent: string): string {
+  if (b.em) return accent;
+  const ms = b.plot!.members;
+  return b === ms[ms.length - 1] ? c.ink : c.muted;
+}
+
+async function drawLine(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: Pace) {
+  const pl = b.plot!, g = b.g!, m = b.m, accent = env.settings.inkColor;
+  if (pl.host !== b) await pl.host.ready;
+  if (pl.host === b || pl.axes) drawPlotAxes(pl, c);
+  const ys = b.vals![0];
+  const color = lineColor(b, c, accent);
+  const ghost = svg(g, 'path', { d: '', fill: 'none', stroke: c.muted, 'stroke-dasharray': '4 4', ...hair(1.2) });
+  const path = svg(g, 'path', { d: '', fill: 'none', stroke: color, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', ...hair(1.8) });
+  const dots = ys.length <= 24 ? ys.map(() => svg(g, 'circle', { r: px(b, 2.6), fill: color, opacity: 0 })) : [];
+  const name = (b.el.caption as string | undefined) ?? idCaption(b.id);
+  const label = name ? kitText(g, 0, 0, name, { size: m.label, fill: color, anchor: 'start', halo: c.halo, opacity: 0 }) : null;
+  if (label && isVarName(name!)) { label.setAttribute('font-style', 'italic'); label.setAttribute('font-family', 'KaTeX_Math, "STIX Two Math", "Cambria Math", "Times New Roman", serif'); }
+  b.el.line = { path, ghost, dots, label, rings: svg(g, 'g') } satisfies LineEls;
+  // Earlier lines on this plot: back to muted, and onto the (maybe widened) axes.
+  for (const o of pl.members) if (o !== b && o.el.line) { const oc = lineColor(o, c, accent); const oe = o.el.line as LineEls; oe.path.setAttribute('stroke', oc); oe.dots.forEach((d) => d.setAttribute('fill', oc)); oe.label?.setAttribute('fill', oc); paintLine(o, o.vals![0], c); }
+  // The line draws in from the left.
+  const fast = k.fadeMs != null || prefersReducedMotion();
+  await tween(fast ? 0 : Math.min(1400, 300 + ys.length * 25) * k.speed, (t) => paintLine(b, ys, c, 1 + t * (ys.length - 1)));
+  paintLine(b, ys, c);
+}
+
+/** Tweens a line to new values; the plot widens if they need it (its axes and other lines follow). */
+async function setLineVals(b: Block, next: C.Mat, ms: number, ctl: Ctl | undefined, c: ReturnType<typeof col>) {
+  const prev = b.vals![0].slice(), to = asRow(next)[0];
+  b.vals = [to.slice()];
+  b.full = [to.slice()];
+  const pl = b.plot!;
+  const old = pl.dom, dom = domOf(pl.members.map((x) => ({ xs: x.xs!, ys: [...x.vals![0], ...(x.ghost ?? [])] })));
+  const moved = dom.y0 !== old.y0 || dom.y1 !== old.y1 || dom.x0 !== old.x0 || dom.x1 !== old.x1;
+  if (!b.el.line) { pl.dom = dom; return; }
+  await tween(ms, (t) => {
+    if (moved) pl.dom = { x0: old.x0 + (dom.x0 - old.x0) * t, x1: old.x1 + (dom.x1 - old.x1) * t, y0: old.y0 + (dom.y0 - old.y0) * t, y1: old.y1 + (dom.y1 - old.y1) * t };
+    paintLine(b, to.map((v, i) => (Number.isFinite(prev[i]) && Number.isFinite(v) ? prev[i] + (v - prev[i]) * t : v)), c);
+    if (moved) for (const o of pl.members) if (o !== b) paintLine(o, o.vals![0], c);
+  }, ctl);
+  pl.dom = dom;
+  if (moved && pl.axes) drawPlotAxes(pl, c);
+  for (const o of pl.members) paintLine(o, o.vals![0], c);
+}
+
+/** Section box around a line's points c0…c1. */
+function lineBox(b: Block, c0: number, c1: number): Box {
+  const r = px(b, 6);
+  const ps = [];
+  for (let i = c0; i <= c1; i++) if (Number.isFinite(b.vals![0][i])) ps.push(linePt(b.plot!, b.xs![i], b.vals![0][i]));
+  if (!ps.length) return b.placed.body;
+  return union(ps.map((q) => ({ x: q.x - r, y: q.y - r, w: 2 * r, h: 2 * r })));
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -1054,7 +1285,7 @@ function winRect(p: Parts, r: number, q: number): Box {
 }
 
 /** Moves the window to output (r, c) and fills it: the overlay glides, the calc line shows its expansion, the cell fills in the accent. */
-async function winGo(p: Parts, r: number, q: number, ctl: Ctl, glideMs: number, c: ReturnType<typeof col>, env: BuildEnv) {
+async function winGo(p: Parts, r: number, q: number, ctl: Ctl, glideMs: number, c: ReturnType<typeof col>, env: BuildEnv, also: [number, number][] = []) {
   const w = p.out.win!, accent = env.settings.inkColor;
   const inEls = p.input.el.grid as GridEls, outEls = p.out.el.grid as GridEls;
   const pin = (b: Block) => px(b, 1.5);
@@ -1064,7 +1295,8 @@ async function winGo(p: Parts, r: number, q: number, ctl: Ctl, glideMs: number, 
   const oc = cellBox(p.out, r, r, q, q);
   if (!o) {
     const ghosts = svg(inEls.over, 'g');
-    const win = svg(inEls.over, 'rect', { x: to.x - pin(p.input), y: to.y - pin(p.input), width: to.w + 2 * pin(p.input), height: to.h + 2 * pin(p.input), fill: accent, 'fill-opacity': 0.08, stroke: accent, rx: px(p.input, 3), ...hair(2.2) });
+    const img = p.input.view === 'image';
+    const win = svg(inEls.over, 'rect', { x: to.x - pin(p.input), y: to.y - pin(p.input), width: to.w + 2 * pin(p.input), height: to.h + 2 * pin(p.input), fill: img ? 'none' : accent, 'fill-opacity': 0.08, stroke: accent, rx: px(p.input, img ? 1 : 3), ...hair(img ? 1.6 : 2.2) });
     const kf = p.kernel?.el.grid ? svg((p.kernel.el.grid as GridEls).over, 'rect', { ...frameAt(p.kernel.placed.body, pin(p.kernel)), fill: 'none', stroke: accent, rx: px(p.kernel, 3), ...hair(2.2) }) : undefined;
     const of = svg(outEls.over, 'rect', { ...frameAt(oc, pin(p.out)), fill: 'none', stroke: accent, rx: px(p.out, 3), ...hair(2.2) });
     o = { win, ghosts, kf, of };
@@ -1092,9 +1324,11 @@ async function winGo(p: Parts, r: number, q: number, ctl: Ctl, glideMs: number, 
   w.filled[r][q] = true;
   const next = p.out.vals!.map((row) => row.slice());
   next[r][q] = p.out.full![r][q];
+  // A sweep over a large image fills a run of cells per step (`also`).
+  for (const [i, j] of also) { w.filled[i][j] = true; next[i][j] = p.out.full![i][j]; }
   const prevCur = w.cur;
   w.cur = [r, q];
-  await setGridVals(p.out, next, ctl.ff ? 0 : 160, ctl, c, [r, q], accent);
+  await setGridVals(p.out, next, ctl.ff || p.out.view === 'image' ? 0 : 160, ctl, c, [r, q], accent);
   if (prevCur && (prevCur[0] !== r || prevCur[1] !== q)) restCell(p.out, prevCur[0], prevCur[1], c, accent);
 }
 const frameAt = (r: Box, p: number) => ({ x: r.x - p, y: r.y - p, width: r.w + 2 * p, height: r.h + 2 * p });
@@ -1108,7 +1342,7 @@ function drawPadding(p: Parts, r: number, q: number, g: SVGGElement, c: ReturnTy
     if (rr >= 0 && cc >= 0 && rr < R && cc < Cn) continue;
     const x = body.x + cc * cs, y = body.y + rr * cs;
     svg(g, 'rect', { x, y, width: cs, height: cs, fill: c.cell, 'fill-opacity': 0.7, stroke: c.muted, 'stroke-dasharray': '2 3', ...hair(1) });
-    kitText(g, x + cs / 2, y + cs / 2, '0', { size: p.input.m.num, fill: c.muted });
+    if (p.input.view !== 'image') kitText(g, x + cs / 2, y + cs / 2, '0', { size: p.input.m.num, fill: c.muted });
   }
 }
 
@@ -1161,12 +1395,17 @@ async function stepOrSweep(v: Extract<KitVerb, { kind: 'step' | 'sweep' }>, env:
         if (signal.aborted) ctl.ff = true;
         if (target) { first(); await winGo(p, target[0], target[1], ctl, GLIDE_MS, c, env); return; }
         const order = C.sweepOrder(w.filled);
-        const slot = C.sweepStepMs(order.length, v.kind === 'sweep' ? v.dur : undefined);
-        const glide = Math.min(GLIDE_MS, slot * 0.4);
-        for (const [i, [r, q]] of order.entries()) {
+        // At most ~120 window moves: past that (a large image), each move fills a run of cells.
+        const per = Math.max(1, Math.ceil(order.length / 120));
+        const runs: [number, number][][] = [];
+        for (let i = 0; i < order.length; i += per) runs.push(order.slice(i, i + per));
+        const slot = C.sweepStepMs(runs.length, v.kind === 'sweep' ? v.dur : undefined);
+        const glide = per > 1 ? 0 : Math.min(GLIDE_MS, slot * 0.4);
+        for (const [i, run] of runs.entries()) {
           if (i === 0) first();
           const t0 = performance.now();
-          await winGo(p, r, q, ctl, prefersReducedMotion() ? 0 : glide, c, env);
+          const [r, q] = run[run.length - 1];
+          await winGo(p, r, q, ctl, prefersReducedMotion() ? 0 : glide, c, env, run.slice(0, -1));
           await pause(slot - (performance.now() - t0), ctl);
         }
         first();
@@ -1249,7 +1488,7 @@ export function partBox(b: Block, p: BlockPart | null): Box | null {
   if (b.kind === 'bars') {
     const n = b.vals![0].length;
     if (p.c1 >= n) return null;
-    return barBox(b, p.c0, p.c1);
+    return b.view === 'line' ? lineBox(b, p.c0, p.c1) : barBox(b, p.c0, p.c1);
   }
   if (b.kind === 'scatter') {
     const n = b.data!.length;
@@ -1353,6 +1592,16 @@ async function emphFade(a: Extract<RefAction, { kind: 'emph' | 'fade' }>, env: B
     target: { region: b.region }, bbox: pad(box, b.m.u(8)),
     draw: async (_signal, k) => {
       if (a.kind === 'fade') { await fadePart(b, part, k); return; }
+      if (b.kind === 'bars' && b.view === 'line' && part) {
+        const e = b.el.line as LineEls;
+        for (let i = part.c0; i <= part.c1; i++) {
+          if (!Number.isFinite(b.vals![0][i])) continue;
+          const q = linePt(b.plot!, b.xs![i], b.vals![0][i]);
+          svg(e.rings, 'circle', { cx: q.x, cy: q.y, r: px(b, 7), fill: 'none', stroke: accent, ...hair(1.6) });
+          e.dots[i]?.setAttribute('fill', accent);
+        }
+        return;
+      }
       if (b.kind === 'bars' && part) {
         const e = b.el.bars as BarEls;
         for (let i = part.c0; i <= part.c1; i++) { e.emBars.add(i); e.bars[i].setAttribute('fill', accent); e.vals[i].setAttribute('fill', accent); }
@@ -1396,6 +1645,7 @@ async function fadePart(b: Block, part: BlockPart | null, k: Pace) {
   const dim: Element[] = [];
   if (!part) dim.push(b.g!);
   else if (b.kind === 'grid' || b.kind === 'table') { const e = (b.kind === 'table' ? b.el.table : b.el.grid) as GridEls; for (let i = part.r0; i <= part.r1; i++) for (let j = part.c0; j <= part.c1; j++) dim.push(e.texts[i][j], ...(e.cells ? [e.cells[i][j]] : [])); }
+  else if (b.kind === 'bars' && b.view === 'line') { const e = b.el.line as LineEls; for (let i = part.c0; i <= part.c1; i++) if (e.dots[i]) dim.push(e.dots[i]); }
   else if (b.kind === 'bars') { const e = b.el.bars as BarEls; for (let i = part.c0; i <= part.c1; i++) dim.push(e.bars[i], e.vals[i]); }
   else if (b.kind === 'scatter') { const e = b.el.scatter as ScatterEls; for (let i = part.c0; i <= part.c1; i++) dim.push(e.pts[i]); }
   await tween(300 * k.speed, (t) => dim.forEach((d) => d.setAttribute('opacity', String(1 - 0.7 * t))));
@@ -1415,7 +1665,8 @@ type TableEls = { texts: SVGTextElement[][]; heads: SVGTextElement[]; over: SVGG
 const tabCell = (b: Block, r: number, j: number): Box => ({ x: b.tab!.xs[j], y: b.placed.body.y + r * b.tab!.rh, w: b.tab!.ws[j], h: b.tab!.rh });
 const tabStr = (b: Block, r: number, j: number) => {
   const v = b.vals![r][j];
-  return Number.isFinite(v) ? C.fmt(v, b.dp, C.fractions(b.full!.map((row) => row[j]))) : b.tab!.filled[r][j] ? '—' : '';
+  const frac = !!b.litFrac && j < (b.litCols ?? 0) && C.fractions(b.full!.map((row) => row[j]));
+  return Number.isFinite(v) ? C.fmt(v, b.dp, frac) : b.tab!.filled[r][j] ? '—' : '';
 };
 
 async function drawTable(b: Block, c: ReturnType<typeof col>, k: Pace) {
@@ -1465,7 +1716,7 @@ async function refreshDeps(ids: string[], store: KitStore, ms: number, ctl: Ctl 
   for (const d of deps) {
     if (d.kind === 'scatter') { jobs.push(refreshScatter(d, store, ms, ctl, c, env.settings.inkColor)); continue; }
     if (d.kind === 'calc' || d.kind === 'fit' || !d.src) continue;
-    const got = computeSource(d.src, (x) => store.get(x));
+    const got = computeSource(d.src, (x) => store.get(x), d.id);
     if (typeof got === 'string') continue;
     if (d.kind === 'bars' && !d.win) got.full = asRow(got.full);
     if (!d.win && 'col' in d.src) { /* a table column: shows what has filled */ }
@@ -1523,7 +1774,7 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
   const below = (o: Block) => o.placed.rect.y >= t.placed.rect.y + t.placed.rect.h - 1;
   const yBelow = Math.max(t.placed.rect.y + t.placed.rect.h, ...others.filter(below).map((o) => o.placed.rect.y + o.placed.rect.h));
   const maxW = 1000 - m.margin - x;
-  const exps = full.map((_, r) => rowExp(v, fn, full, r, t.dp, C.fractions(full.map((row) => row[j]))));
+  const exps = full.map((_, r) => rowExp(v, fn, full, r, t.dp));
   const lines = Math.max(1, ...exps.map((e) => wrapPieces(piecesOf(e, tb.heads[j]), maxW, (s) => m.u(textWidth(s, m.numPx))).length));
   const body = { x, y: yBelow + m.gap * 0.7, w: Math.min(maxW, Math.max(...exps.map((e) => m.u(textWidth(piecesOf(e, tb.heads[j]).join(''), m.numPx))))), h: lines * m.num * 1.55 };
   const cb = newBlock(store.anonId(), 'calc', t.region, { body, rect: { ...body } }, m, []);
@@ -1579,10 +1830,11 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
 }
 
 /** Row r's expansion of a column fn: the fn with the row's values substituted, and its value. */
-function rowExp(v: { fn: string }, fn: import('../expr').VarFn, full: C.Mat, r: number, dp?: number, frac = true): C.Expansion {
+function rowExp(v: { fn: string }, fn: import('../expr').VarFn, full: C.Mat, r: number, dp?: number): C.Expansion {
   const env = rowEnv({} as Block, full, r);
   const value = fn(env);
-  return { parts: [C.substitute(v.fn, env, dp), ' = '], result: Number.isFinite(value) ? C.fmt(value, dp, frac) : '—', value };
+  const div = Number.isFinite(value) ? C.divisionStep(v.fn, env, ROW_VARS, dp) : null;
+  return { parts: [C.substitute(v.fn, env, dp), ' = ', ...(div ? [div] : [])], result: Number.isFinite(value) ? C.fmt(value, dp) : '—', value };
 }
 
 /** A reference line at a value: across bars, a scatter (y = at), or between a table column's rows where it crosses. */
@@ -1591,7 +1843,11 @@ async function levelVerb(v: Extract<KitVerb, { kind: 'level' }>, env: BuildEnv, 
   if (!b) return `unknown block ${v.ref}`;
   let y: number, x0: number, x1: number;
   const { body } = b.placed, m = b.m;
-  if (b.kind === 'bars') {
+  if (b.kind === 'bars' && b.view === 'line') {
+    const pl = b.plot!;
+    if (v.at < pl.dom.y0 || v.at > pl.dom.y1) return 'level outside the plot';
+    y = linePt(pl, pl.dom.x0, v.at).y; x0 = pl.host.placed.body.x; x1 = x0 + pl.host.placed.body.w;
+  } else if (b.kind === 'bars') {
     const gr = b.group!, span = gr.pos + gr.neg || 1;
     y = baseY(b) - (v.at * body.h) / span; x0 = body.x - px(b, 6); x1 = body.x + body.w + px(b, 6);
   } else if (b.kind === 'scatter') {
