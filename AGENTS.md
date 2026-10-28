@@ -1,5 +1,9 @@
 # AGENTS.md — petu (PDF tutor)
 
+> **New here?** Read [docs/briefs/README.md](docs/briefs/README.md), then the brief for the area you're changing.
+> Briefs: [board-engine](docs/briefs/board-engine.md) · [agent-pipeline](docs/briefs/agent-pipeline.md) ·
+> [layout-ui](docs/briefs/layout-ui.md) · [eval](docs/briefs/eval.md). Code wins over any doc.
+
 Core context for anyone (human or agent) working in this repo. Read this first.
 
 ## What it is
