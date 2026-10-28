@@ -110,6 +110,8 @@ export interface DeskApi {
    * band keeps in view, e.g. the point a line starts from.
    */
   reveal(t: Target, r: SRect, before?: BeforeMove, anchor?: SRect): Promise<boolean>;
+  /** Kit blocks need a section `h` units tall (it grows past 700; never shrinks). */
+  growRegion?(id: string, h: number): void;
   /** Ink is landing at this target-space rect: later page framing keeps it in view when it fits. */
   noteInk?(t: Target, r: SRect): void;
   isVisible(t: Target, r: SRect): boolean;

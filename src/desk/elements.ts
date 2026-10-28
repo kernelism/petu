@@ -12,9 +12,12 @@ import { plotStrokes } from './plot';
 import { nudge, placeClear, placeLabel, type Seg } from './nudge';
 import { boxOf, strokeBoxes, union, type ElementEntry } from './registry';
 import { TEXT_PX, MATH_PX, own, makeText, measureText, reveal, drawDot, drawShade, emphPass, moveGroupTo, translateOf, fadeGroup, textSegments, type TextOpts, type ShadeShape, type ShadeLook } from './render';
-import { preloadMath, texToHtml, placeMath, revealMath } from './math';
+import { preloadMath, texToHtml, placeMath, revealMath, setMathAt } from './math';
 import type { BuildElement, BuildEnv, ElementPlan, Pace, TargetCtx } from './types';
 import { MIN_TEXT_PX } from './layout';
+import { KIT_BLOCKS, type KitBlock } from '../script/types';
+import { isBlockRef } from '../script/pointExpr';
+import { buildBlock, buildKitRef, isKitRef, kitEndBox, resolveKitPoints } from './kit/kit';
 
 /** Closed shapes (circle, box) read as rushed below this, however small… */
 export const CLOSED_MIN_MS = 400;
@@ -62,12 +65,22 @@ const where = (t: Target) => (t.region != null ? `region ${t.region}` : `page ${
 /** Resolves one ink action into a plan (see ElementPlan). Strings are skip reasons. */
 export const buildElement: BuildElement = async (a, env) => {
   if (a.kind === 'connect') return connect(a, env);
-  if ('ref' in a) return ref(a, env);
+  if ('ref' in a) return isKitRef(a, env.registry) ? buildKitRef(a, env) : ref(a, env);
   const target: Target = a.region != null ? { region: a.region } : { page: a.page! };
   const ctx = await env.ctx(target);
   if (typeof ctx === 'string') return ctx;
-  return draw(a, ctx, env);
+  if (KIT_BLOCKS.has(a.kind)) return buildBlock(a as KitBlock & DrawAction, ctx, env);
+  // Kit parts named as points (g[2,3]) resolve now that their blocks are laid out.
+  const k = await resolveKitPoints(a, env.registry);
+  if (typeof k === 'string') return k;
+  return draw(centred(k as DrawAction), ctx, env);
 };
+
+/** A box given by its centre → its top-left. (Centred text is placed at draw time, once it is measured.) */
+function centred(a: DrawAction): DrawAction {
+  if (a.kind === 'box' && 'at' in a && a.centered) return { ...a, at: { x: a.at.x - a.w / 2, y: a.at.y - (a.region != null ? a.h : a.h) / 2 }, centered: false };
+  return a;
+}
 
 /** Ink color: accent on pages; in regions, neutral (--ink) unless `em` (rule 6). */
 function colorOf(t: Target, em: boolean | undefined, env: BuildEnv): string {
@@ -340,9 +353,14 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
     }
     case 'write': {
       // Left-aligned at `at`, always: text too long for the section wraps under itself (never shifted back in).
-      const at = P(a.at);
+      let at = P(a.at);
       const room = (o: TextOpts) => Math.max(1000 - at.x, o.size * 8);
       const o = textOpts(ctx, env, textPx(ctx, a.size), a.em, 'write');
+      if (a.centered) {
+        // Centred on `at`: one line, its middle there (never wrapped: a centred label is short).
+        const w = measureText(ctx.layers.agent, a.text, o).w;
+        at = { x: Math.max(0, at.x - w / 2), y: at.y };
+      }
       const est = linesBox(ctx.layers.agent, wrapLines(ctx.layers.agent, a.text, o, room(o)), o, at);
       return {
         target: ctx.target, bbox: est,
@@ -384,18 +402,23 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       if (!html) { console.warn('[desk] math does not parse', a.tex); return 'bad tex'; }
       // Left-aligned at `at` (its vertical middle there), at the slide's body size: never shifted per element.
       const size = px(mathPx(ctx, a.size)) * KATEX_EM;
-      const at = P(a.at);
+      const at0 = P(a.at);
+      // Centred math: its width is known once typeset; estimated here for the reveal box.
+      const at = a.centered ? { x: Math.max(0, at0.x - (a.tex.length * size * 0.5) / 2), y: at0.y } : at0;
       const est = { x: at.x, y: at.y - size * 0.7, w: a.tex.length * size * 0.5, h: size * 1.4 };
       return {
         target: ctx.target, bbox: est,
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
           const m = placeMath(g, at, html, px(mathPx(ctx, a.size)), colorOf(ctx.target, a.em, env));
+          if (a.centered) setMathAt(m, Math.max(0, at0.x - m.box.w / 2), m.box.y);
           env.registry.define({ id: a.id, kind: 'math', target: ctx.target, bbox: m.box, boxes: [m.box], anchor: { x: m.box.x, y: m.box.y + m.box.h / 2 }, group: g });
           await revealMath(g, m, { style: env.settings.inkStyle, signal, ...k });
         },
       };
     }
+    default:
+      return 'not drawable here';
   }
 }
 
@@ -454,6 +477,8 @@ async function ref(a: RefAction, env: BuildEnv): Promise<ElementPlan | string> {
         },
       };
     }
+    default:
+      return 'not a reference';
   }
 }
 
@@ -469,6 +494,7 @@ async function endBox(end: End, env: BuildEnv): Promise<{ t: Target; r: SRect; p
     const rects = locateQuote(await ctx.runs(), end.quote, end.near, { aspect: ctx.h / 1000 }).map((x) => ctx.rectToSpace(x));
     return rects.length ? { t, r: union(rects) } : 'connector anchor not found';
   }
+  if ('ref' in end && isBlockRef(end.ref)) return kitEndBox(end.region, end.ref, env.registry);
   if ('ref' in end) {
     const e: ElementEntry | undefined = await env.registry.wait(end.ref, REF_WAIT_MS);
     if (!e) { console.warn('[desk] unknown id', end.ref); return 'unknown id'; }

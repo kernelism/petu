@@ -29,6 +29,18 @@ export class Registry {
   private byId = new Map<string, ElementEntry>();
   private waiters = new Map<string, ((e: ElementEntry) => void)[]>();
   private anon = 0;
+  /** Per-answer state kept beside the registry (the visual kit's blocks): settled and cleared with it. */
+  private exts = new Map<string, { settle?(): void; clear?(): void }>();
+
+  /** The extension under `key`, made on first use. */
+  ext<T extends { settle?(): void; clear?(): void }>(key: string, make: () => T): T {
+    let e = this.exts.get(key) as T | undefined;
+    if (!e) { e = make(); this.exts.set(key, e); }
+    return e;
+  }
+
+  /** Animations still running jump to their end state (a stopped or replaced answer). */
+  settle(): void { this.exts.forEach((e) => e.settle?.()); }
 
   /** Registers an element. A duplicate id is refused (warned): the element still draws, unnamed. Returns the id used. */
   define(e: Omit<ElementEntry, 'id'> & { id?: string }): string {
@@ -93,6 +105,8 @@ export class Registry {
   }
 
   clear(): void {
+    this.settle();
+    this.exts.forEach((e) => e.clear?.());
     this.byId.clear();
     this.anon = 0;
     // Pending waits resolve undefined on their own timers.
