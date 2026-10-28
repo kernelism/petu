@@ -54,15 +54,34 @@ export function candidates(i: CandidateInput): Candidate[] {
   if (i.prior) for (const [label, p] of i.labels.resolve(i.prior)) add({ page: p, why: 'label', label });
   for (const p of neighbourhood(i.page, i.numPages, i.map)) if (!i.shown?.has(p)) add({ page: p, why: 'neighbour' });
   const near = new Set([i.page, ...neighbourhood(i.page, i.numPages, i.map), ...(i.shown ?? [])]);
-  // The question, then the visible section's title as a second, lower-weight query.
+  // Keyword hits: the question, then the visible section's title as a second, lower-weight query.
+  // Back matter (contents, answer keys, chapter reviews, exercises, index) matches every term and
+  // teaches none, so it is skipped; one page per section, so five hits are five places.
   const q = i.question.replace(/\b(?:page|pg\.?|pp?\.)\s*\d+/gi, ' ');
-  const hits = rankPages(i.pages, q, SEARCH_K + near.size, near).slice(0, SEARCH_K);
-  for (const h of hits) add({ page: h.page, why: 'search' });
   const sec = sectionOf(i.map, i.page);
-  if (sec && out.filter((c) => c.why === 'search').length < SEARCH_K) {
-    for (const h of rankPages(i.pages, sec.title, 2, near)) add({ page: h.page, why: 'search' });
+  const used = new Set<string>();
+  let k = 0;
+  for (const query of [q, sec?.title ?? '']) {
+    if (!query) continue;
+    for (const h of rankPages(i.pages, query, 60, near)) {
+      if (k >= SEARCH_K || out.length >= MAX_CANDIDATES) break;
+      if (apparatus(i.map, h.page)) continue;
+      const s = sectionOf(i.map, h.page);
+      const key = s ? `${s.from}:${s.title}` : `p${h.page}`;
+      if (used.has(key) || has(h.page)) continue;
+      used.add(key);
+      add({ page: h.page, why: 'search' });
+      k++;
+    }
+    if (k >= 3) break; // the section title only tops up a thin result
   }
   return out;
+}
+
+/** Contents, answer keys, reviews, exercises, indexes: pages that mention everything. */
+const APPARATUS = /^(table of )?contents\b|^index\b|^answer key|^answers\b|^solutions?\b|^chapter review|^review questions|^key (terms|equations|concepts)|^summary\b|^conceptual questions|^(additional |challenge )?problems\b|^exercises\b|^homework\b|^practice\b|^glossary\b|^references\b|^bibliography\b|^check your understanding/i;
+export function apparatus(map: MapEntry[], page: number): boolean {
+  return map.some((e) => e.from <= page && e.to >= page && APPARATUS.test(e.title.replace(/^[\d.]+\s+/, '')));
 }
 
 const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
