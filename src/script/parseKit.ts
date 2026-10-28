@@ -144,7 +144,7 @@ export function parseKitBlock(name: string, args: Args, quotes: string[], flags:
     case 'table': {
       const v = parseVals(args.vals);
       const heads = list(args.cols);
-      if (!v || !heads || heads.length !== v[0].length) return null;
+      if (!v || !heads || heads.length < v[0].length) return null;
       return { kind: 'table', vals: v, heads, ...dp, ...caption, ...pl } as KitBlock<PtArg>;
     }
     case 'bars': {

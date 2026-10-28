@@ -69,8 +69,14 @@ function sentences(text: string) {
 }
 
 describe('prompt examples', () => {
-  it('three invented documents of different reach; at least one walks several pages', () => {
-    expect(EXAMPLES).toHaveLength(3);
+  it('four invented documents of different reach; at least one walks several pages, one works numbers with the kit', () => {
+    expect(EXAMPLES).toHaveLength(4);
+    const kit = EXAMPLES.filter((e) => run(e).acts.some((a) => a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table'));
+    expect(kit.length).toBe(1);
+    const acts = run(kit[0]).acts;
+    expect(acts.some((a) => a.kind === 'step' || a.kind === 'sweep' || a.kind === 'col')).toBe(true);
+    // the engine computes: a block from an operation (never a hand-written result)
+    expect(acts.some((a) => 'src' in a && !('vals' in (a as { src: object }).src))).toBe(true);
     expect(EXAMPLES.some((e) => e.pages.length >= 3 && new Set(run(e).acts.flatMap((a) => ('page' in a && a.page != null ? [a.page] : []))).size >= 3)).toBe(true);
     expect(EXAMPLES.some((e) => e.pages.length === 1 && run(e).acts.every((a) => a.kind !== 'sketch'))).toBe(true);
   });
@@ -149,7 +155,7 @@ describe('prompt examples', () => {
         }
       });
 
-      it('plans and declares every sketch: a <plan> before it, a fitted sketch, then one let', () => {
+      it('plans and declares every sketch: a <plan> before it; a drawn figure is fitted then one let (kit blocks need neither)', () => {
         const { plan, acts } = run(ex);
         const sketches = acts.filter((a) => a.kind === 'sketch');
         expect(Boolean(plan.trim())).toBe(sketches.length > 0);
@@ -157,7 +163,10 @@ describe('prompt examples', () => {
         expect(ex.script.indexOf('<plan>')).toBeLessThan(ex.script.indexOf('{{sketch'));
         for (const s of sketches) {
           const i = acts.indexOf(s);
-          expect(s.kind === 'sketch' && s.fit).toBe(true);
+          if (s.kind !== 'sketch') continue;
+          const kitOnly = acts.every((a) => !('region' in a) || a.region !== s.id || ['grid', 'bars', 'scatter', 'table', 'calc', 'fit'].includes(a.kind));
+          if (kitOnly) continue;
+          expect(s.fit).toBe(true);
           expect(acts[i + 1].kind).toBe('let');
         }
       });

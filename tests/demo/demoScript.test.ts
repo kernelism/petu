@@ -136,11 +136,10 @@ describe('every script', () => {
   it('never stacks two tags on one word', () => {
     for (const s of ALL) expect(s).not.toMatch(/\}\}\s*\{\{/);
   });
-  it('declares at most 2 regions and only draws into declared ones', () => {
+  it('only draws into declared regions (no cap on how many)', () => {
     for (const s of ALL) {
       const as = parseAll(s);
       const ids = as.flatMap((a) => (a.kind === 'sketch' ? [a.id] : []));
-      expect(ids.length).toBeLessThanOrEqual(2);
       for (const a of as) if ('region' in a && a.region) expect(ids).toContain(a.region);
     }
   });
@@ -148,7 +147,8 @@ describe('every script', () => {
     for (const s of ALL) {
       const seen = new Set<string>();
       for (const a of parseAll(s)) {
-        if ('ref' in a) expect(seen, `${a.kind} ${a.ref}`).toContain(a.ref);
+        // a kit part (o[1,2]) or a table column (t.c) names its block
+        if ('ref' in a) expect(seen, `${a.kind} ${a.ref}`).toContain(a.ref.replace(/\[.*$|\.[a-z]$/, ''));
         if (a.kind === 'connect') for (const e of [a.from, a.to]) if ('ref' in e) expect(seen).toContain(e.ref);
         if ('id' in a && a.id && a.kind !== 'sketch') seen.add(a.id);
       }

@@ -105,8 +105,13 @@ export function substitute(src: string, env: Record<string, number>, dp?: number
   let toks;
   try { toks = lex(src); } catch { return src; }
   const out: string[] = [];
+  // abs(…) is written |…|: the depth of each open paren, and which of them close an abs.
+  const opens: boolean[] = [];
   for (let i = 0; i < toks.length; i++) {
     const k = toks[i];
+    if (k.t === 'id' && k.v === 'abs' && toks[i + 1]?.v === '(') { out.push('|'); opens.push(true); i++; continue; }
+    if (k.t === 'op' && k.v === '(') { opens.push(false); out.push('('); continue; }
+    if (k.t === 'op' && k.v === ')') { out.push(opens.pop() ? '|' : ')'); continue; }
     if (k.t === 'num') out.push(fmt(k.v));
     else if (k.t === 'id') out.push(k.v in env ? term(env[k.v], dp) : k.v === 'pi' ? 'π' : k.v === 'sqrt' ? '√' : k.v);
     else if (k.v === '^') {
@@ -291,7 +296,7 @@ export function ticks(lo: number, hi: number, n = 4): number[] {
   const raw = (hi - lo) / n, p = 10 ** Math.floor(Math.log10(raw)), f = raw / p;
   const step = (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p;
   const out: number[] = [];
-  for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + 1e-9; v += step) out.push(Math.round(v / step) * step);
+  for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + 1e-9; v += step) out.push(Math.round(v / step) * step + 0);
   return out;
 }
 

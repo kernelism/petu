@@ -40,7 +40,8 @@ export type Metrics = { s: number; numPx: number; labelPx: number; num: number; 
 
 export function metrics(scale: number, bodyPx: number): Metrics {
   const s = Math.max(scale, 1e-3);
-  const numPx = Math.max(MIN_TEXT_PX, bodyPx * 0.85), labelPx = Math.max(MIN_TEXT_PX, bodyPx * 0.72);
+  // Numerals at the slide's body size, never under 13px, and growing with a wide board (to 20px).
+  const numPx = Math.max(13, bodyPx * 0.9, Math.min(20, (1000 * s) / 50)), labelPx = Math.max(MIN_TEXT_PX, numPx * 0.82);
   const u = (px: number) => px / s;
   return { s, numPx, labelPx, num: u(numPx), label: u(labelPx), cell: u(numPx * 2.3), gap: u(numPx * 1.7), opW: u(numPx * 1.4), margin: 40, top: 32, u };
 }
@@ -272,7 +273,8 @@ export async function buildBlock(a: KitBlock & { region?: string; page?: number;
     if (a.kind === 'bars' && R !== 1) return 'bars need one row';
     const strs = fmtAll(got.full, a.dp);
     const wide = Math.max(0, ...strs.map((s) => textWidth(s, m.numPx)));
-    let cellPx = Math.max(m.numPx * 2.3, wide + m.numPx * 1.1);
+    // Square cells, room for three digits at least, so a composition's cells come out one size.
+    let cellPx = Math.max(m.numPx * 2.5, wide + m.numPx * 0.8);
     if (anchor?.cellPx && anchor.kind === a.kind) cellPx = Math.max(cellPx, anchor.cellPx);
     const cs = m.u(cellPx);
     const filled = got.win ? got.full.map((r) => r.map(() => false)) : null;
@@ -285,6 +287,16 @@ export async function buildBlock(a: KitBlock & { region?: string; page?: number;
         b: a.caption ? m.label * 2 : 0,
       };
       const placed = P(Cn * cs, R * cs, pad);
+      // A window's output right under its input: each output cell sits under its window's centre.
+      if (got.win && a.below && anchor?.id === got.win.over && anchor.cs) {
+        const [kr, kc] = C.winSize(got.win.spec);
+        const g = C.winGeometry(anchor.vals!.length, anchor.vals![0].length, got.win.spec)!;
+        void kr;
+        if (g.stride === 1 && Math.abs(anchor.cs - cs) < 1e-6) {
+          const dx = ((kc - 1) / 2 - g.pc) * cs;
+          placed.body.x += dx; placed.rect.x += dx;
+        }
+      }
       b = newBlock(id, 'grid', region, placed, m, got.deps);
       Object.assign(b, { src: a.src, full: got.full, vals, dp: a.dp, cs, cellPx, shade: a.shade, em: a.em });
       b.el.rows = rows; b.el.cols = cols; b.el.caption = a.caption;
@@ -303,7 +315,8 @@ export async function buildBlock(a: KitBlock & { region?: string; page?: number;
       const ext = (v: number[]) => ({ pos: Math.max(0, ...v.filter(Number.isFinite)), neg: Math.max(0, ...v.filter(Number.isFinite).map((x) => -x)) });
       const mine = ext(ev[0]);
       b.full = ev;
-      const g0 = anchor?.kind === 'bars' ? anchor.group : undefined;
+      // Side by side (right=) is a comparison: one scale. Below is a new picture: its own.
+      const g0 = anchor?.kind === 'bars' && a.right ? anchor.group : undefined;
       const span = (e: { pos: number; neg: number }) => e.pos + e.neg || 1;
       if (g0 && span(mine) / span(g0) < 4 && span(g0) / span(mine) < 4) {
         g0.pos = Math.max(g0.pos, mine.pos); g0.neg = Math.max(g0.neg, mine.neg); g0.members.push(b); b.group = g0;
@@ -360,12 +373,20 @@ export async function buildBlock(a: KitBlock & { region?: string; page?: number;
     const at = a.at ?? (a.right || a.below ? undefined : { x: left, y: (others.length ? Math.max(...others.map((o) => o.rect.y + o.rect.h)) + m.gap * 0.8 : m.top) });
     const exp = calcExpansion({ of: a.of, reduce: a.reduce, fn: a.fn, label: a.label }, store, a.dp);
     if (typeof exp === 'string') return exp;
-    const maxW = 1000 - m.margin - (at ? (at as Pt).x : left);
-    const lines = wrapPieces(piecesOf(exp, a.label), maxW, (s) => m.u(textWidth(s, m.numPx))).length;
-    const placed = place(maxW, lines * m.num * 1.55, { l: 0, t: 0, r: 0, b: 0 }, { right: a.right, below: a.below, op: a.op, at: at as Pt | undefined }, anchor?.placed, others, spacing);
-    // The line is only as wide as its text (the rest is free for later blocks).
-    const textW = Math.min(maxW, Math.max(...wrapPieces(piecesOf(exp, a.label), maxW, (s) => m.u(textWidth(s, m.numPx))).map((l) => l.reduce((s, p) => s + m.u(textWidth(p, m.numPx)), 0))));
-    placed.body.w = textW; placed.rect.w = textW;
+    const W = (x: string) => m.u(textWidth(x, m.numPx));
+    const pieces = piecesOf(exp, a.label);
+    const pitch = m.num * 1.55;
+    const spec = { right: a.right, below: a.below, op: a.op, at: at as Pt | undefined };
+    const first = place(Math.min(pieces.reduce((t, x) => t + W(x), 0), 1000 - 2 * m.margin), pitch, { l: 0, t: 0, r: 0, b: 0 }, spec, anchor?.placed, others, spacing);
+    const maxW = Math.max(m.u(m.numPx * 8), 1000 - m.margin - first.body.x);
+    const wrapped = wrapPieces(pieces, maxW, W);
+    const lines = wrapped.length;
+    const textW = Math.min(maxW, Math.max(...wrapped.map((l) => l.reduce((t, x) => t + W(x), 0))));
+    const h = lines * pitch;
+    // Beside a block: centred on its line, however many lines it wraps to.
+    const y = a.right ? first.body.y + pitch / 2 - h / 2 : first.body.y;
+    const body = { x: first.body.x, y, w: textW, h };
+    const placed: Placed = { body, rect: { ...body }, ...(first.op ? { op: first.op } : {}) };
     b = newBlock(id, 'calc', region, placed, m, [...a.of]);
     b.calc = { of: a.of, reduce: a.reduce, fn: a.fn, label: a.label, lines, maxW };
     b.dp = a.dp; b.em = a.em;
@@ -385,7 +406,11 @@ export async function buildBlock(a: KitBlock & { region?: string; page?: number;
       if (b.placed.op) drawOp(g, b, c);
       if (b.kind === 'grid') await drawGrid(b, c, env, pace);
       else if (b.kind === 'bars') await drawBars(b, c, env, pace);
-      else if (b.kind === 'scatter') await drawScatter(b, c, pace);
+      else if (b.kind === 'scatter') {
+        // A table's rows may have filled since the build.
+        if (b.cols) { const t = store.get(b.cols.id); if (t) b.data = t.vals!.map((r) => ({ x: r[b.cols!.x], y: r[b.cols!.y] })); }
+        await drawScatter(b, c, pace);
+      }
       else if (b.kind === 'table') await drawTable(b, c, pace);
       else await drawCalc(b, store, c, env, pace, true);
     },
@@ -410,7 +435,8 @@ async function appear(el: SVGElement, ms: number, k: Pace) {
 
 function drawOp(g: SVGGElement, b: Block, c: ReturnType<typeof col>) {
   const o = b.placed.op!;
-  kitText(g, o.x, o.y, o.glyph, { size: b.m.num * 1.35, fill: c.muted });
+  const t = kitText(g, o.x, o.y, o.glyph, { size: b.m.num * 1.45, fill: c.ink2 });
+  t.setAttribute('font-family', 'KaTeX_Main, "STIX Two Math", "Cambria Math", serif');
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -483,12 +509,21 @@ async function setGridVals(b: Block, next: C.Mat, ms: number, ctl: Ctl | undefin
       els.cells[r][q].setAttribute('fill', sh.fill);
       const tx = els.texts[r][q];
       tx.textContent = blank ? '' : t >= 1 ? C.fmt(v, b.dp) : C.fmt(Number(cur.toFixed(dps[r][q])), dps[r][q]);
-      const em = (accent && accent[0] === r && accent[1] === q) || els.emCells?.some(([a, z]) => a === r && z === q);
+      const em = (accent && accent[0] === r && accent[1] === q) || els.emCells?.some(([a, z]) => a === r && z === q) || (b.el.whereHits as [number, number][] | undefined)?.some(([a, z]) => a === r && z === q);
       tx.setAttribute('fill', em ? accentColor ?? c.ink : sh.text);
       tx.setAttribute('font-weight', em ? '600' : '400');
       if (!Number.isFinite(p) && !blank) tx.setAttribute('opacity', String(t));
     }));
   }, ctl);
+}
+/** A numeral's resting look: emphasized cells keep the accent, others their shade's ink. */
+function restCell(b: Block, r: number, q: number, c: ReturnType<typeof col>, accent: string) {
+  const els = b.el.grid as GridEls;
+  const tx = els.texts[r][q];
+  const em = els.emCells?.some(([a, z]) => a === r && z === q) || (b.el.whereHits as [number, number][] | undefined)?.some(([a, z]) => a === r && z === q);
+  const [lo, hi] = rangeOf(b);
+  tx.setAttribute('fill', em ? accent : shadeOf(b.vals![r][q], b.shade, lo, hi, c).text);
+  tx.setAttribute('font-weight', em ? '600' : '400');
 }
 const decimals = (v: number) => { const s = C.fmt(v); const i = s.indexOf('.'); return i < 0 ? 0 : s.length - i - 1; };
 
@@ -931,12 +966,7 @@ async function winGo(p: Parts, r: number, q: number, ctl: Ctl, glideMs: number, 
   const prevCur = w.cur;
   w.cur = [r, q];
   await setGridVals(p.out, next, ctl.ff ? 0 : 160, ctl, c, [r, q], accent);
-  if (prevCur && (prevCur[0] !== r || prevCur[1] !== q)) {
-    const tx = outEls.texts[prevCur[0]][prevCur[1]];
-    const [lo, hi] = rangeOf(p.out);
-    tx.setAttribute('fill', shadeOf(p.out.vals![prevCur[0]][prevCur[1]], p.out.shade, lo, hi, c).text);
-    tx.setAttribute('font-weight', '400');
-  }
+  if (prevCur && (prevCur[0] !== r || prevCur[1] !== q)) restCell(p.out, prevCur[0], prevCur[1], c, accent);
 }
 const frameAt = (r: Box, p: number) => ({ x: r.x - p, y: r.y - p, width: r.w + 2 * p, height: r.h + 2 * p });
 
@@ -954,7 +984,7 @@ function drawPadding(p: Parts, r: number, q: number, g: SVGGElement, c: ReturnTy
 }
 
 /** Ends a sweep: the window and frames fade, the last cell goes back to ink, the calc line steps back. */
-async function winDone(p: Parts, ctl: Ctl, c: ReturnType<typeof col>) {
+async function winDone(p: Parts, ctl: Ctl, c: ReturnType<typeof col>, accent: string) {
   const o = p.out.el.winEls as { win: SVGRectElement; ghosts: SVGGElement; kf?: SVGRectElement; of: SVGRectElement } | undefined;
   const els = [o?.win, o?.ghosts, o?.kf, o?.of].filter((e) => !!e) as SVGElement[];
   await tween(ctl.ff ? 0 : 260, (t) => els.forEach((e) => e.setAttribute('opacity', String(1 - t))), ctl);
@@ -963,11 +993,8 @@ async function winDone(p: Parts, ctl: Ctl, c: ReturnType<typeof col>) {
   p.out.win!.rect = null;
   const cur = p.out.win!.cur;
   if (cur) {
-    const tx = (p.out.el.grid as GridEls).texts[cur[0]][cur[1]];
-    const [lo, hi] = rangeOf(p.out);
-    tx.setAttribute('fill', shadeOf(p.out.vals![cur[0]][cur[1]], p.out.shade, lo, hi, c).text);
-    tx.setAttribute('font-weight', '400');
     p.out.win!.cur = null;
+    restCell(p.out, cur[0], cur[1], c, accent);
   }
   (p.calc.el.text as SVGElement | undefined)?.setAttribute('opacity', '0.5');
 }
@@ -1014,7 +1041,7 @@ async function stepOrSweep(v: Extract<KitVerb, { kind: 'step' | 'sweep' }>, env:
           await pause(slot - (performance.now() - t0), ctl);
         }
         first();
-        await winDone(p, ctl, c);
+        await winDone(p, ctl, c, env.settings.inkColor);
       }).finally(() => first());
       await Promise.race([started, new Promise((r) => setTimeout(r, 400))]);
     },
@@ -1360,10 +1387,10 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
   const yBelow = Math.max(t.placed.rect.y + t.placed.rect.h, ...others.filter(below).map((o) => o.placed.rect.y + o.placed.rect.h));
   const maxW = 1000 - m.margin - x;
   const exps = full.map((_, r) => rowExp(v, fn, full, r, t.dp));
-  const lines = Math.max(1, ...exps.map((e) => wrapPieces(piecesOf(e, v.head), maxW, (s) => m.u(textWidth(s, m.numPx))).length));
-  const body = { x, y: yBelow + m.gap * 0.7, w: Math.min(maxW, Math.max(...exps.map((e) => m.u(textWidth(piecesOf(e, v.head).join(''), m.numPx))))), h: lines * m.num * 1.55 };
+  const lines = Math.max(1, ...exps.map((e) => wrapPieces(piecesOf(e, tb.heads[j]), maxW, (s) => m.u(textWidth(s, m.numPx))).length));
+  const body = { x, y: yBelow + m.gap * 0.7, w: Math.min(maxW, Math.max(...exps.map((e) => m.u(textWidth(piecesOf(e, tb.heads[j]).join(''), m.numPx))))), h: lines * m.num * 1.55 };
   const cb = newBlock(store.anonId(), 'calc', t.region, { body, rect: { ...body } }, m, []);
-  cb.calc = { of: [], reduce: 'sum', live: true, label: v.head, lines, maxW };
+  cb.calc = { of: [], reduce: 'sum', live: true, label: tb.heads[j], lines, maxW };
   store.add(cb);
   grow(env, t.region, cb.placed.rect);
   const c = col(), accent = env.settings.inkColor;
@@ -1473,6 +1500,13 @@ async function emphWhere(a: Extract<RefAction, { kind: 'emph' }>, env: BuildEnv,
       await b.ready;
       const over = b.kind === 'grid' ? (b.el.grid as GridEls).over : (b.el.table as TableEls).over;
       (b.el.where as SVGGElement | undefined)?.remove();
+      const prev = (b.el.whereHits as [number, number][] | undefined) ?? [];
+      b.el.whereHits = hits;
+      const c = col();
+      for (const [r, q] of prev) {
+        if (b.kind === 'grid') restCell(b, r, q, c, accent);
+        else setAttrs((b.el.table as TableEls).texts[r][q], { fill: c.ink, 'font-weight': 400 });
+      }
       const g = svg(over, 'g');
       b.el.where = g;
       const each = k.fadeMs != null || prefersReducedMotion() ? 0 : Math.min(120, 1400 / hits.length) * k.speed;

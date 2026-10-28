@@ -2,7 +2,9 @@
   /* The window's outer margin and the gutter between the slides and the board. App.tsx sets the exact
      (rounded) value from layout.ts margin(); this is the first-paint default. */
   --m: clamp(16px, 2.5vw, 40px);
-  --canvas-bg: #E9E7E1;
+  --canvas-bg: #ECEAE5;   /* the desk: plain and quiet; the board carries the paper look */
+  --board-paper: #FFFFFE;
+  --board-dot: rgba(0,0,0,.085);
   --surface: #FFFFFF;
   --ink: #1D1D1F;
   --ink-2: #3A3A3C;
@@ -35,6 +37,17 @@
   /* Sketch type: word labels in a quiet sans; symbols (x, x′, C, θ) in KaTeX's math italic. */
   --ink-label-weight: 450;
   --font-math: KaTeX_Math, KaTeX_Main, "Times New Roman", serif;
+
+  /* Visual kit (engine-rendered blocks): light grid lines, a darker edge, muted labels and glyphs. */
+  --kit-cell: #FFFFFF;
+  --kit-line: #D9D6CF;
+  --kit-edge: #9B978E;
+  --kit-muted: #8A8780;
+  --kit-bar: #3F3D39;
+  --kit-dot: #6C6962;
+  --kit-pos: #3E6BC7;   /* signed values: positive */
+  --kit-neg: #C8642B;   /* signed values: negative */
+  --kit-halo: #FFFFFE;  /* = --board-paper: text over the paper's dots */
 }
-html, body, #root { height: 100%; margin: 0; background: var(--canvas-bg) radial-gradient(circle, rgba(0,0,0,.075) 1px, transparent 1.3px) 0 0 / 22px 22px; color: var(--ink); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+html, body, #root { height: 100%; margin: 0; background: var(--canvas-bg); color: var(--ink); font-family: var(--font); -webkit-font-smoothing: antialiased; }
 *:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }

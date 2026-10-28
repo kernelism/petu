@@ -72,6 +72,52 @@ export const SCRIPTS: Record<string, Demo & { src: string }> = {
       `{{circle p=3 mark=#d1}} that is why, {{circle p=3 mark=#d2}} for this pair of cameras, the search is one-dimensional.`,
   },
   /**
+   * Visual kit v1 check (spec "Visual kit v1"), no API call: six board sections, half of them outside
+   * computer science, every number computed by the engine. 1 a window sliding over a patch with an
+   * edge (live calc line, output filling); 2 two vectors as bars, a brightness change, a raw distance
+   * that grows and a normalized score that doesn't; 3 data with outliers, two candidate lines, a band
+   * and a live count; 4 a demand table whose elasticity column fills row by row, with a reference
+   * line; 5 a thrown ball: a table filling heights and speeds, points and bars following it; 6 two
+   * dice: a 6×6 grid of sums, the cells of one sum counted.
+   */
+  kit: {
+    src: '/fixtures/econ.pdf',
+    question: 'Visual kit check',
+    script:
+      `{{scroll p=1}} Six small lessons, drawn by the engine. ` +
+      `{{sketch id=f near=p1}} Take a patch {{grid on=f id=img vals=10,10,10,90,90,90;10,10,10,90,90,90;10,10,10,90,90,90;10,10,10,90,90,90;10,10,10,90,90,90 shade "image patch"}} with a dark-to-bright edge down its middle. ` +
+      `The kernel {{grid on=f id=k vals=-1,0,1;-1,0,1;-1,0,1 right=img op=⊛ "kernel"}} weighs the right column against the left. ` +
+      `{{grid on=f id=o over=img slide=k right=k op== "output"}} The output starts empty. ` +
+      `{{step id=o[1,1]}} Put the kernel on the first patch and multiply and add: all one brightness, so zero. ` +
+      `{{step id=o[1,2]}} Slide one column: now the right column sees the bright side, and the sum jumps. ` +
+      `{{sweep id=o dur=5}} Sweep the rest, and the output is large only where the brightness changes. ` +
+      `{{emph id=o[1:3,2:3]}} That band is the edge. ` +
+      `{{sketch id=b near=p1}} Now two patches as vectors: {{bars on=b id=u vals=2,4,3,5 labels=1,2,3,4 "u"}} u, ` +
+      `{{bars on=b id=v vals=3,5,4,6 labels=1,2,3,4 right=u "v"}} and v, the same pattern one step brighter. ` +
+      `{{calc on=b of=u,v fn="(x-y)^2" reduce=sum "SSD"}} Their sum of squared differences is small. ` +
+      `{{bars on=b id=nu map=u fn="(x-mean)/std" below=u "(u − mean) / std"}} Subtract each mean and divide by the spread, ` +
+      `{{bars on=b id=nv map=v fn="(x-mean)/std" right=nu "(v − mean) / std"}} and the two shapes are identical, ` +
+      `{{calc on=b of=nu,nv reduce=cos "ρ"}} so their correlation is one. ` +
+      `{{set id=v fn="2*x+3"}} Now make v brighter and higher in contrast: ` +
+      `{{emph id=v}} the bars jump, the squared differences explode, but the normalized shapes do not move. ` +
+      `{{sketch id=r near=p1}} Third, {{scatter on=r id=d pts=1,1.3 2,2.1 3,2.8 4,4.2 5,5.1 6,5.8 7,7.2 8,7.9 2.5,7 6.5,1.5 4.5,8.5 x="x" y="y"}} points along a line, plus three outliers. ` +
+      `{{fit on=r id=l1 of=d pick=9,2}} Pick two points at random: this pair includes an outlier, ` +
+      `{{band id=l1 w=0.6 "inliers"}} and only a few points fall inside its band. ` +
+      `{{fit on=r id=l2 of=d pick=2,7 em}} Another pair, {{band id=l2 w=0.6 "inliers"}} and most of the points agree. ` +
+      `{{dist from=d[9] to=l2}} An outlier sits far outside it. ` +
+      `{{sketch id=e near=p1}} Fourth, a demand table: {{table on=e id=dm cols=P,Qd,|ε| vals=10,10;8,20;6,30;4,40;2,50}} price and quantity demanded. ` +
+      `{{col id=dm.c fn="abs(((b-pb)/((b+pb)/2))/((a-pa)/((a+pa)/2)))" dur=4}} For each price cut, the percentage change in quantity over the percentage change in price. ` +
+      `{{level id=dm.c at=1 "|ε| = 1"}} Above this line demand is elastic, below it inelastic. ` +
+      `{{sketch id=m near=p1}} Fifth, a ball thrown up at twenty meters per second: {{table on=m id=tb cols=t,y,v vals=0;1;2;3;4}} one row a second. ` +
+      `{{col id=tb.b fn="20*a-5*a^2" dur=3}} its height each second, ` +
+      `{{scatter on=m id=tr pts=tb.a,tb.b right=tb x="t" y="height"}} traced as it rises and falls. ` +
+      `{{col id=tb.c fn="20-10*a" dur=3}} Its speed drops by ten every second, ` +
+      `{{bars on=m id=vb vals=tb.c labels=tb.a right=tr "v"}} through zero at the top, then negative on the way down. ` +
+      `{{sketch id=p near=p1}} Last, two dice. {{grid on=p id=s size=6x6 fn="r+c" rows=1,2,3,4,5,6 cols=1,2,3,4,5,6 "sum of two dice"}} Each cell is a sum, all thirty-six equally likely. ` +
+      `{{emph id=s where="x==4"}} A four is a short diagonal: {{calc on=p of=s fn="x==4" reduce=count right=s "P(sum = 4)"}} three cells. ` +
+      `{{emph id=s where="x==7"}} A seven runs corner to corner: {{calc on=p of=s fn="x==7" reduce=count below=s "P(sum = 7)"}} six cells, the most of any sum.`,
+  },
+  /**
    * Toolkit check (not a teaching demo): every v2 element once, in one board section for the sample
    * deck's page 3, for screenshots and the timing audit. Also every look flag: the three weights
    * (primary default, secondary, faint), dash (faint by default), shade plain / outline / em.
