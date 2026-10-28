@@ -104,6 +104,8 @@ type DebugState = {
   chunk?: number; word?: number; action?: number; log: ActionTiming[];
   /** Agent answers: the server's meta and done, and notes (dropped messages, lint). */
   meta?: Extract<AskEvent, { t: 'meta' }>; done?: DoneEvent; notes?: string[];
+  /** Stage 1: the scout's pages (teaching order), plan, latency and cost. */
+  scout?: Extract<AskEvent, { t: 'scout' }>;
 };
 
 /** When the first ink of the answer started (the first drawing action, not layout). */
@@ -140,7 +142,9 @@ function describeAction(a: Action): string {
 function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
   const [open, setOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  const [scoutOpen, setScoutOpen] = useState(false);
   const done = d.done;
+  const sc = d.scout;
   const u = done?.usage;
   const cached = u && u.input_tokens > 0 ? `${Math.round((100 * (u.input_tokens_details?.cached_tokens ?? 0)) / u.input_tokens)}%` : '—';
   const notes = [...(done?.lint ?? []), ...(d.notes ?? [])];
@@ -156,6 +160,12 @@ function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
   }
   return (
     <div className="debug" onClick={() => setOpen(false)} title="Click to collapse">
+      {sc && <div className="debug-row" title={sc.fallback}><span>scout</span><span>p{sc.pages.join(' → p')} · {sc.ms}ms{sc.fallback ? ' · fallback' : ''}</span></div>}
+      {sc?.plan && (
+        <button type="button" className="debug-plan" onClick={(e) => { e.stopPropagation(); setScoutOpen((o) => !o); }} aria-expanded={scoutOpen}>
+          {scoutOpen ? <span className="debug-plan-text">{sc.plan}</span> : 'scout plan ▸'}
+        </button>
+      )}
       {d.meta && <div className="debug-row"><span>model</span><span>{d.meta.model}/{d.meta.effort}</span></div>}
       {done && <div className="debug-row"><span>upstream TTFT</span><span>{done.ttftMs}ms</span></div>}
       <div className="debug-row"><span>first chunk</span><span>{ms(d.chunk)}</span></div>
@@ -196,7 +206,7 @@ function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
 function replaySource(chunks: { t: number; d: string }[], events: AskEvent[], h: AskHandlers) {
   return async function* (signal: AbortSignal): AsyncGenerator<string> {
     const t0 = performance.now();
-    for (const e of events) if (e.t === 'meta') h.onMeta?.(e);
+    for (const e of events) { if (e.t === 'meta') h.onMeta?.(e); else if (e.t === 'scout') h.onScout?.(e); }
     for (const c of chunks) {
       const wait = c.t - (performance.now() - t0);
       if (wait > 0) await new Promise((r) => window.setTimeout(r, wait));
@@ -513,6 +523,7 @@ export default function App() {
     const handlers: AskHandlers = {
       onEvent: (e) => run.rec?.event(e),
       onMeta: (e) => { if (DEBUG) setDebug((d) => ({ ...d, meta: e })); },
+      onScout: (e) => { if (DEBUG) setDebug((d) => ({ ...d, scout: e })); },
       onNote: (m) => { if (DEBUG) { console.info('[ask] note:', m); setDebug((d) => ({ ...d, notes: [...(d.notes ?? []), m] })); } },
       onDone: (e) => {
         if (DEBUG) setDebug((d) => ({ ...d, done: e }));
@@ -527,7 +538,8 @@ export default function App() {
     const inner: (signal: AbortSignal) => AsyncIterable<string> = replay
       ? async function* (signal) {
         // A replay resolves page marks against the same grounding the recorded question had.
-        groundingRef.current = groundingOf(await ag.grounds(page));
+        const sc = replay.events?.find((e) => e.t === 'scout');
+        groundingRef.current = groundingOf(await ag.grounds(page, sc?.t === 'scout' ? sc.pages : []));
         yield* replaySource(replay.chunks, replay.events ?? [], handlers)(signal);
       }
       : toAgent

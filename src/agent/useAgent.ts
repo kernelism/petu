@@ -6,14 +6,17 @@ import type { StudentStroke } from '../ink/student/store';
 import type { Grounding } from '../geometry/resolve';
 import { groundingOf, type PageGround } from './context/types';
 import type { AskContext, SpendSummary } from './protocol';
-import { AskError, askStream, capLine, getSpend, spendBlocked, spendPhase, type AskHandlers } from './client';
+import { AskError, askStream, capLine, getSpend, scoutPages, spendBlocked, spendPhase, type AskHandlers } from './client';
 import { History } from './history';
 import { Prewarm } from './prewarm';
 
 /** What App needs from the context builder (Lane G's ContextBuilder, src/agent/context/build.ts). */
 export type ContextSource = {
   warm(page: number): void;
-  build(page: number, question: string, ink: StudentStroke[]): Promise<{ context: AskContext; grounds: PageGround[] }>;
+  /** Stage 1: the deck digest (every page, trimmed). */
+  digest(page: number, question?: string): Promise<string>;
+  /** Stage 2: the visible page and the scout's pages, with their grounds. */
+  build(page: number, question: string, ink: StudentStroke[], scout?: { pages: number[]; plan: string }): Promise<{ context: AskContext; grounds: PageGround[] }>;
   pagePrefix(page: number): Promise<AskContext>;
   destroy(): void;
 };
@@ -85,22 +88,37 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
     if (!b) throw new AskError('network', "Couldn't reach the tutor.", true);
     inFlight.current++;
     try {
-      const { context, grounds } = await b.build(a.page, a.question, a.ink());
+      const phase = spendPhase(spendRef.current);
+      const hist = history.last();
+      const prior = hist[hist.length - 1];
+      const hash = doc?.fingerprints?.[0] ?? name;
+      // Stage 1: the scout picks the pages to teach from (falls back to this page on any failure).
+      const digest = await b.digest(a.page, a.question);
+      if (signal.aborted) return;
+      const scout = await scoutPages({
+        question: a.question, ...(prior ? { prior } : {}), docName: name, docHash: hash, numPages: doc?.numPages ?? a.page,
+        page: a.page, digest, ...(phase ? { phase } : {}),
+      }, signal);
+      if (!scout || signal.aborted) return;
+      const ev = { t: 'scout' as const, pages: scout.pages, plan: scout.plan, ms: scout.ms, usd: scout.usd, ...(scout.fallback ? { fallback: scout.fallback } : {}) };
+      a.handlers.onEvent?.(ev);
+      a.handlers.onScout?.(ev);
+      // Stage 2: the chosen pages' listings and images, then the streamed script.
+      const { context, grounds } = await b.build(a.page, a.question, a.ink(), { pages: scout.pages, plan: scout.plan });
       if (signal.aborted) return;
       a.onGrounding(groundingOf(grounds));
-      const phase = spendPhase(spendRef.current);
-      yield* askStream({ question: a.question, history: history.last(), context, ...(phase ? { phase } : {}) }, signal, a.handlers);
+      yield* askStream({ question: a.question, history: hist, context, ...(phase ? { phase } : {}) }, signal, a.handlers);
     } finally {
       inFlight.current--;
     }
-  }, [history]);
+  }, [history, doc, name]);
 
   const blocked = useMemo(() => (spendBlocked(spend) ? capLine(spend) : undefined), [spend]);
 
-  /** The page's grounding (eval: the largest labelled mark), built like a question's context. */
-  const grounds = useCallback(async (page: number): Promise<PageGround[]> => {
+  /** The grounding of `pages` (eval replays: the pages the recorded answer was given). */
+  const grounds = useCallback(async (page: number, pages: number[] = []): Promise<PageGround[]> => {
     const b = builder.current;
-    return b ? (await b.build(page, '', [])).grounds : [];
+    return b ? (await b.build(page, '', [], { pages, plan: '' })).grounds : [];
   }, []);
 
   return { spend, blocked, refreshSpend, pageChanged, intent, source, history, grounds };

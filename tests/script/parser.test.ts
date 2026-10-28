@@ -40,15 +40,15 @@ describe('ScriptParser', () => {
     expect(summary(runChunks(['a {{wiggle p=1}} b {{circle p=1']))).toEqual(['a', 'b', '{{circle', 'p=1', '|end']);
   });
 
-  it('an unterminated tag does not swallow the rest of the answer (newline, another tag, 300 chars)', () => {
+  it('an unterminated tag does not swallow the rest of the answer (newline, another tag, 800 chars)', () => {
     expect(summary(runChunks(['a {{circle p=1 b c\nd e {{clear}} f']))).toEqual(['a', '{{circle', 'p=1', 'b', 'c', 'd', 'e', '<clear>', 'f', '|end']);
     expect(summary(runChunks(['a {{circle p=1 b {{clear}} c']))).toEqual(['a', '{{circle', 'p=1', 'b', '<clear>', 'c', '|end']);
-    const long = Array.from({ length: 80 }, (_, i) => `w${i}`).join(' ');
+    const long = Array.from({ length: 200 }, (_, i) => `w${i}`).join(' ');
     const p = new ScriptParser();
     const out = summary(p.push(`x {{circle p=1 ${long} `));
     expect(out[0]).toBe('x');
     expect(out[1]).toBe('{{circle');
-    expect(out.length).toBeGreaterThan(60); // emitted while streaming, not held to the end
+    expect(out.length).toBeGreaterThan(150); // emitted while streaming, not held to the end
   });
 
   it('a }} inside a quoted string does not close the tag', () => {
@@ -73,5 +73,16 @@ describe('ScriptParser', () => {
     expect(whole).toContain('<clear>');
     expect(whole).toContain('<label>');
     expect(whole.at(-2)).toBe('p=1');
+  });
+});
+
+describe('long let tags', () => {
+  it('a fitted figure declared in one let of ~450 characters parses', async () => {
+    const { ScriptParser } = await import('../../src/script/parser');
+    const defs = Array.from({ length: 30 }, (_, i) => `P${i}=${i * 10},${i * 7}`).join(' ');
+    const p = new ScriptParser();
+    const ev = [...p.push(`Look {{let on=s ${defs}}} here.`), ...p.end()];
+    const a = ev.find((e) => e.type === 'action');
+    expect(a && a.type === 'action' && a.action.kind === 'let' && a.action.defs.length).toBe(30);
   });
 });

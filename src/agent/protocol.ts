@@ -18,13 +18,19 @@ export type AskContext = {
   docHash: string;
   numPages: number;
   page: number;
-  /** Cached block, part 1: document header + outline. */
+  /** Cached block, part 1: the deck digest (every page, trimmed; src/agent/context/digest.ts). Constant per document. */
   docText: string;
-  /** Cached block, part 2: visible page (text lines + marks) and neighbours' text lines. */
+  /** Cached block, part 2: the visible page's listing (text lines + marks). */
   pageText: string;
   /** JPEG of the visible page, base64 (no data: prefix). */
   image: { b64: string; w: number; h: number };
-  /** Volatile tail: keyword hits from pages not already included. */
+  /** Volatile tail: the listings (lines + marks) of the scout's other pages, in teaching order. */
+  pagesText?: string;
+  /** Volatile tail: JPEGs of the scout's first other pages (with the visible page, at most 4 images). */
+  images?: { page: number; b64: string; w: number; h: number }[];
+  /** Volatile tail: the scout's pages (teaching order) and plan. */
+  scout?: { pages: number[]; plan: string };
+  /** Volatile tail: keyword hits from pages not already included (v2 contexts; v3 sends the digest instead). */
   searchText?: string;
   /** Volatile tail: student ink on the visible page. */
   ink?: { summary: string; crop?: { b64: string; w: number; h: number } };
@@ -33,6 +39,8 @@ export type AskContext = {
 /** NDJSON lines from the server, one JSON object per line. */
 export type AskEvent =
   | { t: 'meta'; reqId: string; model: string; effort: string }
+  /** Client-side: the scout's verdict (stage 1), recorded before the answer's own events. */
+  | { t: 'scout'; pages: number[]; plan: string; ms: number; usd: number; fallback?: string }
   | { t: 'text'; d: string }
   | { t: 'note'; message: string }
   | { t: 'done'; usage?: Usage; usd: number; estimated?: boolean; spentUsd: number; capUsd: number; ttftMs: number; plan?: string; lint?: string[] }
@@ -49,7 +57,7 @@ export type SpendSummary = {
   /** Spend of the local day across all phases. */
   todayAllUsd?: number;
   dailyCapUsd?: number;
-  /** The server's spend phase (dev | bakeoff | iterate | validate | founder). */
+  /** The server's spend phase (dev | bakeoff | iterate | validate | founder | lessondev | lessonbake | lessoniter | lessonval). */
   phase?: string;
   /** The current phase's budget. */
   phaseCapUsd?: number;
