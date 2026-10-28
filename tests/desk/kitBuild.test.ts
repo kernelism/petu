@@ -118,7 +118,7 @@ describe('kit blocks on the board', () => {
     await tag(e, 'scatter on=s id=d pts=1,1 2,2 3,3 4,4 2,4');
     await tag(e, 'fit on=s id=f of=d pick=1,4');
     await tag(e, 'band id=f w=0.2 "inside"');
-    expect(texts(layers.agent, '[data-kit] text').join(' ')).toContain('inside: 4');
+    expect(texts(layers.agent, '[data-kit] text').join(' ')).toContain('inside band: 4');
     await tag(e, 'fit on=s id=g of=d');
     await settle(e);
     expect(texts(layers.agent, '[data-kit] text').join(' ')).toMatch(/y = /);
@@ -275,7 +275,30 @@ describe('kit blocks on the board', () => {
     await settle(e);
     expect(st.get('d')!.vals).toEqual([[9, 15, 12]]);
     expect(st.get('d')!.plot!.dom.y1).toBeGreaterThan(15);
-    expect(await tag(e, 'bars on=s id=q vals=1,2 axes=nope')).toMatch(/no line nope/);
+    expect(await tag(e, 'bars on=s id=q vals=1,2 axes=nope')).toMatch(/no line or plot nope/);
+  });
+
+  it('engine graphs: three trajectories from one formula and shared constants, one scale, apex labels', async () => {
+    const { e, layers } = env();
+    kitStore(e.registry).defineConsts([['v', '20'], ['g', '9.8']]);
+    const traj = (id: string, deg: number, extra = '') => `plot on=s id=${id} x="v*cos(rad(${deg}))*t" y="v*sin(rad(${deg}))*t-g*t^2/2" t=0,2*v*sin(rad(${deg}))/g "${deg}°" label=top ${extra}`;
+    expect(typeof (await tag(e, traj('p45', 45, 'xlabel=distance ylabel=height')))).not.toBe('string');
+    await tag(e, traj('p30', 30, 'axes=p45'));
+    await tag(e, traj('p60', 60, 'axes=p45'));
+    const st = kitStore(e.registry);
+    const top = (id: string) => Math.max(...st.get(id)!.vals![0].filter(Number.isFinite));
+    const land = (id: string) => st.get(id)!.xs!.at(-1)!;
+    expect(top('p60') / top('p30')).toBeCloseTo(3, 2); // sin²60 / sin²30
+    expect(top('p45') / top('p30')).toBeCloseTo(2, 2);
+    expect(land('p30')).toBeCloseTo(land('p60'), 6); // same range
+    expect(land('p45')).toBeCloseTo(400 / 9.8, 6);
+    expect(st.get('p30')!.plot).toBe(st.get('p45')!.plot); // one set of axes, one scale
+    const lbl = texts(layers.agent, '[data-kit="bars"] text');
+    for (const t of ['30°', '45°', '60°', 'distance', 'height']) expect(lbl).toContain(t);
+    // fn= over a domain written with constants; a bad formula is a reason, not a crash
+    expect(typeof (await tag(e, 'plot on=s id=r fn="v^2*sin(rad(2*x))/g" domain=0,90 "range"'))).not.toBe('string');
+    expect(Math.max(...st.get('r')!.vals![0])).toBeCloseTo(400 / 9.8, 3);
+    expect(await tag(e, 'plot on=s fn="q*x" domain=0,1')).toMatch(/bad fn/);
   });
 
   it('a letter past the width falls back to a header of that name (cols=x,y: t.y is y)', async () => {

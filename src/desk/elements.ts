@@ -17,7 +17,7 @@ import type { BuildElement, BuildEnv, ElementPlan, Pace, TargetCtx } from './typ
 import { MIN_TEXT_PX } from './layout';
 import { KIT_BLOCKS, type KitBlock } from '../script/types';
 import { isBlockRef } from '../script/pointExpr';
-import { buildBlock, buildKitRef, isKitRef, kitEndBox, resolveKitPoints } from './kit/kit';
+import { buildBlock, buildKitPlot, buildKitRef, isKitRef, kitEndBox, resolveKitPoints } from './kit/kit';
 
 /** Closed shapes (circle, box) read as rushed below this, however small… */
 export const CLOSED_MIN_MS = 400;
@@ -308,8 +308,10 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       };
     }
     case 'plot': {
+      // On a hand-drawn {{axes}} (named, or the region's latest when none is named): sampled into
+      // strokes as before. Otherwise the engine draws the graph with its own axes (kit line view).
       const ax = a.axes ? await env.registry.wait(a.axes, REF_WAIT_MS) : env.registry.latest(ctx.target, 'axes');
-      if (!ax || ax.kind !== 'axes') { console.warn('[desk] plot: no axes', where(ctx.target)); return 'no axes'; }
+      if (!ax || ax.kind !== 'axes' || !a.fn || !a.domain) return buildKitPlot(a as Parameters<typeof buildKitPlot>[0], ctx, env);
       let fn;
       try { fn = compile(a.fn); } catch (e) { console.warn('[desk] plot: bad fn', a.fn, e); return 'bad fn'; }
       const strokes = plotStrokes(fn, a.domain, { x: ax.bbox.x, y: ax.bbox.y + ax.bbox.h, w: ax.bbox.w, h: ax.bbox.h }, a.range);

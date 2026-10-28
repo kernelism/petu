@@ -145,11 +145,12 @@ describe('buildElement', () => {
     expect(await buildElement({ kind: 'curve', region: 'side', pts: P([[0, 300], [25, 230], [100, 300], [75, 370], [200, 300], [125, 230], [300, 300], [175, 370], [400, 300], [225, 230], [275, 370]]) }, e)).toBe('curve crosses itself');
     expect(typeof await buildElement({ kind: 'curve', region: 'side', pts: P([[0, 300], [25, 230], [50, 300], [75, 370], [100, 300]]) }, e)).not.toBe('string');
   });
-  it('plot needs axes and a valid fn', async () => {
+  it('plot: on hand-drawn axes, or the engine graph without them', async () => {
     const { e } = env();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const plot: InkAction = { kind: 'plot', region: 'side', fn: '1/x', domain: [0.5, 5] };
-    expect(await buildElement(plot, e)).toBe('no axes');
+    // no hand-drawn axes: the engine draws the graph on its own axes
+    expect(typeof (await buildElement(plot, e))).not.toBe('string');
     await run(await buildElement({ kind: 'axes', region: 'side', at: { x: 100, y: 600 }, w: 600, h: 400, id: 'ax' }, e));
     const p = await buildElement(plot, e);
     expect(typeof p).not.toBe('string');

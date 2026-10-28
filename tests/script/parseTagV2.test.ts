@@ -52,7 +52,15 @@ describe('parseTag v2: toolkit', () => {
     expect(parseTag('axes on=side at=100,600 size=600,500 x="depth z" y="disparity" id=ax')).toEqual({
       kind: 'axes', region: 'side', at: { x: 100, y: 600 }, w: 600, h: 500, xLabel: 'depth z', yLabel: 'disparity', id: 'ax',
     });
-    expect(parseTag('plot on=side fn="1/x" domain=0.5,5 em')).toEqual({ kind: 'plot', region: 'side', fn: '1/x', domain: [0.5, 5], em: true });
+    expect(parseTag('plot on=side fn="1/x" domain=0.5,5 em')).toEqual({ kind: 'plot', region: 'side', fn: '1/x', domainSrc: ['0.5', '5'], domain: [0.5, 5], em: true });
+    // engine graphs: domains over constants, a parametric curve over t, a label and axis names
+    expect(parseTag('plot on=s fn="v*x" domain=0,2*v/g "speed" xlabel=time')).toMatchObject({ fn: 'v*x', domainSrc: ['0', '2*v/g'], label: 'speed', xLabel: 'time' });
+    expect(parseTag('plot on=s id=p30 x="v*cos(rad(30))*t" y="v*sin(rad(30))*t-g*t^2/2" t=0,2*v*sin(rad(30))/g "30°" label=top axes=p45')).toEqual({
+      kind: 'plot', region: 's', id: 'p30', x: 'v*cos(rad(30))*t', y: 'v*sin(rad(30))*t-g*t^2/2', t: ['0', '2*v*sin(rad(30))/g'], label: '30°', labelAt: 'top', axes: 'p45' });
+    expect(parseTag('const v=20 g=9.8 T=2*v/g')).toEqual({ kind: 'const', defs: [['v', '20'], ['g', '9.8'], ['T', '2*v/g']] });
+    expect(parseTag('let on=s v=20 g=9.8')).toEqual({ kind: 'const', defs: [['v', '20'], ['g', '9.8']] });
+    expect(parseTag('let v=20')).toEqual({ kind: 'const', defs: [['v', '20']] });
+    expect(parseTag('let on=s A=0,0 B=10,0')).toMatchObject({ kind: 'let' });
     expect(parseTag('plot on=side fn="1/x" domain=0.5,5 range=0,2 axes=ax')).toMatchObject({ range: [0, 2], axes: 'ax' });
     expect(parseTag('plot on=side fn="1/x" domain=5,1')).toBeNull();
     expect(parseTag(`plot on=side fn="${'x+'.repeat(70)}x" domain=0,1`)).toBeNull();

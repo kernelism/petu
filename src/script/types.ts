@@ -79,7 +79,13 @@ export type Shape<P = Pt> =
   /** Region only. at = origin (bottom-left); the x axis runs w right, the y axis h up. */
   | ({ kind: 'axes'; at: P; w: number; h: number; xLabel?: string; yLabel?: string } & W)
   /** Region only. Plots fn(x) over domain into the axes `axes` (default: the latest axes in the region). */
-  | ({ kind: 'plot'; fn: string; domain: [number, number]; range?: [number, number]; axes?: string; dash?: boolean } & W)
+  /**
+   * A graph. With a hand-drawn {{axes}}: fn over a numeric domain, as before. Otherwise the engine
+   * draws it with its own axes (ticks, one scale for every plot on them): fn= over domain=, or a
+   * parametric curve x= y= over t=; ranges may be expressions over {{const}} names; "label" sits at
+   * the curve's end (label=top: at its highest point); xlabel=/ylabel= name the axes.
+   */
+  | ({ kind: 'plot'; fn?: string; x?: string; y?: string; t?: [string, string]; domain?: [number, number]; domainSrc?: [string, string]; range?: [number, number]; axes?: string; dash?: boolean; label?: string; labelAt?: 'end' | 'top'; xLabel?: string; yLabel?: string } & W)
   /** Region only. KaTeX. at = left edge, vertical middle (or the centre with `centered`). */
   | { kind: 'math'; at: P; tex: string; size: TextSize; centered?: boolean }
   | KitBlock<P>;
@@ -192,4 +198,9 @@ export type RayShape = { kind: 'line' | 'arrow'; from: PtArg; through: PtArg; le
 /** A connector end as written: also a page mark (`p4:#d3`, `p4:#s2.a`), resolved by the resolver. */
 export type RawEnd = End | { page: number; mark: string };
 export type RawConnect = { kind: 'connect'; from: RawEnd; to: RawEnd; id?: string };
-export type RawAction = LayoutAction | (DrawAction<PtArg>) | RefAction | RawConnect | LetAction | MarkShape | RayShape;
+/**
+ * {{const v=20 g=9.8 T=2*v/g}}: named numbers for every kit formula in this answer (plots, fn=, col).
+ * Each value is an expression over the constants before it. Taken when parsed (like let); never timed.
+ */
+export type ConstAction = { kind: 'const'; defs: [string, string][] };
+export type RawAction = LayoutAction | (DrawAction<PtArg>) | RefAction | RawConnect | LetAction | MarkShape | RayShape | ConstAction;
