@@ -28,6 +28,9 @@ describe('values', () => {
     expect(C.fmt(0.25)).toBe('0.25');
     expect(C.fmt(0.123)).toBe('0.12');
     expect(C.fmt(5 / 7)).toBe('0.71');
+    expect(C.fractions([3, 1.4, 5 / 7, 1 / 3])).toBe(false); // a column never mixes 1/3 with 0.71
+    expect(C.fractions([1 / 9, 1 / 9, 0])).toBe(true);
+    expect(C.fmt(1 / 3, undefined, false)).toBe('0.33');
   });
 });
 

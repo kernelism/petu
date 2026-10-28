@@ -49,13 +49,13 @@ export function stats(m: Mat): Stats {
 
 const MINUS = '−';
 /** A value as the board writes it. `dp` fixes the decimals; otherwise integers stay whole and others get ~2 significant decimals. */
-export function fmt(v: number, dp?: number): string {
+export function fmt(v: number, dp?: number, frac = true): string {
   if (!Number.isFinite(v)) return Number.isNaN(v) ? '' : v > 0 ? '∞' : `${MINUS}∞`;
   let s: string;
   if (dp != null) s = v.toFixed(dp);
   else {
     const r = Math.round(v * 1e9) / 1e9;
-    const q = fracDen(v);
+    const q = frac ? fracDen(v) : null;
     if (Number.isInteger(r)) s = String(r);
     else if (q) s = `${Math.round(v * q)}/${q}`;
     else {
@@ -77,6 +77,9 @@ function fracDen(v: number): number | null {
   for (const q of [3, 6, 9, 12]) if (Math.abs(v * q - Math.round(v * q)) < 1e-9) return q;
   return null;
 }
+
+/** Whether a set of values reads well with fractions: every one is whole, a short decimal or a third/sixth/ninth. One 0.714… and the set stays decimal, so a column never mixes 1/3 with 0.71. */
+export const fractions = (xs: number[]) => xs.every((v) => !Number.isFinite(v) || Math.abs(v * 100 - Math.round(v * 100)) < 1e-9 || fracDen(v) != null);
 
 /** A value inside an expansion: negatives in parentheses, so `9·(−1)` reads right. */
 export const term = (v: number, dp?: number) => (v < 0 && fmt(v, dp) !== '0' ? `(${fmt(v, dp)})` : fmt(v, dp));

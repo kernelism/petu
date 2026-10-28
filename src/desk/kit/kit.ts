@@ -231,7 +231,9 @@ function eventual(src: KitSource, shown: C.Mat, get: (id: string) => Block | und
   if ('col' in src) { const t = get(src.col[0]); if (t?.full) return [t.full.map((r) => r[src.col[1]])]; }
   return shown;
 }
-const fmtAll = (m: C.Mat, dp?: number) => m.flat().map((v) => C.fmt(v, dp));
+const fmtAll = (m: C.Mat, dp?: number) => m.flat().map((v) => C.fmt(v, dp, C.fractions(m.flat())));
+/** Fractions for a block only when all its values read well that way (C.fractions). */
+const fracOf = (b: Block) => C.fractions([...(b.full ?? b.vals ?? []).flat(), ...(b.vals ?? []).flat()]);
 
 function anchorOf(store: KitStore, a: { right?: string; below?: string }): Promise<Block | undefined> {
   const id = a.right ?? a.below;
@@ -479,7 +481,7 @@ async function drawGrid(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: P
     texts.push([]);
     for (let q = 0; q < Cn; q++) {
       const sh = shadeOf(b.vals![r][q], b.shade, lo, hi, c);
-      texts[r].push(kitText(numG, body.x + (q + 0.5) * cs, body.y + (r + 0.5) * cs, C.fmt(b.vals![r][q], b.dp), { size: m.num, fill: sh.text }));
+      texts[r].push(kitText(numG, body.x + (q + 0.5) * cs, body.y + (r + 0.5) * cs, C.fmt(b.vals![r][q], b.dp, fracOf(b)), { size: m.num, fill: sh.text }));
     }
   }
   const over = svg(g, 'g', { class: 'kit-over' });
@@ -510,7 +512,7 @@ async function setGridVals(b: Block, next: C.Mat, ms: number, ctl: Ctl | undefin
       const sh = shadeOf(cur, b.shade, lo, hi, c);
       els.cells[r][q].setAttribute('fill', sh.fill);
       const tx = els.texts[r][q];
-      tx.textContent = blank ? '' : t >= 1 ? C.fmt(v, b.dp) : C.fmt(Number(cur.toFixed(dps[r][q])), dps[r][q]);
+      tx.textContent = blank ? '' : t >= 1 ? C.fmt(v, b.dp, fracOf(b)) : C.fmt(Number(cur.toFixed(dps[r][q])), dps[r][q]);
       const em = (accent && accent[0] === r && accent[1] === q) || els.emCells?.some(([a, z]) => a === r && z === q) || (b.el.whereHits as [number, number][] | undefined)?.some(([a, z]) => a === r && z === q);
       tx.setAttribute('fill', em ? accentColor ?? c.ink : sh.text);
       tx.setAttribute('font-weight', em ? '600' : '400');
@@ -607,7 +609,7 @@ async function setBarVals(b: Block, next: C.Mat, ms: number, ctl: Ctl | undefine
       const cur = f + ((Number.isFinite(v) ? v : 0) - f) * t;
       const r = barRect(x, i, cur);
       setAttrs(e.bars[i], { x: r.x, y: r.y, width: r.w, height: Math.max(0, r.h), fill: e.emBars.has(i) ? token('--kit-accent') || c.bar : c.bar });
-      const lab = Number.isFinite(v) ? (t >= 1 ? C.fmt(v, x.dp) : C.fmt(Number(cur.toFixed(x.dp ?? decimals(v))), x.dp ?? decimals(v))) : '';
+      const lab = Number.isFinite(v) ? (t >= 1 ? C.fmt(v, x.dp, fracOf(x)) : C.fmt(Number(cur.toFixed(x.dp ?? decimals(v))), x.dp ?? decimals(v))) : '';
       e.vals[i].textContent = lab;
       setAttrs(e.vals[i], { x: r.x + r.w / 2, y: cur >= 0 ? r.y - m.label * 0.7 : r.y + r.h + m.label * 0.7 });
     });
@@ -1303,7 +1305,7 @@ type TableEls = { texts: SVGTextElement[][]; heads: SVGTextElement[]; over: SVGG
 const tabCell = (b: Block, r: number, j: number): Box => ({ x: b.tab!.xs[j], y: b.placed.body.y + r * b.tab!.rh, w: b.tab!.ws[j], h: b.tab!.rh });
 const tabStr = (b: Block, r: number, j: number) => {
   const v = b.vals![r][j];
-  return Number.isFinite(v) ? C.fmt(v, b.dp) : b.tab!.filled[r][j] ? '—' : '';
+  return Number.isFinite(v) ? C.fmt(v, b.dp, C.fractions(b.full!.map((row) => row[j]))) : b.tab!.filled[r][j] ? '—' : '';
 };
 
 async function drawTable(b: Block, c: ReturnType<typeof col>, k: Pace) {
@@ -1410,7 +1412,7 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
   const below = (o: Block) => o.placed.rect.y >= t.placed.rect.y + t.placed.rect.h - 1;
   const yBelow = Math.max(t.placed.rect.y + t.placed.rect.h, ...others.filter(below).map((o) => o.placed.rect.y + o.placed.rect.h));
   const maxW = 1000 - m.margin - x;
-  const exps = full.map((_, r) => rowExp(v, fn, full, r, t.dp));
+  const exps = full.map((_, r) => rowExp(v, fn, full, r, t.dp, C.fractions(full.map((row) => row[j]))));
   const lines = Math.max(1, ...exps.map((e) => wrapPieces(piecesOf(e, tb.heads[j]), maxW, (s) => m.u(textWidth(s, m.numPx))).length));
   const body = { x, y: yBelow + m.gap * 0.7, w: Math.min(maxW, Math.max(...exps.map((e) => m.u(textWidth(piecesOf(e, tb.heads[j]).join(''), m.numPx))))), h: lines * m.num * 1.55 };
   const cb = newBlock(store.anonId(), 'calc', t.region, { body, rect: { ...body } }, m, []);
@@ -1466,10 +1468,10 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
 }
 
 /** Row r's expansion of a column fn: the fn with the row's values substituted, and its value. */
-function rowExp(v: { fn: string }, fn: import('../expr').VarFn, full: C.Mat, r: number, dp?: number): C.Expansion {
+function rowExp(v: { fn: string }, fn: import('../expr').VarFn, full: C.Mat, r: number, dp?: number, frac = true): C.Expansion {
   const env = rowEnv({} as Block, full, r);
   const value = fn(env);
-  return { parts: [C.substitute(v.fn, env, dp), ' = '], result: Number.isFinite(value) ? C.fmt(value, dp) : '—', value };
+  return { parts: [C.substitute(v.fn, env, dp), ' = '], result: Number.isFinite(value) ? C.fmt(value, dp, frac) : '—', value };
 }
 
 /** A reference line at a value: across bars, a scatter (y = at), or between a table column's rows where it crosses. */
