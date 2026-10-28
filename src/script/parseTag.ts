@@ -2,7 +2,8 @@
 import { REGION_H, type Compass, type RawEnd, type Pt, type RawAction, type Target, type Weight } from './types';
 import { tokenize, unquote } from './tokenize';
 import { NAME, normName, parsePtArg, worldPt, isBlockRef, type PtArg } from './pointExpr';
-import { parseKitBlock, parseKitVerb } from './parseKit';
+import { parseKitBlock, parseKitVerb, sceneRel } from './parseKit';
+import { parseScene, SCENE_TAGS } from './parseScene';
 
 /** Region and element ids: a letter, then letters, digits, - or _. Case-insensitive (stored lowercased). */
 const ID = /^[a-z][a-z0-9_-]{0,23}$/;
@@ -137,7 +138,9 @@ export function parseTag(body: string): RawAction | null {
       return parseKitVerb(name, args, quotes, flags);
     case 'move': {
       const ref = eid(args.id), to = pt(args.to, 1000); // clamped to the element's own space when it runs
-      return ref && to ? { kind: 'move', ref, to } : null;
+      const rel = sceneRel(args);
+      if (rel) return ref && args.to == null ? { kind: 'move', ref, place: rel } : null;
+      return ref && to && rel === undefined ? { kind: 'move', ref, to } : null;
     }
     case 'connect': {
       const near = pt(args.near, 1000);
@@ -175,7 +178,12 @@ export function parseTag(body: string): RawAction | null {
     const out = s.trim().split(/\s+/).map((x) => P(x));
     return out.length >= min && out.every(Boolean) ? (out as PtArg[]) : undefined;
   };
-  if (name === 'grid' || name === 'bars' || name === 'scatter' || name === 'table' || name === 'calc' || name === 'fit') {
+  if (SCENE_TAGS.has(name)) {
+    if (!inRegion) return null;
+    const s = parseScene(name, args, quotes, flags);
+    return s ? ({ ...s, ...target, ...mark } as RawAction) : null;
+  }
+  if (name === 'grid' || name === 'bars' || name === 'scatter' || name === 'table' || name === 'calc' || name === 'fit' || name === 'shares' || name === 'blend') {
     if (!inRegion) return null;
     const b = parseKitBlock(name, args, quotes, flags, P);
     return b ? ({ ...b, ...target, ...mark } as RawAction) : null;

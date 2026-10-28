@@ -149,7 +149,7 @@ describe('every script', () => {
       for (const a of parseAll(s)) {
         // a kit part (o[1,2]) or a table column (t.c) names its block
         if ('ref' in a) expect(seen, `${a.kind} ${a.ref}`).toContain(a.ref.replace(/\[.*$|\.[a-z]$/, ''));
-        if (a.kind === 'connect') for (const e of [a.from, a.to]) if ('ref' in e) expect(seen).toContain(e.ref);
+        if (a.kind === 'connect') for (const e of [a.from, a.to]) if ('ref' in e) expect(seen).toContain(e.ref.replace(/\[.*$/, ''));
         if ('id' in a && a.id && a.kind !== 'sketch') seen.add(a.id);
       }
     }

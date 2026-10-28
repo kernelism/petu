@@ -151,4 +151,40 @@ export const SCRIPTS: Record<string, Demo & { src: string }> = {
       `then {{emph id=a}} emphasis, {{move id=a to=160,200}} a move, {{fade id=a}} a fade, ` +
       `{{label id=pl "1/z" dir=n}} and a label.`,
   },
+  /**
+   * Board v2 (spec "Board v2: one connected scene"), three subjects, one scene each: things placed
+   * by relation (no coordinates), linked to each other and to the page, transformed rather than
+   * redrawn, and one standard op the engine computes.
+   */
+  scene: {
+    src: '/fixtures/mechanics.pdf',
+    question: 'Where does the work done on the cart go?',
+    script:
+      `{{scroll p=12}} Here, {{highlight p=12 "A 3 kg cart from rest, pushed"}} every joule the push does on the cart turns into motion. ` +
+      `{{scene id=s near=p12}} Take {{const m=3}} the {{node on=s id=push "push, 20 N"}} push {{node on=s id=cart "cart, 3 kg" right=push}} acts on the cart {{link on=s from=push to=cart "does work"}} and does work on it. ` +
+      `{{connect from=p12:"W = Fd cos θ" to=s:push}} Work is force times distance, ` +
+      `{{bars on=s id=w size=1x5 fn="20*(c-1)*1.5" labels=0,1.5,3,4.5,6 below=push "work done (J) after x metres"}} so it climbs steadily as the cart moves. ` +
+      `{{note on=s "force × distance" annotate=w[5]}} After six metres that is the slide's figure. ` +
+      `{{bars on=s id=v map=w fn="sqrt(2*x/m)" right=w "speed (m/s)"}} Set it equal to one half m v squared and the engine solves for the speed. ` +
+      `{{link on=s from=w to=v "½mv² = W"}} Speed grows like the square root of the work, {{emph id=v[5]}} so it rises fast at first and then levels. ` +
+      `{{connect from=p12:"v = 8.9 m/s" to=s:v[5]}} That end value is the page's answer. ` +
+      `{{shares on=s id=goes vals=1,0 labels=motion,heat right=cart "where the work goes"}} Without friction {{link on=s from=cart to=goes strength=0.9 plain}} it all goes into motion. ` +
+      `{{set id=goes vals=2,1}} Add a rough floor and a third of it leaks away as heat, {{note on=s "same work, less speed" below=goes}} so the same push buys less speed.`,
+  },
+  'scene-econ': {
+    src: '/fixtures/econ.pdf',
+    question: 'Who actually pays the tax?',
+    script:
+      `{{scroll p=12}} Here, {{highlight p=12 "Buyers and sellers split the tax"}} neither side pays the whole tax: it drives a wedge between the price buyers pay and the price sellers keep. ` +
+      `{{scene id=s near=p12}} On {{node on=s id=buyers "buyers"}} one side are the buyers, {{node on=s id=sellers "sellers" right=buyers}} on the other the sellers. ` +
+      `{{bars on=s id=tax vals=2 labels=t below=buyers "tax per unit"}} Put a tax of two on each unit. ` +
+      `That is {{connect from=p12:"t = 2" to=s:tax}} the slide's t. ` +
+      `{{bars on=s id=pb map=tax fn="(70+5*x)/10" right=tax op=none "buyers pay"}} Solving the slide's two lines, buyers now pay this {{bars on=s id=ps map=tax fn="(70+5*x)/10-x" right=pb op=none "sellers keep"}} and sellers keep this. ` +
+      `Buyers {{link on=s from=buyers to=pb "pay"}} pay one, sellers {{link on=s from=sellers to=ps "keep"}} keep the other. ` +
+      `{{bars on=s id=shift size=1x2 fn="(2-c)*((70+5*2)/10-7)+(c-1)*(7-((70+5*2)/10-2))" labels=buyers,sellers below=pb op=none "change from 7"}} Compared with the old price of seven, ` +
+      `{{shares on=s id=burden op=normalize of=shift labels=buyers,sellers right=shift "who bears the tax"}} the burden splits like this. ` +
+      `{{connect from=p12:"Pb = 8, Ps = 6, Q = 20" to=s:pb}} The page's numbers agree. ` +
+      `{{note on=s "equal slopes, equal shares" annotate=burden}} Because the two curves are equally steep, each side carries half. ` +
+      `{{set id=tax vals=4}} Double the tax and both prices move apart, {{emph id=burden}} but the split stays the same.`,
+  },
 };

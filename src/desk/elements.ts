@@ -16,7 +16,13 @@ import { preloadMath, texToHtml, placeMath, revealMath, setMathAt } from './math
 import type { BuildElement, BuildEnv, ElementPlan, Pace, TargetCtx } from './types';
 import { MIN_TEXT_PX } from './layout';
 import { KIT_BLOCKS, type KitBlock } from '../script/types';
-import { isBlockRef } from '../script/pointExpr';
+import { blockPart, isBlockRef } from '../script/pointExpr';
+import { SCENE_KINDS, type SceneShape } from '../script/types';
+import { buildScene, buildSceneRef, isSceneRef } from './scene/scene';
+import { anchorBox, sceneStore } from './scene/store';
+
+/** Waits briefly for a scene thing (or block) named by a ref. */
+async function sceneWait(ref: string, env: BuildEnv) { await anchorBox(ref, env.registry, REF_WAIT_MS); }
 import { buildBlock, buildKitPlot, buildKitRef, isKitRef, kitEndBox, resolveKitPoints } from './kit/kit';
 
 /** Closed shapes (circle, box) read as rushed below this, however small… */
@@ -65,10 +71,16 @@ const where = (t: Target) => (t.region != null ? `region ${t.region}` : `page ${
 /** Resolves one ink action into a plan (see ElementPlan). Strings are skip reasons. */
 export const buildElement: BuildElement = async (a, env) => {
   if (a.kind === 'connect') return connect(a, env);
-  if ('ref' in a) return isKitRef(a, env.registry) ? buildKitRef(a, env) : ref(a, env);
+  if ('ref' in a) {
+    // A scene thing's verb waits for the thing (it may still be building on its own word).
+    if ((a.kind === 'move' && a.place) || (a.kind === 'set' && (a.text != null || a.value != null || a.weight != null))) await sceneWait(a.ref, env);
+    if (isSceneRef(a, env)) return buildSceneRef(a, env);
+    return isKitRef(a, env.registry) ? buildKitRef(a, env) : ref(a, env);
+  }
   const target: Target = a.region != null ? { region: a.region } : { page: a.page! };
   const ctx = await env.ctx(target);
   if (typeof ctx === 'string') return ctx;
+  if (SCENE_KINDS.has(a.kind)) return buildScene(a as SceneShape & DrawAction, ctx, env);
   if (KIT_BLOCKS.has(a.kind)) return buildBlock(a as KitBlock & DrawAction, ctx, env);
   // Kit parts named as points (g[2,3]) resolve now that their blocks are laid out.
   const k = await resolveKitPoints(a, env.registry);
@@ -496,6 +508,10 @@ async function endBox(end: End, env: BuildEnv): Promise<{ t: Target; r: SRect; p
   if ('quote' in end) {
     const rects = locateQuote(await ctx.runs(), end.quote, end.near, { aspect: ctx.h / 1000 }).map((x) => ctx.rectToSpace(x));
     return rects.length ? { t, r: union(rects) } : 'connector anchor not found';
+  }
+  if ('ref' in end && sceneStore(env.registry).get(isBlockRef(end.ref) ? blockPart(end.ref)!.id : end.ref)) {
+    const b = await anchorBox(end.ref, env.registry);
+    return b ? { t, r: b } : `unknown ${end.ref}`;
   }
   if ('ref' in end && isBlockRef(end.ref)) return kitEndBox(end.region, end.ref, env.registry);
   if ('ref' in end) {

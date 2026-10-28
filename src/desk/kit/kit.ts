@@ -393,9 +393,11 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
   const id = a.id ?? store.anonId();
   if (a.id && store.get(a.id)) return 'duplicate id';
   a = await withColumns(a, store);
-  const anchor = await anchorOf(store, a);
+  // In a scene, a neighbour may be any thing (a node, a note): the scene places by its box, so only a kit neighbour is waited for here.
+  const anchor = ctx.scene && (a.right || a.below) && !store.get(a.right ?? a.below ?? '') && sceneStore(env.registry).get(a.right ?? a.below ?? '') ? undefined : await anchorOf(store, a);
+  const sceneNeighbour = !!ctx.scene && !anchor && !!(a.right || a.below) && !!(await anchorBox(a.right ?? a.below!, env.registry, 0));
   // A neighbour that was skipped: the block still draws, in the default place (one skip never cascades).
-  if ((a.right || a.below) && !anchor) { console.warn('[kit] unknown neighbour, placed below:', a.right ?? a.below); a = { ...a, right: undefined, below: undefined, op: undefined }; }
+  if ((a.right || a.below) && !anchor && !sceneNeighbour) { console.warn('[kit] unknown neighbour, placed below:', a.right ?? a.below); a = { ...a, right: undefined, below: undefined, op: undefined }; }
   // Defaults: a grid or bars is named on the board (its id, when it has no caption; tables and plots
   // name themselves by their headers and axes), and a computed block placed right of (below) its own
   // source reads as "source → result" (↓) unless op= says otherwise. An → between stacked blocks points down.
@@ -1632,6 +1634,7 @@ async function setVerb(v: Extract<KitVerb, { kind: 'set' }>, env: BuildEnv, stor
         else jobs.push(setGridVals(b, next, SET_MS, ctl, c));
         jobs.push(refreshDeps([b.id], store, SET_MS, ctl, env, c));
         await Promise.all(jobs);
+        store.notify(b.id);
       });
       await pause(Math.min(SET_MS, 300));
     },
@@ -1914,6 +1917,7 @@ async function refreshDeps(ids: string[], store: KitStore, ms: number, ctl: Ctl 
     else d.vals = shown;
   }
   await Promise.all(jobs);
+  deps.forEach((d) => store.notify(d.id));
   for (const d of deps) {
     if (d.kind !== 'calc' || !d.g || d.calc!.live) continue;
     if (d.calc!.win) {

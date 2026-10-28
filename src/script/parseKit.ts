@@ -12,15 +12,17 @@
  *   {{calc on=s of=d reduce=sum "total"}}  {{calc on=s of=u,v reduce=dot}}  {{fit on=s id=f of=p pick=2,7}}
  *   {{step id=o[1,2]}}  {{sweep id=o dur=6}}  {{set id=b fn="x+20"}}  {{band id=f w=0.5}}  {{dist from=p[4] to=f}}
  */
-import type { ColRef, KitBlock, KitReduce, KitSource, KitVerb, WinReduce, Pt } from './types';
+import { SCENE_RELS, type ColRef, type KitBlock, type KitReduce, type KitSource, type KitVerb, type ScenePlace, type WinReduce, type Pt } from './types';
 import type { PtArg } from './pointExpr';
 import { isBlockRef, NAME, normName } from './pointExpr';
 import { parseVals, MAX_DIM, MAX_IMG } from '../desk/kit/compute';
+import { valueRef } from './parseScene';
 
 const MAX_FN = 120;
 const MAX_LABEL = 40;
 const MAX_POINTS = 40;
-const REDUCES = new Set<KitReduce>(['sum', 'mean', 'max', 'min', 'norm', 'count', 'dot', 'cos']);
+const REDUCES = new Set<KitReduce>(['sum', 'mean', 'max', 'min', 'norm', 'count', 'dot', 'cos', 'wavg', 'argmax']);
+const OPS = new Set(['softmax', 'normalize', 'l2', 'cumsum', 'rank', 'matmul', 'scale']);
 const WIN_REDUCES = new Set<WinReduce>(['sum', 'mean', 'max', 'min']);
 /** Operator glyphs between blocks; ASCII spellings map to the glyph. */
 const GLYPHS: Record<string, string> = {
@@ -37,19 +39,39 @@ const list = (s?: string) => {
 };
 const fnOk = (s?: string) => (s && s.length <= MAX_FN ? s : undefined);
 
+/** One of right= left= above= below= beside= near= (an id or a part): where a thing goes in a scene. Undefined when none; null when malformed or more than one. */
+export function sceneRel(args: Args): ScenePlace | null | undefined {
+  const given = SCENE_RELS.filter((k) => args[k] != null);
+  if (!given.length) return undefined;
+  if (given.length > 1) return null;
+  const v = args[given[0]].trim();
+  const of = isBlockRef(v) ? v : eid(v);
+  return of ? { rel: given[0], of } : null;
+}
+
 type Args = Record<string, string>;
 
 /** right= / below= / op= / at=: where a block goes. Null when malformed. */
 function place(args: Args, P: (s?: string) => PtArg | undefined): Record<string, unknown> | null {
   const out: Record<string, unknown> = {};
   if (args.right != null && args.below != null) return null;
+  // Board v2: left / above / beside / near another thing (a scene places it; a plain section stacks it below).
+  const rel = sceneRel(args);
+  if (rel === null) return null;
+  if (rel && rel.rel !== 'right' && rel.rel !== 'below') {
+    if (args.right != null || args.below != null || args.at != null) return null;
+    out.rel = rel;
+    out.below = rel.of;
+    if (args.op != null) return null;
+    return out;
+  }
   for (const k of ['right', 'below'] as const) {
     if (args[k] == null) continue;
     const r = eid(args[k]);
     if (!r) return null;
     out[k] = r;
   }
-  if (args.op != null) {
+  if (args.op != null && !OPS.has(args.op.trim().toLowerCase())) {
     // op=none: no glyph (a computed block beside its source otherwise gets →).
     const g = args.op.trim().toLowerCase() === 'none' ? '' : GLYPHS[args.op.trim()];
     if (g == null || (out.right == null && out.below == null)) return null;
@@ -82,6 +104,15 @@ const srcRef = (s?: string) => { const cr = colRef(s); return cr ? colStr(cr) : 
 
 /** vals= / map= fn= / zip= fn= / over= (slide= | win= reduce=|fn=) / size= fn=: where a block's values come from. */
 function source(args: Args, flags: Set<string>): KitSource | null {
+  // op=softmax of=v (t=2): a standard operation the engine computes (src/desk/kit/ops.ts).
+  const op = args.op?.trim().toLowerCase();
+  if (op && OPS.has(op)) {
+    if (['vals', 'map', 'zip', 'over', 'size'].some((k) => args[k] != null)) return null;
+    const of = (args.of ?? '').split(',').map((x) => srcRef(x.trim()));
+    const t = num(args.t);
+    if (!of.length || of.some((x) => !x) || of.length !== (op === 'matmul' ? 2 : 1) || (args.t != null && !(t != null && t > 0))) return null;
+    return { op: op as Extract<KitSource, { op: string }>['op'], of: of as string[], ...(t != null ? { t } : {}) };
+  }
   const given = ['vals', 'map', 'zip', 'over', 'size'].filter((k) => args[k] != null);
   if (given.length !== 1) return null;
   if (args.size != null) {
@@ -188,12 +219,26 @@ export function parseKitBlock(name: string, args: Args, quotes: string[], flags:
       const of = (args.of ?? '').split(',').map((x) => eid(x.trim()));
       const r = (args.reduce ?? 'sum').toLowerCase() as KitReduce;
       if (!of.length || of.length > 2 || of.some((x) => !x) || !REDUCES.has(r)) return null;
-      const pair = r === 'dot' || r === 'cos';
+      const pair = r === 'dot' || r === 'cos' || r === 'wavg';
       const fn = args.fn != null ? fnOk(args.fn) : undefined;
       if (args.fn != null && !fn) return null;
       if (pair ? of.length !== 2 : of.length !== (fn ? of.length : 1)) return null;
       const label = quotes[0]?.trim() ? { label: quotes[0].trim().slice(0, MAX_LABEL) } : {};
       return { kind: 'calc', of: of as string[], reduce: r, ...(fn ? { fn } : {}), ...label, ...dp, ...pl } as KitBlock<PtArg>;
+    }
+    case 'shares':
+    case 'blend': {
+      // blend of=w,v: the values of v mixed in w's shares (w's values, normalised), with the result.
+      let src: KitSource | null;
+      let mix: string | undefined;
+      if (name === 'blend') {
+        const of = (args.of ?? '').split(',').map((x) => eid(x.trim()));
+        if (of.length !== 2 || !of[0] || !of[1]) return null;
+        src = { op: 'normalize', of: [of[0]] }; mix = of[1];
+      } else src = source(args, flags);
+      const labels = list(args.labels);
+      if (!src || labels === null) return null;
+      return { kind: 'shares', src, ...(labels ? { labels } : {}), ...(mix ? { mix } : {}), ...dp, ...caption, ...pl } as KitBlock<PtArg>;
     }
     case 'fit': {
       const of = eid(args.of);
@@ -220,6 +265,13 @@ export function parseKitVerb(name: string, args: Args, quotes: string[], _flags:
     }
     case 'set': {
       if (!ref) return null;
+      // Board v2: a scene thing changes in place: a new label ("text"), value= or a link's strength=.
+      if (quotes[0]?.trim() || args.value != null || args.strength != null) {
+        if (args.to != null || args.fn != null || args.vals != null) return null;
+        const value = valueRef(args.value), weight = valueRef(args.strength);
+        if (value === null || weight === null) return null;
+        return { kind: 'set', ref, ...(quotes[0]?.trim() ? { text: quotes[0].trim().slice(0, 60) } : {}), ...(value != null ? { value } : {}), ...(weight != null ? { weight } : {}) };
+      }
       const to = num(args.to), fn = fnOk(args.fn), vals = args.vals != null ? parseVals(args.vals) : undefined;
       const n = [args.to != null, args.fn != null, args.vals != null].filter(Boolean).length;
       if (n !== 1 || (args.to != null && to == null) || (args.fn != null && !fn) || vals === null) return null;

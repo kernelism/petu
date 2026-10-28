@@ -161,10 +161,8 @@ export type RefAction =
   | { kind: 'label'; ref: string; text: string; dir?: Compass; em?: boolean }
   /** `where` (a kit grid or table): every cell whose value makes the fn true, x being the cell. */
   | { kind: 'emph'; ref: string; where?: string }
+  /** Moves a point or label to `to`; in a scene, any thing to a new place by relation (links follow). */
   | { kind: 'move'; ref: string; to?: Pt; place?: ScenePlace }
-  /** Board v2 continuity: a thing becomes several (they come out of it) or several become one. */
-  | { kind: 'split'; ref: string; into: string[]; texts: string[] }
-  | { kind: 'merge'; ref: string; from: string[]; text: string }
   | { kind: 'fade'; ref: string }
   | KitVerb;
 
