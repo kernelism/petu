@@ -1,7 +1,7 @@
 // tests/desk/desk.test.ts
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Desk, GLIDE_MS, type DeskHost } from '../../src/desk/Desk';
-import { computeLayout, frameFor, SAFE_TOP, type Split } from '../../src/desk/layout';
+import { computeLayout, frameFor, type Split } from '../../src/desk/layout';
 import { Director } from '../../src/playback/director';
 import { DEFAULTS } from '../../src/settings/settings';
 import type { ViewerApi } from '../../src/pdf/viewerApi';
@@ -287,14 +287,13 @@ describe('Desk under interruption', () => {
     await d.resume();
     expect(d.following()).toBe(true);
   });
-  it('opening the board re-frames the slide being explained when the column change pushed it out of view', async () => {
-    const h = fakeHost(900, 800);
+  it('opening the board frames the slide being explained (the viewer top-aligns it in a split); appending does not', async () => {
+    const h = fakeHost();
     const d = new Desk(h, stage);
-    h.s.top = 1226; // page 3 framed in the reading column
     await d.addRegion(spec('side', 3));
-    expect(h.glideTo).toHaveBeenCalled();
-    const L = h.layout();
-    expect(h.s.top).toBeGreaterThan(L!.tops[2] - SAFE_TOP - 200);
+    expect(h.scrollToPage).toHaveBeenCalledWith(3);
+    await d.addRegion(spec('more', 3));
+    expect(h.scrollToPage).toHaveBeenCalledOnce();
   });
 });
 

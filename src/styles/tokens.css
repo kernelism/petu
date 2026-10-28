@@ -1,5 +1,6 @@
 :root {
-  /* The window's outer margin and the gutter between the slides and the board (layout.ts margin()). */
+  /* The window's outer margin and the gutter between the slides and the board. App.tsx sets the exact
+     (rounded) value from layout.ts margin(); this is the first-paint default. */
   --m: clamp(16px, 2.5vw, 40px);
   --canvas-bg: #E9E7E1;
   --surface: #FFFFFF;

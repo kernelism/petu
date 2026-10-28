@@ -207,3 +207,94 @@ export function routeConnector(from: Rect, to: Rect, edge: Edge, o: RouteOpts = 
   });
   return out.map(F.back);
 }
+
+// ------------------------------------------------------------------------------------------------
+// Split layout: page → gutter → board.
+
+export type GutterOpts = {
+  /** The anchor's page, view px. */
+  page: Rect;
+  /** The x of the gutter's middle, between the page's right edge and the board. */
+  gutterX: number;
+  /** Whether page content touches a rect (view px). Unknown (page not rendered yet): treated as clear. */
+  blocked?: (r: Rect) => boolean;
+  /** The slides' visible band: the run along the page stays inside it. */
+  band?: { y0: number; y1: number };
+};
+
+/** The short vertical exit from an anchor to its run may pass the anchor's own figure, never further than this share of the page height. */
+const HOOK_MAX = 0.3;
+/** A hook that passes content costs this much more than a clear one. */
+const HOOK_BLOCKED_COST = 400;
+/** Gutter corners. */
+const RADIUS = 10;
+
+/**
+ * A connector in the split layout: from the page anchor (`from`) to a board element (`to`), view px.
+ * It leaves the anchor (straight out at its height, or by a short vertical exit), runs level to the
+ * page's right edge along a band clear of page content, turns into the gutter, runs vertically there
+ * to the element's height, and turns into the board to the element — rounded corners, no diagonal
+ * across the slide. Null when no level run to the page edge is clear of content (the caller drops it).
+ */
+export function routeGutter(from: Rect, to: Rect, o: GutterOpts): Stroke | null {
+  const P = o.page, E = P.x + P.w, gx = o.gutterX;
+  const T = { x: to.x - END_GAP, y: to.y + to.h / 2 };
+  if (!(T.x > gx + 2) || !(gx > E)) return null;
+  const clear = Math.max(4, Math.min(12, P.w * 0.012));
+  const cx = from.x + from.w / 2, cy = from.y + from.h / 2;
+  const top = from.y - END_GAP, bottom = from.y + from.h + END_GAP;
+  const inSpan = (v: number) => v >= from.y && v <= from.y + from.h;
+  const run = (v: number): Rect => {
+    const x0 = inSpan(v) ? from.x + from.w + END_GAP : cx - clear;
+    return { x: x0, y: v - clear, w: Math.max(0, E - x0), h: 2 * clear };
+  };
+  const hook = (v: number): Rect => (v < from.y
+    ? { x: cx - clear / 2, y: v, w: clear, h: Math.max(0, top - v) }
+    : { x: cx - clear / 2, y: bottom, w: clear, h: Math.max(0, v - bottom) });
+  const y0 = Math.max(P.y + clear + 2, o.band?.y0 ?? -Infinity), y1 = Math.min(P.y + P.h - clear - 2, o.band?.y1 ?? Infinity);
+  const hookMax = P.h * HOOK_MAX;
+  let v = NaN, best = Infinity;
+  for (let y = y0; y <= y1; y += 2) {
+    const span = inSpan(y);
+    if (!span && Math.abs(y - cy) - from.h / 2 > hookMax) continue;
+    if (o.blocked?.(run(y))) continue;
+    const cost = Math.abs(y - cy) + PULL * Math.abs(y - T.y) + (span ? 0 : TURN_COST) + (!span && o.blocked?.(hook(y)) ? HOOK_BLOCKED_COST : 0);
+    if (cost < best) { best = cost; v = y; }
+  }
+  if (Number.isNaN(v)) return null;
+
+  const segs: Seg[] = [];
+  const corner = (a: SPt, c: SPt, b: SPt): Seg => ({ kind: 'cubic', a, c1: { x: a.x + (c.x - a.x) * 0.5523, y: a.y + (c.y - a.y) * 0.5523 }, c2: { x: b.x + (c.x - b.x) * 0.5523, y: b.y + (c.y - b.y) * 0.5523 }, b });
+  const line = (a: SPt, b: SPt) => { if (Math.hypot(b.x - a.x, b.y - a.y) > 0.5) segs.push({ kind: 'line', a, b }); };
+  // 1. Out of the anchor onto the run.
+  let p: SPt;
+  if (inSpan(v)) p = { x: from.x + from.w + END_GAP, y: v };
+  else {
+    const sg = v < cy ? -1 : 1;
+    const start = { x: cx, y: sg < 0 ? top : bottom };
+    const R = Math.max(0, Math.min(RADIUS, Math.abs(v - start.y), (E - cx) / 3));
+    line(start, { x: cx, y: v - sg * R });
+    p = { x: cx + R, y: v };
+    if (R > 0.5) segs.push(corner({ x: cx, y: v - sg * R }, { x: cx, y: v }, p));
+  }
+  // 2. Level to the gutter, down (or up) the gutter, into the board.
+  const dy = T.y - v;
+  if (Math.abs(dy) < 1.5) { line(p, T); }
+  else {
+    const sg = Math.sign(dy);
+    const R = Math.max(0, Math.min(RADIUS, Math.abs(dy) / 2, gx - p.x, T.x - gx));
+    line(p, { x: gx - R, y: v });
+    segs.push(corner({ x: gx - R, y: v }, { x: gx, y: v }, { x: gx, y: v + sg * R }));
+    line({ x: gx, y: v + sg * R }, { x: gx, y: T.y - sg * R });
+    segs.push(corner({ x: gx, y: T.y - sg * R }, { x: gx, y: T.y }, { x: gx + R, y: T.y }));
+    line({ x: gx + R, y: T.y }, T);
+  }
+  // 3. Sampled by length, so the trace runs at an even pace.
+  const lens = segs.map(segLen), total = lens.reduce((s, x) => s + x, 0) || 1;
+  const out: SPt[] = [segs[0].a];
+  segs.forEach((s, i) => {
+    const n = s.kind === 'line' ? Math.max(1, Math.round((SAMPLES * lens[i]) / total)) : 6;
+    for (let j = 1; j <= n; j++) out.push(segAt(s, j / n));
+  });
+  return out;
+}

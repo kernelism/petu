@@ -14,13 +14,14 @@
 }
 .stage > .pv-scroll {
   position: absolute;
-  --fade: 14px;
+  --fade: 12px;
+  /* Fully visible inside the band (a page framed at its top edge is whole); the fades lie just outside it. */
   -webkit-mask-image: linear-gradient(to bottom,
-    transparent var(--view-top), #000 calc(var(--view-top) + var(--fade)),
-    #000 calc(100% - var(--view-bottom) - var(--fade)), transparent calc(100% - var(--view-bottom)));
+    transparent calc(var(--view-top) - var(--fade)), #000 var(--view-top),
+    #000 calc(100% - var(--view-bottom)), transparent calc(100% - var(--view-bottom) + var(--fade)));
   mask-image: linear-gradient(to bottom,
-    transparent var(--view-top), #000 calc(var(--view-top) + var(--fade)),
-    #000 calc(100% - var(--view-bottom) - var(--fade)), transparent calc(100% - var(--view-bottom)));
+    transparent calc(var(--view-top) - var(--fade)), #000 var(--view-top),
+    #000 calc(100% - var(--view-bottom)), transparent calc(100% - var(--view-bottom) + var(--fade)));
 }
 /* While an answer draws on the board, set the neighbouring pages back so the page being explained
    reads as the one in frame. They come back when the answer ends or the student scrolls (App.tsx). */
