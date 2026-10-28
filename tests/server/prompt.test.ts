@@ -13,6 +13,9 @@ export const EVAL_VOCAB = [
   /lec\d\d/i, /optical flow/i, /disparity/i, /baseline/i, /x-prime/i, /Harris/i, /eigen/i, /thin lens/i,
   /Szeliski/i, /COMPSCI/i, /407,600/, /CS ?670/i, /stereo/i, /\bdepth\b/i, /focal/i, /triangulat/i,
   /homograph/i, /convolution/i, /gradient/i, /\bSIFT\b/, /RANSAC/i, /midterm/i, /Lucas|Kanade/i,
+  // the Eval v3 synthetic decks (public/fixtures/econ.pdf, mechanics.pdf)
+  /elasticit/i, /deadweight/i, /supply and demand|demand curve|supply curve/i, /surplus/i, /projectile/i,
+  /inclined plane/i, /friction/i, /pulley|Atwood/i, /centripetal/i,
 ];
 
 describe('system prompt', () => {

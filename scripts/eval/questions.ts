@@ -1,12 +1,17 @@
-// scripts/eval/questions.ts — question set v1: 24 questions over 12 founder PDFs, dev/test split.
-// The split is fixed here and hashed (QSET). Editing any row changes QSET and fails the pin in
-// tests/eval/questions.test.ts until the pin is updated on purpose. The test split is never used
-// while tuning: see assertSplitAllowed. PDFs are read in place; this file holds only page numbers
+// scripts/eval/questions.ts — the question sets. q1 (checkpoint 2): 24 questions over 12 founder PDFs,
+// hand/random picks with a type taxonomy. q2 (Eval v3, the default; rows in q2.ts): 40 questions
+// written by an agent that saw only the PDFs, split 20 dev / 20 test.
+// Each set is hashed (qsetId). Editing any row changes the id and fails the pins in
+// tests/eval/questions.test.ts until they are updated on purpose. The test split is never used
+// while tuning: see assertSplitAllowed. PDFs are read in place; these files hold only page numbers
 // and the questions, never PDF content.
 import { createHash } from 'node:crypto';
+import { Q2 } from './q2.ts';
+import { knownDeck } from './decks.ts';
 
 export type Split = 'dev' | 'test';
-export type QType = 'derive' | 'why' | 'what-if' | 'compare' | 'point-at' | 'navigation' | 'ink' | 'follow-up' | 'off-topic';
+/** q1's taxonomy; q2 has only the writer's own scope label (narrow | broad). */
+export type QType = 'derive' | 'why' | 'what-if' | 'compare' | 'point-at' | 'navigation' | 'ink' | 'follow-up' | 'off-topic' | 'narrow' | 'broad';
 export type Question = {
   id: string;
   split: Split;
@@ -14,7 +19,8 @@ export type Question = {
   deck: string;
   /** 1-based pdf.js page index. */
   page: number;
-  pick: 'hand' | 'random';
+  /** q1: hand-picked or seeded random page. q2: chosen by the question-writing agent. */
+  pick: 'hand' | 'random' | 'agent';
   type: QType;
   /** Free-form tags for the quotas ('point', 'text'). */
   tags?: string[];
@@ -28,7 +34,8 @@ export type Question = {
 const q = (id: string, deck: string, page: number, pick: Question['pick'], type: QType, question: string, extra: Partial<Question> = {}): Question =>
   ({ id, split: id.startsWith('T') ? 'test' : 'dev', deck, page, pick, type, question, ...extra });
 
-export const QUESTIONS: Question[] = [
+/** Question set q1 (checkpoint 2). */
+export const Q1: Question[] = [
   q('D1', 'lec02', 36, 'hand', 'derive', 'Derive the thin lens equation from the similar triangles here.'),
   q('D2', 'lec02', 18, 'hand', 'why', 'Why do parallel lines on the ground meet at the horizon?'),
   q('D3', 'lec06', 28, 'hand', 'why', 'Why does a separable filter save so much computation?'),
@@ -58,6 +65,16 @@ export const QUESTIONS: Question[] = [
   q('T10', 'szeliski', 1220, 'random', 'navigation', 'Where does the book introduce matte reflection?', { tags: ['text'] }),
 ];
 
+export type QSetName = 'q1' | 'q2';
+export const QSETS: Record<QSetName, Question[]> = { q1: Q1, q2: Q2 };
+export const DEFAULT_QSET: QSetName = 'q2';
+/** The default set (q2). Pass a set explicitly where the runner's --qset applies. */
+export const QUESTIONS: Question[] = QSETS[DEFAULT_QSET];
+export function questionSet(name: string): Question[] {
+  if (!(name in QSETS)) throw new Error(`unknown question set ${name} (have: ${Object.keys(QSETS).join(', ')})`);
+  return QSETS[name as QSetName];
+}
+
 export const bySplit = (split: Split | 'both', qs: Question[] = QUESTIONS): Question[] =>
   split === 'both' ? qs : qs.filter((x) => x.split === split);
 
@@ -68,9 +85,12 @@ const stable = (v: unknown): string => JSON.stringify(v, (_k, val) =>
 
 /** Content hash of the set (hex, 64 chars). */
 export const qsetHash = (qs: Question[] = QUESTIONS): string => createHash('sha256').update(stable(qs)).digest('hex');
-/** Version label used in runIds: `q1-<first 8 of the hash>`. */
-export const QSET_VERSION = 'q1';
-export const qsetId = (qs: Question[] = QUESTIONS): string => `${QSET_VERSION}-${qsetHash(qs).slice(0, 8)}`;
+/** Label used in runIds: `<set name>-<first 8 of the hash>`, e.g. `q2-1a2b3c4d`. */
+export const qsetId = (qs: Question[] = QUESTIONS, name: string = nameOf(qs)): string => `${name}-${qsetHash(qs).slice(0, 8)}`;
+function nameOf(qs: Question[]): string {
+  for (const [k, v] of Object.entries(QSETS)) if (v === qs) return k;
+  return DEFAULT_QSET;
+}
 export const QSET = qsetId();
 
 /** Sanity checks on the set itself (used by tests and by `freeze`). */
@@ -83,6 +103,7 @@ export function validateSet(qs: Question[]): string[] {
     if ((x.split === 'test') !== x.id.startsWith('T')) errs.push(`${x.id}: id prefix does not match split`);
     if (!x.question.trim()) errs.push(`${x.id}: empty question`);
     if (x.page < 1) errs.push(`${x.id}: bad page`);
+    if (!knownDeck(x.deck)) errs.push(`${x.id}: unknown deck ${x.deck}`);
   }
   const pages = new Map<string, string>();
   for (const x of qs) {
@@ -93,6 +114,10 @@ export function validateSet(qs: Question[]): string[] {
   return errs;
 }
 
+/** Phases that may run the held-out test split: always (validation), or once (the baseline). */
+export const TEST_ALWAYS = new Set(['validate', 'lessonval']);
+export const TEST_ONCE = new Set(['bakeoff', 'lessonbake']);
+
 /**
  * The test split is for the baseline (bake-off, once) and validation only. Tuning phases refuse it.
  * `testUsedBefore`: number of earlier runs that touched a test question (read from the eval dir).
@@ -100,23 +125,25 @@ export function validateSet(qs: Question[]): string[] {
 export function assertSplitAllowed(ids: string[], phase: string, testUsedBefore: number, qs: Question[] = QUESTIONS): void {
   const touchesTest = ids.some((id) => qs.find((x) => x.id === id)?.split === 'test');
   if (!touchesTest) return;
-  if (phase === 'validate') return;
-  if (phase === 'bakeoff' && testUsedBefore === 0) return;
-  throw new Error(`the test split is held out: refusing to run it in phase "${phase}" (allowed: the one bake-off baseline, and validate)`);
+  if (TEST_ALWAYS.has(phase)) return;
+  if (TEST_ONCE.has(phase) && testUsedBefore === 0) return;
+  throw new Error(`the test split is held out: refusing to run it in phase "${phase}" (allowed: the one baseline in ${[...TEST_ONCE].join('/')}, and ${[...TEST_ALWAYS].join('/')})`);
 }
 
-/** Freeze the set into <evalDir>/questions.json. */
-export async function freeze(evalDir: string): Promise<string> {
-  const errs = validateSet(QUESTIONS);
+/** Freeze a set into <evalDir>/questions[-<name>].json (q1 keeps its original file name). */
+export async function freeze(evalDir: string, name: QSetName = DEFAULT_QSET): Promise<string> {
+  const qs = QSETS[name];
+  const errs = validateSet(qs);
   if (errs.length) throw new Error(errs.join('; '));
   const { mkdirSync, writeFileSync } = await import('node:fs');
   const { join } = await import('node:path');
   mkdirSync(evalDir, { recursive: true });
-  const file = join(evalDir, 'questions.json');
-  writeFileSync(file, JSON.stringify({ qset: QSET, hash: qsetHash(), questions: QUESTIONS }, null, 1));
+  const file = join(evalDir, name === 'q1' ? 'questions.json' : `questions-${name}.json`);
+  writeFileSync(file, JSON.stringify({ qset: qsetId(qs, name), hash: qsetHash(qs), questions: qs }, null, 1));
   return file;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  console.log('wrote', await freeze(process.argv[2] ?? '.petu/eval'), QSET);
+  const name = (process.argv[3] ?? DEFAULT_QSET) as QSetName;
+  console.log('wrote', await freeze(process.argv[2] ?? '.petu/eval', name), qsetId(QSETS[name], name));
 }
