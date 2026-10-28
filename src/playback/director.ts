@@ -1,5 +1,5 @@
 // src/playback/director.ts
-import { REGION_H, REGION_W, targetOf, type Action, type InkAction, type LayoutAction, type Target } from '../script/types';
+import { REGION_H, REGION_W, targetOf, type Action, type RawAction, type InkAction, type LayoutAction, type Target } from '../script/types';
 import type { ViewerApi } from '../pdf/viewerApi';
 import { rectToSpace, toSpace, type SRect } from '../geometry/space';
 import { rng } from '../ink/agent/strokes';
@@ -81,7 +81,9 @@ export class Director {
   private desk(): DeskApi | null { return this.d.desk(); }
 
   /** Runs `a`, whose word starts at `at` (performance.now() ms; default now). */
-  run(a: Action, at: number = now()): void {
+  run(raw: RawAction, at: number = now()): void {
+    if (raw.kind === 'let' || 'mark' in raw || 'through' in raw) return; // T0 shim: resolved by Lane R
+    const a = raw as Action;
     const signal = this.ctrl.signal;
     const t: ActionTiming = { action: a, firedAt: at, queuedAt: now(), startedAt: NaN };
     if (this.pendingReset != null) this.resetFor(a, signal);
@@ -106,7 +108,9 @@ export class Director {
   }
 
   /** Warms caches as soon as an action is parsed: a page's text runs, KaTeX. */
-  prefetch(a: Action): void {
+  prefetch(raw: RawAction): void {
+    if (raw.kind === 'let' || 'mark' in raw || 'through' in raw) return; // T0 shim
+    const a = raw as Action;
     if (a.kind === 'math') { void preloadMath().catch(() => {}); return; }
     const v = this.d.viewer();
     if (!v) return;

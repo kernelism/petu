@@ -4,5 +4,5 @@
     "moduleResolution": "bundler", "jsx": "react-jsx", "strict": true, "noEmit": true,
     "skipLibCheck": true, "allowImportingTsExtensions": true, "types": ["vite/client", "vitest/globals"]
   },
-  "include": ["src", "tests", "scripts", "vite.config.ts", "vitest.setup.ts"]
+  "include": ["src", "server", "tests", "scripts", "vite.config.ts", "vitest.setup.ts"]
 }

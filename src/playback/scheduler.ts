@@ -1,4 +1,4 @@
-import type { Action, ScriptEvent } from '../script/types';
+import type { RawAction as Action, ScriptEvent } from '../script/types';
 import { endsClause, type NarrationClock } from './clock';
 
 export type SchedulerCallbacks = {

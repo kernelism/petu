@@ -10,11 +10,12 @@ import type { Action } from '../../src/script/types';
 afterEach(() => vi.restoreAllMocks());
 
 function parseAll(script: string): Action[] {
+  // Demo scripts use only literal coordinates: their raw actions are plain actions.
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const p = new ScriptParser();
   const events = [...p.push(script), ...p.end()];
   expect(warn).not.toHaveBeenCalled();
-  return events.flatMap((e) => (e.type === 'action' ? [e.action] : []));
+  return events.flatMap((e) => (e.type === 'action' ? [e.action as Action] : []));
 }
 const em = (as: Action[]) => as.filter((a) => 'em' in a && a.em).map((a) => a.kind);
 const ALL = [DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.values(SCRIPTS).map((x) => x.script)];

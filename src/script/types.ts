@@ -42,43 +42,43 @@ type W = { weight?: Weight };
  * Anchored forms (`quote`) are preferred on pages: they resolve against the text layer, so they are
  * pixel-exact. `near` disambiguates repeated text. Radii (`r`, `rx`, `ry`) are in x units.
  */
-export type Shape =
-  | { kind: 'highlight'; quote: string; near?: Pt }
-  | ({ kind: 'underline'; quote: string; near?: Pt } & W)
-  | ({ kind: 'circle'; at: Pt; rx: number; ry: number; dash?: boolean } & W)
-  | ({ kind: 'circle'; quote: string; near?: Pt; dash?: boolean } & W)
-  | ({ kind: 'line'; from: Pt; to: Pt; dash?: boolean } & W)
-  | ({ kind: 'arrow'; from: Pt; to: Pt; dash?: boolean } & W)
+export type Shape<P = Pt> =
+  | { kind: 'highlight'; quote: string; near?: P }
+  | ({ kind: 'underline'; quote: string; near?: P } & W)
+  | ({ kind: 'circle'; at: P; rx: number; ry: number; dash?: boolean } & W)
+  | ({ kind: 'circle'; quote: string; near?: P; dash?: boolean } & W)
+  | ({ kind: 'line'; from: P; to: P; dash?: boolean } & W)
+  | ({ kind: 'arrow'; from: P; to: P; dash?: boolean } & W)
   /** at = top-left corner; w in x units, h in y units. */
-  | ({ kind: 'box'; at: Pt; w: number; h: number } & W)
-  | ({ kind: 'box'; quote: string; near?: Pt } & W)
-  | { kind: 'label'; at: Pt; text: string }
+  | ({ kind: 'box'; at: P; w: number; h: number } & W)
+  | ({ kind: 'box'; quote: string; near?: P } & W)
+  | { kind: 'label'; at: P; text: string }
   /** Region only. at = left edge, vertical middle. */
-  | { kind: 'write'; at: Pt; text: string; size: TextSize }
+  | { kind: 'write'; at: P; text: string; size: TextSize }
   /** A dot, plus an optional label placed toward `dir` (default ne) and nudged off other elements. */
-  | { kind: 'point'; at: Pt; text?: string; dir?: Compass }
+  | { kind: 'point'; at: P; text?: string; dir?: Compass }
   /** Catmull-Rom curve through 2+ points. */
-  | ({ kind: 'curve'; pts: Pt[]; dash?: boolean } & W)
+  | ({ kind: 'curve'; pts: P[]; dash?: boolean } & W)
   /**
    * A fill under the ink: a polygon (3+ points) or an ellipse. In a region: an opaque light sheet
    * (overlaps never muddy); `outline` adds a 1px hairline (a sheet like the slide's boxes); `em` is
    * a ~10% accent tint instead, without outline unless `outline` is given too. On a page: a light
    * multiply tint, so the slide shows through.
    */
-  | { kind: 'shade'; pts: Pt[]; outline?: boolean }
-  | { kind: 'shade'; at: Pt; rx: number; ry: number; outline?: boolean }
+  | { kind: 'shade'; pts: P[]; outline?: boolean }
+  | { kind: 'shade'; at: P; rx: number; ry: number; outline?: boolean }
   /** Arc between the rays at→from and at→to (the smaller sweep). r in x units, default 30. */
-  | ({ kind: 'angle'; at: Pt; from: Pt; to: Pt; r?: number; text?: string } & W)
+  | ({ kind: 'angle'; at: P; from: P; to: P; r?: number; text?: string } & W)
   /** Curly brace from `from` to `to`; its tip points to the left of the direction from → to. */
-  | ({ kind: 'brace'; from: Pt; to: Pt; text?: string } & W)
+  | ({ kind: 'brace'; from: P; to: P; text?: string } & W)
   /** Region only. at = origin (bottom-left); the x axis runs w right, the y axis h up. */
-  | ({ kind: 'axes'; at: Pt; w: number; h: number; xLabel?: string; yLabel?: string } & W)
+  | ({ kind: 'axes'; at: P; w: number; h: number; xLabel?: string; yLabel?: string } & W)
   /** Region only. Plots fn(x) over domain into the axes `axes` (default: the latest axes in the region). */
   | ({ kind: 'plot'; fn: string; domain: [number, number]; range?: [number, number]; axes?: string; dash?: boolean } & W)
   /** Region only. KaTeX. at = left edge, vertical middle. */
-  | { kind: 'math'; at: Pt; tex: string; size: TextSize };
+  | { kind: 'math'; at: P; tex: string; size: TextSize };
 
-export type DrawAction = Shape & Target & Mark;
+export type DrawAction<P = Pt> = Shape<P> & Target & Mark;
 
 /** Actions on an element drawn earlier in this answer (by id). */
 export type RefAction =
@@ -92,7 +92,7 @@ export type ConnectAction = { kind: 'connect'; from: End; to: End; id?: string }
 export type LayoutAction =
   | { kind: 'scroll'; page: number; y?: number }
   /** Reserves region `id` next to page `page`. */
-  | { kind: 'sketch'; id: string; page: number; size: RegionSize; place: Place }
+  | { kind: 'sketch'; id: string; page: number; size: RegionSize; place: Place; fit?: boolean }
   | { kind: 'clear' };
 
 export type Action = LayoutAction | DrawAction | RefAction | ConnectAction;
@@ -100,7 +100,7 @@ export type InkAction = Exclude<Action, LayoutAction>;
 
 export type ScriptEvent =
   | { type: 'word'; text: string }
-  | { type: 'action'; action: Action }
+  | { type: 'action'; action: RawAction }
   | { type: 'end' };
 
 /** The target an action draws into, when it has exactly one (refs and connectors don't). */
@@ -108,3 +108,17 @@ export function targetOf(a: Action): Target | null {
   if ('ref' in a || a.kind === 'connect' || a.kind === 'sketch' || a.kind === 'scroll' || a.kind === 'clear') return null;
   return a.region != null ? { region: a.region } : { page: a.page! };
 }
+
+// ------------------------------------------------------------------------------------------------
+// Agent v2: relational geometry and page marks. The parser emits RawAction; the director resolves
+// it (src/geometry/resolve.ts) into an Action with plain points just before building it.
+
+import type { PtArg } from './pointExpr';
+type Ink = { id?: string; em?: boolean; weight?: Weight; dash?: boolean };
+/** `{{let on=R A=x,y B=mid(A,C)}}`: names points without drawing anything. */
+export type LetAction = { kind: 'let'; defs: [string, PtArg][] } & Target;
+/** A shape on a page mark: `{{circle p=4 mark=#d3}}`, `{{line p=4 mark=#s2}}`, `{{box p=4 mark=#t12}}`. */
+export type MarkShape = { kind: 'circle' | 'box' | 'highlight' | 'underline' | 'line' | 'arrow'; page: number; region?: never; mark: string } & Ink;
+/** A ray: from A through B, to the frame edge (regions) or `len` × |AB| (pages default 1.5). */
+export type RayShape = { kind: 'line' | 'arrow'; from: PtArg; through: PtArg; len?: number } & Target & Ink;
+export type RawAction = LayoutAction | (DrawAction<PtArg>) | RefAction | ConnectAction | LetAction | MarkShape | RayShape;

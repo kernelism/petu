@@ -1,7 +1,7 @@
 import { ScriptParser } from '../script/parser';
 import { Scheduler, actionLeadMs } from './scheduler';
 import type { NarrationClock } from './clock';
-import type { Action, ScriptEvent } from '../script/types';
+import type { RawAction as Action, ScriptEvent } from '../script/types';
 
 export type SessionState = 'idle' | 'loading' | 'playing' | 'done' | 'stopped' | 'error';
 type Deps = {

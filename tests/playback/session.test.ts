@@ -10,7 +10,7 @@ function make(idle?: () => Promise<void>) {
   let words: string[] = [];
   const s = new AnswerSession({
     clock: new PacedClock(() => 170, () => Date.now(), () => 100),
-    onAction: (a, at) => { actions.push(a); ats.push(at); },
+    onAction: (a, at) => { actions.push(a as Action); ats.push(at); },
     onWord: (w) => { words = w; },
     onState: (st) => states.push(st),
     idle,
