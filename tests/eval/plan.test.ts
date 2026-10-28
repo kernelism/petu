@@ -12,6 +12,7 @@ describe('args', () => {
     expect(parseArgs(['--qset', 'q1', '--rubric', 'r2'])).toMatchObject({ qset: 'q1', rubric: 'r2' });
     expect(parseArgs(['--fake-judge'])).toMatchObject({ fakeJudge: true, judge: true });
     expect(() => parseArgs(['--qset', 'q9'])).toThrow(/qset/);
+    expect(parseArgs(['--qset', 'q3'])).toMatchObject({ qset: 'q3' });
     expect(() => parseArgs(['--rubric', 'r1'])).toThrow(/rubric/);
   });
   it('parses the documented flags', () => {
@@ -32,6 +33,7 @@ describe('args', () => {
 describe('selection', () => {
   it('splits (q1)', () => {
     expect(selectQuestions(parseArgs(['--qset', 'q1']))).toHaveLength(14);
+    expect(selectQuestions(parseArgs(['--qset', 'q3']))).toHaveLength(18);
     expect(selectQuestions(parseArgs(['--qset', 'q1', '--split', 'test']))).toHaveLength(10);
     expect(selectQuestions(parseArgs(['--qset', 'q1', '--split', 'both']))).toHaveLength(24);
   });

@@ -143,7 +143,7 @@ async function dump(runId: string, n: number, seed: number, allowFake: boolean):
   const { frameSchedule, frameCaptions } = await import('./frames.ts');
   const run = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')) as { args: { qset?: string; rubric?: RubricVersion } };
   const rubric = run.args.rubric ?? 'r2';
-  const qs = QSETS[(run.args.qset ?? 'q1') as 'q1' | 'q2'];
+  const qs = QSETS[(run.args.qset ?? 'q1') as keyof typeof QSETS];
   const judged = judgementsOf(dir, allowFake);
   const cands = Object.keys(judged).flatMap((id) => { const q = qs.find((x) => x.id === id.split('.')[0]); return q ? [{ id, deck: q.deck, scope: q.type, q }] : []; });
   if (!cands.length) throw new Error(`no judged answers in ${dir}${allowFake ? '' : ' (fake judgements are skipped; --allow-fake to rehearse)'}`);

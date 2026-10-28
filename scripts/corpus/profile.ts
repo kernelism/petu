@@ -156,7 +156,7 @@ async function profile(t: Target) {
   };
 }
 
-const out = [];
+const out: Awaited<ReturnType<typeof profile>>[] = [];
 for (const t of targets) {
   process.stderr.write(`${t.id} … `);
   const r = await profile(t);
