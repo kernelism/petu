@@ -1,6 +1,7 @@
 // server/plugin.ts — the petu API as Vite dev-server middleware (`apply: 'serve'`, localhost only).
 //
-//   POST /api/ask              AskRequest → NDJSON AskEvents
+//   POST /api/ask              AskRequest → NDJSON AskEvents (with an opener and the storyboard on: the
+//                              lesson design first — a `storyboard` event — then stage 2 performing it)
 //   POST /api/scout            ScoutRequest → NDJSON ScoutEvents (stage 1, streamed: opener sentences,
 //                              then the verdict: pages in teaching order + plan, then the cost; any
 //                              failure falls back to the visible page, never an error status)
@@ -123,7 +124,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     res.on('close', onClose);
     const emit = (e: AskEvent) => { if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify(e) + '\n'); };
     try {
-      await ask(body as AskRequest, env.model, deps, emit, ctl.signal);
+      await ask(body as AskRequest, env.model, deps, emit, ctl.signal, env.storyboard);
     } finally {
       res.off('close', onClose);
       if (!res.writableEnded && !res.destroyed) res.end();
@@ -190,7 +191,8 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   function routeSpend(req: IncomingMessage, res: ServerResponse) {
     if (req.method !== 'GET') return json(res, 405, { error: 'GET only' });
     const s = ledger.summary();
-    const worst = worstCaseUsd(env.model.model, TYPICAL_INPUT_TOKENS, env.model.maxOutput, env.model.fast) + worstCaseUsd(env.scout.model, TYPICAL_SCOUT_TOKENS, env.scout.maxOutput, env.scout.fast);
+    const worst = worstCaseUsd(env.model.model, TYPICAL_INPUT_TOKENS, env.model.maxOutput, env.model.fast) + worstCaseUsd(env.scout.model, TYPICAL_SCOUT_TOKENS, env.scout.maxOutput, env.scout.fast)
+      + (env.storyboard ? worstCaseUsd(env.storyboard.model, TYPICAL_INPUT_TOKENS, env.storyboard.maxOutput, env.storyboard.fast) : 0);
     const refusal = ledger.check(env.phase, worst);
     return json(res, 200, { ...s, phase: env.phase, phaseCapUsd: env.caps.phaseUsd?.[env.phase], ...(refusal ? { blocked: refusal.message, blockedCode: refusal.code } : {}) });
   }

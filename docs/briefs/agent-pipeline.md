@@ -42,6 +42,15 @@ Enter → useAgent.source
 ```
 Failed/slow scout (8s) → `fallbackScout`: visible page only, no opener, stage 2 alone.
 
+**Storyboard** (spec "Board v2" 5; `PETU_STORYBOARD=1`, off by default): inside `/api/ask`, when an opener
+was spoken, `storyboard()` first asks a reasoning model (`PETU_STORYBOARD_MODEL` gpt-6.1-terra,
+`PETU_STORYBOARD_EFFORT` low, deadline `PETU_STORYBOARD_TIMEOUT_MS` 12s) with stage 2's grounding plus
+the opener, for strict JSON (`src/agent/storyboard.ts`: confusion, example, scene, beats, aha, check;
+prompt `server/prompt/storyboard.ts`, `STORYBOARD_VERSION`, cache key `petu-story-<v>`). It emits a
+`storyboard` AskEvent before `meta` (?debug row + expandable JSON; `.petu/answers.jsonl` `storyboard`),
+is booked as kind `storyboard`, and stage 2 gets a `STORYBOARD` block after the PLAN. Timeout, bad
+JSON, upstream error or cap → stage 2 on the scout plan. Esc aborts it (booked as an estimate).
+
 ## Request layout and caching (stage 2, `buildRequest`)
 
 1. `developer`: system prompt — breakpoint **12h**.
@@ -61,7 +70,7 @@ to what prewarm sends. `PETU_EXPLICIT_CACHE=0` → implicit caching, prewarm off
 - Caps: total ≤ $40 (`PETU_TOTAL_CAP_USD` can only lower it); phase (`PETU_PHASE`, default `founder`):
   dev 1, bakeoff 6, iterate 7, validate 2, founder 21.99, lessondev 1.5, lessonbake 3, lessoniter 3.5,
   lessonval 2 (override one run: `PETU_CAP_<PHASE>=…`); daily $3 in founder phase only (`PETU_DAILY_CAP_USD`).
-- Kinds booked: `answer`, `scout`, `prewarm`, `judge`. `GET /api/spend` shows totals and `blocked`.
+- Kinds booked: `answer`, `scout`, `storyboard`, `prewarm`, `judge`. `GET /api/spend` shows totals and `blocked`.
 - A request whose `phase` ≠ the server's phase is rejected (400).
 
 ## Invariants / contracts

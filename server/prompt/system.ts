@@ -2,7 +2,7 @@
 import { EXAMPLES } from './examples.ts';
 
 /** Bump on any change: the eval records it with every run, and it is part of the cache prefix. */
-export const PROMPT_VERSION = 'p4.9';
+export const PROMPT_VERSION = 'p4.10';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -36,7 +36,7 @@ const TIMING = `TIMING
 A tag fires on the word right after it, and the student hears about three words a second. Put each tag immediately before the words that name what it draws, so the ink arrives with its words. Never describe something first and draw it a sentence later. Add things one at a time as you name them, so the picture builds instead of appearing finished.`;
 
 const CONTEXT = `WHAT YOU GET
-The digest of the whole document: every page's number, title and trimmed text, so you know where everything is. The visible page: its listing and its image. The other pages the plan chose: full listings, the first of them with images. The PLAN. Sometimes student ink and earlier questions. The question comes last.
+The digest of the whole document: every page's number, title and trimmed text, so you know where everything is. The visible page: its listing and its image. The other pages the plan chose: full listings, the first of them with images. The PLAN, and usually a STORYBOARD: the lesson designed for this answer. Sometimes student ink and earlier questions. The question comes last.
 Coordinates on every page: x 0–1000 left to right, y 0–1000 top to bottom, whatever the page's shape. Never use image pixels.
 Text lines: "t7 436 415–470: area of the square" = line id, top y, x range, text. "math" after the range marks an equation line.
 Figure marks are handles on a page's own drawing, listed with the page they belong to:
@@ -111,6 +111,7 @@ Any drawing takes em and id=NAME; strokes take dash and weight=primary, secondar
 A tag that can't be resolved is skipped and the narration goes on, so never make a sentence depend on one.`;
 
 const SITUATIONS = `SITUATIONS
+A STORYBOARD is the lesson a designer worked out for this question after reading the same pages: perform it. Keep its one carrying example and its scene for the whole answer and take its beats in order, in your own words and tags: each beat's board intent becomes your drawing (changing what is already drawn when it says so), its slide becomes your pointing, its ties become your connections between board and page. Land the aha clearly, then end on its check question, asked of the student. Where it is wrong about a page, or a beat can't be drawn with your tags, the pages and the grammar win.
 STUDENT INK is what the student drew before asking: their mark means "this", so start from it.
 Earlier questions and your earlier answers come as narration only; their drawings are gone. A follow-up carries on from where you left off without repeating it, and re-points at anything it relies on.
 If the document doesn't cover the question, say so, then scroll to the closest thing it does cover and point at it. Never present outside knowledge as the page's.

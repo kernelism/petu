@@ -126,3 +126,53 @@ describe('twoStage: opener, then stage 2, as one stream', () => {
     await expect(drain(g, [])).rejects.toBeInstanceOf(AskError);
   });
 });
+
+describe('twoStage with a storyboard: opener → storyboard → stage 2', () => {
+  /** Stage 2's stream: the server designs the lesson first (`designed`), then its text comes. */
+  function storyAsk() {
+    let designed!: () => void;
+    const gate = new Promise<void>((ok) => { designed = ok; });
+    const seen: string[] = [];
+    const ask = (_c: AskContext, signal?: AbortSignal) => (async function* () {
+      seen.push('asked');
+      await gate;
+      if (signal?.aborted) return;
+      seen.push('storyboard');
+      yield 'Beat one.';
+    })();
+    return { ask, designed, seen };
+  }
+
+  it('the whole opener plays while the storyboard is designed; stage 2 text follows it', async () => {
+    const st = storyAsk();
+    const { o, s, events } = setup({ ask: (c) => st.ask(c) });
+    const out: string[] = [];
+    const done = drain(twoStage(o, new AbortController().signal), out);
+    s.say('Prices rise. ');
+    s.decide({ pages: [3], plan: 'p', ms: 900, usd: 0, opener: 'Prices rise. ', openerMs: 500 });
+    await tick(); await tick();
+    expect(st.seen).toEqual(['asked']); // stage 2 asked at the verdict, still designing
+    expect(out).toEqual(['Prices rise. ']);
+    st.designed();
+    await done;
+    expect(st.seen).toEqual(['asked', 'storyboard']);
+    expect(out).toEqual(['Prices rise. ', ' ', 'Beat one.']);
+    expect(events.map((e) => e.t)).toEqual(['scout', 'handoff']);
+  });
+
+  it('Esc while the storyboard is being designed: nothing more plays, no handoff', async () => {
+    const st = storyAsk();
+    const ctl = new AbortController();
+    const { o, s, events } = setup({ ask: (c) => st.ask(c, ctl.signal) });
+    const out: string[] = [];
+    const done = drain(twoStage(o, ctl.signal), out);
+    s.say('Prices rise. ');
+    s.decide({ pages: [3], plan: 'p', ms: 900, usd: 0, opener: 'Prices rise. ' });
+    await tick(); await tick();
+    ctl.abort();
+    st.designed();
+    await done;
+    expect(out).toEqual(['Prices rise. ']);
+    expect(events.map((e) => e.t)).not.toContain('handoff');
+  });
+});
