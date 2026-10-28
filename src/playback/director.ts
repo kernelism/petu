@@ -11,6 +11,7 @@ import { regionRuns } from '../desk/runs';
 import { buildElement } from '../desk/elements';
 import { preloadMath } from '../desk/math';
 import type { BuildElement, BuildEnv, DeskApi, ElementPlan, TargetCtx } from '../desk/types';
+import { bodyFraction } from '../desk/layout';
 
 /** Ink actions sharing a word start this far apart, in order. */
 export const STAGGER_MS = 120;
@@ -63,7 +64,7 @@ const buildsEarly = (a: InkAction) => a.kind !== 'connect' && !('ref' in a) && a
 
 /**
  * Executes actions against the desk in two lanes:
- * - a serial layout lane: scrolls, sketches (region placement), reveals, connector framing, clear;
+ * - a serial layout lane: scrolls, sketches (board sections), reveals, connector framing, clear;
  * - concurrent ink: each ink action waits only for the most recent layout action queued before it
  *   (until its target is on screen), then starts on its word, whatever earlier ink is doing.
  */
@@ -138,6 +139,7 @@ export class Director {
     const pages: number[] = [];
     if (a.kind === 'connect') for (const e of [a.from, a.to]) if ('quote' in e) pages.push(e.page);
     if ('quote' in a && a.page != null) pages.push(a.page);
+    if (a.kind === 'sketch') pages.push(a.page ?? v.currentPage()); // its body text sizes the section
     for (const p of pages) if (p >= 1 && p <= v.numPages()) void v.textRuns(p).catch(() => {});
   }
 
@@ -148,6 +150,7 @@ export class Director {
     this.last = null;
     this.stagger = { at: NaN, n: 0 };
     this.drawing.clear();
+    this.registry.settle(); // kit animations (a sweep) land in their end state
     this.pendingReset = null; // an answer stopped before it acted leaves the desk as it is
     this.desk()?.abort(); // pans stop, and no desk move in flight (a column glide, entering B) lands later
     this.gen++;
@@ -158,9 +161,9 @@ export class Director {
   /**
    * Starts a new answer: stops the old one, clears the registry and fades the old page marks out. The
    * fade sits at the head of the layout lane, so the caller can start streaming right away.
-   * The desk (regions, wires, lanes, B) is reset later, by the new answer's first layout or ink action
-   * (rule 8; see resetFor), so the old regions stay up until the new answer touches the page or desk,
-   * and an answer that ends without acting leaves them as they are.
+   * The desk (connectors, this answer's ids) is reset later, by the new answer's first layout or ink
+   * action (rule 8; see resetFor), so an answer that ends without acting leaves it as it is. The board
+   * itself persists across answers.
    */
   begin(ms = 300): Promise<void> {
     this.stop();
@@ -187,15 +190,13 @@ export class Director {
 
   /**
    * The new answer's first action resets the desk begin() left up, through the layout lane, so the
-   * action (and ink queued after it) waits for it. A sketch keeps the lanes, so the column doesn't
-   * glide back to center and out again; {{clear}} resets the desk itself.
+   * action (and ink queued after it) waits for it; {{clear}} resets the desk itself.
    */
   private resetFor(a: Action, signal: AbortSignal) {
     const ms = this.pendingReset!;
     this.pendingReset = null;
     if (a.kind === 'clear') return;
-    const opts = a.kind === 'sketch' ? { keepLanes: true } : undefined;
-    const e = this.enqueueLayout('clear', async () => { const desk = this.desk(); if (desk) await (opts ? desk.reset(ms, opts) : desk.reset(ms)); }, signal);
+    const e = this.enqueueLayout('clear', async () => { await this.desk()?.reset(ms); }, signal);
     this.track(e.done);
   }
 
@@ -270,18 +271,31 @@ export class Director {
     const desk = this.desk();
     if (!desk) return 'no desk';
     const v = this.d.viewer();
-    if (!v || a.page < 1 || a.page > v.numPages()) { if (a.kind === 'sketch') console.warn('[director] sketch skipped: page out of range', a.id); return 'page out of range'; }
+    if (!v) return 'no viewer';
     if (a.kind === 'sketch') {
-      // Lands ink in flight only if placing the region moves the view (a column glide, entering B).
-      const r = await desk.addRegion({ id: a.id, page: a.page, size: a.size, place: a.place }, this.land);
+      // The slide the section explains: `near=` when given and in range, else the one in view.
+      const page = a.page != null && a.page >= 1 && a.page <= v.numPages() ? a.page : v.currentPage();
+      const body = await this.bodyOf(v, page);
+      if (signal.aborted) return;
+      // Lands ink in flight only if opening the board moves the view (the split glide, a board scroll).
+      const r = await desk.addRegion({ id: a.id, page, size: a.size, body }, this.land);
       if (typeof r === 'string') { console.warn('[director] sketch skipped:', r, a.id); return r; }
       return;
     }
+    if (a.page < 1 || a.page > v.numPages()) return 'page out of range';
     if (!desk.following()) return 'student is driving'; // rule 6
     await this.land(); // a scroll always moves the view
     if (signal.aborted) return;
     this.d.onScrolledTo(a.page); // the page indicator names the destination as the glide starts
     await desk.scrollToPage(a.page, a.y);
+  }
+
+  /** The slide's body text size (a fraction of the page width) from its text layer; null when it has none. Never waits long. */
+  private async bodyOf(v: ViewerApi, page: number): Promise<number | null> {
+    try {
+      const runs = await Promise.race([v.textRuns(page), wait(400).then(() => null)]);
+      return runs ? bodyFraction(runs, v.spaceHeight(page) / 1000) : null;
+    } catch { return null; }
   }
 
   /** The toolkit's view of a target: a page (through the viewer) or a region (through the desk). */
@@ -290,7 +304,7 @@ export class Director {
       const r = this.desk()?.region(t.region);
       if (!r) { console.warn('[director] unknown region', t.region); return 'unknown region'; }
       return {
-        target: t, layers: r.layers, h: REGION_H, scale: r.scale,
+        target: t, layers: r.layers, h: REGION_H, scale: r.scale, body: r.body,
         toSpace: (p) => p, rectToSpace: (x) => x, runs: async () => regionRuns(r.layers.agent),
       };
     }

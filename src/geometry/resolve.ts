@@ -1,6 +1,6 @@
 // src/geometry/resolve.ts
 import { REGION_H, type Action, type End, type Pt, type RawAction, type RawEnd, type Target } from '../script/types';
-import { isLiteral, type PtArg } from '../script/pointExpr';
+import { isBlockRef, isLiteral, type PtArg } from '../script/pointExpr';
 import { Figure, rayEnd } from './figure';
 import type { PageRect } from './space';
 
@@ -96,6 +96,8 @@ export class Figures {
     const f = this.figure(t);
     const h = t.region != null ? REGION_H : 1000;
     const local = (p: PtArg): Pt | string => {
+      // A kit block's part (g[2,3]): its place exists only once the block is laid out, so the kit resolves it when built.
+      if (t.region != null && !isLiteral(p) && 'ref' in p && isBlockRef(p.ref)) return p as unknown as Pt;
       const w = f.world(p);
       if (!('x' in w)) return 'missing' in w ? `unknown point ${w.missing}` : w.degenerate;
       return t.region != null ? f.toLocal(w, h) : { x: clamp(w.x, 1000), y: clamp(w.y, 1000) };
@@ -127,8 +129,8 @@ export class Figures {
     if (t.region != null && f.fitted) for (const k of ['rx', 'ry', 'r', 'w', 'h'] as const) if (typeof out[k] === 'number') out[k] = f.scaleLen(out[k] as number);
     // Boxes and axes stay inside their target (axes grow up from their origin).
     const at = out.at as Pt | undefined;
-    if (at && a.kind === 'box' && typeof out.w === 'number') { out.w = Math.min(out.w as number, 1000 - at.x); out.h = Math.min(out.h as number, h - at.y); }
-    if (at && a.kind === 'axes') { out.w = Math.min(out.w as number, 1000 - at.x); out.h = Math.min(out.h as number, at.y); }
+    if (at && a.kind === 'box' && typeof out.w === 'number' && 'x' in at && !out.centered) { out.w = Math.min(out.w as number, 1000 - at.x); out.h = Math.min(out.h as number, h - at.y); }
+    if (at && a.kind === 'axes' && 'x' in at) { out.w = Math.min(out.w as number, 1000 - at.x); out.h = Math.min(out.h as number, at.y); }
     // Unchanged (all literal, in range, unfitted): hand back the same object, so identity-keyed
     // bookkeeping (debug timings, tests) sees the action it ran.
     return sameShape(out, a as Record<string, unknown>) ? (a as Action) : (out as Action);

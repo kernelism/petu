@@ -18,6 +18,15 @@ const FALLBACK: Record<string, string> = {
   '--shade-tint': '0.1',
   '--ink-label-weight': '450',
   '--font-math': 'KaTeX_Math, KaTeX_Main, "Times New Roman", serif',
+  '--kit-cell': '#FFFFFF',
+  '--kit-line': '#D9D6CF',
+  '--kit-edge': '#9B978E',
+  '--kit-muted': '#8A8780',
+  '--kit-bar': '#3F3D39',
+  '--kit-dot': '#6C6962',
+  '--kit-pos': '#3E6BC7',
+  '--kit-neg': '#C8642B',
+  '--kit-halo': '#FFFFFE',
 };
 
 /** A token's value (trimmed), or its fallback. */

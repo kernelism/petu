@@ -6,8 +6,8 @@ Core context for anyone (human or agent) working in this repo. Read this first.
 
 A web app where a student opens a PDF and asks questions about it. The tutor answers by
 *performing* on the document: it scrolls to the right page, highlights text in sync with its
-narration, and draws to explain — on the page itself, on the desk beside the page, or on a
-full-screen canvas for big diagrams. The student can draw too.
+narration, and draws to explain — on the page itself, or on a board that opens beside the slides
+(slides pinned left, board right; stacked in a narrow window). The student can draw too.
 
 Narration is shown as paced captions today. The same word timeline will later be driven by TTS.
 
@@ -60,8 +60,10 @@ counted per question set).
 
 Dev URLs (append to the dev server URL):
 - `?demo=1` — PDF-only demo on the fixture
-- `?demo=side` — tutor sketches beside the page ("C")
-- `?demo=plane` — full-screen takeover ("B")
+- `?demo=side` — a sketch on the board (normal split, 1:1), connected to the slide
+- `?demo=plane` — a `size=l` sketch: the wide split (slides 0.4, board 0.6)
+- `?script=kit` — the visual kit: six board sections (a sliding window, vectors as bars, a scatter
+  with a band, a demand table, a thrown ball's table, dice), half outside CS, all numbers engine-computed
 - `?script=lec09`, `?script=toolkit`, `?script=relational` — dev scripts, no API call (lec09 needs a
   local, gitignored PDF; relational shows the `let`/construction grammar on the fixture)
 - `?src=<pdf url>` — open a PDF by URL (e.g. `/api/dev-pdf/<name>.pdf` from `PETU_PDF_DIRS`)
@@ -84,8 +86,11 @@ Pipeline:
 2. `src/playback/` — `clock` (paced narration, TTS-ready interface), `scheduler` (fires each
    action at its word, with per-kind lead), `director` (one serial layout lane + concurrent ink
    lanes, backlog compression, timeouts), `session`.
-3. `src/desk/` — the canvas model: sketch regions anchored to pages, lanes that slide the page
-   column aside (C), the full-screen stage (B), connectors, follow mode, element registry
+3. `src/desk/` — the split layout (spec "Lessons v3" L): `layout.ts` derives the reading / split /
+   stacked frame from the window (margin = gutter = clamp(16px, 2.5vw, 40px)); `Desk.ts` owns the
+   board (sections appended top to bottom, uniformly scaled, text at the slide's measured body size,
+   persisting across answers until × / Esc), connectors in an overlay above slides and board,
+   follow mode, element registry
    (`id=`, `emph`, `move`, `fade`), toolkit elements (`expr` safe parser — no eval, `plot`,
    `math`, `nudge`).
 4. `src/ink/agent/` — stroke geometry and human-like pen motion (live / hand / clean styles).
@@ -117,7 +122,14 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
 - `src/agent/{client,useAgent,prewarm,history}.ts` — NDJSON client, cut-off handling (plays what
   arrived), prewarm on ask-bar intent, follow-up history (narration only). `evalHooks.ts` is
   dev-only (`?eval`).
-- `server/` — `plugin.ts` (routes: `/api/ask`, `/api/prewarm`, `/api/spend`, `/api/judge` (eval
+- **Two stages, one stream** (`src/agent/twoStage.ts`, `server/scoutStream.ts`): `/api/scout` streams
+  the scout's JSON `{opener, pages, plan}` as NDJSON. The opener (the answer's first sentence or two,
+  tags on the visible page only, released clause by clause) plays at once; the moment pages and plan
+  are parsed, stage 2 is built and asked with the opener verbatim (`context.opener`, ALREADY SPOKEN)
+  and its script follows the opener's last word; the note tells it never to restate the opener's claim and to open on something new (the mechanism, the first drawn step). A failed scout = stage 2 alone on the visible page.
+  The dock shows a faint static "…" while thinking and after the last word if the stream pauses.
+  `?debug` shows scout verdict, opener, stage-2 first text and the handoff gap.
+- `server/` — `plugin.ts` (routes: `/api/ask`, `/api/scout`, `/api/prewarm`, `/api/spend`, `/api/judge` (eval
   token), `/api/dev-pdf/`), `env.ts` (the only reader of the key and `PETU_*` knobs), `openai.ts`
   (request builder: explicit cache breakpoints after the system prompt (12h) and the page block
   (30m), `prompt_cache_key` per document; one retry before the first text), `sse.ts`,
@@ -126,7 +138,7 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   app: a loopback Host, an Origin (if any) equal to it, and `content-type: application/json` on POSTs
   (`guard` in `plugin.ts`; these routes run before Vite's own host check). Upstream calls time out
   (15s to headers, 20s between chunks, 60s for prewarm/judge).
-- **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p3.2**: hard answer shape (opener ≤ 16
+- **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p4.6** (kit card and WORKED NUMBERS principles; change an input with `set`, name blocks): hard answer shape (opener ≤ 16
   words that starts with its mark, one new element per sentence, 3–7 elements, one `em`, a payoff),
   mechanism over definition, precise marks, per-question-type playbook, few-shot examples from the
   fixture and synthetic pages only. Bump `PROMPT_VERSION` on any change. `tests/server/prompt.test.ts`
@@ -147,7 +159,31 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   drops only that name.
 
 Action kinds: `scroll highlight underline circle box line arrow curve point label write math
-shade angle brace axes plot sketch connect emph move fade clear`.
+shade angle brace axes plot sketch connect emph move fade clear`, plus the visual kit's.
+
+**Visual kit v1** (`src/desk/kit/`, parser `src/script/parseKit.ts`; spec "Visual kit v1"). The model
+names data and operations; the engine lays blocks out from the board's type size, computes every
+number and animates.
+- Blocks (in a sketch, no `fit`/`let`): `grid` (matrix/table of cells, `shade`, `rows=`/`cols=` labels),
+  `bars` (a vector), `table` (headers + rows; empty columns filled by `col`), `scatter` (literal points
+  or a table's columns), `calc` (a live calculation line: expansion and result), `fit` (least squares
+  or `pick=i,j`). Placement `right=`/`below=` another block (bodies aligned, engine spacing; wraps at
+  the margin; `below` clears whatever sits under the anchor) with an `op=` glyph (⊛ · × = → − + ÷);
+  a computed block `right=` its own source gets → unless `op=` says otherwise (`op=none`). A grid or
+  bars without a caption is captioned with its id (a single letter in math italic). A section's kit
+  composition is centred in the board (the whole group shifts; the first placement at once, later
+  ones glide).
+- Computed sources: `map=`/`zip=` (any block with values, or a table column `t.c`) with `fn=` (expr.ts, now with variables and comparisons: x, y,
+  mean sum std norm min max n), `over=G slide=K` (sum of products; `same`, `flip`, `stride`),
+  `win=RxC reduce=…|fn=` (cells a b c…), `size=RxC fn="r+c"`, `vals=t.c` (a table column).
+- Verbs: `step id=o[r,c]`, `sweep id=o dur=`, `col id=t.c fn= dur=` (rows fill; a b… this row, pa pb…
+  the row above), `set` (an input changes, dependents recompute and tween), `band`, `dist`, `level`
+  (a reference line), `emph … where="x==7"`. Parts (`g[2,3]`, `g[1:2,1:3]`, `v[4]`, table `t[3]` = row)
+  are points and boxes for emph/fade/box/arrow/connect. `center=` places boxes and text by their centre.
+- One state animation per block: a later state change fast-forwards the running one (lands its end
+  state) and then starts; overlays (emph, fade) never interrupt. Sweeps never block the narration
+  (draw resolves once the first cell is under way). Reduced motion: no glides, discrete steps.
+- Sections have no per-answer cap and grow past 700 units for tall kit content (`growRegion`).
 
 ### Contracts not to break
 
@@ -161,9 +197,11 @@ shade angle brace axes plot sketch connect emph move fade clear`.
   names topology (marks, names, constructions); the engine computes coordinates. Demo scripts use
   literals and stay byte-identical through the resolver.
 - **Continuity.** Reveal a whole box before drawing in it; pan back before drawing off-screen;
-  frame both ends of a connector (else take over the screen); ids unique; clamp to bounds;
-  nothing drawn under the caption dock; if the student scrolls, show "Back to answer";
-  re-layout on resize; at most 2 regions per answer.
+  bring both ends of a connector on screen (slides and board scroll independently); ids unique;
+  nothing drawn under the caption dock (the viewer's visible band ends above it); if the student
+  scrolls the slides or the board, show "Back to answer"; re-layout on resize. No cap on sketches
+  per answer. Board elements are never shifted individually: a section scales as a whole, text
+  wraps at its `at`. The board's scroller carries `data-petu-board` (the eval captures it).
 
 ## Explanation quality (applies to demo scripts and the agent prompt)
 
@@ -179,7 +217,8 @@ scrollbars; every control has hover, focus-visible and active states; text ≥ 1
 | Checkpoint | Scope | Status |
 |---|---|---|
 | 1 | Viewer, student canvas, parser, paced clock, director, agent strokes, captions, demos (no AI) | done |
-| Canvas v2 + Toolkit v2 | Desk canvas (C beside page, B takeover), free movement, connectors, follow mode, full drawing toolkit, visual language | done |
+| Canvas v2 + Toolkit v2 | Desk canvas, free movement, connectors, follow mode, full drawing toolkit, visual language | done (placement replaced by Lessons v3 L) |
+| Lessons v3 L | Split layout: slides left, board right, persistent board, dock under the slide column | done |
 | 2 | Agent: grounding (lines + marks), relational geometry, `/api/ask` streaming from OpenAI with a spend ledger, prompt p3.2, `?debug` latency/cost, judged eval (24 questions, 12 PDFs, held-out test split) | done; held-out test judge 4.61 (P1 4.45), first word p50 1.28s, ~$0.004/answer; awaiting founder review |
 | 3 | Polish: settings panel, history, text selection, anchored-bubble captions setting, error states | later |
 | Voice | Own design pass (TTS clock drives the same timeline) | after 3 |

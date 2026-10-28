@@ -6,7 +6,7 @@ import type { Action, ScriptEvent } from '../../src/script/types';
 /** Every word lasts 100ms; time is Date.now() (faked). */
 const fixedClock = () => new PacedClock(() => 170, () => Date.now(), () => 100);
 const w = (text: string): ScriptEvent => ({ type: 'word', text });
-const SKETCH: Action = { kind: 'sketch', id: 's', page: 1, size: 'm', place: 'auto' };
+const SKETCH: Action = { kind: 'sketch', id: 's', page: 1, size: 'm' };
 const act = (kind: 'clear' | 'sketch' = 'clear'): ScriptEvent => ({ type: 'action', action: kind === 'clear' ? { kind } : SKETCH });
 const words = (s: string) => s.split(' ').map(w);
 const END: ScriptEvent = { type: 'end' };

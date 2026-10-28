@@ -6,7 +6,7 @@ import { Figures } from '../../src/geometry/resolve';
 
 describe('parseTag: agent v2 grammar', () => {
   it('sketch … fit', () => {
-    expect(parseTag('sketch id=s near=p4 size=m fit')).toEqual({ kind: 'sketch', id: 's', page: 4, size: 'm', place: 'auto', fit: true });
+    expect(parseTag('sketch id=s near=p4 size=m fit')).toEqual({ kind: 'sketch', id: 's', page: 4, size: 'm', fit: true });
   });
   it('let names points (case-sensitive, primes), literals and constructions', () => {
     expect(parseTag("let on=s O=300,600 O'=700,600 X=500,-200 x=meet(O,X,L,R)")).toEqual({

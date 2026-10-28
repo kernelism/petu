@@ -14,6 +14,10 @@ import { boxOf, strokeBoxes, union, type ElementEntry } from './registry';
 import { TEXT_PX, MATH_PX, own, makeText, measureText, reveal, drawDot, drawShade, emphPass, moveGroupTo, translateOf, fadeGroup, textSegments, type TextOpts, type ShadeShape, type ShadeLook } from './render';
 import { preloadMath, texToHtml, placeMath, revealMath, setMathAt } from './math';
 import type { BuildElement, BuildEnv, ElementPlan, Pace, TargetCtx } from './types';
+import { MIN_TEXT_PX } from './layout';
+import { KIT_BLOCKS, type KitBlock } from '../script/types';
+import { isBlockRef } from '../script/pointExpr';
+import { buildBlock, buildKitRef, isKitRef, kitEndBox, resolveKitPoints } from './kit/kit';
 
 /** Closed shapes (circle, box) read as rushed below this, however small… */
 export const CLOSED_MIN_MS = 400;
@@ -28,6 +32,30 @@ const PAD = 6;
 /** Connector arrivals within this many CSS px of the element are obstacles for later labels. */
 const ARRIVAL_PX = 64;
 
+/**
+ * Board type, relative to the slide's body text (`size=m` = the body size): labels and `s` a step
+ * smaller, `l` a step larger. Never under MIN_TEXT_PX: a section whose text would be smaller scrolls
+ * instead of shrinking (the section's scale is capped for that in layout.boardLayout).
+ */
+export const BODY_REL = { label: 0.9, s: 0.85, m: 1, l: 1.3 } as const;
+/** KaTeX sets its formulas at 1.21 em: math at `size=m` renders at the body size, like the slide's own. */
+export const KATEX_EM = 1.21;
+/** Board text px for a role: from the slide's body size in a region, the fixed scale on a page. */
+export function textPx(ctx: TargetCtx, role: keyof typeof BODY_REL): number {
+  const b = ctx.body?.();
+  return b ? Math.max(MIN_TEXT_PX, b * BODY_REL[role]) : TEXT_PX[role];
+}
+/**
+ * The font size handed to KaTeX (it scales by KATEX_EM itself): the formula's font size is the body
+ * size, like the slide's own math. Its floor is the text floor in x-height terms (KaTeX's math
+ * italic has a smaller x-height than the sans, by about KATEX_EM), so a formula never reads smaller
+ * than the smallest board text.
+ */
+export function mathPx(ctx: TargetCtx, size: 's' | 'm' | 'l'): number {
+  const b = ctx.body?.();
+  return b ? Math.max(MIN_TEXT_PX * KATEX_EM, b * BODY_REL[size]) / KATEX_EM : MATH_PX[size];
+}
+
 /** The smallest axis-aligned ellipse through a w × h rect's corners, plus 4 (never under 12). */
 export const encloseRect = (w: number, h: number) => ({ rx: Math.max(12, w / Math.SQRT2 + 4), ry: Math.max(12, h / Math.SQRT2 + 4) });
 
@@ -37,12 +65,22 @@ const where = (t: Target) => (t.region != null ? `region ${t.region}` : `page ${
 /** Resolves one ink action into a plan (see ElementPlan). Strings are skip reasons. */
 export const buildElement: BuildElement = async (a, env) => {
   if (a.kind === 'connect') return connect(a, env);
-  if ('ref' in a) return ref(a, env);
+  if ('ref' in a) return isKitRef(a, env.registry) ? buildKitRef(a, env) : ref(a, env);
   const target: Target = a.region != null ? { region: a.region } : { page: a.page! };
   const ctx = await env.ctx(target);
   if (typeof ctx === 'string') return ctx;
-  return draw(a, ctx, env);
+  if (KIT_BLOCKS.has(a.kind)) return buildBlock(a as KitBlock & DrawAction, ctx, env);
+  // Kit parts named as points (g[2,3]) resolve now that their blocks are laid out.
+  const k = await resolveKitPoints(a, env.registry);
+  if (typeof k === 'string') return k;
+  return draw(centred(k as DrawAction), ctx, env);
 };
+
+/** A box given by its centre → its top-left. (Centred text is placed at draw time, once it is measured.) */
+function centred(a: DrawAction): DrawAction {
+  if (a.kind === 'box' && 'at' in a && a.centered) return { ...a, at: { x: a.at.x - a.w / 2, y: a.at.y - (a.region != null ? a.h : a.h) / 2 }, centered: false };
+  return a;
+}
 
 /** Ink color: accent on pages; in regions, neutral (--ink) unless `em` (rule 6). */
 function colorOf(t: Target, em: boolean | undefined, env: BuildEnv): string {
@@ -64,8 +102,35 @@ const fontsFor = async (...texts: (string | undefined)[]) => {
   if (texts.some((t) => t && textSegments(t).some((g) => g.math))) await preloadMath().catch(() => {});
 };
 
-/** The bounds labels must stay in: the target's whole space. */
-const bounds = (ctx: TargetCtx): SRect => ({ x: 0, y: 0, w: 1000, h: ctx.h });
+/** Room around a section that labels may use (section units): the board's padding is there for them. */
+const REGION_BLEED = 40;
+/** The bounds labels must stay in: a page's whole space; a section and the padding around it. */
+const bounds = (ctx: TargetCtx): SRect => (isRegion(ctx.target)
+  ? { x: -REGION_BLEED, y: -REGION_BLEED, w: 1000 + 2 * REGION_BLEED, h: ctx.h + 2 * REGION_BLEED }
+  : { x: 0, y: 0, w: 1000, h: ctx.h });
+/** Line pitch of wrapped board text, in ems. */
+const LINE_EM = 1.3;
+/**
+ * Splits text into lines no wider than `maxW` (target units) at spaces. A single word wider than
+ * that keeps its own line. Text keeps its left edge: it wraps, it is never shifted back in.
+ */
+export function wrapLines(layer: SVGGElement, text: string, o: TextOpts, maxW: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let cur = '';
+  for (const w of words) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (cur && measureText(layer, next, o).w > maxW) { lines.push(cur); cur = w; } else cur = next;
+  }
+  if (cur) lines.push(cur);
+  return lines.length ? lines : [text];
+}
+/** The box of wrapped lines whose first line's vertical middle is at at.y, left edge at at.x. */
+function linesBox(layer: SVGGElement, lines: string[], o: TextOpts, at: SPt): SRect {
+  const ms = lines.map((l) => measureText(layer, l, o));
+  const h0 = ms[0].h, pitch = o.size * LINE_EM;
+  return { x: at.x, y: at.y - h0 / 2, w: Math.max(...ms.map((m) => m.w)), h: h0 + pitch * (lines.length - 1) };
+}
 /** Shifts `r` left/up (or right/down) just enough to sit inside `b`; a box larger than `b` keeps its top-left in. */
 const inside = (r: SRect, b: SRect): SRect => ({
   ...r,
@@ -134,6 +199,13 @@ async function writeLabel(g: SVGGElement, box: SRect, text: string, o: TextOpts,
   await reveal(tg, box, Array.from(text).length, { style: env.settings.inkStyle, signal, ...k });
 }
 
+/** Writes wrapped lines left-aligned at at.x, the first line's middle at at.y. */
+async function writeLines(g: SVGGElement, at: SPt, lines: string[], box: SRect, o: TextOpts, env: BuildEnv, signal: AbortSignal, k: Pace) {
+  const tg = own(g);
+  lines.forEach((l, i) => makeText(tg, { x: at.x, y: at.y + i * o.size * LINE_EM }, l, o));
+  await reveal(tg, box, lines.reduce((n, l) => n + Array.from(l).length, 0), { style: env.settings.inkStyle, signal, ...k });
+}
+
 async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<ElementPlan | string> {
   const r = env.rng();
   const P = (p: SPt) => ctx.toSpace(p);
@@ -197,7 +269,7 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       const tip = { x: c.x + b.x * (rad + px(10)), y: c.y + b.y * (rad + px(10)) };
       const dir = compassOf(b);
       return strokePlan(a, ctx, env, { strokes: [arc] }, [], async (g, sig, k) => {
-        const o = textOpts(ctx, env, TEXT_PX.label, a.em);
+        const o = textOpts(ctx, env, textPx(ctx, 'label'), a.em);
         const box = placeText(ctx, env, g, a.text!, o, tip, dir, 0);
         await writeLabel(g, box, a.text!, o, env, sig, k);
       });
@@ -210,7 +282,7 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       const n = { x: (t.y - f.y) / (L || 1), y: -(t.x - f.x) / (L || 1) };
       const tip = { x: (f.x + t.x) / 2 + n.x * (depth + px(4)), y: (f.y + t.y) / 2 + n.y * (depth + px(4)) };
       return strokePlan(a, ctx, env, { strokes: [s] }, [], async (g, sig, k) => {
-        const o = textOpts(ctx, env, TEXT_PX.label, a.em);
+        const o = textOpts(ctx, env, textPx(ctx, 'label'), a.em);
         const box = placeText(ctx, env, g, a.text!, o, tip, compassOf(n), 0);
         await writeLabel(g, box, a.text!, o, env, sig, k);
       });
@@ -227,7 +299,7 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
           env.registry.define({ id: a.id, kind: 'axes', target: ctx.target, bbox: axesBox, boxes, anchor: { x: o.x + a.w, y: o.y - a.h }, group: g, strokes });
-          const tOpts = textOpts(ctx, env, TEXT_PX.s, false);
+          const tOpts = textOpts(ctx, env, textPx(ctx, 's'), false);
           const ws = inkOf(a, ctx.target, env);
           await drawStrokes(g, strokes, { color: ws.color, width: ws.width, opacity: ws.opacity < 1 ? ws.opacity : undefined, scale: ctx.scale(), signal, mode: k.fadeMs != null || env.settings.inkStyle === 'clean' || prefersReducedMotion() ? 'fade' : 'trace', fadeMs: k.fadeMs, speed: k.speed });
           if (a.xLabel) { const m = measureText(g, a.xLabel, tOpts); await writeLabel(g, { x: o.x + a.w - m.w, y: o.y + px(8), ...m }, a.xLabel, tOpts, env, signal, k); }
@@ -248,14 +320,14 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       const c = P(a.at), rad = px(DOT_PX);
       const dot = { x: c.x - rad, y: c.y - rad, w: rad * 2, h: rad * 2 };
       const color = colorOf(ctx.target, a.em, env);
-      const o = textOpts(ctx, env, TEXT_PX.label, a.em);
+      const o = textOpts(ctx, env, textPx(ctx, 'label'), a.em);
       const est = a.text ? placeLabel(c, measureText(ctx.layers.agent, a.text, o).w, o.size * 1.2, a.dir ?? 'ne', rad) : null;
       return {
         target: ctx.target,
         bbox: union([dot, ...(est ? [est] : [])].map((b) => ({ x: b.x - PAD, y: b.y - PAD, w: b.w + 2 * PAD, h: b.h + 2 * PAD }))),
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
-          const od = textOpts(ctx, env, TEXT_PX.label, a.em); // sized for the scale now (a column glide may have run since build)
+          const od = textOpts(ctx, env, textPx(ctx, 'label'), a.em); // sized for the scale now (a column glide may have run since build)
           const box = a.text ? placeText(ctx, env, g, a.text, od, c, a.dir ?? 'ne', rad) : null;
           env.registry.define({ id: a.id, kind: 'point', target: ctx.target, bbox: union([dot, ...(box ? [box] : [])]), boxes: [dot, ...(box ? [box] : [])], anchor: c, group: g });
           await drawDot(g, c, rad, color, k, signal);
@@ -264,7 +336,7 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       };
     }
     case 'label': {
-      const o = textOpts(ctx, env, TEXT_PX.label, a.em);
+      const o = textOpts(ctx, env, textPx(ctx, 'label'), a.em);
       const at = P(a.at);
       const m = measureText(ctx.layers.agent, a.text, o);
       const est = inside({ x: at.x, y: at.y - m.h / 2, ...m }, bounds(ctx));
@@ -272,7 +344,7 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
         target: ctx.target, bbox: est,
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
-          const od = textOpts(ctx, env, TEXT_PX.label, a.em), md = measureText(g, a.text, od); // measured at draw time
+          const od = textOpts(ctx, env, textPx(ctx, 'label'), a.em), md = measureText(g, a.text, od); // measured at draw time
           const box = nudge({ x: at.x, y: at.y - md.h / 2, ...md }, env.registry.obstacles(ctx.target), bounds(ctx));
           env.registry.define({ id: a.id, kind: 'label', target: ctx.target, bbox: box, boxes: [box], anchor: { x: box.x, y: box.y + box.h / 2 }, group: g });
           await writeLabel(g, box, a.text, od, env, signal, k);
@@ -280,18 +352,25 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       };
     }
     case 'write': {
-      const o = textOpts(ctx, env, TEXT_PX[a.size], a.em, 'write');
-      const at = P(a.at);
-      const m = measureText(ctx.layers.agent, a.text, o);
-      const est = inside({ x: at.x, y: at.y - m.h / 2, ...m }, bounds(ctx));
+      // Left-aligned at `at`, always: text too long for the section wraps under itself (never shifted back in).
+      let at = P(a.at);
+      const room = (o: TextOpts) => Math.max(1000 - at.x, o.size * 8);
+      const o = textOpts(ctx, env, textPx(ctx, a.size), a.em, 'write');
+      if (a.centered) {
+        // Centred on `at`: one line, its middle there (never wrapped: a centred label is short).
+        const w = measureText(ctx.layers.agent, a.text, o).w;
+        at = { x: Math.max(0, at.x - w / 2), y: at.y };
+      }
+      const est = linesBox(ctx.layers.agent, wrapLines(ctx.layers.agent, a.text, o, room(o)), o, at);
       return {
         target: ctx.target, bbox: est,
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
-          const od = textOpts(ctx, env, TEXT_PX[a.size], a.em, 'write'), md = measureText(g, a.text, od); // measured at draw time
-          const box = inside({ x: at.x, y: at.y - md.h / 2, ...md }, bounds(ctx)); // rule 5: never past the edge
-          env.registry.define({ id: a.id, kind: 'write', target: ctx.target, bbox: box, boxes: [box], anchor: { x: box.x, y: box.y + box.h / 2 }, group: g });
-          await writeLabel(g, box, a.text, od, env, signal, k);
+          const od = textOpts(ctx, env, textPx(ctx, a.size), a.em, 'write'); // measured at draw time
+          const lines = wrapLines(g, a.text, od, room(od));
+          const box = linesBox(g, lines, od, at);
+          env.registry.define({ id: a.id, kind: 'write', target: ctx.target, bbox: box, boxes: [box], anchor: { x: box.x, y: at.y }, group: g });
+          await writeLines(g, at, lines, box, od, env, signal, k);
         },
       };
     }
@@ -319,24 +398,27 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
     }
     case 'math': {
       const katex = await preloadMath();
-      const html = texToHtml(katex, a.tex);
+      const html = texToHtml(katex, a.tex, isRegion(ctx.target));
       if (!html) { console.warn('[desk] math does not parse', a.tex); return 'bad tex'; }
-      const size = px(MATH_PX[a.size]);
-      const at = P(a.at);
-      const est = inside({ x: at.x, y: at.y - size * 0.7, w: a.tex.length * size * 0.5, h: size * 1.4 }, bounds(ctx));
+      // Left-aligned at `at` (its vertical middle there), at the slide's body size: never shifted per element.
+      const size = px(mathPx(ctx, a.size)) * KATEX_EM;
+      const at0 = P(a.at);
+      // Centred math: its width is known once typeset; estimated here for the reveal box.
+      const at = a.centered ? { x: Math.max(0, at0.x - (a.tex.length * size * 0.5) / 2), y: at0.y } : at0;
+      const est = { x: at.x, y: at.y - size * 0.7, w: a.tex.length * size * 0.5, h: size * 1.4 };
       return {
         target: ctx.target, bbox: est,
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
-          const m = placeMath(g, at, html, px(MATH_PX[a.size]), colorOf(ctx.target, a.em, env));
-          // Rule 5: the measured formula stays inside its target (a payoff at x=950 shifts left, not off the region).
-          const fit = inside({ ...m.box, w: m.box.w + 2, h: m.box.h + 2 }, bounds(ctx));
-          if (fit.x !== m.box.x || fit.y !== m.box.y) setMathAt(m, fit.x, fit.y);
+          const m = placeMath(g, at, html, px(mathPx(ctx, a.size)), colorOf(ctx.target, a.em, env));
+          if (a.centered) setMathAt(m, Math.max(0, at0.x - m.box.w / 2), m.box.y);
           env.registry.define({ id: a.id, kind: 'math', target: ctx.target, bbox: m.box, boxes: [m.box], anchor: { x: m.box.x, y: m.box.y + m.box.h / 2 }, group: g });
           await revealMath(g, m, { style: env.settings.inkStyle, signal, ...k });
         },
       };
     }
+    default:
+      return 'not drawable here';
   }
 }
 
@@ -388,13 +470,15 @@ async function ref(a: RefAction, env: BuildEnv): Promise<ElementPlan | string> {
         target: e.target, bbox: { x: e.anchor.x - 60, y: e.anchor.y - 40, w: 120, h: 80 },
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
-          const o = textOpts(ctx, env, TEXT_PX.label, a.em);
+          const o = textOpts(ctx, env, textPx(ctx, 'label'), a.em);
           const box = placeText(ctx, env, g, a.text, o, e.anchor, a.dir ?? 'ne', clear);
           env.registry.define({ kind: 'label', target: e.target, bbox: box, boxes: [box], anchor: { x: box.x, y: box.y + box.h / 2 }, group: g });
           await writeLabel(g, box, a.text, o, env, signal, k);
         },
       };
     }
+    default:
+      return 'not a reference';
   }
 }
 
@@ -410,6 +494,7 @@ async function endBox(end: End, env: BuildEnv): Promise<{ t: Target; r: SRect; p
     const rects = locateQuote(await ctx.runs(), end.quote, end.near, { aspect: ctx.h / 1000 }).map((x) => ctx.rectToSpace(x));
     return rects.length ? { t, r: union(rects) } : 'connector anchor not found';
   }
+  if ('ref' in end && isBlockRef(end.ref)) return kitEndBox(end.region, end.ref, env.registry);
   if ('ref' in end) {
     const e: ElementEntry | undefined = await env.registry.wait(end.ref, REF_WAIT_MS);
     if (!e) { console.warn('[desk] unknown id', end.ref); return 'unknown id'; }

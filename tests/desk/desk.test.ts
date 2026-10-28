@@ -1,7 +1,7 @@
 // tests/desk/desk.test.ts
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Desk, type DeskHost } from '../../src/desk/Desk';
-import { column, computeLayout, regionWidth, GAP_X, SAFE_BOTTOM, SAFE_TOP, type Lanes } from '../../src/desk/layout';
+import { Desk, GLIDE_MS, type DeskHost } from '../../src/desk/Desk';
+import { computeLayout, frameFor, type Split } from '../../src/desk/layout';
 import { Director } from '../../src/playback/director';
 import { DEFAULTS } from '../../src/settings/settings';
 import type { ViewerApi } from '../../src/pdf/viewerApi';
@@ -11,226 +11,273 @@ import { dockPlacement } from '../../src/ui/layout';
 /** A viewer stand-in: real layout math, no pdf.js. */
 function fakeHost(W = 1440, H = 900, pages = 5) {
   const aspects = new Float64Array(pages).fill(9 / 16);
-  const s = { W, H, top: 0, lanes: { left: 0, right: 0 } as Lanes, gaps: new Map<number, number>() as ReadonlyMap<number, number> };
-  const cbs = { layout: new Set<() => void>(), scroll: new Set<() => void>(), user: new Set<() => void>(), card: new Set<() => void>() };
+  const s = { W, H, top: 0, split: 'none' as Split };
+  const cbs = { layout: new Set<() => void>(), scroll: new Set<() => void>(), user: new Set<() => void>() };
   const sub = (set: Set<() => void>) => (cb: () => void) => { set.add(cb); return () => { set.delete(cb); }; };
-  const layer = document.createElement('div');
-  const layout = () => computeLayout(column(s.W, s.lanes), aspects, s.gaps);
-  const host: DeskHost & { s: typeof s; resize(W: number, H: number): void; user(): void } = {
+  const layout = () => computeLayout(frameFor(s.W, s.H, s.split, 9 / 16).page, aspects, s.H);
+  const host: DeskHost & { s: typeof s; resize(W: number, H: number): void; user(): void; scroll(top: number): void } = {
     s,
     viewport: () => ({ W: s.W, H: s.H }),
     layout,
     scrollTop: () => s.top,
     maxScroll: () => Math.max(0, layout().total - s.H),
     aspect: () => 9 / 16,
-    layer: () => layer,
-    setColumn: vi.fn(async (lanes: Lanes, gaps: ReadonlyMap<number, number>) => { s.lanes = lanes; s.gaps = gaps; }),
+    setSplit: vi.fn(async (split: Split) => { s.split = split; cbs.layout.forEach((f) => f()); }),
     glideTo: vi.fn(async (top: () => number) => { s.top = top(); cbs.scroll.forEach((f) => f()); }),
     cancelGlide: vi.fn(),
     scrollToPage: vi.fn(async () => {}),
-    setCard: vi.fn(async () => {}),
     onLayout: sub(cbs.layout),
     onScroll: sub(cbs.scroll),
     onUserIntent: sub(cbs.user),
-    onCardClick: sub(cbs.card),
     resize(W: number, H: number) { s.W = W; s.H = H; cbs.layout.forEach((f) => f()); },
     user() { cbs.user.forEach((f) => f()); },
+    scroll(top: number) { s.top = top; cbs.scroll.forEach((f) => f()); },
   };
   return host;
 }
+/** A host whose split glide takes its full time. */
+const slowHost = (W = 1440, H = 900) => {
+  const h = fakeHost(W, H);
+  h.setSplit = vi.fn(async (split: Split, ms: number) => { await new Promise((r) => setTimeout(r, ms)); h.s.split = split; });
+  return h;
+};
 
-const spec = (id: string, page = 2, o: object = {}) => ({ id, page, size: 'm' as const, place: 'auto' as const, ...o });
+const spec = (id: string, page = 2, o: object = {}) => ({ id, page, size: 'm' as const, ...o });
 const flush = () => vi.advanceTimersByTimeAsync(10);
+const boardOf = (stage: HTMLElement) => stage.querySelector('.desk-board') as HTMLElement;
 
-describe('Desk', () => {
+describe('Desk: the board', () => {
   let stage: HTMLDivElement;
   beforeEach(() => { vi.useFakeTimers(); stage = document.createElement('div'); });
   afterEach(() => vi.useRealTimers());
 
-  it('places a region beside its page on the desk layer, reserving a lane', async () => {
+  it('is closed while reading: the dock centres under the page column', () => {
+    const h = fakeHost();
+    const d = new Desk(h, stage);
+    expect(d.state().split).toBe('none');
+    expect(boardOf(stage).classList.contains('is-open')).toBe(false);
+    expect(dockPlacement(1440, d.state()).x).toBe(720);
+  });
+  it('a first sketch opens it: one split glide, the slide column pinned left, a section appended', async () => {
     const h = fakeHost();
     const d = new Desk(h, stage);
     const r = await d.addRegion(spec('side'));
     expect(typeof r).not.toBe('string');
-    expect(h.setColumn).toHaveBeenCalledOnce();
-    expect((r as { mode: string }).mode).toBe('right');
-    const el = h.layer().querySelector('.desk-region') as HTMLElement;
-    expect(el.classList.contains('is-shown')).toBe(true);
-    const L = h.layout()!;
-    expect(parseFloat(el.style.left)).toBeGreaterThan(L.pageX + L.pageW);
+    expect(h.setSplit).toHaveBeenCalledOnce();
+    expect(h.setSplit).toHaveBeenCalledWith('normal', GLIDE_MS);
+    const s = d.state();
+    const f = frameFor(1440, 900, 'normal', 9 / 16);
+    expect(s.split).toBe('normal');
+    expect(s.column).toEqual({ x: f.slides.x, w: f.slides.w });
+    expect(s.board).toEqual(f.board);
+    const board = boardOf(stage);
+    expect(board.classList.contains('is-open')).toBe(true);
+    expect(parseFloat(board.style.left)).toBe(f.board!.x);
+    expect(board.querySelector('[data-petu-board] .desk-region.is-shown')).not.toBeNull();
+    // A second sketch in the same answer appends without moving the slides again.
+    await d.addRegion(spec('more'));
+    expect(h.setSplit).toHaveBeenCalledOnce();
+    const els = board.querySelectorAll<HTMLElement>('.desk-region');
+    expect(els).toHaveLength(2);
+    expect(parseFloat(els[1].style.top)).toBeGreaterThan(parseFloat(els[0].style.top) + parseFloat(els[0].style.height));
   });
-  it('refuses a third region (rule 8) and a duplicate id', async () => {
-    const d = new Desk(fakeHost(1920, 1080), stage);
+  it('the dock follows the slide column from the glide\'s start', async () => {
+    const h = slowHost();
+    const d = new Desk(h, stage);
+    const cols: number[] = [];
+    d.subscribe((s) => cols.push(s.column.x));
+    const a = d.addRegion(spec('side'));
+    await flush();
+    expect(d.state().column.x).toBe(frameFor(1440, 900, 'normal', 9 / 16).slides.x);
+    await vi.advanceTimersByTimeAsync(GLIDE_MS + 50);
+    await a;
+    expect(cols[cols.length - 1]).toBe(frameFor(1440, 900, 'normal', 9 / 16).slides.x);
+  });
+  it('size=l widens the split; s and m are the normal split', async () => {
+    const h = fakeHost();
+    const d = new Desk(h, stage);
+    await d.addRegion(spec('a', 2, { size: 's' }));
+    expect(d.state().split).toBe('normal');
+    await d.addRegion(spec('b', 2, { size: 'l' }));
+    expect(h.setSplit).toHaveBeenLastCalledWith('wide', GLIDE_MS);
+    expect(d.state().split).toBe('wide');
+  });
+  it('refuses a duplicate id, and has no cap on sections per answer', async () => {
+    const d = new Desk(fakeHost(), stage);
     await d.addRegion(spec('a'));
     expect(await d.addRegion(spec('a'))).toBe('duplicate region id');
-    await d.addRegion(spec('b'));
-    expect(await d.addRegion(spec('c'))).toBe('max 2 regions per answer');
+    for (const id of ['b', 'c', 'd', 'e']) expect(typeof (await d.addRegion(spec(id)))).toBe('object');
   });
-  it('size l takes the stage (B) with its page on the card', async () => {
+  it('grows a section past 700 units for kit blocks, never shrinking it', async () => {
+    const d = new Desk(fakeHost(), stage);
+    await d.addRegion(spec('a'));
+    const svg = stage.querySelector('.desk-region svg')!;
+    d.growRegion('a', 900);
+    expect(svg.getAttribute('viewBox')).toBe('0 0 1000 900');
+    d.growRegion('a', 800);
+    expect(svg.getAttribute('viewBox')).toBe('0 0 1000 900');
+  });
+  it('centres a section\'s content in the board: the whole group shifts, first at once, then gliding', async () => {
+    const d = new Desk(fakeHost(), stage);
+    await d.addRegion(spec('a'));
+    const svgs = [...stage.querySelectorAll<SVGSVGElement>('.desk-region svg')];
+    d.centreRegion('a', 40, 400); // content 40–400: its centre 220 goes to 500
+    svgs.forEach((s) => { expect(s.style.transform).toBe('translateX(28.000%)'); expect(s.style.transition).toBe('none'); });
+    d.centreRegion('a', 40, 960); // full width: back in place, gliding
+    svgs.forEach((s) => { expect(s.style.transform).toBe(''); expect(s.style.transition).toBe(''); });
+    d.centreRegion('a', 600, 900); // never pushed past the section's edge
+    expect(svgs[0].style.transform).toBe('translateX(-25.000%)');
+    // a viewBox change (growth) keeps the shift
+    d.growRegion('a', 900);
+    expect(svgs[0].style.transform).toBe('translateX(-25.000%)');
+  });
+  it('persists across answers: reset frees the ids and keeps the sections and the split', async () => {
     const h = fakeHost();
     const d = new Desk(h, stage);
-    await d.addRegion(spec('big', 3, { size: 'l' }));
-    expect(d.state().mode).toBe('b');
-    expect(d.state().card).toBe(3);
-    expect(h.setCard).toHaveBeenCalledWith(expect.objectContaining({ page: 3 }), expect.any(Number));
-    expect(stage.querySelector('.desk-region')).not.toBeNull();
+    await d.addRegion(spec('side'));
+    await d.reset(300);
+    expect(d.region('side')).toBeNull();
+    expect(d.state().split).toBe('normal');
+    expect(h.setSplit).toHaveBeenCalledOnce();
+    expect(await d.addRegion(spec('side'))).not.toBe('duplicate region id'); // a new answer's id
+    expect(boardOf(stage).querySelectorAll('.desk-region')).toHaveLength(2);
+    expect(h.setSplit).toHaveBeenCalledOnce();
   });
-  it('resizing while in B refits the card at once; asking for the same stage again does not re-enter', async () => {
+  it('dismiss: the board slides out, the slides glide back to centre, the sections go once it has left', async () => {
     const h = fakeHost();
     const d = new Desk(h, stage);
-    await d.addRegion(spec('big', 3, { size: 'l' }));
-    vi.mocked(h.setCard).mockClear();
-    await d.resume();
-    await d.reveal({ region: 'big' }, { x: 0, y: 0, w: 1000, h: 700 });
-    expect(h.setCard).not.toHaveBeenCalled();
-    h.resize(1280, 800);
+    await d.addRegion(spec('side'));
+    await d.dismiss();
+    expect(h.setSplit).toHaveBeenLastCalledWith('none', GLIDE_MS);
+    expect(d.state().split).toBe('none');
+    expect(boardOf(stage).classList.contains('is-open')).toBe(false);
+    expect(dockPlacement(1440, d.state()).x).toBe(720);
+    expect(boardOf(stage).querySelector('.desk-region')).not.toBeNull(); // still sliding out
+    await vi.advanceTimersByTimeAsync(GLIDE_MS + 10);
+    expect(boardOf(stage).querySelector('.desk-region')).toBeNull();
+    // Opening again starts a fresh board.
+    await d.addRegion(spec('next'));
+    expect(boardOf(stage).querySelectorAll('.desk-region')).toHaveLength(1);
+  });
+  it('the close button calls onClose (the app stops a playing answer, then dismisses)', async () => {
+    const onClose = vi.fn();
+    const d = new Desk(fakeHost(), stage, { onClose });
+    await d.addRegion(spec('side'));
+    (stage.querySelector('.desk-board-close') as HTMLButtonElement).click();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+  it('a narrow window stacks the board under the slides', async () => {
+    const h = fakeHost(900, 800);
+    const d = new Desk(h, stage);
+    await d.addRegion(spec('side'));
+    expect(d.state().stacked).toBe(true);
+    expect(boardOf(stage).classList.contains('is-stacked')).toBe(true);
+  });
+  it('re-places the board on resize, and stacks or unstacks with the window', async () => {
+    const h = fakeHost();
+    const d = new Desk(h, stage);
+    await d.addRegion(spec('side'));
+    h.resize(900, 800);
     await flush();
-    expect(d.state().mode).toBe('b');
-    expect(h.setCard).toHaveBeenCalledWith(expect.objectContaining({ page: 3, rect: expect.objectContaining({ x: expect.any(Number) }) }), 0);
-  });
-  it('resizing moves a region between C and B with the same ink nodes (rule 7)', async () => {
-    const h = fakeHost();
-    const d = new Desk(h, stage);
-    const r = (await d.addRegion(spec('side', 2, { place: 'right' }))) as { layers: { agent: SVGGElement } };
-    const mark = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    r.layers.agent.appendChild(mark);
-    h.resize(1024, 768);
-    await flush();
-    expect(d.region('side')!.mode).toBe('b');
-    expect(stage.contains(r.layers.agent)).toBe(true);
-    expect(r.layers.agent.contains(mark)).toBe(true);
+    expect(d.state().stacked).toBe(true);
+    expect(parseFloat(boardOf(stage).style.left)).toBe(frameFor(900, 800, 'normal', 9 / 16).board!.x);
     h.resize(1440, 900);
     await flush();
-    expect(d.region('side')!.mode).toBe('right');
-    expect(h.layer().contains(mark)).toBe(true);
+    expect(d.state().stacked).toBe(false);
   });
-  it('reveal scrolls a region that is off screen; nothing moves when it is visible', async () => {
+  it('region text scale and body size come from the slide: uniform scale, body px from the page width', async () => {
     const h = fakeHost();
     const d = new Desk(h, stage);
-    await d.addRegion(spec('side', 4));
-    const box = { x: 0, y: 0, w: 1000, h: 700 };
-    expect(d.isVisible({ region: 'side' }, box)).toBe(true); // framed as it was placed
-    h.s.top = 0; // the view moved elsewhere since
-    expect(d.isVisible({ region: 'side' }, box)).toBe(false);
-    expect(await d.reveal({ region: 'side' }, box)).toBe(true);
-    expect(d.isVisible({ region: 'side' }, box)).toBe(true);
-    expect(await d.reveal({ region: 'side' }, box)).toBe(false);
+    const r = await d.addRegion(spec('side', 2, { body: 0.03 }));
+    if (typeof r === 'string') throw new Error(r);
+    const pageW = frameFor(1440, 900, 'normal', 9 / 16).page.pageW;
+    expect(r.body()).toBeCloseTo(Math.min(36, 0.03 * pageW));
+    expect(r.scale()).toBeGreaterThan(0);
   });
-  it('in B, pointing at another page swaps the card; a C region leaves B first (rule 2)', async () => {
-    const h = fakeHost();
-    const d = new Desk(h, stage);
-    await d.addRegion(spec('big', 3, { size: 'l' }));
-    await d.reveal({ page: 1 }, { x: 0, y: 0, w: 10, h: 10 });
-    expect(d.state().card).toBe(1);
-    await d.addRegion(spec('side', 1, { place: 'right' }));
-    await d.reveal({ region: 'side' }, { x: 0, y: 0, w: 10, h: 10 });
-    expect(d.state().mode).toBe('c');
-  });
-  it('frameBoth scrolls to both when they fit, else promotes the region to B (rule 3)', async () => {
-    const h = fakeHost();
-    const d = new Desk(h, stage);
-    await d.addRegion(spec('side', 4));
-    h.s.top = 0;
-    vi.mocked(h.glideTo).mockClear();
-    await d.frameBoth({ t: { page: 4 }, r: { x: 100, y: 100, w: 10, h: 10 } }, { t: { region: 'side' }, r: { x: 10, y: 10, w: 10, h: 10 } });
-    expect(d.state().mode).toBe('c');
-    expect(h.glideTo).toHaveBeenCalled();
-    const tall = fakeHost(1440, 520);
-    const d2 = new Desk(tall, stage);
-    await d2.addRegion(spec('side', 2, { place: 'below' }));
-    await d2.frameBoth({ t: { page: 2 }, r: { x: 100, y: 0, w: 10, h: 10 } }, { t: { region: 'side' }, r: { x: 10, y: 650, w: 10, h: 10 } });
-    expect(d2.region('side')!.mode).toBe('b');
-    expect(d2.state().card).toBe(2);
-  });
-  it('the student taking over stops all view moves until resume (rule 6)', async () => {
+  it('reveal glides the slides to page ink that is off screen; nothing moves when it is visible', async () => {
     const h = fakeHost();
     const d = new Desk(h, stage);
     d.follow.setAnswering(true);
-    await d.addRegion(spec('side', 4));
-    h.s.top = 0;
-    vi.mocked(h.glideTo).mockClear();
+    const box = { x: 100, y: 100, w: 50, h: 50 };
+    expect(await d.reveal({ page: 4 }, box)).toBe(true);
+    expect(d.isVisible({ page: 4 }, box)).toBe(true);
+    expect(await d.reveal({ page: 4 }, box)).toBe(false);
+  });
+  it('the student taking over stops every move until resume (rule 6)', async () => {
+    const h = fakeHost();
+    const d = new Desk(h, stage);
+    d.follow.setAnswering(true);
     h.user();
     expect(d.following()).toBe(false);
-    expect(await d.reveal({ region: 'side' }, { x: 0, y: 0, w: 1000, h: 700 })).toBe(false);
+    expect(await d.reveal({ page: 4 }, { x: 0, y: 0, w: 10, h: 10 })).toBe(false);
     expect(h.glideTo).not.toHaveBeenCalled();
     await d.resume();
     expect(d.following()).toBe(true);
-    expect(h.glideTo).toHaveBeenCalledOnce();
+    expect(h.glideTo).toHaveBeenCalled();
   });
-  it('placing a region frames its page with it, clear of the caption, when both fit', async () => {
-    const h = fakeHost(1280, 713);
-    const d = new Desk(h, stage);
-    // Page 2 sits low: the region beside it would be in view, but the page's bottom under the dock.
-    h.s.lanes = { left: 0, right: regionWidth('m', 1280) + GAP_X }; // the column already beside its lane
-    const L0 = h.layout()!;
-    h.s.top = L0.tops[1] + L0.heights[1] - (713 - SAFE_BOTTOM + 20); // page bottom 20px under the dock line
-    await d.addRegion(spec('side', 2));
-    const L = h.layout()!;
-    expect(L.tops[1] + L.heights[1]).toBeLessThanOrEqual(h.s.top + 713 - SAFE_BOTTOM + 1);
-    expect(L.tops[1]).toBeGreaterThanOrEqual(h.s.top + SAFE_TOP - 1);
+  it('a board scroll by the student during an answer is taking over too', async () => {
+    const d = new Desk(fakeHost(), stage);
+    await d.addRegion(spec('side'));
+    d.follow.setAnswering(true);
+    stage.querySelector('[data-petu-board]')!.dispatchEvent(new Event('wheel'));
+    expect(d.following()).toBe(false);
   });
-  it('a connector is routed on the desk and re-routed on relayout', async () => {
+});
+
+describe('Desk: connectors', () => {
+  let stage: HTMLDivElement;
+  beforeEach(() => { vi.useFakeTimers(); stage = document.createElement('div'); });
+  afterEach(() => vi.useRealTimers());
+
+  it('route from the page anchor through the gutter to the board, in the overlay above both', async () => {
     const h = fakeHost();
     const d = new Desk(h, stage);
-    await d.addRegion(spec('side', 2));
-    const c = d.addConnector({ t: { page: 2 }, r: { x: 300, y: 200, w: 20, h: 20 } }, { t: { region: 'side' }, r: { x: 100, y: 100, w: 10, h: 10 } });
-    expect(typeof c).not.toBe('string');
-    const handle = c as { group: SVGGElement; stroke: { x: number }[] };
-    const L = h.layout()!;
-    expect(handle.stroke[0].x).toBeLessThan(L.pageX + L.pageW);
-    expect(handle.stroke.at(-1)!.x).toBeGreaterThan(L.pageX + L.pageW);
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    handle.group.appendChild(path);
-    h.resize(1600, 900);
-    await flush();
-    expect(path.getAttribute('d')).toMatch(/^M/);
+    await d.addRegion(spec('side', 1));
+    const c = d.addConnector({ t: { page: 1 }, r: { x: 300, y: 300, w: 20, h: 20 } }, { t: { region: 'side' }, r: { x: 300, y: 300, w: 10, h: 10 } });
+    if (typeof c === 'string') throw new Error(c);
+    const f = frameFor(1440, 900, 'normal', 9 / 16);
+    const end = c.stroke[c.stroke.length - 1];
+    expect(end.x).toBeGreaterThan(f.board!.x); // it arrives on the board
+    expect(c.stroke[0].x).toBeLessThan(f.slides.x + f.slides.w); // from the slide
+    const svg = stage.querySelector('.desk-wires .desk-wire') as SVGElement;
+    expect(svg).not.toBeNull();
+    expect(svg.classList.contains('is-hidden')).toBe(false);
   });
-  it('reset clears regions and wires, leaves B and collapses the lanes (rule 8)', async () => {
+  it('a centred section: the connector lands where its element now is (shifted with the group)', async () => {
     const h = fakeHost();
     const d = new Desk(h, stage);
-    await d.addRegion(spec('big', 3, { size: 'l' }));
-    const p = d.reset(300);
-    await vi.advanceTimersByTimeAsync(300);
-    await p;
-    expect(d.region('big')).toBeNull();
-    expect(d.state().mode).toBe('c');
-    expect(stage.querySelector('.desk-region')).toBeNull();
-    expect(h.s.lanes).toEqual({ left: 0, right: 0 });
+    await d.addRegion(spec('side', 1));
+    const c = d.addConnector({ t: { page: 1 }, r: { x: 300, y: 300, w: 20, h: 20 } }, { t: { region: 'side' }, r: { x: 300, y: 300, w: 10, h: 10 } });
+    if (typeof c === 'string') throw new Error(c);
+    const before = c.stroke[c.stroke.length - 1].x;
+    d.centreRegion('side', 40, 400); // the group moves 280 units right
+    const after = c.stroke[c.stroke.length - 1].x;
+    const s = d.region('side')!.scale();
+    expect(after - before).toBeCloseTo(280 * s, 1);
   });
-  it('reset with keepLanes clears regions and leaves B but keeps the column, so the next sketch glides once', async () => {
+  it('fade while the page anchor is out of view, and return with it', async () => {
     const h = fakeHost();
     const d = new Desk(h, stage);
-    await d.addRegion(spec('side', 2, { place: 'right' }));
-    await d.addRegion(spec('big', 3, { size: 'l' }));
-    expect(d.state().mode).toBe('b');
-    const lanes = { ...h.s.lanes };
-    expect(lanes.right).toBeGreaterThan(0);
-    vi.mocked(h.setColumn).mockClear();
-    const p = d.reset(300, { keepLanes: true });
-    await vi.advanceTimersByTimeAsync(300);
-    await p;
-    expect(d.region('side')).toBeNull();
-    expect(d.region('big')).toBeNull();
-    expect(d.state().mode).toBe('c');
-    expect(h.layer().querySelector('.desk-region')).toBeNull();
-    expect(stage.querySelector('.desk-region')).toBeNull();
-    expect(h.setColumn).not.toHaveBeenCalled();
-    expect(h.s.lanes).toEqual(lanes);
-    // The new answer's first sketch on the same side: no glide back to center and out again.
-    await d.addRegion(spec('next', 4, { place: 'right' }));
-    expect(h.setColumn).not.toHaveBeenCalled();
-    // A sketch on the other side glides straight from the current lanes to the new ones, once.
-    const h2 = fakeHost();
-    const d3 = new Desk(h2, document.createElement('div'));
-    await d3.addRegion(spec('a', 2, { place: 'right' }));
-    const p2 = d3.reset(300, { keepLanes: true });
-    await vi.advanceTimersByTimeAsync(300);
-    await p2;
-    vi.mocked(h2.setColumn).mockClear();
-    await d3.addRegion(spec('b', 2, { place: 'left' }));
-    expect(h2.setColumn).toHaveBeenCalledOnce();
-    expect(vi.mocked(h2.setColumn).mock.calls[0][0]).toEqual(expect.objectContaining({ right: 0 }));
-    expect(h2.s.lanes.left).toBeGreaterThan(0);
+    await d.addRegion(spec('side', 1));
+    d.addConnector({ t: { page: 1 }, r: { x: 300, y: 300, w: 20, h: 20 } }, { t: { region: 'side' }, r: { x: 300, y: 300, w: 10, h: 10 } });
+    const svg = stage.querySelector('.desk-wire') as SVGElement;
+    h.scroll(3000);
+    await vi.advanceTimersByTimeAsync(40);
+    expect(svg.classList.contains('is-hidden')).toBe(true);
+    h.scroll(0);
+    await vi.advanceTimersByTimeAsync(40);
+    expect(svg.classList.contains('is-hidden')).toBe(false);
+  });
+  it('need a page end and a section of this answer; they fade out with the page marks on reset', async () => {
+    const h = fakeHost();
+    const d = new Desk(h, stage);
+    expect(d.addConnector({ t: { page: 1 }, r: { x: 0, y: 0, w: 1, h: 1 } }, { t: { region: 'nope' }, r: { x: 0, y: 0, w: 1, h: 1 } })).toBe('connector needs a page and a region');
+    await d.addRegion(spec('side', 1));
+    d.addConnector({ t: { page: 1 }, r: { x: 300, y: 300, w: 20, h: 20 } }, { t: { region: 'side' }, r: { x: 300, y: 300, w: 10, h: 10 } });
+    await d.reset(200);
+    expect(stage.querySelector('.desk-wire')).not.toBeNull(); // fading
+    await vi.advanceTimersByTimeAsync(250);
+    expect(stage.querySelector('.desk-wire')).toBeNull();
   });
 });
 
@@ -238,189 +285,49 @@ describe('Desk under interruption', () => {
   let stage: HTMLDivElement;
   beforeEach(() => { vi.useFakeTimers(); stage = document.createElement('div'); });
   afterEach(() => vi.useRealTimers());
-  /** A host whose column glide takes its ms, like the viewer's. */
-  const slowHost = (W = 1440, H = 900) => {
-    const h = fakeHost(W, H);
-    h.setColumn = vi.fn(async (lanes: Lanes, gaps: ReadonlyMap<number, number>, ms: number) => {
-      await new Promise((r) => setTimeout(r, ms));
-      h.s.lanes = lanes; h.s.gaps = gaps;
-    });
-    return h;
-  };
 
-  it('a reset during frameBoth\'s promotion to B does not enter B for the region it cleared (H1)', async () => {
-    const h = slowHost(1440, 600);
-    const d = new Desk(h, stage);
-    const a = d.addRegion(spec('side', 2, { place: 'below' }));
-    await vi.advanceTimersByTimeAsync(500);
-    await a;
-    expect(d.region('side')!.mode).toBe('below');
-    const f = d.frameBoth({ t: { page: 2 }, r: { x: 100, y: 0, w: 10, h: 10 } }, { t: { region: 'side' }, r: { x: 10, y: 650, w: 10, h: 10 } });
-    await vi.advanceTimersByTimeAsync(100);
-    const r = d.reset(300, { keepLanes: true });
-    await vi.advanceTimersByTimeAsync(1000);
-    await Promise.all([f, r]);
-    expect(d.state().mode).toBe('c');
-    expect(h.setCard).not.toHaveBeenCalledWith(expect.objectContaining({ page: 2 }), expect.anything());
-  });
-  it('a region reset while its lanes glide is reported, not returned as null (H1)', async () => {
+  it('a reset while the board opens is reported, not returned as a live region', async () => {
     const h = slowHost();
     const d = new Desk(h, stage);
-    const a = d.addRegion(spec('side', 2, { place: 'right' }));
+    const a = d.addRegion(spec('side'));
     await vi.advanceTimersByTimeAsync(100);
-    const r = d.reset(0, { keepLanes: true });
-    await vi.advanceTimersByTimeAsync(1000);
-    await r;
+    await d.reset(0);
+    await vi.advanceTimersByTimeAsync(GLIDE_MS);
     expect(await a).toBe('desk reset');
+    expect(d.state().split).toBe('normal'); // the board itself stays
   });
-  it('abort() with no regions collapses lanes kept by reset(keepLanes) (low)', async () => {
+  it('reset never moves the slides (no split change), and resolves at once', async () => {
     const h = fakeHost();
     const d = new Desk(h, stage);
-    await d.addRegion(spec('side', 2, { place: 'right' }));
-    const r = d.reset(300, { keepLanes: true });
-    await vi.advanceTimersByTimeAsync(300);
-    await r;
-    expect(h.s.lanes.right).toBeGreaterThan(0);
-    d.abort();
-    await flush();
-    expect(h.s.lanes).toEqual({ left: 0, right: 0 });
-  });
-  it('after the lanes collapse the dock is centred under the column again, at every window size (reset and abort)', async () => {
-    for (const [W, H] of [[1280, 800], [1440, 900], [1700, 1000], [1920, 1080], [2560, 1440]]) {
-      for (const how of ['reset', 'abort'] as const) {
-        const h = fakeHost(W, H);
-        const d = new Desk(h, stage);
-        let last: ReturnType<Desk['state']> | null = null;
-        d.subscribe((s) => { last = s; });
-        await d.addRegion(spec('side', 2, { place: 'right' }));
-        expect(dockPlacement(W, last).x).toBeLessThan(W / 2 - 1); // beside its lane
-        if (how === 'reset') {
-          const r = d.reset(300);
-          await vi.advanceTimersByTimeAsync(300);
-          await r;
-        } else {
-          const r = d.reset(300, { keepLanes: true });
-          await vi.advanceTimersByTimeAsync(300);
-          await r;
-          d.abort();
-          await flush();
-        }
-        expect(h.s.lanes).toEqual({ left: 0, right: 0 });
-        expect(dockPlacement(W, last).x, `${W}x${H} ${how}`).toBeCloseTo(W / 2, 0);
-        expect(dockPlacement(W, d.state()).x).toBeCloseTo(W / 2, 0);
-      }
-    }
-  });
-  it('reset with nothing to leave does not hold for the fade (M4)', async () => {
-    const h = fakeHost();
-    const d = new Desk(h, stage);
-    await d.addRegion(spec('side', 2, { place: 'right' }));
     let done = false;
-    void d.reset(300, { keepLanes: true }).then(() => { done = true; });
-    await vi.advanceTimersByTimeAsync(5);
+    void d.reset(300).then(() => { done = true; });
+    await Promise.resolve();
     expect(done).toBe(true);
-    expect(h.layer().querySelector('.desk-region')).not.toBeNull(); // still fading
-    await vi.advanceTimersByTimeAsync(300);
-    expect(h.layer().querySelector('.desk-region')).toBeNull();
-    const d2 = new Desk(fakeHost(), document.createElement('div'));
-    let done2 = false;
-    void d2.reset(300, { keepLanes: true }).then(() => { done2 = true; });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(done2).toBe(true);
+    expect(h.setSplit).not.toHaveBeenCalled();
   });
-  it('a wire whose ends are not both on screen is hidden, not left at a stale spot (M3)', async () => {
+  it('abort cancels the pans in flight', () => {
     const h = fakeHost();
     const d = new Desk(h, stage);
-    await d.addRegion(spec('a', 2, { size: 'l' }));
-    const c = d.addConnector({ t: { page: 2 }, r: { x: 300, y: 200, w: 20, h: 20 } }, { t: { region: 'a' }, r: { x: 100, y: 100, w: 10, h: 10 } });
-    expect(typeof c).not.toBe('string');
-    const svg = stage.querySelector('.desk-wire') as SVGSVGElement;
-    expect(svg.style.display).toBe('');
-    await d.addRegion(spec('b', 3, { size: 'l' })); // b on the stage, page 3 on the card: page 2 is off screen
-    expect(svg.style.display).toBe('none');
-    await d.reveal({ page: 2 }, { x: 0, y: 0, w: 10, h: 10 }); // page 2 back on the card, but region a is not on the stage
-    expect(d.state().card).toBe(2);
-    expect(svg.style.display).toBe('none');
-    await d.reveal({ region: 'a' }, { x: 0, y: 0, w: 10, h: 10 });
-    expect(svg.style.display).toBe('');
+    d.abort();
+    expect(h.cancelGlide).toHaveBeenCalled();
   });
-  it('a card swap repositions the B region for the new card (M3)', async () => {
-    const h = fakeHost();
-    const aspects: Record<number, number> = { 3: 9 / 16, 1: 1.4 };
-    h.aspect = (p: number) => aspects[p] ?? 9 / 16;
-    const d = new Desk(h, stage);
-    await d.addRegion(spec('big', 3, { size: 'l' }));
-    const el = stage.querySelector('.desk-region') as HTMLElement;
-    const before = el.style.left;
-    await d.reveal({ page: 1 }, { x: 0, y: 0, w: 10, h: 10 });
-    expect(d.state().card).toBe(1);
-    expect(el.style.left).not.toBe(before);
-  });
-  it('a region added while the student drives is where "Back to answer" returns (low)', async () => {
+  it('a region added while the student drives is where "Back to answer" returns', async () => {
     const h = fakeHost();
     const d = new Desk(h, stage);
     d.follow.setAnswering(true);
     h.user();
-    await d.addRegion(spec('big', 3, { size: 'l' }));
-    expect(d.state().mode).toBe('c');
+    await d.addRegion(spec('side', 4));
+    expect(h.glideTo).not.toHaveBeenCalled();
     await d.resume();
-    expect(d.state().mode).toBe('b');
-    expect(d.state().card).toBe(3);
+    expect(d.following()).toBe(true);
   });
-  it('a C region placed off screen is framed as it is placed: the scroll glides alongside the column (rule 1)', async () => {
-    const h = slowHost();
-    const glides: { at: number; maxMs?: number }[] = [];
-    h.glideTo = vi.fn(async (top: () => number, maxMs?: number) => {
-      glides.push({ at: performance.now(), maxMs });
-      await new Promise((r) => setTimeout(r, maxMs ?? 450));
-      h.s.top = top();
-    });
-    const d = new Desk(h, stage);
-    d.follow.setAnswering(true);
-    const box = { x: 0, y: 0, w: 1000, h: 700 };
-    const t0 = performance.now();
-    let doneAt = NaN;
-    const a = d.addRegion(spec('s', 3, { place: 'right' })).then((r) => { doneAt = performance.now(); return r; });
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(typeof (await a)).not.toBe('string');
-    expect(h.setColumn).toHaveBeenCalledOnce();
-    expect(glides).toHaveLength(1);
-    expect(glides[0].at - t0).toBeLessThan(5); // starts with the column glide, not after it
-    expect(glides[0].maxMs).toBeLessThanOrEqual(420); // and ends before the column commits
-    expect(doneAt - t0).toBeLessThan(470);
-    expect(d.isVisible({ region: 's' }, box)).toBe(true);
-    // Already framed: the first ink's reveal moves nothing.
-    expect(await d.reveal({ region: 's' }, box)).toBe(false);
-    expect(glides).toHaveLength(1);
-  });
-  it('a region placed on screen, or while the student drives, does not scroll (rules 1, 6)', async () => {
+  it('opening the board frames the slide being explained (the viewer top-aligns it in a split); appending does not', async () => {
     const h = fakeHost();
     const d = new Desk(h, stage);
-    await d.addRegion(spec('s', 1, { place: 'right' }));
-    expect(h.glideTo).not.toHaveBeenCalled();
-    const h2 = fakeHost();
-    const d2 = new Desk(h2, document.createElement('div'));
-    d2.follow.setAnswering(true);
-    h2.user();
-    await d2.addRegion(spec('s', 4, { place: 'right' }));
-    expect(h2.glideTo).not.toHaveBeenCalled();
-  });
-  it('a reset while a new region is being framed leaves the scroll where it is (epoch)', async () => {
-    const h = slowHost();
-    let top: (() => number) | null = null;
-    h.glideTo = vi.fn(async (t: () => number, maxMs?: number) => { top = t; await new Promise((r) => setTimeout(r, maxMs ?? 450)); h.s.top = t(); });
-    const d = new Desk(h, stage);
-    const a = d.addRegion(spec('s', 3, { place: 'right' }));
-    await vi.advanceTimersByTimeAsync(50);
-    const target = top!();
-    expect(target).toBeGreaterThan(0);
-    h.s.top = 120; // mid-glide
-    const r = d.reset(0, { keepLanes: true });
-    expect(top!()).toBe(target); // a gone region's target holds, so the glide doesn't drift back
-    await vi.advanceTimersByTimeAsync(1000);
-    await r;
-    expect(await a).toBe('desk reset');
-    expect(h.glideTo).toHaveBeenCalledOnce();
+    await d.addRegion(spec('side', 3));
+    expect(h.scrollToPage).toHaveBeenCalledWith(3);
+    await d.addRegion(spec('more', 3));
+    expect(h.scrollToPage).toHaveBeenCalledOnce();
   });
 });
 
@@ -428,51 +335,39 @@ describe('Director on a real Desk', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
   afterEach(() => vi.useRealTimers());
 
-  it('a new answer\'s first sketch after the old answer\'s regions draws its first ink on its word (M4)', async () => {
-    const h = fakeHost();
-    h.setColumn = vi.fn(async (lanes: Lanes, gaps: ReadonlyMap<number, number>, ms: number) => {
-      await new Promise((r) => setTimeout(r, ms));
-      h.s.lanes = lanes; h.s.gaps = gaps;
-    });
-    const desk = new Desk(h, document.createElement('div'));
-    const old = desk.addRegion(spec('old', 1, { place: 'right' }));
-    await vi.advanceTimersByTimeAsync(500);
-    await old;
-    let inkAt = NaN;
-    const build: BuildElement = async () => ({ target: { region: 'next' }, bbox: { x: 0, y: 0, w: 10, h: 10 }, draw: async () => { inkAt = performance.now(); } });
-    const viewer = { numPages: () => 5, allLayers: () => [] } as unknown as ViewerApi;
-    const d = new Director({ viewer: () => viewer, desk: () => desk, settings: () => DEFAULTS, onScrolledTo: () => {}, build });
-    const t0 = performance.now();
-    void d.begin(300);
-    // The scheduler fires the sketch 450ms ahead of its word; its region's first ink is on that word.
-    d.run({ kind: 'sketch', id: 'next', page: 1, size: 'm', place: 'left' }, t0 + 450);
-    d.run({ kind: 'line', region: 'next', from: { x: 0, y: 0 }, to: { x: 100, y: 100 } }, t0 + 450);
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(inkAt - (t0 + 450)).toBeGreaterThanOrEqual(0);
-    expect(inkAt - (t0 + 450)).toBeLessThan(40);
-  });
-  it('a sketch-first answer off screen: the first region ink starts within 150ms of the sketch glide, with no second glide', async () => {
-    const h = fakeHost();
-    h.setColumn = vi.fn(async (lanes: Lanes, gaps: ReadonlyMap<number, number>, ms: number) => {
-      await new Promise((r) => setTimeout(r, ms));
-      h.s.lanes = lanes; h.s.gaps = gaps;
-    });
-    h.glideTo = vi.fn(async (top: () => number, maxMs?: number) => { await new Promise((r) => setTimeout(r, maxMs ?? 450)); h.s.top = top(); });
+  const viewer = { numPages: () => 5, currentPage: () => 2, allLayers: () => [], textRuns: async () => [], spaceHeight: () => 562.5 } as unknown as ViewerApi;
+
+  it('a sketch-first answer: the first section ink starts within 150ms of the split glide', async () => {
+    const h = slowHost();
     const desk = new Desk(h, document.createElement('div'));
     let inkAt = NaN;
     const build: BuildElement = async () => ({ target: { region: 's' }, bbox: { x: 200, y: 450, w: 100, h: 100 }, draw: async () => { inkAt = performance.now(); } });
-    const viewer = { numPages: () => 5, allLayers: () => [] } as unknown as ViewerApi;
     const d = new Director({ viewer: () => viewer, desk: () => desk, settings: () => DEFAULTS, onScrolledTo: () => {}, build });
     void d.begin(300);
     const t0 = performance.now();
-    // Word 0 (no lead): the view is on page 1, the sketch goes beside page 3.
-    d.run({ kind: 'sketch', id: 's', page: 3, size: 'm', place: 'auto' }, t0);
+    d.run({ kind: 'sketch', id: 's', page: 3, size: 'm' }, t0);
     d.run({ kind: 'point', region: 's', at: { x: 240, y: 500 } }, t0);
     await vi.advanceTimersByTimeAsync(3000);
-    expect(h.setColumn).toHaveBeenCalledOnce();
-    expect(h.glideTo).toHaveBeenCalledOnce(); // the sketch's own framing; the ink's reveal moves nothing
-    expect(desk.isVisible({ region: 's' }, { x: 0, y: 0, w: 1000, h: 700 })).toBe(true);
-    const glideEnd = t0 + 420; // GLIDE_MS
-    expect(inkAt - glideEnd).toBeLessThan(150);
+    expect(h.setSplit).toHaveBeenCalledOnce();
+    expect(inkAt - (t0 + GLIDE_MS)).toBeLessThan(150);
+  });
+  it('a second answer\'s sketch appends to the open board: no glide, ink on its word', async () => {
+    const h = slowHost();
+    const desk = new Desk(h, document.createElement('div'));
+    const first = desk.addRegion(spec('old', 1));
+    await vi.advanceTimersByTimeAsync(GLIDE_MS + 50);
+    await first;
+    let inkAt = NaN;
+    const build: BuildElement = async () => ({ target: { region: 'next' }, bbox: { x: 0, y: 0, w: 10, h: 10 }, draw: async () => { inkAt = performance.now(); } });
+    const d = new Director({ viewer: () => viewer, desk: () => desk, settings: () => DEFAULTS, onScrolledTo: () => {}, build });
+    const t0 = performance.now();
+    void d.begin(300);
+    d.run({ kind: 'sketch', id: 'next', size: 'm' }, t0 + 450); // no near=: the slide in view
+    d.run({ kind: 'line', region: 'next', from: { x: 0, y: 0 }, to: { x: 100, y: 100 } }, t0 + 450);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(h.setSplit).toHaveBeenCalledOnce();
+    expect(inkAt - (t0 + 450)).toBeGreaterThanOrEqual(0);
+    expect(inkAt - (t0 + 450)).toBeLessThan(40);
+    expect(desk.region('next')!.page).toBe(2);
   });
 });

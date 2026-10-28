@@ -82,8 +82,8 @@ describe('ScriptFilter: bounded tags and plans', () => {
     const s = 'Set {{ not a tag\nThen **bold** and \\(x\\). {{scroll p=1}} end.';
     for (const step of [1, 2, 3, 7, 100]) expect(run(s, step).out, String(step)).toBe('Set {{ not a tag\nThen bold and x. {{scroll p=1}} end.');
   });
-  it('a {{ with no }} within 400 characters is not a tag', () => {
-    const s = `A {{ ${'y'.repeat(450)} then **b** {{scroll p=1}} z.`;
+  it('a {{ with no }} within 800 characters is not a tag', () => {
+    const s = `A {{ ${'y'.repeat(850)} then **b** {{scroll p=1}} z.`;
     for (const step of [1, 5, 64, 1000]) {
       const out = run(s, step).out;
       expect(out, String(step)).toContain(' then b {{scroll p=1}} z.');

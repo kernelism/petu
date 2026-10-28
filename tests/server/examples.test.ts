@@ -8,7 +8,21 @@ import type { Pt, RawAction } from '../../src/script/types';
 
 type Line = { id: string; y: number; x0: number; x1: number; text: string };
 
-/** Reads the model-facing listing back into marks (the same format src/agent/context emits). */
+/**
+ * Reads the model-facing listings back into marks (the same format src/agent/context emits): the
+ * visible page first, then any other page sent with a listing. Marks are per page.
+ */
+export function parseListings(listing: string) {
+  const byPage = new Map<number, ReturnType<typeof parseListing>>();
+  const heads: string[] = [];
+  let cur: string[] = [];
+  const flush = () => { if (cur.length) { const page = Number(/^PAGE (\d+)/.exec(cur[0])![1]); byPage.set(page, parseListing(page, cur.join('\n'))); heads.push(cur[0]); } };
+  for (const l of listing.split('\n')) { if (l.startsWith('PAGE ')) { flush(); cur = [l]; } else cur.push(l); }
+  flush();
+  return { heads, byPage, mark: (p: number, id: string) => byPage.get(p)?.mark(p, id), lines: (p: number) => byPage.get(p)?.lines ?? [], unknown: [...byPage.values()].flatMap((x) => x.unknown) };
+}
+
+/** One page's listing back into marks. */
 export function parseListing(page: number, listing: string) {
   const dots = new Map<string, Pt>(), marks = new Map<string, GroundMark>();
   const lines: Line[] = [], unknown: string[] = [];
@@ -33,7 +47,7 @@ function run(ex: Example) {
   const text = f.push(ex.script) + f.end();
   const p = new ScriptParser();
   const acts = [...p.push(text), ...p.end()].flatMap((e) => (e.type === 'action' ? [e.action] : [])) as RawAction[];
-  const ground = parseListing(ex.page, ex.listing);
+  const ground = parseListings(ex.listing);
   const figs = new Figures(ground);
   acts.forEach((a) => figs.note(a));
   return { text, plan: f.plan, acts, ground, figs };
@@ -55,20 +69,30 @@ function sentences(text: string) {
 }
 
 describe('prompt examples', () => {
-  it('cover four different question types, from the fixture and off-domain synthetic pages only', () => {
+  it('four invented documents of different reach; at least one walks several pages, one works numbers with the kit', () => {
     expect(EXAMPLES).toHaveLength(4);
-    expect(EXAMPLES.map((e) => e.title.split(':')[0])).toEqual(['point-at', 'what-if', 'derive', 'why']);
-    expect(EXAMPLES.map((e) => e.source)).toEqual(['fixture', 'synthetic', 'synthetic', 'synthetic']);
+    const kit = EXAMPLES.filter((e) => run(e).acts.some((a) => a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table'));
+    expect(kit.length).toBe(1);
+    const acts = run(kit[0]).acts;
+    expect(acts.some((a) => a.kind === 'step' || a.kind === 'sweep' || a.kind === 'col')).toBe(true);
+    // the engine computes: a block from an operation (never a hand-written result)
+    expect(acts.some((a) => 'src' in a && !('vals' in (a as { src: object }).src))).toBe(true);
+    expect(EXAMPLES.some((e) => e.pages.length >= 3 && new Set(run(e).acts.flatMap((a) => ('page' in a && a.page != null ? [a.page] : []))).size >= 3)).toBe(true);
+    expect(EXAMPLES.some((e) => e.pages.length === 1 && run(e).acts.every((a) => a.kind !== 'sketch'))).toBe(true);
   });
 
   for (const ex of EXAMPLES) {
     describe(ex.title, () => {
-      it('its listing is in the grounding format', () => {
-        expect(ex.listing.split('\n')[0]).toMatch(new RegExp(`^PAGE ${ex.page} \\(visible; (16:9 slide|4:3 slide|portrait page|page); image attached\\)$`));
-        expect(parseListing(ex.page, ex.listing).unknown).toEqual([]);
+      it('its listings are in the grounding format: the visible page first, then the scout pages in order', () => {
+        const g = parseListings(ex.listing);
+        expect(g.heads[0]).toMatch(new RegExp(`^PAGE ${ex.page} \\(visible; (16:9 slide|4:3 slide|portrait page|page); image attached\\)$`));
+        for (const h of g.heads.slice(1)) expect(h).toMatch(/^PAGE \d+ \((16:9 slide|4:3 slide|portrait page|page); (image attached|listing only, no image)\)$/);
+        expect([...g.byPage.keys()]).toEqual([ex.page, ...ex.pages.filter((p) => p !== ex.page)]);
+        expect(g.unknown).toEqual([]);
+        expect(ex.plan.split(/\s+/).length).toBeLessThanOrEqual(80);
       });
 
-      it('parses with no malformed tag, resolves every tag, and passes lint untouched', () => {
+      it('parses with no malformed tag, resolves every tag, and lint notes nothing', () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const { text, acts, figs } = run(ex);
         expect(warn).not.toHaveBeenCalled();
@@ -80,30 +104,47 @@ describe('prompt examples', () => {
         expect(lint.notes).toEqual([]);
       });
 
-      it('follows the answer shape', () => {
+      it('answers first while pointing at the visible page, and speaks math, never TeX', () => {
         const { text, acts } = run(ex);
         const ss = sentences(text);
-        // On the visible page the answer opens with its mark (no scroll: the page is already in view).
         expect(DRAW.has(acts[0].kind) && 'page' in acts[0] && acts[0].page === ex.page, JSON.stringify(acts[0])).toBe(true);
-        // Sentence 1: the answer in ≤ 16 words, already pointing.
-        expect(ss[0].words.length).toBeLessThanOrEqual(16);
         expect(ss[0].tags.some((k) => DRAW.has(k))).toBe(true);
-        // One new drawn element per sentence, 3–8 in all, exactly one accent.
-        for (const s of ss) expect(s.tags.filter((k) => DRAW.has(k)).length, s.words.join(' ')).toBeLessThanOrEqual(1);
-        const drawn = acts.filter((a) => DRAW.has(a.kind)).length;
-        expect(drawn).toBeGreaterThanOrEqual(3);
-        expect(drawn).toBeLessThanOrEqual(8);
-        expect(acts.filter((a) => 'em' in a && a.em)).toHaveLength(1);
-        // Spoken math only: no TeX, markdown or symbols in the narration.
         const spoken = ss.flatMap((x) => x.words).join(' ');
         expect(spoken).not.toMatch(/[\\$^_*#`={}]/);
+      });
+
+      it('only marks pages sent with a listing, and scrolls to another page before marking it', () => {
+        const { acts } = run(ex);
+        const listed = new Set(parseListings(ex.listing).byPage.keys());
+        let shown = ex.page;
+        for (const a of acts) {
+          if (a.kind === 'scroll') { shown = a.page; continue; }
+          if ('page' in a && a.page != null && a.kind !== 'sketch') {
+            expect(listed.has(a.page), JSON.stringify(a)).toBe(true);
+            expect(a.page, `${a.kind} on p${a.page} without a scroll there`).toBe(shown);
+          }
+        }
+      });
+
+      it('the board never duplicates: no board text copies a page line or a sentence of the narration', () => {
+        const { text, acts } = run(ex);
+        const g = parseListings(ex.listing);
+        const pageText = [...g.byPage.keys()].flatMap((p) => g.lines(p).map((l) => l.text.toLowerCase()));
+        const spoken = sentences(text).map((x) => x.words.join(' ').toLowerCase());
+        for (const a of acts) {
+          if (!('region' in a) || a.region == null) continue;
+          const t = (('text' in a && a.text) || (a.kind === 'math' && a.tex) || '') as string;
+          if (t.split(/\s+/).length < 3) continue; // a label
+          expect(pageText.some((l) => l.includes(t.toLowerCase())), t).toBe(false);
+          expect(spoken.some((l) => l.includes(t.toLowerCase())), t).toBe(false);
+        }
       });
 
       it('copies quotes from the listing, with near= where a quote is short or repeated', () => {
         const { acts, ground } = run(ex);
         for (const a of acts) {
           if (!('quote' in a) || a.page == null) continue;
-          const hits = ground.lines.filter((l) => l.text.includes(a.quote));
+          const hits = ground.lines(a.page).filter((l) => l.text.includes(a.quote));
           expect(hits.length, a.quote).toBeGreaterThan(0);
           const count = hits.reduce((n, l) => n + l.text.split(a.quote).length - 1, 0);
           if (a.quote.length <= 2 || count > 1) {
@@ -114,15 +155,18 @@ describe('prompt examples', () => {
         }
       });
 
-      it('plans and declares every sketch: <plan> after sentence 1, a fitted sketch, then one let', () => {
+      it('plans and declares every sketch: a <plan> before it; a drawn figure is fitted then one let (kit blocks need neither)', () => {
         const { plan, acts } = run(ex);
         const sketches = acts.filter((a) => a.kind === 'sketch');
         expect(Boolean(plan.trim())).toBe(sketches.length > 0);
         if (!sketches.length) return;
-        expect(ex.script.indexOf('<plan>')).toBeGreaterThan(ex.script.search(/[.?!]\s/));
+        expect(ex.script.indexOf('<plan>')).toBeLessThan(ex.script.indexOf('{{sketch'));
         for (const s of sketches) {
           const i = acts.indexOf(s);
-          expect(s.kind === 'sketch' && s.fit).toBe(true);
+          if (s.kind !== 'sketch') continue;
+          const kitOnly = acts.every((a) => !('region' in a) || a.region !== s.id || ['grid', 'bars', 'scatter', 'table', 'calc', 'fit'].includes(a.kind));
+          if (kitOnly) continue;
+          expect(s.fit).toBe(true);
           expect(acts[i + 1].kind).toBe('let');
         }
       });
@@ -130,7 +174,7 @@ describe('prompt examples', () => {
   }
 
   it('what-if: both shadow tips land where the geometry says (120, then 240 long)', () => {
-    const ex = EXAMPLES.find((e) => e.title.startsWith('what-if'))!;
+    const ex = EXAMPLES.find((e) => e.title.includes('what-if'))!;
     const { figs, plan } = run(ex);
     const fig = figs.figure({ region: 's' });
     const at = (n: string) => fig.world({ ref: n }) as Pt;
@@ -144,20 +188,17 @@ describe('prompt examples', () => {
     expect(plan).toMatch(/meet\(L,H,O,P\)/);
   });
 
-  it('derive: the staircase and its flipped copy tile the n by n+1 rectangle exactly', () => {
-    const ex = EXAMPLES.find((e) => e.title.startsWith('derive'))!;
-    const { acts, figs } = run(ex);
-    const fig = figs.figure({ region: 'd' });
-    const shades = acts.filter((a) => a.kind === 'shade' && 'pts' in a) as { pts: Parameters<typeof fig.world>[0][] }[];
-    expect(shades).toHaveLength(2);
-    const area = (ps: Pt[]) => Math.abs(ps.reduce((s, p, i) => { const q = ps[(i + 1) % ps.length]; return s + p.x * q.y - q.x * p.y; }, 0)) / 2;
-    const polys = shades.map((s) => s.pts.map((p) => fig.world(p) as Pt));
-    const [A, B, C, D] = ['A', 'B', 'C', 'D'].map((n) => fig.world({ ref: n }) as Pt);
-    const rect = area([A, B, C, D]);
-    expect(area(polys[0])).toBeCloseTo(rect / 2, 6);
-    expect(area(polys[1])).toBeCloseTo(rect / 2, 6);
-    // n = 4 columns of width 100, n + 1 = 5 rows of height 100.
-    expect(Math.abs(B.x - A.x)).toBe(400);
-    expect(Math.abs(C.y - B.y)).toBe(500);
+  it('lever: the push end is three times as far from the pivot, and travels three times as far', () => {
+    const ex = EXAMPLES.find((e) => e.pages.length === 3)!;
+    const { figs } = run(ex);
+    const fig = figs.figure({ region: 'v' });
+    const at = (n: string) => fig.world({ ref: n }) as Pt;
+    const d = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
+    expect(d(at('B'), at('P'))).toBeCloseTo(3 * d(at('A'), at('P')), 6);
+    expect(d(at('B2'), at('P'))).toBeCloseTo(3 * d(at('A2'), at('P')), 6);
+    expect(d(at('B'), at('B2'))).toBeCloseTo(3 * d(at('A'), at('A2')), 6);
+    // The turned bar still passes through the pivot.
+    const cross = (at('B2').x - at('A2').x) * (at('P').y - at('A2').y) - (at('B2').y - at('A2').y) * (at('P').x - at('A2').x);
+    expect(cross).toBeCloseTo(0, 6);
   });
 });

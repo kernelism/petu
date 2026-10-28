@@ -3,11 +3,9 @@
   inset: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  background-color: var(--canvas-bg, #E9E7E1);
-  /* The desk: a faint dot grid that scrolls with the pages. */
-  background-image: radial-gradient(circle, rgba(0, 0, 0, 0.075) 1px, transparent 1.3px);
-  background-size: 22px 22px;
-  background-attachment: local;
+  /* Transparent: the desk's dot grid is the window's (tokens.css), so the viewer can be clipped to
+     its visible band (app.css) without a seam. */
+  background: transparent;
   overscroll-behavior: contain;
   /* The viewer keeps the reading position itself; the browser's anchoring would look like the student scrolling. */
   overflow-anchor: none;
@@ -74,9 +72,3 @@
 .pv-highlight {
   mix-blend-mode: multiply;
 }
-
-/* B: the scroller is the reference card (src/desk/Desk.ts, PdfViewer setCard). The card page is marked
-   with an attribute, not a class: React owns .pv-page's className and would drop it on re-render. */
-.pv-scroll.is-b { overflow: hidden; background: transparent; }
-.pv-scroll.is-b .pv-page:not([data-card]) { opacity: 0; pointer-events: none; }
-.pv-scroll.is-b .pv-page[data-card] { border-radius: 6px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), 0 10px 28px rgba(0, 0, 0, 0.14); cursor: pointer; }

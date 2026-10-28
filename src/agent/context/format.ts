@@ -12,13 +12,23 @@ const VISIBLE_CHARS = VISIBLE_TOKENS * 3.3;
 
 /** The visible page: header, lines (none when the text layer is unusable), marks. */
 export function formatVisible(g: PageGround): string {
-  const head = `PAGE ${g.page} (visible; ${shape(g.aspect)}; ${g.noText ? 'no extractable text: point with marks, or by coordinates inside images' : 'image attached'})`;
+  return formatPage(g, { visible: true, image: true });
+}
+
+/**
+ * A page's full listing (lines and figure marks). The visible page says so; another page says
+ * whether its image is attached. `maxChars` cuts a dense page's lines with "…" (the marks stay).
+ */
+export function formatPage(g: PageGround, o: { visible?: boolean; image: boolean; maxChars?: number }): string {
+  const what = g.noText ? 'no extractable text: point with marks, or by coordinates inside images' : o.image ? 'image attached' : 'listing only, no image';
+  const head = `PAGE ${g.page} (${o.visible ? 'visible; ' : ''}${shape(g.aspect)}; ${what})`;
   const marks = formatMarks(g.marks);
   const lines: string[] = [];
+  const max = o.maxChars ?? VISIBLE_CHARS;
   let n = head.length + marks.length + 4;
   for (const l of g.noText ? [] : g.lines) {
     const s = lineText(l);
-    if (n + s.length + 1 > VISIBLE_CHARS) { lines.push('…'); break; }
+    if (n + s.length + 1 > max) { lines.push('…'); break; }
     lines.push(s);
     n += s.length + 1;
   }

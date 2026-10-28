@@ -1,7 +1,8 @@
 // src/script/parseTag.ts
 import { REGION_H, type Compass, type RawEnd, type Pt, type RawAction, type Target, type Weight } from './types';
 import { tokenize, unquote } from './tokenize';
-import { NAME, normName, parsePtArg, worldPt, type PtArg } from './pointExpr';
+import { NAME, normName, parsePtArg, worldPt, isBlockRef, type PtArg } from './pointExpr';
+import { parseKitBlock, parseKitVerb } from './parseKit';
 
 /** Region and element ids: a letter, then letters, digits, - or _. Case-insensitive (stored lowercased). */
 const ID = /^[a-z][a-z0-9_-]{0,23}$/;
@@ -17,6 +18,8 @@ const id = (s?: string) => (s && ID.test(s.toLowerCase()) ? s.toLowerCase() : un
 /** Element ids double as point names: case-sensitive (X and x are different points), ' → ′. */
 const eid = (s?: string) => { const n = s ? normName(s) : ''; return n && NAME.test(n) ? n : undefined; };
 const MARK_ID = /^#[a-z]\d{1,3}$/;
+/** An element id, or a part of a kit block (`g[2,3]`, `v[1:3]`). */
+const rid = (s?: string) => (s && isBlockRef(s) ? s : eid(s));
 
 /** "x,y" → a point clamped to 0–1000 × 0–ymax. */
 function pt(s: string | undefined, ymax: number): Pt | undefined {
@@ -56,7 +59,7 @@ function end(s: string | undefined, near: Pt | undefined): RawEnd | undefined {
   if (!region) return undefined;
   const at = pt(rest, REGION_H);
   if (at) return { region, at };
-  const ref = eid(rest);
+  const ref = rid(rest);
   return ref ? { region, ref } : undefined;
 }
 
@@ -95,20 +98,30 @@ export function parseTag(body: string): RawAction | null {
   switch (name) {
     case 'clear': return { kind: 'clear' };
     case 'sketch': {
+      // A section on the board. `near=pN` names the slide it explains (optional: the visible one);
+      // `place=` is accepted and ignored (the board has one place); `size=l` widens the board.
       const sid = id(args.id);
-      const page = num(args.near?.replace(/^p/i, ''));
+      const n = args.near != null ? num(args.near.replace(/^p/i, '')) : undefined;
+      const page = n != null && n >= 1 && Number.isInteger(n) ? n : undefined;
       const size = (args.size ?? 'm').toLowerCase();
-      const place = (args.place ?? 'auto').toLowerCase();
-      if (!sid || page === undefined || page < 1 || !Number.isInteger(page)) return null;
+      if (!sid) return null;
       if (size !== 's' && size !== 'm' && size !== 'l') return null;
-      if (place !== 'auto' && place !== 'right' && place !== 'left' && place !== 'below') return null;
-      return { kind: 'sketch', id: sid, page, size, place, ...(flags.has('fit') ? { fit: true } : {}) };
+      return { kind: 'sketch', id: sid, ...(page != null ? { page } : {}), size, ...(flags.has('fit') ? { fit: true } : {}) };
     }
     case 'emph':
     case 'fade': {
-      const ref = eid(args.id);
+      const ref = rid(args.id);
+      if (name === 'emph' && args.where != null) return ref && args.where.length <= 120 ? { kind: 'emph', ref, where: args.where } : null;
       return ref ? { kind: name, ref } : null;
     }
+    case 'step':
+    case 'sweep':
+    case 'set':
+    case 'band':
+    case 'dist':
+    case 'col':
+    case 'level':
+      return parseKitVerb(name, args, quotes, flags);
     case 'move': {
       const ref = eid(args.id), to = pt(args.to, 1000); // clamped to the element's own space when it runs
       return ref && to ? { kind: 'move', ref, to } : null;
@@ -149,6 +162,11 @@ export function parseTag(body: string): RawAction | null {
     const out = s.trim().split(/\s+/).map((x) => P(x));
     return out.length >= min && out.every(Boolean) ? (out as PtArg[]) : undefined;
   };
+  if (name === 'grid' || name === 'bars' || name === 'scatter' || name === 'table' || name === 'calc' || name === 'fit') {
+    if (!inRegion) return null;
+    const b = parseKitBlock(name, args, quotes, flags, P);
+    return b ? ({ ...b, ...target, ...mark } as RawAction) : null;
+  }
   const markArg = args.mark;
   if (markArg !== undefined) {
     if (inRegion || !MARK_ID.test(markArg)) return null;
@@ -199,6 +217,13 @@ export function parseTag(body: string): RawAction | null {
     case 'box': {
       if (anchor) return { kind: 'box', ...target, ...anchor, ...weight, ...mark };
       const s = pair(args.size);
+      // A kit part (`at=g[1:2,1:3]`): frames those cells; the kit sizes it when it is built.
+      if (inRegion && args.at && isBlockRef(args.at) && !args.size) return { kind: 'box', ...target, at: at!, w: 0, h: 0, ...weight, ...mark } as RawAction;
+      const c = P(args.center);
+      if (c && !args.at) {
+        if (!s || !(s[0] > 0 && s[1] > 0)) return null;
+        return { kind: 'box', ...target, at: c, w: s[0], h: s[1], centered: true, ...weight, ...mark } as RawAction;
+      }
       if (!at || !s || !(s[0] > 0 && s[1] > 0)) return null;
       // Literal page boxes clip to the page; everything else clamps when resolved.
       const lit = 'x' in at && !inRegion;
@@ -206,8 +231,11 @@ export function parseTag(body: string): RawAction | null {
     }
     case 'label':
       return at && quote ? { kind: 'label', ...target, at, text: quote, ...mark } : null;
-    case 'write':
-      return inRegion && at && quote && textSize ? { kind: 'write', ...target, at, text: quote, size: textSize, ...mark } : null;
+    case 'write': {
+      const c = args.at ? undefined : P(args.center);
+      const p0 = at ?? c;
+      return inRegion && p0 && quote && textSize ? { kind: 'write', ...target, at: p0, text: quote, size: textSize, ...(c ? { centered: true } : {}), ...mark } : null;
+    }
     case 'point': {
       const dir = args.dir?.toLowerCase();
       if (!at || (dir && !COMPASS.has(dir))) return null;
@@ -246,8 +274,11 @@ export function parseTag(body: string): RawAction | null {
       if (range && !(range[1] > range[0])) return null;
       return { kind: 'plot', ...target, fn, domain, ...(range ? { range } : {}), ...(axes ? { axes } : {}), ...dash, ...weight, ...mark };
     }
-    case 'math':
-      return inRegion && at && quote && textSize ? { kind: 'math', ...target, at, tex: normalizeTex(quote), size: textSize, ...mark } : null;
+    case 'math': {
+      const c = args.at ? undefined : P(args.center);
+      const p0 = at ?? c;
+      return inRegion && p0 && quote && textSize ? { kind: 'math', ...target, at: p0, tex: normalizeTex(quote), size: textSize, ...(c ? { centered: true } : {}), ...mark } : null;
+    }
     default:
       return null;
   }

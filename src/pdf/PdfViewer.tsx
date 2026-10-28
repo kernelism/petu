@@ -11,9 +11,9 @@ import { animateScrollTo } from './scroll';
 import { prefersReducedMotion } from '../ink/agent/animate';
 import { ink } from '../ink/student/store';
 import { PageSlot, type SlotHandle } from './PageSlot';
-import { column, computeLayout, pageAt, SAFE_TOP, safeBottom, TOP_PAD, type Lanes, type PageLayout } from '../desk/layout';
+import { computeLayout, frameFor, pageAt, SAFE_TOP, safeBottom, setStackBottom, STACK_PAD, type PageLayout, type Split } from '../desk/layout';
 import { ScrollOwner, isScrollKey } from '../desk/follow';
-import type { DeskHost, StageRect } from '../desk/types';
+import type { DeskHost } from '../desk/types';
 import './viewer.css';
 
 type Props = {
@@ -226,11 +226,13 @@ export default PdfViewer;
 function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const sizerRef = useRef<HTMLDivElement>(null);
-  /** The scroller's width; the page column follows from it and the lanes the desk reserves. */
+  /** The scroller's size; the page column follows from it and the split state the desk sets. */
   const [viewW, setViewW] = useState(0);
-  const [lanes, setLanes] = useState<Lanes>({ left: 0, right: 0 });
-  const [gaps, setGaps] = useState<ReadonlyMap<number, number>>(() => new Map());
-  const deskLayerRef = useRef<HTMLDivElement>(null);
+  const [viewH, setViewH] = useState(0);
+  const [split, setSplitState] = useState<Split>('none');
+  /** The split state for the framing maths (read inside the long-lived effect). */
+  const splitRef = useRef<Split>('none');
+  splitRef.current = split;
   /** Desk subscribers, told after every committed layout (resize, a page's true size, the column). */
   const layoutSubs = useRef(new Set<() => void>());
   /** Every programmatic scrollTop write goes through this, so the student's scrolls stand out (rule 6). */
@@ -277,18 +279,28 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
   // Fit-to-width, tracked with a ResizeObserver.
   useLayoutEffect(() => {
     const el = scrollRef.current!;
-    const measure = () => setViewW(el.clientWidth);
+    const measure = () => { setViewW(el.clientWidth); setViewH(el.clientHeight); };
     measure();
     const ro = new ResizeObserver(() => { if (!glideRef.current) measure(); });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
-  const layout = useMemo(
-    () => (viewW > 0 && aspectsRef.current ? computeLayout(column(viewW, lanes), aspectsRef.current, gaps) : null),
+  /** The window's frame for the split state: the page column, and (stacked) where the slides' band ends. */
+  const frame = useMemo(
+    () => (viewW > 0 && aspectsRef.current ? frameFor(viewW, viewH, split, aspectsRef.current[0]) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [viewW, lanes, gaps, aspectsVersion],
+    [viewW, viewH, split, aspectsVersion],
   );
+  const layout = useMemo(
+    () => (frame && aspectsRef.current ? computeLayout(frame.page, aspectsRef.current, viewH) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [frame?.page.pageW, frame?.page.pageX, viewH, aspectsVersion],
+  );
+  // Stacked, the slides' band ends at the board: framing keeps ink above it.
+  useLayoutEffect(() => {
+    setStackBottom(frame?.stacked ? viewH - (frame.slides.y + frame.slides.h) : null);
+  }, [frame, viewH]);
 
   const saveAnchor = useCallback(() => {
     const el = scrollRef.current, L = layoutRef.current;
@@ -312,6 +324,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     saveAnchor();
     layoutSubs.current.forEach((f) => f());
   }, [layout, saveAnchor]);
+
 
   const register = useCallback((page: number, h: SlotHandle | null) => {
     const prev = slots.current.get(page);
@@ -364,7 +377,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     };
     let raf = 0;
     const onScroll = () => {
-      if (owner.isForeign(el.scrollTop, el.scrollHeight - el.clientHeight) && cardPage == null) intent(); // scrollbar drag, find-in-page, focus…
+      if (owner.isForeign(el.scrollTop, el.scrollHeight - el.clientHeight)) intent(); // scrollbar drag, find-in-page, focus…
       subs.scroll.forEach((f) => f());
       saveAnchor();
       // A scroll during a column glide: keep scaling around the current reading line.
@@ -440,9 +453,17 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     };
     /** Whether `page` fits whole between the top bar and the caption. */
     const fits = (page: number) => layoutRef.current!.heights[page - 1] <= el.clientHeight - SAFE_TOP - safeBottom();
-    /** Scroll top that shows `page` whole, centered in the room between the chrome (or its top aligned when it doesn't fit). */
+    /**
+     * Scroll top that shows `page` whole. Reading: centred in the room between the chrome (top
+     * aligned when it doesn't fit). Split: its top edge on the board's top edge, always, so the slide
+     * column and the board read as one fitted frame and no sliver of the page above shows.
+     */
     const framedTop = (page: number) => {
       const L = layoutRef.current!;
+      if (splitRef.current !== 'none') {
+        const f = frameFor(el.clientWidth, el.clientHeight, splitRef.current, aspectsRef.current![0]);
+        return L.tops[page - 1] - SAFE_TOP - (f.stacked ? STACK_PAD : 0);
+      }
       const room = el.clientHeight - SAFE_TOP - safeBottom();
       return L.tops[page - 1] - SAFE_TOP - Math.max(0, (room - L.heights[page - 1]) / 2);
     };
@@ -509,20 +530,21 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     };
 
     // ---- The desk host (src/desk/Desk.ts drives it) -------------------------------------------
-    const subs = { scroll: new Set<() => void>(), intent: new Set<() => void>(), card: new Set<() => void>() };
+    const subs = { scroll: new Set<() => void>(), intent: new Set<() => void>() };
     const sub = (set: Set<() => void>) => (cb: () => void) => { set.add(cb); return () => { set.delete(cb); }; };
     const intent = () => { if (focusRef.current != null) setFocusPage(null); subs.intent.forEach((f) => f()); };
 
-    /** Glides the page column to new lanes / below-gaps: pages slide and scale by transform, then re-lay out once. */
-    const setColumn = (next: Lanes, nextGaps: ReadonlyMap<number, number>, ms: number) => new Promise<void>((done) => {
+    /** Glides the page column to a split state: pages slide and scale by transform, then re-lay out once. */
+    const setSplit = (next: Split, ms: number) => new Promise<void>((done) => {
       if (prefersReducedMotion()) ms = 0;
       glideRef.current?.finish();
       const sizer = sizerRef.current, L = layoutRef.current;
-      const L2 = computeLayout(column(el.clientWidth, next), aspectsRef.current!, nextGaps);
+      const L2 = computeLayout(frameFor(el.clientWidth, el.clientHeight, next, aspectsRef.current![0]).page, aspectsRef.current!, el.clientHeight);
       const commit = () => {
         // Re-measures too: the ResizeObserver skips measuring mid-glide, so a resize during one is caught up here.
-        flushSync(() => { setLanes(next); setGaps(nextGaps); setViewW(el.clientWidth); });
-        renderer.renderW = column(el.clientWidth, next).pageW;
+        splitRef.current = next;
+        flushSync(() => { setSplitState(next); setViewW(el.clientWidth); setViewH(el.clientHeight); });
+        renderer.renderW = layoutRef.current?.pageW ?? L2.pageW;
         renderer.pump();
       };
       if (!sizer || !L || ms <= 0 || (Math.abs(L2.pageW - L.pageW) < 0.5 && Math.abs(L2.pageX - L.pageX) < 0.5)) { commit(); done(); return; }
@@ -559,112 +581,13 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       g.timer = window.setTimeout(finish, ms + 40);
     });
 
-    /**
-     * B: the scroller itself becomes the reference card. Its box grows to hold the whole card page
-     * (the scroller clips to its box before the transform), scrollTop puts that page TOP_PAD below
-     * the box top, and a compensating translate keeps it where it was; then it transitions onto the card.
-     */
-    let cardPage: number | null = null;
-    /** The card's current transform, so asking for the same card again costs nothing. */
-    let cardTo = '';
-    /** The page pinned for the card (still pinned while an exit glides). */
-    let pinned: number | null = null;
-    /** Bumped by every setCard call: a call bails after each await once a newer one started (an exit mid-entry, a re-entry mid-exit). */
-    let cardSeq = 0;
-    const wait = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
-    const frame = () => new Promise((r) => requestAnimationFrame(r));
-    const setCard = async (card: { page: number; rect: StageRect } | null, ms: number) => {
-      const seq = ++cardSeq;
-      const stale = () => seq !== cardSeq;
-      if (prefersReducedMotion()) ms = 0;
-      // A card swap superseded mid-fade must not leave the scroller invisible.
-      if (el.style.opacity === '0') { el.style.transition = 'none'; el.style.opacity = '1'; }
-      const L = layoutRef.current;
-      if (!L) return;
-      const ease = 'cubic-bezier(.2,.8,.2,1)';
-      if (card) {
-        const k = card.rect.w / L.pageW;
-        // Where the card page sits in the scroller's box after its scrollTop write: TOP_PAD, unless
-        // the write was clamped (a last page in a tall window can't scroll that far), so the
-        // transform lands the page itself on the card rect either way.
-        const at = (i: number) => L.tops[i] - el.scrollTop;
-        const toFor = (i: number) => `translate(${card.rect.x - L.pageX * k}px, ${card.rect.y - at(i) * k}px) scale(${k})`;
-        if (cardPage === card.page) {
-          // Already the card (B re-entry, another B region, a resize): only move to the new rect, if
-          // it moved. Never re-run the entry from the page's scroller position (a jump, and ~430ms).
-          const i = card.page - 1;
-          el.style.height = `${Math.max(el.clientHeight, L.heights[i] + 2 * TOP_PAD)}px`;
-          if (Math.abs(el.scrollTop - (L.tops[i] - TOP_PAD)) > 0.5) owner.write(el, L.tops[i] - TOP_PAD);
-          const to = toFor(i);
-          if (cardTo === to) return;
-          cardTo = to;
-          el.style.transition = ms > 0 ? `transform ${ms}ms ${ease}` : 'none';
-          el.style.transform = to;
-          if (ms > 0) await wait(ms);
-          return;
-        }
-        const swap = cardPage != null && cardPage !== card.page;
-        if (swap) { el.style.transition = 'opacity 120ms ease-out'; el.style.opacity = '0'; await wait(120); if (stale()) return; }
-        const i = card.page - 1;
-        const onScreen = L.tops[i] - el.scrollTop; // where the page is now (stage px)
-        // Re-entering the same page mid-exit: start from where the exit glide has got to, not from the box.
-        const midExit = !swap && pinned === card.page && el.classList.contains('is-b') ? getComputedStyle(el).transform : '';
-        el.classList.add('is-b');
-        el.style.transition = 'none';
-        el.style.height = `${Math.max(el.clientHeight, L.heights[i] + 2 * TOP_PAD)}px`;
-        owner.write(el, L.tops[i] - TOP_PAD);
-        el.style.transformOrigin = '0 0';
-        el.style.transform = swap ? '' : midExit && midExit !== 'none' ? midExit : `translate(0px, ${onScreen - at(i)}px)`;
-        if (pinned != null && pinned !== card.page) renderer.unpin(pinned);
-        if (pinned !== card.page) renderer.pin(card.page);
-        pinned = card.page;
-        const to = toFor(i);
-        for (const h of slots.current.values()) h.el.toggleAttribute('data-card', Number(h.el.dataset.page) === card.page);
-        cardPage = card.page;
-        cardTo = to;
-        await frame();
-        if (stale()) return; // an exit (or another card) started meanwhile: its transform wins
-        el.style.transition = swap ? `opacity 180ms ease-out` : `transform ${ms}ms ${ease}`;
-        el.style.transform = to;
-        el.style.opacity = '1';
-        await wait(swap ? 180 : ms);
-        return;
-      }
-      if (cardPage == null) return;
-      // Back: glide the card to where the page will sit framed in the scroller, then drop B in one frame.
-      // Marked leaving at once, so a re-entry during the glide runs the full entry instead of the same-card fast path.
-      const p = cardPage, i = p - 1;
-      cardPage = null;
-      cardTo = '';
-      const target = Math.max(0, Math.min(fits(p) ? framedTop(p) : L.tops[i] - SAFE_TOP, L.total - el.clientHeight));
-      el.style.transition = `transform ${ms}ms ${ease}`;
-      el.style.transform = `translate(0px, ${el.scrollTop - target}px)`; // the page, from where it sits in the box to where it will
-      await wait(ms);
-      if (stale()) return; // re-entered B meanwhile: the entry owns the scroller now
-      el.style.transition = 'none';
-      el.style.transform = '';
-      el.style.height = '';
-      el.classList.remove('is-b');
-      for (const h of slots.current.values()) h.el.removeAttribute('data-card');
-      owner.write(el, target);
-      if (pinned != null) renderer.unpin(pinned);
-      pinned = null;
-    };
-    const onCardClick = (e: MouseEvent) => {
-      if (cardPage == null || ink.get().canvasOn) return;
-      if ((e.target as HTMLElement).closest?.('.pv-page[data-card]')) subs.card.forEach((f) => f());
-    };
-    el.addEventListener('click', onCardClick);
-
     const host: DeskHost = {
-      // In B (until an exit glide has dropped it) the scroller's box is grown to hold the card page.
-      viewport: () => ({ W: el.clientWidth, H: el.classList.contains('is-b') ? window.innerHeight : el.clientHeight }),
+      viewport: () => ({ W: el.clientWidth, H: el.clientHeight }),
       layout: () => layoutRef.current,
       scrollTop: () => el.scrollTop,
       maxScroll: () => Math.max(0, (layoutRef.current?.total ?? 0) - el.clientHeight),
       aspect: (page) => aspectsRef.current?.[clampPage(page) - 1] ?? 1.294,
-      layer: () => deskLayerRef.current!,
-      setColumn,
+      setSplit,
       glideTo: async (top, maxMs) => {
         glide?.abort();
         const ctrl = (glide = new AbortController());
@@ -673,11 +596,9 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       },
       cancelGlide: () => glide?.abort(),
       scrollToPage: (page, y) => api.scrollToPage(page, y),
-      setCard,
       onLayout: (cb) => { layoutSubs.current.add(cb); return () => { layoutSubs.current.delete(cb); }; },
       onScroll: sub(subs.scroll),
       onUserIntent: sub(subs.intent),
-      onCardClick: sub(subs.card),
       contentMask: (page) => renderer.mask(clampPage(page)),
     };
     cbRef.current.onReady(api);
@@ -690,7 +611,6 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       el.removeEventListener('touchstart', onUserScroll);
       window.removeEventListener('keydown', onKey);
       window.visualViewport?.removeEventListener('resize', onZoom);
-      el.removeEventListener('click', onCardClick);
       if (raf) cancelAnimationFrame(raf);
       mq?.removeEventListener('change', onDpr);
       io.disconnect();
@@ -727,8 +647,6 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
               current={i + 1 === (focus ?? center)}
             />
           ))}
-          {/* Sketch regions and connectors (C) live here, in the pages' coordinate frame: they scroll natively. */}
-          <div ref={deskLayerRef} className="desk-layer" />
         </div>
       )}
     </div>

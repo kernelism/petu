@@ -1,127 +1,123 @@
 // tests/desk/layout.test.ts
 import { describe, it, expect } from 'vitest';
 import {
-  column, computeLayout, placeAll, regionRects, lanesFor, gapsFor, stageLayout, inView, fitTogether, frameTop, frameInk, band, INK_PAD, regionWidth,
-  MAX_PAGE_W, MIN_PAGE_W, C_MIN_PAGE_W, GAP_X, TOOLBAR_CLEAR, COLUMN_AIR, EDGE, SAFE_TOP, SAFE_BOTTOM, GAP_Y, type RegionReq,
+  frameFor, readingColumn, computeLayout, boardLayout, bodyFraction, bodyPx, cropSpan, margin, inView, frameTop, frameInk, band, INK_PAD,
+  MAX_PAGE_W, MIN_SLIDE_COL, SAFE_TOP, SAFE_BOTTOM, BOARD_HEAD, MIN_TEXT_PX, TEXT_UNITS, SECTION_H, CROP_PAD, BOTTOM_PAD, dockReserve,
 } from '../../src/desk/layout';
 
-const slides = (n: number) => new Float64Array(n).fill(9 / 16);
-const req = (id: string, page: number, o: Partial<RegionReq> = {}): RegionReq => ({ id, page, size: 'm', place: 'auto', ...o });
+const SIZES: [number, number][] = [[1280, 800], [1440, 900], [2560, 1440], [1024, 768], [900, 800], [700, 900]];
 const overlaps = (a: { x: number; y: number; w: number; h: number }, b: typeof a) =>
   a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
-function deskAt(W: number, H: number, reqs: RegionReq[], pages = 5) {
-  const placed = placeAll(reqs, W, H);
-  const col = column(W, lanesFor(placed, W));
-  const L = computeLayout(col, slides(pages), gapsFor(placed, W, col));
-  return { placed, col, L, rects: regionRects(placed, L, W) };
-}
-
-describe('column', () => {
-  it('is centered at full width with no lanes (unchanged from the viewer today)', () => {
-    expect(column(1440, { left: 0, right: 0 })).toEqual({ pageW: MAX_PAGE_W, pageX: 290 });
-    expect(column(800, { left: 0, right: 0 })).toEqual({ pageW: 736, pageX: 32 });
-  });
-  it('slides the page left to make a right lane, shrinking it only when needed', () => {
-    const lane = regionWidth('m', 1440) + GAP_X;
-    const c = column(1440, { left: 0, right: lane });
-    expect(c.pageX + c.pageW + lane).toBeLessThanOrEqual(1440 - EDGE);
-    expect(c.pageX).toBeLessThan(290);
-    expect(c.pageX).toBeGreaterThanOrEqual(TOOLBAR_CLEAR); // never under the canvas toolbar
-    const wide = column(2560, { left: 0, right: lane });
-    expect(wide.pageW).toBe(MAX_PAGE_W);
-  });
-  it('gives the off-center column some air beside the toolbar, but never at the cost of C fitting', () => {
-    const lane = regionWidth('m', 1440) + GAP_X;
-    const c = column(1440, { left: 0, right: lane });
-    expect(c.pageX).toBeGreaterThanOrEqual(TOOLBAR_CLEAR + COLUMN_AIR);
-    expect(c.pageW).toBeGreaterThanOrEqual(C_MIN_PAGE_W);
-    // A window where the page only just fits beside the lane: the air gives way first.
-    for (let W = 1000; W <= 1300; W += 7) {
-      const l = regionWidth('m', W) + GAP_X;
-      const room = W - EDGE - TOOLBAR_CLEAR - l;
-      const k = column(W, { left: 0, right: l });
-      expect(k.pageW).toBe(Math.max(MIN_PAGE_W, Math.min(MAX_PAGE_W, room - Math.max(0, Math.min(COLUMN_AIR, room - C_MIN_PAGE_W)))));
-      if (room >= C_MIN_PAGE_W) expect(k.pageW).toBeGreaterThanOrEqual(C_MIN_PAGE_W);
-    }
-  });
-  it('keeps a left lane clear of the toolbar', () => {
-    const lane = regionWidth('s', 1440) + GAP_X;
-    const c = column(1440, { left: lane, right: 0 });
-    expect(c.pageX - lane).toBeGreaterThanOrEqual(TOOLBAR_CLEAR);
+describe('margin', () => {
+  it('is 2.5% of the window width, within 16–40px', () => {
+    expect(margin(1440)).toBe(36);
+    expect(margin(400)).toBe(16);
+    expect(margin(2560)).toBe(40);
   });
 });
 
-describe('placeAll', () => {
-  it('auto prefers right, then left for a second region on the same page', () => {
-    const p = placeAll([req('a', 3), req('b', 3)], 1920, 1080);
-    expect(p.map((x) => x.mode)).toEqual(['right', 'left']);
+describe('frameFor', () => {
+  it('reading: the page column centred, as before the split layout', () => {
+    const f = frameFor(1440, 900, 'none', 9 / 16);
+    expect(f.board).toBeNull();
+    expect(f.page).toEqual(readingColumn(1440));
+    expect(f.page).toEqual({ pageW: MAX_PAGE_W, pageX: 290 });
   });
-  it('size l is always B, and so is a promoted region', () => {
-    expect(placeAll([req('a', 3, { size: 'l' })], 2560, 1440)[0].mode).toBe('b');
-    expect(placeAll([req('a', 3, { forceB: true })], 2560, 1440)[0].mode).toBe('b');
-  });
-  it('auto goes below when neither side fits; B when below does not fit either', () => {
-    expect(placeAll([req('a', 3)], 1024, 768)[0].mode).toBe('below');
-    expect(placeAll([req('a', 3)], 1024, 440)[0].mode).toBe('b'); // too short for the region
-  });
-  it('a side that would make the page narrower than C_MIN_PAGE_W does not fit', () => {
-    expect(placeAll([req('a', 3, { place: 'right' })], 1024, 768)[0].mode).toBe('b');
-    expect(column(1024, lanesFor([{ ...req('a', 3), mode: 'right' }], 1024)).pageW).toBeLessThan(C_MIN_PAGE_W);
-  });
-  it('an explicit place that does not fit is B, not another side', () => {
-    expect(placeAll([req('a', 3, { place: 'left' })], 1024, 768)[0].mode).toBe('b');
-  });
-  it('is a pure function of the window: resizing back restores C (rule 7)', () => {
-    const r = [req('a', 2, { place: 'right' })];
-    expect(placeAll(r, 1024, 768)[0].mode).toBe('b');
-    expect(placeAll(r, 1440, 900)[0].mode).toBe('right');
-  });
-});
-
-describe('regionRects', () => {
-  for (const [W, H] of [[1280, 800], [1440, 900], [1920, 1080], [2560, 1440]]) {
-    it(`never overlaps pages or other regions at ${W}×${H}`, () => {
-      const { L, rects } = deskAt(W, H, [req('a', 2), req('b', 2), req('c', 4, { place: 'below' })]);
-      const pages = Array.from(L.tops, (t, i) => ({ x: L.pageX, y: t, w: L.pageW, h: L.heights[i] }));
-      const rs = [...rects.values()];
-      for (const r of rs) {
-        for (const p of pages) expect(overlaps(r, p)).toBe(false);
-        expect(r.x).toBeGreaterThanOrEqual(0);
-        expect(r.x + r.w).toBeLessThanOrEqual(W);
+  for (const [W, H] of SIZES) {
+    it(`split at ${W}×${H}: equal margins, gutter = margin, shared top and bottom edges, nothing overlapping`, () => {
+      const f = frameFor(W, H, 'normal', 9 / 16);
+      const b = f.board!;
+      if (f.stacked) {
+        expect(f.slides.w).toBe(b.w);
+        expect(b.y - (f.slides.y + f.slides.h)).toBeCloseTo(f.m);
+        expect(b.y + b.h).toBeLessThanOrEqual(H - dockReserve());
+        expect(f.page.pageW * (9 / 16)).toBeLessThanOrEqual(f.slides.h);
+      } else {
+        expect(f.slides.x).toBe(f.m);
+        expect(b.x - (f.slides.x + f.slides.w)).toBeCloseTo(f.m);
+        expect(W - (b.x + b.w)).toBeCloseTo(f.m);
+        expect(f.slides.y).toBe(b.y);
+        expect(f.slides.h).toBe(b.h);
+        expect(b.y + b.h).toBeCloseTo(H - f.m);
+        expect(Math.abs(f.slides.w - b.w)).toBeLessThanOrEqual(1); // 1:1
+        expect(f.page).toEqual({ pageX: f.m, pageW: f.slides.w }); // the page fills its column
       }
-      for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) expect(overlaps(rs[i], rs[j])).toBe(false);
+      expect(overlaps(f.slides, b)).toBe(false);
     });
   }
-  it('anchors a region to its page: it moves with the page top', () => {
-    const a = deskAt(1440, 900, [req('a', 3)]);
-    const r = a.rects.get('a')!;
-    expect(r.x).toBe(a.L.pageX + a.L.pageW + GAP_X);
-    expect(r.y - a.L.tops[2]).toBeCloseTo(Math.max(0, (a.L.heights[2] - r.h) / 2));
+  it('wide (size=l): the slide column takes ~0.4, the board ~0.6', () => {
+    const f = frameFor(1440, 900, 'wide', 9 / 16);
+    expect(f.ratio).toBe('wide');
+    expect(f.slides.w / (f.slides.w + f.board!.w)).toBeCloseTo(0.4, 1);
   });
-  it('stacks two right regions on the same page instead of overlapping', () => {
-    const { rects } = deskAt(1920, 1080, [req('a', 3, { place: 'right' }), req('b', 3, { place: 'right' })]);
-    const a = rects.get('a')!, b = rects.get('b')!;
-    expect(b.y).toBeGreaterThanOrEqual(a.y + a.h + GAP_Y - 1e-9);
+  it('a wide split that would squeeze the slides below the minimum falls back to normal', () => {
+    const f = frameFor(1100, 800, 'wide', 9 / 16);
+    expect(f.ratio).toBe('normal');
+    expect(f.stacked).toBe(false);
   });
-  it('below inserts a gap after its page and centers the region in the column', () => {
-    const { L, rects } = deskAt(1440, 900, [req('a', 2, { place: 'below' })]);
-    const r = rects.get('a')!;
-    expect(r.y).toBeCloseTo(L.tops[1] + L.heights[1] + GAP_Y);
-    expect(L.tops[2]).toBeGreaterThanOrEqual(r.y + r.h + GAP_Y);
-    expect(r.x + r.w / 2).toBeCloseTo(L.pageX + L.pageW / 2);
+  it('stacks below the minimum slide column', () => {
+    expect(frameFor(900, 800, 'normal', 9 / 16).stacked).toBe(true);
+    expect(frameFor(1100, 800, 'normal', 9 / 16).stacked).toBe(false);
+    const W = Math.ceil(2 * MIN_SLIDE_COL / 0.925) + 2;
+    expect(frameFor(W, 800, 'normal', 9 / 16).stacked).toBe(false);
+  });
+  it('is a pure function of the window (resizing back restores the same frame)', () => {
+    expect(frameFor(1440, 900, 'normal', 0.75)).toEqual(frameFor(1440, 900, 'normal', 0.75));
   });
 });
 
-describe('stageLayout (B)', () => {
-  it('pins the card top-left and gives the region the rest, inside the chrome', () => {
-    const s = stageLayout(1440, 900, 9 / 16);
-    expect(s.card.x).toBeLessThan(s.region.x);
-    expect(s.region.x).toBeGreaterThanOrEqual(s.card.x + s.card.w + 40);
-    expect(s.region.y).toBeGreaterThanOrEqual(SAFE_TOP);
-    expect(s.region.y + s.region.h).toBeLessThanOrEqual(900 - SAFE_BOTTOM);
-    expect(s.region.h / s.region.w).toBeCloseTo(0.7);
-    expect(s.region.w).toBeGreaterThan(800);
+describe('computeLayout', () => {
+  it('lets the last page scroll up to the band in a short window', () => {
+    const L = computeLayout({ pageX: 0, pageW: 340 }, new Float64Array(3).fill(9 / 16), 800);
+    const last = L.tops[2];
+    expect(L.total - 800).toBeGreaterThanOrEqual(last - SAFE_TOP);
+    expect(computeLayout({ pageX: 0, pageW: 340 }, new Float64Array(3).fill(9 / 16)).total).toBe(last + 340 * 9 / 16 + BOTTOM_PAD);
+  });
+});
+
+describe('boardLayout', () => {
+  it('stacks sections under the head with one even gap, centred, uniformly scaled', () => {
+    const { boxes, pad, height } = boardLayout(666, [{ body: 20 }, { body: 20, span: 300 }]);
+    expect(boxes[0].y).toBe(BOARD_HEAD);
+    expect(boxes[1].y - (boxes[0].y + boxes[0].h)).toBe(pad);
+    expect(boxes[0].h).toBeCloseTo(SECTION_H * boxes[0].s);
+    expect(boxes[1].h).toBeCloseTo(300 * boxes[1].s); // a cropped section keeps only its ink
+    expect(boxes[0].x - pad).toBeCloseTo(666 - pad - (boxes[0].x + boxes[0].w));
+    expect(height).toBeCloseTo(boxes[1].y + boxes[1].h + pad);
+  });
+  it('scale = min(width fit, type cap): small body text gets a smaller section, never text under the floor', () => {
+    const wide = boardLayout(2000, [{ body: 14 }]).boxes[0];
+    expect(wide.s).toBeCloseTo(14 / TEXT_UNITS);
+    const narrow = boardLayout(400, [{ body: 30 }]).boxes[0];
+    expect(narrow.w).toBeLessThanOrEqual(400);
+    expect(boardLayout(2000, [{ body: 4 }]).boxes[0].s).toBeCloseTo(MIN_TEXT_PX / TEXT_UNITS);
+  });
+});
+
+describe('bodyFraction / bodyPx', () => {
+  const run = (text: string, y: number, h: number) => ({ text, rect: { x: 0, y, w: 100, h } });
+  it('is the character-weighted median glyph size, ignoring headers and footers', () => {
+    const runs = [
+      run('A Big Title', 100, 80),
+      run('body text that goes on and on', 300, 40), run('more body text here and there', 400, 40),
+      run('COMPSCI 670 Some Author — Some University, Fall 26, a long footer line', 960, 20),
+    ];
+    // 40 model units of a 9:16 page's height, 1.12 em per box → a fraction of the page width.
+    expect(bodyFraction(runs, 9 / 16)).toBeCloseTo((40 / 1000) * (9 / 16) / 1.12);
+  });
+  it('is null without text; bodyPx falls back and stays within the floor', () => {
+    expect(bodyFraction([], 0.75)).toBeNull();
+    expect(bodyPx(null, 666)).toBeGreaterThanOrEqual(MIN_TEXT_PX);
+    expect(bodyPx(0.001, 666)).toBe(MIN_TEXT_PX);
+  });
+});
+
+describe('cropSpan', () => {
+  it('keeps a finished section\'s ink plus air; nothing measured keeps it whole', () => {
+    expect(cropSpan({ y: 100, h: 300 })).toEqual({ y0: 100 - CROP_PAD, y1: 400 + CROP_PAD });
+    expect(cropSpan({ y: 10, h: 680 })).toEqual({ y0: 0, y1: SECTION_H });
+    expect(cropSpan(null)).toEqual({ y0: 0, y1: SECTION_H });
   });
 });
 
@@ -131,9 +127,7 @@ describe('framing', () => {
     expect(inView({ x: 0, y: 1000 + SAFE_TOP, w: 10, h: 100 }, v)).toBe(true);
     expect(inView({ x: 0, y: 1000 + 900 - SAFE_BOTTOM - 50, w: 10, h: 100 }, v)).toBe(false);
   });
-  it('fitTogether and frameTop center a union in the band', () => {
-    expect(fitTogether([{ x: 0, y: 0, w: 1, h: 100 }, { x: 0, y: 500, w: 1, h: 100 }], 900)).toBe(true);
-    expect(fitTogether([{ x: 0, y: 0, w: 1, h: 100 }, { x: 0, y: 700, w: 1, h: 100 }], 900)).toBe(false);
+  it('frameTop centres a rect in the band', () => {
     const r = { x: 0, y: 2000, w: 1, h: 280 };
     const t = frameTop(r, v);
     expect(r.y - t - SAFE_TOP).toBeCloseTo(900 - SAFE_TOP - SAFE_BOTTOM - (r.y + r.h - t - SAFE_TOP));

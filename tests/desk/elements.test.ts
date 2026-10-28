@@ -245,18 +245,14 @@ describe('buildElement', () => {
     expect(typeof em).not.toBe('string');
     await run(em);
   });
-  it('math placed near the right edge ends fully inside the region (rule 5)', async () => {
+  it('math is left-aligned at `at`: never shifted back in per element (the section scales as a whole)', async () => {
     const { e, layers } = env();
     const p = await buildElement({ kind: 'math', region: 'side', at: { x: 950, y: 690 }, tex: 'x - x\' = \\frac{Bf}{z}', size: 'l' }, e);
     expect(typeof p).not.toBe('string');
     await run(p);
     const el = layers.agent.querySelector('.desk-math')!;
-    const [x, y] = /translate\(([-\d.e]+) ([-\d.e]+)\)/.exec(el.getAttribute('transform')!)!.slice(1).map(Number);
-    const box = [...e.registry.obstacles({ region: 'side' })][0];
-    expect([box.x, box.y]).toEqual([x, y]);
-    expect(x).toBeGreaterThanOrEqual(0);
-    expect(y + box.h).toBeLessThanOrEqual(700 + 2);
-    expect(box.x + box.w).toBeLessThanOrEqual(1000);
+    const [x] = /translate\(([-\d.e]+) ([-\d.e]+)\)/.exec(el.getAttribute('transform')!)!.slice(1).map(Number);
+    expect(x).toBe(950);
   });
   it('math, write and label keep their `at` y whatever the region scale (WebKit drift regression)', async () => {
     const mids: number[][] = [];
@@ -276,12 +272,25 @@ describe('buildElement', () => {
       expect(m[2]).toBeCloseTo(350, 0);
     }
   });
-  it('written text near the edge stays inside the region (rule 5)', async () => {
+  it('written text keeps its left edge at `at` and wraps under itself instead of running off the section', async () => {
     const { e, layers } = env();
-    await run(await buildElement({ kind: 'write', region: 'side', at: { x: 980, y: 350 }, text: 'disparity', size: 'm', id: 'w' }, e));
+    await run(await buildElement({ kind: 'write', region: 'side', at: { x: 500, y: 350 }, text: 'the match for x must lie somewhere along the epipolar line', size: 'm', id: 'w' }, e));
     const b = e.registry.get('w')!.bbox;
-    expect(b.x + b.w).toBeLessThanOrEqual(1000);
-    expect(Number(layers.agent.querySelector('text')!.getAttribute('x'))).toBeCloseTo(b.x);
+    const texts = [...layers.agent.querySelectorAll('text')];
+    expect(texts.length).toBeGreaterThan(1);
+    for (const t of texts) expect(Number(t.getAttribute('x'))).toBe(500);
+    expect(b.x).toBe(500);
+  });
+  it('region text is sized from the slide body: m = body, never under 12px; math at the body size', async () => {
+    const { e, layers } = env();
+    const ctx0 = e.ctx;
+    e.ctx = async (t) => { const c = await ctx0(t); return typeof c === 'string' || t.page != null ? c : { ...c, scale: () => 0.5, body: () => 20 }; };
+    await run(await buildElement({ kind: 'write', region: 'side', at: { x: 100, y: 100 }, text: 'body', size: 'm' }, e));
+    expect(Number(layers.agent.querySelector('text')!.getAttribute('font-size'))).toBeCloseTo(20 / 0.5);
+    layers.agent.replaceChildren();
+    e.ctx = async (t) => { const c = await ctx0(t); return typeof c === 'string' || t.page != null ? c : { ...c, scale: () => 0.5, body: () => 8 }; };
+    await run(await buildElement({ kind: 'label', region: 'side', at: { x: 100, y: 100 }, text: 'tiny' }, e));
+    expect(Number(layers.agent.querySelector('text')!.getAttribute('font-size'))).toBeCloseTo(12 / 0.5);
   });
   it('labels are sized for the scale at draw time, not build time', async () => {
     let k = 0.5;

@@ -24,7 +24,7 @@ import { Caption, joinWords } from './ui/Caption';
 import { AskBar, type Transcript } from './ui/AskBar';
 import { FollowPill } from './ui/FollowPill';
 import { dockPlacement, dockReserve } from './ui/layout';
-import { setSafeBottom } from './desk/layout';
+import { DOCK_GAP, margin, SAFE_TOP, setSafeBottom } from './desk/layout';
 import { takeSentences } from './ui/text';
 import type { Action, RawAction } from './script/types';
 import type { Grounding } from './geometry/resolve';
@@ -38,7 +38,7 @@ import { groundingOf, type PageGround } from './agent/context/types';
 
 const params = new URLSearchParams(location.search);
 const DEBUG = params.has('debug');
-// Dev-only review autoplay: ?demo=1 the PDF demo, ?demo=side (or the old name, board) the desk sketch, ?demo=plane the stage.
+// Dev-only review autoplay: ?demo=1 the PDF demo, ?demo=side (or the old name, board) a sketch on the board, ?demo=plane a wide board.
 const demoParam = import.meta.env.DEV ? params.get('demo') : null;
 const DEMO = demoParam === '1' ? DEMO_QUESTION : demoParam === 'side' || demoParam === 'board' ? DEMO_SIDE_QUESTION : demoParam === 'plane' ? DEMO_PLANE_QUESTION : null;
 // Dev-only: ?src=<pdf url>&script=<name> opens that PDF and plays a named script (src/demo/scripts.ts).
@@ -68,6 +68,8 @@ const NO_ANSWER = 'No answer came back.';
 /** No word this long after Enter: one static line under the question. */
 const STILL_THINKING_MS = 4000;
 const STILL_THINKING = 'Still thinking…';
+/** All words spoken and no new one for this long, mid-answer: the caption shows a faint ellipsis. */
+const PAUSE_GRACE_MS = 350;
 /** Demos and dev scripts send no page marks: every `mark=` is skipped. */
 const NO_MARKS: Grounding = { mark: () => undefined };
 
@@ -104,6 +106,10 @@ type DebugState = {
   chunk?: number; word?: number; action?: number; log: ActionTiming[];
   /** Agent answers: the server's meta and done, and notes (dropped messages, lint). */
   meta?: Extract<AskEvent, { t: 'meta' }>; done?: DoneEvent; notes?: string[];
+  /** Stage 1: the scout's pages (teaching order), plan, latency and cost. */
+  scout?: Extract<AskEvent, { t: 'scout' }>;
+  /** Stage 2's first text reached the player (absolute ms), and when the opener's words were due to end then. */
+  handoff?: number; openerEnd?: number;
 };
 
 /** When the first ink of the answer started (the first drawing action, not layout). */
@@ -140,11 +146,16 @@ function describeAction(a: Action): string {
 function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
   const [open, setOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  const [scoutOpen, setScoutOpen] = useState(false);
   const done = d.done;
+  const sc = d.scout;
   const u = done?.usage;
   const cached = u && u.input_tokens > 0 ? `${Math.round((100 * (u.input_tokens_details?.cached_tokens ?? 0)) / u.input_tokens)}%` : '—';
   const notes = [...(done?.lint ?? []), ...(d.notes ?? [])];
   const ms = (t?: number) => (t == null ? '—' : `${Math.round(t - t0)}ms`);
+  // The first chunk was the opener when stage 2's first text came later.
+  const opener = d.chunk != null && d.handoff != null && d.handoff > d.chunk + 1 ? d.chunk : undefined;
+  const gap = d.handoff != null && d.openerEnd != null && opener != null ? Math.round(d.handoff - d.openerEnd) : undefined;
   // Start relative to the word: layout that starts ahead of its word (anticipatory scrolls) is negative.
   const rel = (d: number) => { const r = Math.round(d); return r > 0 ? `+${r}` : r < 0 ? `−${-r}` : '0'; };
   if (!open) {
@@ -156,6 +167,16 @@ function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
   }
   return (
     <div className="debug" onClick={() => setOpen(false)} title="Click to collapse">
+      {sc && <div className="debug-row" title={sc.fallback}><span>scout</span><span>p{sc.pages.join(' → p')} · {sc.ms}ms{sc.fallback ? ' · fallback' : ''}</span></div>}
+      {sc?.atMs != null && <div className="debug-row"><span>scout verdict</span><span>{sc.atMs}ms{sc.input ? ` · cached ${Math.round((100 * (sc.cached ?? 0)) / sc.input)}%` : ''}</span></div>}
+      {opener != null && <div className="debug-row"><span>opener</span><span>{ms(opener)}</span></div>}
+      {d.handoff != null && <div className="debug-row"><span>stage 2 first text</span><span>{ms(d.handoff)}</span></div>}
+      {gap != null && <div className="debug-row" title="+: silence between the opener's last word and stage 2's first; early: stage 2 was ready that long before the opener ended"><span>handoff gap</span><span>{gap >= 0 ? `+${gap}ms` : `0 (${-gap}ms early)`}</span></div>}
+      {sc?.plan && (
+        <button type="button" className="debug-plan" onClick={(e) => { e.stopPropagation(); setScoutOpen((o) => !o); }} aria-expanded={scoutOpen}>
+          {scoutOpen ? <span className="debug-plan-text">{sc.plan}</span> : 'scout plan ▸'}
+        </button>
+      )}
       {d.meta && <div className="debug-row"><span>model</span><span>{d.meta.model}/{d.meta.effort}</span></div>}
       {done && <div className="debug-row"><span>upstream TTFT</span><span>{done.ttftMs}ms</span></div>}
       <div className="debug-row"><span>first chunk</span><span>{ms(d.chunk)}</span></div>
@@ -196,7 +217,7 @@ function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
 function replaySource(chunks: { t: number; d: string }[], events: AskEvent[], h: AskHandlers) {
   return async function* (signal: AbortSignal): AsyncGenerator<string> {
     const t0 = performance.now();
-    for (const e of events) if (e.t === 'meta') h.onMeta?.(e);
+    for (const e of events) { if (e.t === 'meta') h.onMeta?.(e); else if (e.t === 'scout') h.onScout?.(e); }
     for (const c of chunks) {
       const wait = c.t - (performance.now() - t0);
       if (wait > 0) await new Promise((r) => window.setTimeout(r, wait));
@@ -245,7 +266,7 @@ export default function App() {
   const [captionWords, setCaptionWords] = useState<string[]>([]);
   const [captionVisible, setCaptionVisible] = useState(false);
   const [pageTick, setPageTick] = useState(0);
-  /** The desk's mode and page column (the dock centers under it), and whether the student has taken over. */
+  /** The desk's split state and slide column (the dock centres under it), and whether the student has taken over. */
   const [desk, setDesk] = useState<DeskState | null>(null);
   const [paused, setPaused] = useState(false);
   const [viewportW, setViewportW] = useState(window.innerWidth);
@@ -254,6 +275,9 @@ export default function App() {
   const [waiting, setWaiting] = useState(false);
   /** "Still thinking…" once no word has come for a while. */
   const [hint, setHint] = useState<string | undefined>();
+  /** Mid-answer, all words so far spoken and the next not yet in (e.g. the opener ended before stage 2). */
+  const [pausing, setPausing] = useState(false);
+  const pauseTimer = useRef<number>();
   /** A failed or cut-off answer: its line, and whether Retry is offered. */
   const [answerError, setAnswerError] = useState<{ message: string; retry: boolean } | null>(null);
   const [restore, setRestore] = useState<{ text: string; seq: number } | undefined>();
@@ -269,7 +293,7 @@ export default function App() {
 
   const viewerRef = useRef<ViewerApi | null>(null);
   const deskRef = useRef<Desk | null>(null);
-  /** The B stage's host: the Desk owns its children. */
+  /** The board's host (and the connectors' overlay): the Desk owns its children. */
   const stageRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
   busyRef.current = busy;
@@ -317,6 +341,7 @@ export default function App() {
 
   const clearHide = () => window.clearTimeout(hideTimer.current);
   const clearThink = () => { window.clearTimeout(thinkTimer.current); setHint(undefined); };
+  const clearPause = () => { window.clearTimeout(pauseTimer.current); setPausing(false); };
 
   const agent = useAgent({ doc, name: fileName, enabled: !DEMO_PATH || EVAL, make: MAKE_CONTEXT, warmSystem: !params.has('nogen') });
   const agentRef = useRef(agent);
@@ -324,7 +349,9 @@ export default function App() {
 
   // The dock follows the window (and the desk's column, through its state).
   useEffect(() => {
-    const apply = () => setViewportW(window.innerWidth);
+    // --m (the window margin) from the same function the layout uses, so CSS and JS edges match to the pixel.
+    const apply = () => { setViewportW(window.innerWidth); document.documentElement.style.setProperty('--m', `${margin(window.innerWidth)}px`); };
+    apply();
     window.addEventListener('resize', apply);
     return () => window.removeEventListener('resize', apply);
   }, []);
@@ -357,6 +384,29 @@ export default function App() {
     return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
   }, [hasDoc]);
 
+  // The viewer's visible area ends above the dock (the caption when it shows, else the ask bar), or,
+  // stacked, above the board: no slide content under the dock, no sliver of a page between its parts.
+  const [viewBottom, setViewBottom] = useState(0);
+  const stacked = !!desk?.stacked;
+  const boardY = desk?.board?.y;
+  useLayoutEffect(() => {
+    const dock = dockRef.current;
+    if (!dock) return;
+    const update = () => {
+      const H = window.innerHeight;
+      if (stacked && boardY != null) { setViewBottom(Math.max(0, H - (boardY - margin(window.innerWidth)))); return; }
+      const bar = dock.querySelector<HTMLElement>('.askbar'), cap = dock.querySelector<HTMLElement>('.caption');
+      if (!bar) return;
+      const top = bar.getBoundingClientRect().top - (captionVisible && cap ? cap.offsetHeight : 0);
+      setViewBottom(Math.max(0, H - top + DOCK_GAP));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    dock.querySelectorAll('.askbar, .caption').forEach((e) => ro.observe(e));
+    window.addEventListener('resize', update);
+    return () => { ro.disconnect(); window.removeEventListener('resize', update); };
+  }, [hasDoc, captionVisible, stacked, boardY]);
+
   /** Shows a one-off line in the caption, then fades it. */
   const flash = useCallback((text: string, ms = 4000) => {
     clearHide();
@@ -375,6 +425,7 @@ export default function App() {
     s?.stop();
     director.stop();
     deskRef.current?.follow.setAnswering(false);
+    clearPause();
     setWaiting(false);
     clearThink();
     setBusy(false);
@@ -513,6 +564,14 @@ export default function App() {
     const handlers: AskHandlers = {
       onEvent: (e) => run.rec?.event(e),
       onMeta: (e) => { if (DEBUG) setDebug((d) => ({ ...d, meta: e })); },
+      onScout: (e) => { if (DEBUG) setDebug((d) => ({ ...d, scout: e })); },
+      onHandoff: (e) => {
+        // When the words queued so far (the opener) end: past it, the student heard a gap.
+        const end = clock.endsAt();
+        const tNow = performance.now();
+        if (spoke && Number.isFinite(end)) e.openerEndMs = Math.round(end - t0);
+        if (DEBUG) setDebug((d) => ({ ...d, handoff: tNow, ...(spoke && Number.isFinite(end) ? { openerEnd: end } : {}) }));
+      },
       onNote: (m) => { if (DEBUG) { console.info('[ask] note:', m); setDebug((d) => ({ ...d, notes: [...(d.notes ?? []), m] })); } },
       onDone: (e) => {
         if (DEBUG) setDebug((d) => ({ ...d, done: e }));
@@ -521,13 +580,17 @@ export default function App() {
       onCutOff: (m) => { cutOff = m; },
     };
 
+    const clock = new PacedClock(() => getSettings().wpm);
+    /** The script stream has not ended: a pause in it is a gap the student can see. */
+    let streamOpen = true;
     let firstChunk = true;
     let chunks = 0;
     const replay = run.replay;
     const inner: (signal: AbortSignal) => AsyncIterable<string> = replay
       ? async function* (signal) {
         // A replay resolves page marks against the same grounding the recorded question had.
-        groundingRef.current = groundingOf(await ag.grounds(page));
+        const sc = replay.events?.find((e) => e.t === 'scout');
+        groundingRef.current = groundingOf(await ag.grounds(page, sc?.t === 'scout' ? sc.pages : []));
         yield* replaySource(replay.chunks, replay.events ?? [], handlers)(signal);
       }
       : toAgent
@@ -550,12 +613,14 @@ export default function App() {
       } catch (e) {
         if (e instanceof AskError) askErr = e;
         throw e;
+      } finally {
+        streamOpen = false;
       }
     };
 
     const finish = () => { if (recRef.current === run.rec) recRef.current = null; settle(); };
     const session: AnswerSession = new AnswerSession({
-      clock: new PacedClock(() => getSettings().wpm),
+      clock,
       onParsed: (a) => director.prefetch(a),
       onAction: (a, at) => {
         if (sessionRef.current !== session) return;
@@ -567,6 +632,10 @@ export default function App() {
         if (sessionRef.current !== session) return;
         if (DEBUG && words.length === 1) { const t = performance.now(); setDebug((d) => ({ ...d, word: t })); }
         if (!spoke) { spoke = true; setWaiting(false); clearThink(); }
+        // Once these words are spoken, a faint ellipsis if nothing new has come (a gap in the stream).
+        window.clearTimeout(pauseTimer.current);
+        setPausing(false);
+        pauseTimer.current = window.setTimeout(() => { if (sessionRef.current === session && streamOpen) setPausing(true); }, Math.max(0, clock.endsAt() - clock.now()) + PAUSE_GRACE_MS);
         run.rec?.word(words[words.length - 1]);
         spoken = words;
         speak(words);
@@ -577,6 +646,7 @@ export default function App() {
         if (st === 'stopped') { finish(); return; }
         if (sessionRef.current !== session) return;
         if (st === 'loading' || st === 'playing') { setBusy(true); return; }
+        clearPause();
         setBusy(false);
         setWaiting(false);
         clearThink();
@@ -630,6 +700,8 @@ export default function App() {
     clearHide();
     setCaptionVisible(false);
   }, [stopAll]);
+  const closeRef = useRef(onStop);
+  closeRef.current = onStop;
 
   // Dev-only: the eval runner's backend (window.__petu), over the real agent path.
   const evalReady = useRef<{ promise: Promise<void>; resolve(): void } | null>(null);
@@ -674,9 +746,10 @@ export default function App() {
 
   const onReady = useCallback((api: ViewerApi) => {
     viewerRef.current = api;
-    // One desk per viewer (a new document remounts the viewer): regions, connectors, the stage.
+    // One desk per viewer (a new document remounts the viewer): the board, its sections, connectors.
     deskRef.current?.destroy();
-    const desk = new Desk(api.deskHost(), stageRef.current!);
+    // The board's ×: an answer still playing stops first (its ink would have nowhere to go).
+    const desk = new Desk(api.deskHost(), stageRef.current!, { onClose: () => { if (busyRef.current) closeRef.current(); void deskRef.current?.dismiss(); } });
     deskRef.current = desk;
     desk.subscribe((s) => { setDesk(s); setPaused(desk.follow.paused()); });
     if (import.meta.env.DEV) { window.__viewer = api; window.__desk = desk; }
@@ -701,17 +774,18 @@ export default function App() {
     else if (DEMO) void openSample();
   }, [open, openSample]);
 
-  // Esc between answers leaves the stage (while playing, Esc stops the answer first).
+  // Esc between answers closes the board (while playing, Esc stops the answer first).
+  const boardOpen = !!desk && desk.split !== 'none';
   useEffect(() => {
-    if (desk?.mode !== 'b') return;
+    if (!boardOpen) return;
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-      if (e.key === 'Escape' && !busyRef.current && !e.defaultPrevented && !typing) void deskRef.current?.exitStage();
+      if (e.key === 'Escape' && !busyRef.current && !e.defaultPrevented && !typing && !document.querySelector('.popover')) void deskRef.current?.dismiss();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [desk?.mode]);
+  }, [boardOpen]);
 
   const onPageChange = useCallback((p: number) => {
     setPage(p);
@@ -731,10 +805,11 @@ export default function App() {
 
   return (
     <>
-      {/* Neighbouring pages step back only while an answer is drawing beside a page and the student follows it. */}
+      {/* Neighbouring pages step back only while an answer is drawing on the board and the student follows it.
+          --view-top/--view-bottom: the viewer's visible band (under the chrome row, above the dock). */}
       <main
-        className={`stage${desk?.sketching && desk.mode === 'c' && desk.following && busy ? ' is-sketching' : ''}`}
-        style={{ '--glide': `${GLIDE_MS}ms` } as CSSProperties}
+        className={`stage${desk?.sketching && desk.following && busy ? ' is-sketching' : ''}`}
+        style={{ '--glide': `${GLIDE_MS}ms`, '--view-top': `${SAFE_TOP}px`, '--view-bottom': `${viewBottom}px` } as CSSProperties}
       >
         <PdfViewer
           doc={doc}
@@ -743,7 +818,7 @@ export default function App() {
           renderOverlay={(p, H) => <StudentInkLayer page={p} spaceH={H} />}
         />
       </main>
-      {/* B: the takeover stage (src/desk/Desk.ts fills it). Above the pages, below the chrome. */}
+      {/* The board and the connectors' overlay (src/desk/Desk.ts fills it). Above the pages, below the chrome. */}
       <div ref={stageRef} className="desk-stage" />
       <TopBar
         fileName={fileName}
@@ -766,6 +841,7 @@ export default function App() {
           question={question}
           waiting={waiting}
           hint={hint}
+          pausing={pausing}
           error={answerError ? { message: answerError.message, onRetry: answerError.retry ? onRetry : undefined } : undefined}
         />
         <AskBar

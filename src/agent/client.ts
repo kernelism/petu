@@ -1,5 +1,6 @@
 // src/agent/client.ts — the browser side of POST /api/ask (NDJSON AskEvents) and GET /api/spend.
 import { formatUsd, HARD_STOP_USD, type AskErrorCode, type AskEvent, type AskRequest, type SpendSummary } from './protocol';
+import { fallbackScout, parseScout, type ScoutEvent, type ScoutRequest, type ScoutResult } from './scout';
 
 export class AskError extends Error {
   constructor(readonly code: AskErrorCode, message: string, readonly retryable: boolean) { super(message); }
@@ -7,6 +8,10 @@ export class AskError extends Error {
 
 export type AskHandlers = {
   onMeta?(e: Extract<AskEvent, { t: 'meta' }>): void;
+  /** Stage 1 finished: the scout's pages, plan and latency. */
+  onScout?(e: Extract<AskEvent, { t: 'scout' }>): void;
+  /** Stage 2's first text is about to play (after the opener, if there was one). */
+  onHandoff?(e: Extract<AskEvent, { t: 'handoff' }>): void;
   onNote?(message: string): void;
   onDone?(e: Extract<AskEvent, { t: 'done' }>): void;
   /** The stream ended early after narration started: play what arrived, then say so. */
@@ -84,6 +89,115 @@ export async function* askStream(req: AskRequest, signal: AbortSignal, h: AskHan
   } finally {
     if (signal.aborted) void reader.cancel().catch(() => {});
     else reader.releaseLock();
+  }
+}
+
+/** A live stage 1: opener sentences as they arrive, then the verdict, then the cost. */
+export type ScoutLive = {
+  /** The opener's sentences (script text, tags included), in order; ends when the verdict is in. */
+  opener: AsyncIterable<string>;
+  /** The pages and plan (with the whole opener), or a visible-page fallback. Null only on abort. */
+  verdict: Promise<ScoutResult | null>;
+  /** The scout's cost and cache use, once its stream ends (0 when unknown). */
+  cost: Promise<{ usd: number; cached?: number; input?: number }>;
+};
+
+/**
+ * POST /api/scout → NDJSON ScoutEvents. Never throws: any failure (network, server, cap, bad lines, a
+ * stream that ends without a verdict) resolves the verdict with the visible page alone, so the answer
+ * still goes ahead; opener sentences that already arrived stay. An abort ends the opener and resolves
+ * the verdict with null. `ms` fields are from the call.
+ */
+export function scoutLive(req: ScoutRequest, signal: AbortSignal, f: typeof fetch = fetch, now: () => number = () => performance.now()): ScoutLive {
+  const t0 = now();
+  const q = new Queue<string>();
+  let said = '', openerMs: number | undefined;
+  let settle!: (v: ScoutResult | null) => void;
+  let pay!: (c: { usd: number; cached?: number; input?: number }) => void;
+  const verdict = new Promise<ScoutResult | null>((ok) => { settle = ok; });
+  const cost = new Promise<{ usd: number; cached?: number; input?: number }>((ok) => { pay = ok; });
+  let decided = false;
+  const decide = (v: ScoutResult | null) => {
+    if (decided) return;
+    decided = true;
+    q.close();
+    settle(v && { ...v, ...(said ? { opener: said } : {}), ...(openerMs != null ? { openerMs } : {}) });
+  };
+  const fallback = (why: string) => decide(signal.aborted ? null : fallbackScout(req.page, why, Math.round(now() - t0)));
+  void (async () => {
+    let usd = 0, cached: number | undefined, input: number | undefined;
+    try {
+      const r = await f('/api/scout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req), signal });
+      if (!r.ok || !r.body) { fallback(`scout server error (${r.status})`); return; }
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      const line = (raw: string) => {
+        const s = raw.trim();
+        if (!s) return;
+        let e: ScoutEvent;
+        try { e = JSON.parse(s) as ScoutEvent; } catch { return; }
+        if (e.t === 'opener' && !decided && typeof e.d === 'string' && e.d) {
+          if (openerMs == null) openerMs = Math.round(now() - t0);
+          said += e.d;
+          q.push(e.d);
+        } else if (e.t === 'scout') {
+          // The server parses already; parse again so a bad reply can never pass a bad page on.
+          const p = parseScout(JSON.stringify({ pages: e.pages, plan: e.plan }), req.numPages, req.page);
+          const fb = e.fallback ?? p.fallback;
+          decide({ pages: p.pages, plan: p.plan, ms: Math.round(now() - t0), usd: 0, ...(fb ? { fallback: fb } : {}) });
+        } else if (e.t === 'end') { usd = typeof e.usd === 'number' ? e.usd : 0; cached = e.cached; input = e.input; }
+      };
+      for (;;) {
+        const x = await reader.read();
+        if (x.done) break;
+        buf += dec.decode(x.value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf('\n')) >= 0) { line(buf.slice(0, nl)); buf = buf.slice(nl + 1); }
+      }
+      line(buf + dec.decode());
+      fallback('scout ended without a verdict');
+    } catch {
+      fallback("couldn't reach the scout");
+    } finally {
+      q.close();
+      pay({ usd, ...(cached != null ? { cached } : {}), ...(input != null ? { input } : {}) });
+    }
+  })();
+  return { opener: q, verdict, cost };
+}
+
+/** Stage 1 as one result (tests, eval tools): the streamed scout, its opener collected. */
+export async function scoutPages(req: ScoutRequest, signal: AbortSignal, f: typeof fetch = fetch, now: () => number = () => performance.now()): Promise<ScoutResult | null> {
+  const live = scoutLive(req, signal, f, now);
+  for await (const _ of live.opener) { /* collected in the verdict */ }
+  const v = await live.verdict;
+  if (!v) return null;
+  return { ...v, usd: (await live.cost).usd };
+}
+
+/** A minimal async queue: push/close on one side, `for await` on the other. */
+export class Queue<T> implements AsyncIterable<T> {
+  private items: T[] = [];
+  private waiting: ((r: IteratorResult<T>) => void) | null = null;
+  private closed = false;
+  push(x: T): void {
+    if (this.closed) return;
+    if (this.waiting) { const w = this.waiting; this.waiting = null; w({ value: x, done: false }); }
+    else this.items.push(x);
+  }
+  close(): void {
+    this.closed = true;
+    if (this.waiting) { const w = this.waiting; this.waiting = null; w({ value: undefined as never, done: true }); }
+  }
+  [Symbol.asyncIterator](): AsyncIterator<T> {
+    return {
+      next: () => {
+        if (this.items.length) return Promise.resolve({ value: this.items.shift()!, done: false });
+        if (this.closed) return Promise.resolve({ value: undefined as never, done: true });
+        return new Promise((ok) => { this.waiting = ok; });
+      },
+    };
   }
 }
 
