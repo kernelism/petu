@@ -123,12 +123,12 @@ export class ScoutJson {
 
 /** The tags an opener may use: pointing at the visible page, nothing that scrolls or draws on the board. */
 export const OPENER_TAGS = new Set(['highlight', 'underline', 'circle', 'box', 'arrow', 'line']);
-/** A sentence longer than this is let through at its next clause break rather than held back. */
-const LONG = 220;
+/** A clause shorter than this waits for more ("So," alone is not worth a release). */
+const MIN_CLAUSE = 16;
 
 /**
- * Splits the opener into whole sentences as its characters arrive (`push` returns the sentences
- * completed by this delta, `end` the rest). Inside a sentence, a tag that does not point at the
+ * Splits the opener into whole sentences or clauses as its characters arrive (`push` returns what
+ * this delta completed, `end` the rest). Inside a sentence, a tag that does not point at the
  * visible page (another page, the board, a scroll) is dropped and noted; narration is cleaned.
  */
 export class OpenerGate {
@@ -154,19 +154,24 @@ export class OpenerGate {
     return rest.trim() ? this.emit(rest) : '';
   }
 
-  /** The end of the first complete sentence in the buffer (outside tags), or 0. */
+  /**
+   * The end of the first complete sentence or clause in the buffer (outside tags), or 0. A clause
+   * (after , ; : and a space, at least MIN_CLAUSE characters) is let through too: the model writes
+   * far faster than the narration is spoken, so the rest of the sentence is in long before it is due.
+   */
   private boundary(): number {
-    let inTag = false, clause = 0;
+    let inTag = false;
     for (let i = 0; i < this.buf.length; i++) {
       if (!inTag && this.buf.startsWith('{{', i)) { inTag = true; i++; continue; }
       if (inTag) { if (this.buf.startsWith('}}', i)) { inTag = false; i++; } continue; }
       const c = this.buf[i];
       const next = this.buf[i + 1];
       if (next === undefined) break; // the next character decides
-      if ('.!?'.includes(c) && /\s/.test(next) && !/\b(e\.g|i\.e|cf|vs|etc|Fig|Eq)\.$/i.test(this.buf.slice(Math.max(0, i - 4), i + 1))) return i + 2;
-      if ((c === ',' || c === ';' || c === ':') && /\s/.test(next)) clause = i + 2;
+      if (!/\s/.test(next)) continue;
+      if ('.!?'.includes(c) && !/\b(e\.g|i\.e|cf|vs|etc|Fig|Eq)\.$/i.test(this.buf.slice(Math.max(0, i - 4), i + 1))) return i + 2;
+      if (',;:'.includes(c) && i + 1 >= MIN_CLAUSE) return i + 2;
     }
-    return !inTag && this.buf.length > LONG && clause ? clause : 0;
+    return 0;
   }
 
   private emit(sentence: string): string {

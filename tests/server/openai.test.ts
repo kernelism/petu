@@ -593,6 +593,18 @@ describe('Lessons v3: two stages', () => {
     expect(order).toEqual(['opener', 'scout', 'upstream done', 'end']);
   });
 
+  it('scout stream: the opener’s last sentence plays when its string closes, before pages and plan are written', async () => {
+    const seen: string[] = [];
+    const { f } = fakeFetch([{ chunks: scoutSse({ opener: 'One sentence only.', pages: [2], plan: 'a fairly long plan written after the opener' }, 3) }]);
+    await scoutStream(sreq, scfg, deps(f), (e) => seen.push(e.t === 'opener' ? `opener:${e.d}` : e.t));
+    expect(seen).toEqual(['opener:One sentence only.', 'scout', 'end']);
+    // It was emitted while the plan was still streaming: check with a stream that stops before the plan.
+    const early: string[] = [];
+    const half = fakeFetch([{ chunks: scoutSse('{"opener":"One sentence only.","pages":[2],"plan":"still writ', 4, false) }]);
+    await scoutStream(sreq, scfg, deps(half.f), (e) => early.push(e.t));
+    expect(early[0]).toBe('opener');
+  });
+
   it('scout stream: no retry on failure, it falls back to the visible page (with whatever opener already came)', async () => {
     const down = fakeFetch([{ status: 503 }]);
     const { r: r2, ev } = await collect(down.f);

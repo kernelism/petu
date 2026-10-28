@@ -83,10 +83,12 @@ describe('OpenerGate (opener → spoken script)', () => {
     expect(g.said).toBe('The key is x and y: {{highlight p=3 "**raw**"}} here.');
   });
 
-  it('lets a very long sentence through at a clause break', () => {
-    const long = `${'word '.repeat(50)}, and then ${'more '.repeat(10)}`;
-    const g = new OpenerGate(1);
-    expect(g.push(long)).toMatch(/, $/);
+  it('lets a clause through as soon as it ends (not a tiny one), never inside a tag', () => {
+    const g = new OpenerGate(3);
+    expect(g.push('So, ')).toBe('');
+    expect(g.push('the window slides over the corner, and ')).toBe('So, the window slides over the corner, ');
+    expect(g.push('{{highlight p=3 "a, b"}} both shift')).toBe('');
+    expect(g.end()).toBe('and {{highlight p=3 "a, b"}} both shift');
   });
 
   it('drops an unclosed tag at the end', () => {

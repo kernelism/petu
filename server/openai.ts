@@ -231,6 +231,8 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
     onString: (k, dlt) => { if (k === 'opener') say(gate.push(dlt)); },
     onField: (k) => {
       const f = json.fields;
+      // The opener's last sentence plays as soon as its string closes, not when the verdict comes.
+      if (k === 'opener') say(gate.end());
       // The verdict once pages and plan are both in (the opener, first in the schema, is complete by then).
       if ((k === 'pages' || k === 'plan') && 'pages' in f && 'plan' in f) decide(parseScout(JSON.stringify({ pages: f.pages, plan: f.plan }), r.numPages, r.page));
     },
