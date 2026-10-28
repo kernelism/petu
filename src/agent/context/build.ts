@@ -181,6 +181,15 @@ export class ContextBuilder {
     };
   }
 
+  /**
+   * The visible page's listing (byte-identical to the answer's pageText) and ground: what the scout's
+   * opener may point at, and the grounding its tags resolve against.
+   */
+  async visible(page: number): Promise<{ pageText: string; ground: PageGround }> {
+    const ground = await this.entry(page, false).ground;
+    return { pageText: formatVisible(ground), ground };
+  }
+
   /** For prewarm: the cacheable prefix (digest + visible page), nothing question-specific. */
   async pagePrefix(page: number): Promise<AskContext> {
     return (await this.assemble(page)).context;

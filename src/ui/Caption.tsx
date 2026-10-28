@@ -29,6 +29,11 @@ type Props = {
   /** A quiet status line while no word has arrived yet ("Still thinking…"). Static text, no motion. */
   hint?: string;
   /**
+   * Mid-answer, every word so far has been spoken and the next has not arrived (the opener ended
+   * before the rest of the answer was ready): a faint ellipsis after the last word. It fades in once.
+   */
+  pausing?: boolean;
+  /**
    * A failed or cut-off answer: the message, plus a Retry control when retrying can help (the
    * caption takes pointer events then).
    */
@@ -55,7 +60,7 @@ function makeMeasure(el: HTMLElement): (s: string) => number {
   };
 }
 
-export function Caption({ words, visible, question, waiting = false, hint, error }: Props) {
+export function Caption({ words, visible, question, waiting = false, hint, pausing = false, error }: Props) {
   const tokens = groupWords(words);
   const viewRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -107,6 +112,8 @@ export function Caption({ words, visible, question, waiting = false, hint, error
 
   const shown = visible && (tokens.length > 0 || !!question || !!error);
   const showHint = !!hint && !error && tokens.length === 0;
+  /** Between Enter and the first word: the narration line holds a faint ellipsis, so the dock keeps its height. */
+  const thinking = waiting && !error && tokens.length === 0;
   const visibleTokens = tokens.slice(Math.min(start, tokens.length));
   return (
     <div className={`caption${shown ? ' is-visible' : ''}${error?.onRetry ? ' has-error' : ''}`} aria-hidden={!shown}>
@@ -122,6 +129,8 @@ export function Caption({ words, visible, question, waiting = false, hint, error
         </div>
       ) : showHint ? (
         <div className="caption-hint">{hint}</div>
+      ) : thinking ? (
+        <div className="caption-think" aria-hidden="true">…</div>
       ) : tokens.length > 0 && (
         <div className={`caption-viewport${tall ? ' is-tall' : ''}`} ref={viewRef}>
           {leaving && (
@@ -133,6 +142,7 @@ export function Caption({ words, visible, question, waiting = false, hint, error
             {visibleTokens.map((t, i) => (
               <span key={i} className="caption-word">{t} </span>
             ))}
+            {pausing && <span className="caption-pause" aria-hidden="true">…</span>}
           </div>
         </div>
       )}

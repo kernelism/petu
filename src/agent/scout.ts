@@ -1,9 +1,12 @@
 // src/agent/scout.ts — stage 1 of an answer, shared by the browser and the dev server.
 //
-// The scout reads the deck digest (every page, trimmed), the page in view, the previous exchange and
-// the question, and returns which pages the answer should teach from, in teaching order, and a short
-// plan. Its JSON is parsed defensively: anything unusable falls back to the visible page alone, so a
-// scout failure never stops an answer.
+// The scout reads the deck digest (every page, trimmed), the visible page's listing, the previous
+// exchange and the question. It writes, in this order: the OPENER (the answer's first one or two
+// sentences, in plain words, pointing only at the visible page), the pages the answer should teach
+// from (teaching order), and a short plan. It streams (POST /api/scout → NDJSON ScoutEvents): the
+// opener is spoken while the rest is still being written, and stage 2 starts as soon as the pages
+// and plan are known, told exactly what the opener said. Its JSON is parsed defensively: anything
+// unusable falls back to the visible page alone, so a scout failure never stops an answer.
 
 /** What the browser sends to POST /api/scout. */
 export type ScoutRequest = {
@@ -17,11 +20,26 @@ export type ScoutRequest = {
   page: number;
   /** The deck digest (src/agent/context/digest.ts): byte-identical to the answer's docText. */
   digest: string;
+  /** The visible page's listing (lines + marks, no image): what the opener may point at. */
+  pageText?: string;
   phase?: string;
 };
 
 /** The scout's verdict. `fallback` says why the visible page alone is used. */
-export type ScoutResult = { pages: number[]; plan: string; ms: number; usd: number; fallback?: string };
+export type ScoutResult = { pages: number[]; plan: string; ms: number; usd: number; fallback?: string;
+  /** The opener as spoken (tags included; only what passed the visible-page filter). */
+  opener?: string;
+  /** From the scout request to its first opener sentence. */
+  openerMs?: number };
+
+/**
+ * NDJSON lines of POST /api/scout, in order: `opener` sentences (zero or more), then one `scout`
+ * verdict (as soon as pages and plan are parsed; `ms` from the request), then `end` with the cost.
+ */
+export type ScoutEvent =
+  | { t: 'opener'; d: string; ms: number }
+  | { t: 'scout'; pages: number[]; plan: string; ms: number; fallback?: string; notes?: string[] }
+  | { t: 'end'; usd: number; ms: number; cached?: number; input?: number };
 
 export const SCOUT_MAX_PAGES = 6;
 /** ≈ 80 words. */
@@ -31,8 +49,10 @@ export const SCOUT_PLAN_CHARS = 600;
 export const SCOUT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['pages', 'plan'],
+  required: ['opener', 'pages', 'plan'],
+  // Property order is output order: the opener first, so it can be spoken while the rest is written.
   properties: {
+    opener: { type: 'string', description: 'The first one or two sentences of the spoken answer, with tags that point only at the visible page.' },
     pages: { type: 'array', items: { type: 'integer' }, description: 'At most 6 page numbers from the digest, in teaching order.' },
     plan: { type: 'string', description: 'At most 80 words.' },
   },

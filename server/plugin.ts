@@ -1,8 +1,9 @@
 // server/plugin.ts — the petu API as Vite dev-server middleware (`apply: 'serve'`, localhost only).
 //
 //   POST /api/ask              AskRequest → NDJSON AskEvents
-//   POST /api/scout            ScoutRequest → ScoutResult (stage 1: pages in teaching order + plan;
-//                              any failure falls back to the visible page, never an error status)
+//   POST /api/scout            ScoutRequest → NDJSON ScoutEvents (stage 1, streamed: opener sentences,
+//                              then the verdict: pages in teaching order + plan, then the cost; any
+//                              failure falls back to the visible page, never an error status)
 //   POST /api/prewarm          { context } → { ok, usd, reason? }: the answer's prefix (deduped per
 //                              docHash+page for 25 min) and the scout's (per digest)
 //                              { scope: 'system' } → the shared system block (document open; ≤ 1 per 11.5h)
@@ -23,8 +24,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
 import type { AskContext, AskEvent, AskRequest } from '../src/agent/protocol';
 import { Ledger } from './ledger';
-import { ask, judge, prewarm, prewarmScout, prewarmSystem, scout, type Deps, type JudgeRequest, type Timeouts } from './openai';
-import type { ScoutRequest } from '../src/agent/scout';
+import { ask, judge, prewarm, prewarmScout, prewarmSystem, scoutStream, type Deps, type JudgeRequest, type Timeouts } from './openai';
+import type { ScoutEvent, ScoutRequest } from '../src/agent/scout';
 import { createHash } from 'node:crypto';
 import { CacheStats } from './cacheStats';
 import { worstCaseUsd } from './prices';
@@ -130,13 +131,20 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     if (body === undefined) return;
     const bad = validateScout(body) ?? (body.phase != null && body.phase !== env.phase ? `phase "${String(body.phase)}" ≠ server phase "${env.phase}"` : null);
     if (bad) return json(res, 400, badRequest(bad));
+    res.statusCode = 200;
+    res.setHeader('content-type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('cache-control', 'no-store');
+    res.setHeader('x-accel-buffering', 'no');
+    res.flushHeaders();
     const ctl = new AbortController();
     const onClose = () => { if (!res.writableEnded) ctl.abort(); };
     res.on('close', onClose);
+    const emit = (e: ScoutEvent) => { if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify(e) + '\n'); };
     try {
-      return json(res, 200, await scout(body as ScoutRequest, env.scout, deps, ctl.signal));
+      await scoutStream(body as ScoutRequest, env.scout, deps, emit, ctl.signal);
     } finally {
       res.off('close', onClose);
+      if (!res.writableEnded && !res.destroyed) res.end();
     }
   }
 
@@ -155,8 +163,9 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     const bad = validateContext(body?.context);
     if (bad) return json(res, 400, badRequest(bad));
     const c = body.context as AskContext;
-    // The scout's prefix (instructions + digest) is per digest; the answer's is per (doc, page).
-    const sk = `scout:${createHash('sha1').update(c.docText).digest('hex')}`;
+    // The scout's prefix (instructions + digest + the visible page's listing) is per (digest, page);
+    // the answer's is per (doc, page).
+    const sk = `scout:${createHash('sha1').update(c.docText).digest('hex')}:${c.page}`;
     const k = `${c.docHash}:${c.page}`;
     const fresh = (key: string) => { const at = prewarmed.get(key); return at != null && now() - at < PREWARM_TTL_MS; };
     const doScout = !fresh(sk), doPage = !fresh(k);
@@ -165,7 +174,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     if (doPage) remember(k);
     const [a, b] = await Promise.all([
       doPage ? prewarm(c, env.model, deps) : Promise.resolve({ ok: true, usd: 0, reason: 'deduped' }),
-      doScout ? prewarmScout({ digest: c.docText, docHash: c.docHash, docName: c.docName, numPages: c.numPages, page: c.page }, env.scout, deps) : Promise.resolve({ ok: true, usd: 0, reason: 'deduped' }),
+      doScout ? prewarmScout({ digest: c.docText, docHash: c.docHash, docName: c.docName, numPages: c.numPages, page: c.page, pageText: c.pageText }, env.scout, deps) : Promise.resolve({ ok: true, usd: 0, reason: 'deduped' }),
     ]);
     if (!a.ok) prewarmed.delete(k);
     if (!b.ok) prewarmed.delete(sk);
@@ -287,7 +296,7 @@ async function readJson(req: IncomingMessage, res: ServerResponse): Promise<any>
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 const isStr = (v: unknown): v is string => typeof v === 'string';
 /** Sane maxima for what the browser sends (it sends ≤ 1280 px images and much shorter text). */
-export const LIMITS = { imageSide: 2048, docText: 120_000, pageText: 60_000, pagesText: 120_000, images: 3, plan: 2_000, scoutPages: 6, searchText: 20_000, inkSummary: 4_000 };
+export const LIMITS = { imageSide: 2048, docText: 120_000, pageText: 60_000, pagesText: 120_000, images: 3, plan: 2_000, opener: 2_000, scoutPages: 6, searchText: 20_000, inkSummary: 4_000 };
 const isImage = (v: any) => v != null && isStr(v.b64) && v.b64.length > 0 && typeof v.w === 'number' && typeof v.h === 'number' && v.w > 0 && v.h > 0 && v.w <= LIMITS.imageSide && v.h <= LIMITS.imageSide;
 
 export function validateContext(c: any): string | null {
@@ -301,6 +310,7 @@ export function validateContext(c: any): string | null {
   if (c.pagesText != null && (!isStr(c.pagesText) || c.pagesText.length > LIMITS.pagesText)) return 'context.pagesText must be a string of at most 120,000 characters';
   if (c.images != null && (!Array.isArray(c.images) || c.images.length > LIMITS.images || !c.images.every((im: any) => isImage(im) && isInt(im.page) && im.page >= 1 && im.page <= c.numPages))) return `context.images must be at most ${LIMITS.images} images { page, b64, w, h }`;
   if (c.scout != null && (!Array.isArray(c.scout.pages) || c.scout.pages.length > LIMITS.scoutPages + 1 || !c.scout.pages.every((p: unknown) => isInt(p) && p >= 1 && p <= c.numPages) || !isStr(c.scout.plan) || c.scout.plan.length > LIMITS.plan)) return 'context.scout must be { pages: page numbers, plan }';
+  if (c.opener != null && (!isStr(c.opener) || c.opener.length > LIMITS.opener)) return 'context.opener must be a string of at most 2,000 characters';
   if (c.searchText != null && (!isStr(c.searchText) || c.searchText.length > LIMITS.searchText)) return 'context.searchText must be a string of at most 20,000 characters';
   if (c.ink != null && (!isStr(c.ink.summary) || c.ink.summary.length > LIMITS.inkSummary || (c.ink.crop != null && !isImage(c.ink.crop)))) return 'context.ink is malformed';
   return null;
@@ -313,6 +323,7 @@ export function validateScout(b: any): string | null {
   if (!isInt(b.numPages) || b.numPages < 1) return 'numPages must be a positive integer';
   if (!isInt(b.page) || b.page < 1 || b.page > b.numPages) return 'page is out of range';
   if (!isStr(b.digest) || !b.digest || b.digest.length > LIMITS.docText) return 'digest must be a string of at most 120,000 characters';
+  if (b.pageText != null && (!isStr(b.pageText) || b.pageText.length > LIMITS.pageText)) return 'pageText must be a string of at most 60,000 characters';
   if (b.prior != null && !(isStr(b.prior.q) && isStr(b.prior.a) && isInt(b.prior.page) && b.prior.q.length <= 2000 && b.prior.a.length <= 20_000)) return 'prior must be { q, a, page }';
   return null;
 }

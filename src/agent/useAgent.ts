@@ -6,7 +6,8 @@ import type { StudentStroke } from '../ink/student/store';
 import type { Grounding } from '../geometry/resolve';
 import { groundingOf, type PageGround } from './context/types';
 import type { AskContext, SpendSummary } from './protocol';
-import { AskError, askStream, capLine, getSpend, scoutPages, spendBlocked, spendPhase, type AskHandlers } from './client';
+import { twoStage } from './twoStage';
+import { AskError, askStream, capLine, getSpend, scoutLive, spendBlocked, spendPhase, type AskHandlers } from './client';
 import { History } from './history';
 import { Prewarm } from './prewarm';
 
@@ -18,6 +19,8 @@ export type ContextSource = {
   /** Stage 2: the visible page and the scout's pages, with their grounds. */
   build(page: number, question: string, ink: StudentStroke[], scout?: { pages: number[]; plan: string }): Promise<{ context: AskContext; grounds: PageGround[] }>;
   pagePrefix(page: number): Promise<AskContext>;
+  /** The visible page's listing and ground (the opener's grounding). */
+  visible(page: number): Promise<{ pageText: string; ground: PageGround }>;
   destroy(): void;
 };
 export type MakeContext = (doc: PdfDoc, name: string) => ContextSource;
@@ -81,33 +84,37 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
     if (spendBlocked(spendRef.current)) void refreshSpend();
   }, [doc, prewarm, refreshSpend]);
 
-  /** The answer source for AnswerSession: build the context, then stream the script. */
+  /**
+   * The answer source for AnswerSession, in two stages joined into one script stream:
+   *  1. the scout (streamed): its opener's sentences play as they arrive, pointing at the visible page;
+   *  2. as soon as the scout's pages and plan are in, the answer's context is built and stage 2 is
+   *     asked, told exactly what the opener said; its script follows the opener's last word.
+   * A failed scout falls back to the visible page alone (no opener). Aborting stops both.
+   */
   const source = useCallback((a: AgentAsk) => async function* (signal: AbortSignal): AsyncGenerator<string> {
     const b = builder.current;
     // E1 integration point: without Lane G's builder there is no context to send.
     if (!b) throw new AskError('network', "Couldn't reach the tutor.", true);
     inFlight.current++;
+    const t0 = performance.now();
+    const since = () => Math.round(performance.now() - t0);
     try {
       const phase = spendPhase(spendRef.current);
       const hist = history.last();
       const prior = hist[hist.length - 1];
       const hash = doc?.fingerprints?.[0] ?? name;
-      // Stage 1: the scout picks the pages to teach from (falls back to this page on any failure).
-      const digest = await b.digest(a.page, a.question);
+      const [digest, vis] = await Promise.all([b.digest(a.page, a.question), b.visible(a.page)]);
       if (signal.aborted) return;
-      const scout = await scoutPages({
+      const live = scoutLive({
         question: a.question, ...(prior ? { prior } : {}), docName: name, docHash: hash, numPages: doc?.numPages ?? a.page,
-        page: a.page, digest, ...(phase ? { phase } : {}),
+        page: a.page, digest, pageText: vis.pageText, ...(phase ? { phase } : {}),
       }, signal);
-      if (!scout || signal.aborted) return;
-      const ev = { t: 'scout' as const, pages: scout.pages, plan: scout.plan, ms: scout.ms, usd: scout.usd, ...(scout.fallback ? { fallback: scout.fallback } : {}) };
-      a.handlers.onEvent?.(ev);
-      a.handlers.onScout?.(ev);
-      // Stage 2: the chosen pages' listings and images, then the streamed script.
-      const { context, grounds } = await b.build(a.page, a.question, a.ink(), { pages: scout.pages, plan: scout.plan });
-      if (signal.aborted) return;
-      a.onGrounding(groundingOf(grounds));
-      yield* askStream({ question: a.question, history: hist, context, ...(phase ? { phase } : {}) }, signal, a.handlers);
+      yield* twoStage({
+        live, visible: vis.ground, handlers: a.handlers, since,
+        build: (sc) => b.build(a.page, a.question, a.ink(), { pages: sc.pages, plan: sc.plan }),
+        ask: (context) => askStream({ question: a.question, history: hist, context, ...(phase ? { phase } : {}) }, signal, a.handlers),
+        onGrounding: (pages) => a.onGrounding(groundingOf(pages)),
+      }, signal);
     } finally {
       inFlight.current--;
     }

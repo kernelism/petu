@@ -222,8 +222,18 @@
 .caption.has-error { pointer-events: auto; }
 .caption-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 26px; }
 .caption-error-msg { min-width: 0; }
-/* Waiting longer than usual: one static line under the question. No motion. */
-.caption-hint { font-size: 13px; line-height: 20px; color: rgba(255,255,255,.66); }
+/* Waiting longer than usual: one static line under the question, in the narration's slot. No motion. */
+.caption-hint { font-size: 13px; line-height: calc(var(--cap-size) * 1.45); color: rgba(255,255,255,.66); }
+/* Thinking (Enter → first word): the narration line holds one faint ellipsis that fades in once, after
+   a beat, so a quick answer never flashes it. Static: no loop, no shimmer, no dots that pulse. */
+.caption-think {
+  height: calc(var(--cap-size) * 1.45);
+  color: rgba(255,255,255,.42);
+  animation: caption-think-in 600ms var(--ease-out) 350ms both;
+}
+@keyframes caption-think-in { from { opacity: 0; } to { opacity: 1; } }
+/* Mid-answer pause (the opener ended before the rest was ready): the same ellipsis after the last word. */
+.caption-pause { color: rgba(255,255,255,.42); animation: caption-think-in 400ms var(--ease-out) both; }
 .caption-retry {
   flex: none;
   height: 26px;
@@ -676,7 +686,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .askbar-btn, .popover, .caption-word, .askbar-chips, .transcript, .topbar-num.is-tick { animation: none; }
-  .caption-q.is-waiting, .caption-text.is-next, .caption-leaving { animation: none; }
+  .caption-q.is-waiting, .caption-text.is-next, .caption-leaving, .caption-think, .caption-pause { animation: none; }
   .caption-leaving { display: none; }
   .dock, .caption, .caption-viewport, .dropveil, .tb-fold, .tb-tip, .switch, .switch::after { transition-duration: 0s; }
 }

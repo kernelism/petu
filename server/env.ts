@@ -36,9 +36,9 @@ export const DEFAULT_MODEL = 'gpt-6.1-terra';
 export const DEFAULT_EFFORT: Effort = 'none';
 /** Stage 2's output budget: a script that walks several pages and draws (p3.2 answers used ≤ ~900). */
 export const DEFAULT_MAX_OUTPUT = 3200;
-/** Stage 1 (spec A): the fast model at effort none; its JSON is ≤ 6 pages and ≤ 80 words. */
+/** Stage 1 (spec A): the fast model at effort none; its JSON is the opener (one or two sentences), ≤ 6 pages and ≤ 80 words. */
 export const DEFAULT_SCOUT_MODEL = 'gpt-6.1-terra';
-export const SCOUT_MAX_OUTPUT = 400;
+export const SCOUT_MAX_OUTPUT = 600;
 /** Models whose API rejects reasoning.effort "none" (developers.openai.com/api/docs/guides/reasoning, 2026-10-28). */
 const NO_NONE = new Set(['gpt-6.1-sol', 'gpt-6-astra']);
 

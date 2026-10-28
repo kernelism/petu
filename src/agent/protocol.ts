@@ -30,6 +30,11 @@ export type AskContext = {
   images?: { page: number; b64: string; w: number; h: number }[];
   /** Volatile tail: the scout's pages (teaching order) and plan. */
   scout?: { pages: number[]; plan: string };
+  /**
+   * Volatile tail: the opener the scout wrote, already spoken (and its marks drawn) before this
+   * answer's first word. The answer continues from it without repeating it.
+   */
+  opener?: string;
   /** Volatile tail: keyword hits from pages not already included (v2 contexts; v3 sends the digest instead). */
   searchText?: string;
   /** Volatile tail: student ink on the visible page. */
@@ -40,7 +45,12 @@ export type AskContext = {
 export type AskEvent =
   | { t: 'meta'; reqId: string; model: string; effort: string }
   /** Client-side: the scout's verdict (stage 1), recorded before the answer's own events. */
-  | { t: 'scout'; pages: number[]; plan: string; ms: number; usd: number; fallback?: string }
+  | { t: 'scout'; pages: number[]; plan: string; ms: number; usd: number; fallback?: string;
+      /** `ms`: the scout call to its verdict. `atMs`: the verdict, from Enter. `openerMs`: the call to its
+       * first opener sentence. `opener`: what the opener said (script). `cached`/`input`: its tokens. */
+      atMs?: number; openerMs?: number; opener?: string; cached?: number; input?: number }
+  /** Client-side: stage 2's first text reached the player (ms from Enter); the opener's words were then due to end at `openerEndMs`. */
+  | { t: 'handoff'; ms: number; openerEndMs?: number }
   | { t: 'text'; d: string }
   | { t: 'note'; message: string }
   | { t: 'done'; usage?: Usage; usd: number; estimated?: boolean; spentUsd: number; capUsd: number; ttftMs: number; plan?: string; lint?: string[] }

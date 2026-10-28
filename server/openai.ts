@@ -43,7 +43,8 @@ import { ScriptFilter } from './scriptFilter';
 import { Lint } from './lint';
 import { systemPrompt, PROMPT_VERSION } from './prompt/system';
 import { SCOUT_SYSTEM, SCOUT_VERSION } from './prompt/scout';
-import { SCOUT_SCHEMA, fallbackScout, parseScout, type ScoutRequest, type ScoutResult } from '../src/agent/scout';
+import { SCOUT_SCHEMA, fallbackScout, parseScout, type ScoutEvent, type ScoutRequest, type ScoutResult } from '../src/agent/scout';
+import { OpenerGate, ScoutJson } from './scoutStream';
 import { CacheStats, estimatedUsage } from './cacheStats';
 
 export type Effort = 'none' | 'low' | 'medium' | 'high';
@@ -112,6 +113,7 @@ export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { con
     if (c.ink.crop) tail.push({ type: 'input_image', image_url: img(c.ink.crop.b64), detail: 'high' });
   }
   tail.push({ type: 'input_text', text: `QUESTION (the student is looking at page ${c.page}): ${r.question}` });
+  if (c.opener) tail.push({ type: 'input_text', text: openerNote(c.opener) });
   const input = [
     developer(cfg),
     { role: 'user', content: [
@@ -134,6 +136,13 @@ export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { con
   };
 }
 
+/**
+ * Stage 2 continues the scout's opener: the student has already heard it (and seen its marks), so the
+ * script picks up at the next sentence, as one continuous explanation.
+ */
+export const openerNote = (opener: string) =>
+  `ALREADY SPOKEN: you have already said the opening below aloud, and its tags have been drawn. Your script continues straight on from its last word, as the next sentence of the same explanation. Do not repeat, rephrase or summarise it, do not answer the question again, and do not mark again what it marked; build on it. If the opening already says everything the question needs, output nothing.\nOPENING: ${opener}`;
+
 /** The scout's cache key: one per scout prompt version, shared by every document. */
 export const scoutCacheKey = () => `petu-scout-${SCOUT_VERSION}`;
 /** How much of the previous answer the scout reads. */
@@ -141,22 +150,26 @@ const PRIOR_CHARS = 600;
 
 /**
  * Stage 1 (scout). Cacheable prefix: the scout instructions and the deck digest (30m), byte-identical
- * to the digest the answer sends. Then the page in view, the previous exchange, the question last.
- * Strict JSON out.
+ * to the digest the answer sends, then the visible page's listing (30m: constant per page; what the
+ * opener may point at). Then the previous exchange and the question last. Strict JSON out, streamed:
+ * the opener comes first so it can be spoken while the pages and plan are written.
  */
 export function buildScoutRequest(r: ScoutRequest, cfg: ModelConfig, prewarm = false) {
   const tail = [`The student is looking at page ${r.page}.`];
   if (r.prior) tail.push(`PREVIOUS QUESTION (page ${r.prior.page}): ${r.prior.q}\nPREVIOUS ANSWER (spoken): ${r.prior.a.length > PRIOR_CHARS ? `${r.prior.a.slice(0, PRIOR_CHARS)}…` : r.prior.a}`);
   tail.push(`QUESTION: ${r.question}`);
+  const prefix: unknown[] = [{ type: 'input_text', text: r.digest, ...bp(cfg.explicitCache, '30m') }];
+  // The same listing the answer gets (so prewarm and ask agree byte for byte), minus the image.
+  if (r.pageText) prefix.push({ type: 'input_text', text: r.pageText.replace(/; image attached\)/, '; listing only, no image)'), ...bp(cfg.explicitCache, '30m') });
   return {
     model: cfg.model, store: false, max_output_tokens: cfg.maxOutput, reasoning: { effort: cfg.effort },
     prompt_cache_key: scoutCacheKey(),
     input: [
       { role: 'developer', content: [{ type: 'input_text', text: SCOUT_SYSTEM }] },
-      { role: 'user', content: [{ type: 'input_text', text: r.digest, ...bp(cfg.explicitCache, '30m') }] },
+      { role: 'user', content: prefix },
       ...(prewarm ? [] : [{ role: 'user', content: [{ type: 'input_text', text: tail.join('\n') }] }]),
     ],
-    stream: false,
+    stream: !prewarm,
     ...(cfg.fast ? { service_tier: 'fast' } : {}),
     text: { format: { type: 'json_schema', name: 'scout', schema: SCOUT_SCHEMA, strict: true } },
     ...(cfg.explicitCache ? { prompt_cache_options: { mode: 'explicit', ...(prewarm ? { prewarm: true } : {}) } } : {}),
@@ -164,28 +177,116 @@ export function buildScoutRequest(r: ScoutRequest, cfg: ModelConfig, prewarm = f
   };
 }
 
-/** Upper bound on the scout's wait for a reply: past it the answer goes ahead on the visible page. */
+/** Upper bound on the scout's wait for its verdict: past it the answer goes ahead on the visible page. */
 export const SCOUT_TIMEOUT_MS = 8000;
 
 /**
- * Stage 1: one non-streamed JSON call (no retry: a slow or failed scout falls back to the visible
- * page rather than delaying the answer). Booked as kind 'scout'. Never throws.
+ * Stage 1, streamed (no retry: a slow or failed scout falls back to the visible page rather than
+ * delaying the answer). Emits `opener` sentences as they complete, the `scout` verdict as soon as
+ * the pages and plan are parsed (always exactly one, a fallback on any failure), then `end` with the
+ * cost. Booked as kind 'scout': real usage when the stream completes, else an estimate. Never throws.
  */
-export async function scout(r: ScoutRequest, cfg: ModelConfig, d: Deps, signal?: AbortSignal): Promise<ScoutResult> {
+export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, emit: (e: ScoutEvent) => void, signal?: AbortSignal): Promise<ScoutResult> {
   const now = d.now ?? (() => performance.now());
   const t0 = now();
-  if (!d.key) return fallbackScout(r.page, 'no key');
-  if (!PRICES[cfg.model]) return fallbackScout(r.page, `no price for ${cfg.model}`);
+  const ms = () => Math.round(now() - t0);
+  let verdict: ScoutResult | null = null;
+  const gate = new OpenerGate(r.page);
+  let openerMs: number | undefined;
+  const say = (s: string) => {
+    if (!s || verdict || signal?.aborted) return;
+    if (openerMs == null) openerMs = ms();
+    emit({ t: 'opener', d: s, ms: ms() });
+  };
+  const decide = (v: { pages: number[]; plan: string; fallback?: string }) => {
+    if (verdict) return;
+    say(gate.end());
+    verdict = { pages: v.pages, plan: v.plan, ms: ms(), usd: 0, ...(v.fallback ? { fallback: v.fallback } : {}), ...(gate.said ? { opener: gate.said } : {}), ...(openerMs != null ? { openerMs } : {}) };
+    if (!signal?.aborted) emit({ t: 'scout', pages: verdict.pages, plan: verdict.plan, ms: verdict.ms, ...(v.fallback ? { fallback: v.fallback } : {}), ...(gate.notes.length ? { notes: gate.notes } : {}) });
+  };
+  const finish = (usd: number, u?: Usage): ScoutResult => {
+    if (!verdict) decide(fallbackScout(r.page, 'scout ended without a verdict'));
+    verdict!.usd = usd;
+    if (!signal?.aborted) emit({ t: 'end', usd, ms: ms(), ...(u ? { cached: u.input_tokens_details?.cached_tokens ?? 0, input: u.input_tokens } : {}) });
+    return verdict!;
+  };
+  if (!d.key) { decide(fallbackScout(r.page, 'no key')); return finish(0); }
+  if (!PRICES[cfg.model]) { decide(fallbackScout(r.page, `no price for ${cfg.model}`)); return finish(0); }
+
   const body = buildScoutRequest(r, cfg);
-  const res = await callJson(body, cfg.model, estimateInputTokens(body, []), cfg.maxOutput, cfg.fast, 'scout', d, { timeoutMs: Math.min(SCOUT_TIMEOUT_MS, d.timeouts?.callMs ?? SCOUT_TIMEOUT_MS), retry: false, signal });
-  const ms = Math.round(now() - t0);
-  if (!res.ok) return fallbackScout(r.page, res.code === 'cap' ? 'cap' : `scout failed: ${res.message.slice(0, 120)}`, ms, res.usd);
-  const p = parseScout(outputText(res.json), r.numPages, r.page);
-  return { pages: p.pages, plan: p.plan, ms, usd: res.usd, ...(p.fallback ? { fallback: p.fallback } : {}) };
+  const est = estimateInputTokens(body, []);
+  const id = randomUUID();
+  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput, cfg.fast), { kind: 'scout', model: cfg.model });
+  if (refused) { decide(fallbackScout(r.page, 'cap')); return finish(0); }
+
+  const T = { ...TIMEOUTS, ...d.timeouts };
+  const up = new AbortController();
+  const onAbort = () => up.abort();
+  signal?.addEventListener('abort', onAbort);
+  if (signal?.aborted) up.abort();
+  let timedOut = false, sent = false, usage: Usage | undefined, outChars = 0, text = '';
+  // The verdict must come within SCOUT_TIMEOUT_MS (or the configured call timeout, if shorter).
+  const deadline = setTimeout(() => { timedOut = true; up.abort(); }, Math.min(SCOUT_TIMEOUT_MS, T.callMs));
+  const json = new ScoutJson({
+    onString: (k, dlt) => { if (k === 'opener') say(gate.push(dlt)); },
+    onField: (k) => {
+      const f = json.fields;
+      // The verdict once pages and plan are both in (the opener, first in the schema, is complete by then).
+      if ((k === 'pages' || k === 'plan') && 'pages' in f && 'plan' in f) decide(parseScout(JSON.stringify({ pages: f.pages, plan: f.plan }), r.numPages, r.page));
+    },
+  });
+  try {
+    sent = true;
+    const res = await d.fetch(URL_, { method: 'POST', signal: up.signal, headers: headers(d.key), body: JSON.stringify(body) });
+    if (!res.ok || !res.body) {
+      const msg = scrub((await res.text().catch(() => '')).slice(0, 120), d.key);
+      clearTimeout(deadline);
+      signal?.removeEventListener('abort', onAbort);
+      d.ledger.release(id);
+      decide(fallbackScout(r.page, `scout failed: OpenAI ${res.status}: ${msg}`));
+      return finish(0);
+    }
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    const dec = new TextDecoder(), sse = new SseParser(), events = new ResponseEvents();
+    for (;;) {
+      let idle: ReturnType<typeof setTimeout> | undefined;
+      const x = await Promise.race([reader.read(), new Promise<'idle'>((ok) => { idle = setTimeout(() => ok('idle'), T.idleMs); })]);
+      clearTimeout(idle);
+      if (x === 'idle') { up.abort(); reader.cancel().catch(() => undefined); break; }
+      if (x.done) break;
+      for (const ev of sse.push(dec.decode(x.value, { stream: true }))) {
+        for (const u of events.handle(ev)) {
+          if (u.t === 'text') { text += u.d; outChars += u.d.length; json.push(u.d); }
+          else if (u.t === 'usage') usage = u.usage;
+          else if (u.t === 'error') throw new Error(u.message);
+        }
+      }
+    }
+  } catch (e) {
+    if (!verdict && !signal?.aborted) decide(fallbackScout(r.page, timedOut ? 'scout timed out' : `scout failed: ${scrub(String(e), d.key).slice(0, 120)}`));
+  } finally {
+    clearTimeout(deadline);
+    signal?.removeEventListener('abort', onAbort);
+  }
+  if (!verdict) {
+    // The stream ended without the fields arriving one by one (or the incremental read missed them):
+    // parse the whole text once more.
+    decide(timedOut ? fallbackScout(r.page, 'scout timed out') : parseScout(text, r.numPages, r.page));
+  }
+  if (!sent) { d.ledger.release(id); return finish(0); }
+  const u: Usage = usage ?? estimatedUsage(est, 0, Math.ceil(outChars / 3.2) || cfg.maxOutput);
+  const usd = costUsd(cfg.model, u, '12h', cfg.fast);
+  d.ledger.settle({ id, phase: d.phase, kind: 'scout', model: cfg.model, usd, estimated: !usage, tokens: tokens(u) });
+  return finish(usd, usage);
+}
+
+/** Stage 1 as one result (the opener included): `scoutStream` without the events. */
+export async function scout(r: ScoutRequest, cfg: ModelConfig, d: Deps, signal?: AbortSignal): Promise<ScoutResult> {
+  return scoutStream(r, cfg, d, () => {}, signal);
 }
 
 /** Writes the scout's prefix (instructions + digest) without generating output. */
-export async function prewarmScout(r: Pick<ScoutRequest, 'digest' | 'docHash' | 'numPages' | 'page' | 'docName'>, cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {
+export async function prewarmScout(r: Pick<ScoutRequest, 'digest' | 'docHash' | 'numPages' | 'page' | 'docName' | 'pageText'>, cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {
   if (!cfg.explicitCache) return { ok: false, usd: 0, reason: 'prewarm needs explicit caching (PETU_EXPLICIT_CACHE=0)' };
   if (!d.key) return { ok: false, usd: 0, reason: 'no key' };
   if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };

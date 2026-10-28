@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from '../../server/ledger';
 import { costUsd } from '../../server/prices';
-import { ask, askImages, buildRequest, buildScoutRequest, buildSystemPrewarm, estimateInputTokens, prewarm, prewarmScout, prewarmSystem, judge, scout, scoutCacheKey, systemTokensLow, type ModelConfig, type Deps } from '../../server/openai';
+import { ask, askImages, buildRequest, buildScoutRequest, buildSystemPrewarm, estimateInputTokens, openerNote, prewarm, prewarmScout, prewarmSystem, judge, scoutStream, scoutCacheKey, systemTokensLow, type ModelConfig, type Deps } from '../../server/openai';
 import { SCOUT_SYSTEM } from '../../server/prompt/scout';
+import type { ScoutEvent } from '../../src/agent/scout';
 import { CacheStats } from '../../server/cacheStats';
 import { PROMPT_VERSION, systemPrompt } from '../../server/prompt/system';
 import type { AskEvent, AskRequest, AskContext } from '../../src/agent/protocol';
@@ -515,53 +516,149 @@ describe('Lessons v3: two stages', () => {
     expect(two - one).toBeGreaterThan(40 * 23 * 1.2);
   });
 
-  const sreq = { question: 'How does it work?', docName: 'd.pdf', docHash: 'h', numPages: 12, page: 3, digest: 'DECK d.pdf\np1: a', prior: { q: 'before?', a: 'x'.repeat(2000), page: 2 } };
-  const scfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 400, fast: false, explicitCache: true };
+  const sreq = { question: 'How does it work?', docName: 'd.pdf', docHash: 'h', numPages: 12, page: 3, digest: 'DECK d.pdf\np1: a', prior: { q: 'before?', a: 'x'.repeat(2000), page: 2 },
+    pageText: 'PAGE 3 (visible; 16:9 slide; image attached)\nt1 60 40–300: Three' };
+  const scfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600, fast: false, explicitCache: true };
 
-  it('scout request: instructions, then the digest (30m), then the page in view, the previous exchange and the question last; strict JSON out', () => {
+  it('scout request: instructions, the digest (30m) and the visible listing (30m), then the previous exchange and the question last; strict JSON, streamed', () => {
     const b = buildScoutRequest(sreq, scfg) as any;
     expect(b.input[0]).toEqual({ role: 'developer', content: [{ type: 'input_text', text: SCOUT_SYSTEM }] });
     expect(b.input[1].content[0]).toEqual({ type: 'input_text', text: 'DECK d.pdf\np1: a', prompt_cache_breakpoint: { mode: 'explicit', ttl: '30m' } });
+    // The answer's own listing of the visible page, but the scout gets no image.
+    expect(b.input[1].content[1]).toEqual({ type: 'input_text', text: 'PAGE 3 (visible; 16:9 slide; listing only, no image)\nt1 60 40–300: Three', prompt_cache_breakpoint: { mode: 'explicit', ttl: '30m' } });
     const tail = b.input[2].content[0].text as string;
     expect(tail.startsWith('The student is looking at page 3.')).toBe(true);
     expect(tail).toContain('PREVIOUS QUESTION (page 2): before?');
     expect(tail.length).toBeLessThan(900); // the previous answer is trimmed
     expect(tail.endsWith('QUESTION: How does it work?')).toBe(true);
-    expect(b).toMatchObject({ stream: false, max_output_tokens: 400, reasoning: { effort: 'none' }, prompt_cache_key: scoutCacheKey(), text: { format: { type: 'json_schema', strict: true } } });
+    expect(b).toMatchObject({ stream: true, max_output_tokens: 600, reasoning: { effort: 'none' }, prompt_cache_key: scoutCacheKey(), text: { format: { type: 'json_schema', strict: true } } });
+    // The opener is first in the schema: it streams first.
+    expect(Object.keys(b.text.format.schema.properties)).toEqual(['opener', 'pages', 'plan']);
     // The prewarm is the same prefix (and the same output format, which is part of the prompt).
     const pre = buildScoutRequest(sreq, scfg, true) as any;
     expect(pre.input).toEqual(b.input.slice(0, 2));
     expect(pre.text).toEqual(b.text);
+    expect(pre.stream).toBe(false);
     expect(pre.prompt_cache_options).toEqual({ mode: 'explicit', prewarm: true });
   });
 
-  const reply = (text: string, u = { input_tokens: 3000, output_tokens: 60, input_tokens_details: { cached_tokens: 2800 } }) =>
-    ({ status: 200, text: JSON.stringify({ output: [{ type: 'message', content: [{ type: 'output_text', text }] }], usage: u }) });
+  const susage = { input_tokens: 3000, output_tokens: 60, input_tokens_details: { cached_tokens: 2800 } };
+  /** The scout's JSON as SSE deltas of `n` characters, then completed. */
+  const scoutSse = (obj: object | string, n = 5, done = true) => {
+    const text = typeof obj === 'string' ? obj : JSON.stringify(obj);
+    const parts: string[] = [];
+    for (let i = 0; i < text.length; i += n) parts.push(text.slice(i, i + n));
+    return [sse({ type: 'response.output_item.added', item: { id: 's1', type: 'message' } }), ...textEvents('s1', parts),
+      ...(done ? [sse({ type: 'response.completed', response: { status: 'completed', usage: susage } })] : [])];
+  };
+  const collect = async (f: typeof fetch, d: Partial<Deps> = {}, signal?: AbortSignal) => {
+    const ev: ScoutEvent[] = [];
+    const r = await scoutStream(sreq, scfg, deps(f, d), (e) => ev.push(e), signal);
+    return { r, ev };
+  };
 
-  it('scout: parses the pages and plan and books a scout entry; no retry on failure, it falls back', async () => {
-    const { f, calls } = fakeFetch([reply('{"pages":[5,6,3],"plan":"p"}')]);
-    const r = await scout(sreq, scfg, deps(f));
-    expect(r).toMatchObject({ pages: [5, 6, 3], plan: 'p' });
-    expect(r.fallback).toBeUndefined();
+  it('scout stream: opener sentences first (as they complete), then the verdict, then the cost; one scout entry', async () => {
+    const obj = { opener: '{{circle p=3 mark=#d1}} It keeps the line with the most inliers. {{highlight p=9 "x"}}Outliers do not vote.', pages: [5, 6, 3], plan: 'p' };
+    const { f, calls } = fakeFetch([{ chunks: scoutSse(obj, 4) }]);
+    const { r, ev } = await collect(f);
     expect(calls).toHaveLength(1);
+    expect(ev.map((e) => e.t)).toEqual(['opener', 'opener', 'scout', 'end']);
+    expect(ev[0]).toMatchObject({ t: 'opener', d: '{{circle p=3 mark=#d1}} It keeps the line with the most inliers. ' });
+    expect(ev[1]).toMatchObject({ t: 'opener', d: 'Outliers do not vote.' }); // the tag on page 9 is dropped
+    expect(ev[2]).toMatchObject({ t: 'scout', pages: [5, 6, 3], plan: 'p', notes: [expect.stringMatching(/dropped/)] });
+    expect(r).toMatchObject({ pages: [5, 6, 3], plan: 'p', opener: '{{circle p=3 mark=#d1}} It keeps the line with the most inliers. Outliers do not vote.' });
+    expect(r.fallback).toBeUndefined();
     const e = JSON.parse(readFileSync(join(dir, 'spend.json'), 'utf8')).entries;
-    expect(e).toEqual([expect.objectContaining({ kind: 'scout', phase: 'dev', usd: r.usd })]);
-    expect(r.usd).toBeCloseTo(costUsd('gpt-6.1-terra', { input_tokens: 3000, output_tokens: 60, input_tokens_details: { cached_tokens: 2800 } }), 9);
-
-    const down = fakeFetch([{ status: 503 }]);
-    const r2 = await scout(sreq, scfg, deps(down.f));
-    expect(down.calls).toHaveLength(1);
-    expect(r2).toMatchObject({ pages: [3], fallback: expect.stringMatching(/scout failed/) });
-
-    const junk = fakeFetch([reply('not json')]);
-    expect(await scout(sreq, scfg, deps(junk.f))).toMatchObject({ pages: [3], fallback: expect.any(String) });
+    expect(e).toEqual([expect.objectContaining({ kind: 'scout', phase: 'dev', usd: r.usd, estimated: false })]);
+    expect(r.usd).toBeCloseTo(costUsd('gpt-6.1-terra', susage), 9);
+    expect(ev[3]).toMatchObject({ t: 'end', usd: r.usd, cached: 2800, input: 3000 });
   });
 
-  it('scout: a cap refusal never calls fetch and falls back', async () => {
+  it('scout stream: the verdict comes as soon as pages and plan are parsed, before the stream completes', async () => {
+    const order: string[] = [];
+    const f = (async () => {
+      const enc = new TextEncoder();
+      const chunks = scoutSse({ opener: 'Yes.', pages: [2], plan: 'q' }, 200, false);
+      let i = 0;
+      return new Response(new ReadableStream<Uint8Array>({
+        async pull(c) {
+          if (i < chunks.length) { c.enqueue(enc.encode(chunks[i++])); return; }
+          order.push('upstream done');
+          c.enqueue(enc.encode(sse({ type: 'response.completed', response: { status: 'completed', usage: susage } })));
+          c.close();
+        },
+      }, { highWaterMark: 0 }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await scoutStream(sreq, scfg, deps(f), (e) => order.push(e.t));
+    expect(order).toEqual(['opener', 'scout', 'upstream done', 'end']);
+  });
+
+  it('scout stream: no retry on failure, it falls back to the visible page (with whatever opener already came)', async () => {
+    const down = fakeFetch([{ status: 503 }]);
+    const { r: r2, ev } = await collect(down.f);
+    expect(down.calls).toHaveLength(1);
+    expect(r2).toMatchObject({ pages: [3], fallback: expect.stringMatching(/scout failed/) });
+    expect(ev.map((e) => e.t)).toEqual(['scout', 'end']);
+
+    const junk = fakeFetch([{ chunks: scoutSse('not json') }]);
+    expect((await collect(junk.f)).r).toMatchObject({ pages: [3], fallback: expect.any(String) });
+
+    // The stream drops after the opener: the opener stays, the pages fall back.
+    const cut = fakeFetch([{ chunks: scoutSse('{"opener":"Half an answer. And', 6, false) }]);
+    const c = await collect(cut.f);
+    expect(c.ev.map((e) => e.t)).toEqual(['opener', 'opener', 'scout', 'end']);
+    expect(c.r).toMatchObject({ pages: [3], opener: 'Half an answer. And', fallback: expect.any(String) });
+  });
+
+  it('scout stream: a cap refusal never calls fetch and falls back', async () => {
     const tight = new Ledger(join(dir, 'tight.json'), { totalUsd: 0 });
     const { f, calls } = fakeFetch([]);
-    expect(await scout(sreq, scfg, deps(f, { ledger: tight }))).toMatchObject({ pages: [3], fallback: 'cap' });
+    expect((await collect(f, { ledger: tight })).r).toMatchObject({ pages: [3], fallback: 'cap' });
     expect(calls).toHaveLength(0);
+  });
+
+  it('scout stream: a client abort during the opener stops upstream, emits nothing more and books an estimate (no open reservation)', async () => {
+    const ctl = new AbortController();
+    const enc = new TextEncoder();
+    let upstreamAborted = false;
+    const f = (async (_u: string, init: RequestInit) => {
+      init.signal!.addEventListener('abort', () => { upstreamAborted = true; });
+      const chunks = scoutSse('{"opener":"First sentence. Second', 8, false);
+      let i = 0;
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(c) {
+          if (i < chunks.length) { c.enqueue(enc.encode(chunks[i++])); return; }
+          return new Promise<void>((ok) => { const stop = () => { c.error(new DOMException('aborted', 'AbortError')); ok(); }; if (init.signal!.aborted) stop(); else init.signal!.addEventListener('abort', stop); });
+        },
+      }, { highWaterMark: 0 }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const ev: ScoutEvent[] = [];
+    const p = scoutStream(sreq, scfg, deps(f), (e) => { ev.push(e); if (e.t === 'opener') ctl.abort(); }, ctl.signal);
+    await p;
+    expect(upstreamAborted).toBe(true);
+    expect(ev.map((e) => e.t)).toEqual(['opener']);
+    const raw = JSON.parse(readFileSync(join(dir, 'spend.json'), 'utf8'));
+    expect(raw.entries).toEqual([expect.objectContaining({ kind: 'scout', estimated: true })]);
+    expect(raw.entries[0].usd).toBeGreaterThan(0);
+    expect(raw.open ?? {}).toEqual({});
+  });
+
+  it('scout stream: a scout that never decides times out to the visible page', async () => {
+    const f = (async (_u: string, init: RequestInit) => new Response(new ReadableStream<Uint8Array>({
+      pull(c) { return new Promise<void>((ok) => { const stop = () => { c.error(new DOMException('aborted', 'AbortError')); ok(); }; if (init.signal!.aborted) stop(); else init.signal!.addEventListener('abort', stop); }); },
+    }, { highWaterMark: 0 }), { status: 200 })) as unknown as typeof fetch;
+    const { r } = await collect(f, { timeouts: { callMs: 40, idleMs: 1000, headersMs: 1000 } });
+    expect(r).toMatchObject({ pages: [3], fallback: 'scout timed out' });
+  });
+
+  it('stage 2 is told the opener verbatim, after the question, and continues from it', () => {
+    const b = buildRequest(req({ context: { ...multi, opener: '{{circle p=2 mark=#d1}} It is the best line.' } }), cfg) as any;
+    const tail = b.input[2].content;
+    expect(tail.at(-2).text).toMatch(/^QUESTION/);
+    expect(tail.at(-1).text).toBe(openerNote('{{circle p=2 mark=#d1}} It is the best line.'));
+    expect(tail.at(-1).text).toMatch(/^ALREADY SPOKEN:.*Do not repeat.*\nOPENING: \{\{circle p=2 mark=#d1\}\} It is the best line\.$/s);
+    // The cached prefix is unchanged by the opener.
+    expect(b.input.slice(0, 2)).toEqual((buildRequest(req({ context: multi }), cfg) as any).input.slice(0, 2));
   });
 
   it('scout prewarm writes the scout prefix and books a prewarm entry', async () => {

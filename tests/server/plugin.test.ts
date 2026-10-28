@@ -18,7 +18,7 @@ describe('parseEnv', () => {
     const e = parseEnv(from({}), opts);
     expect(e.key).toBe('');
     expect(e.model).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 3200, fast: false, explicitCache: true });
-    expect(e.scout).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 400, fast: false, explicitCache: true });
+    expect(e.scout).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600, fast: false, explicitCache: true });
     expect(e.phase).toBe('founder');
     expect(e.caps).toEqual({ totalUsd: 40, dailyUsd: 3, phaseUsd: PHASE_CAPS });
     expect(PHASE_CAPS).toEqual({ dev: 1, bakeoff: 6, iterate: 7, validate: 2, founder: 21.99, lessondev: 1.5, lessonbake: 3, lessoniter: 3.5, lessonval: 2 });
@@ -167,6 +167,8 @@ describe('createApi', () => {
       { ...good(), context: { ...good().context, scout: { pages: [1], plan: 'x'.repeat(2001) } } },
       { ...good(), context: { ...good().context, pageText: 'x'.repeat(60_001) } },
       { ...good(), context: { ...good().context, searchText: 'x'.repeat(20_001) } },
+      { ...good(), context: { ...good().context, opener: 'x'.repeat(2_001) } },
+      { ...good(), context: { ...good().context, opener: 42 } },
       { ...good(), context: { ...good().context, ink: { summary: 'x'.repeat(4_001) } } },
     ];
     for (const b of bad) {
@@ -248,7 +250,7 @@ describe('createApi', () => {
     expect(JSON.parse(res.body()).blocked).toMatch(/Spending stopped/);
   });
 
-  it('POST /api/prewarm warms the answer prefix (per docHash+page) and the scout prefix (per digest), each deduped', async () => {
+  it('POST /api/prewarm warms the answer prefix (per docHash+page) and the scout prefix (per digest+page, with the visible listing), each deduped', async () => {
     const bodies: any[] = [];
     const f = (async (_u: string, init: RequestInit) => { bodies.push(JSON.parse(String(init.body))); return new Response(JSON.stringify({ usage: { input_tokens: 100, output_tokens: 0 } }), { status: 200 }); }) as unknown as typeof fetch;
     const api = createApi({ env: env(), root, fetch: f });
@@ -262,33 +264,45 @@ describe('createApi', () => {
     expect(keys[0]).toMatch(/^petu-p/);
     expect(keys[1]).toMatch(/^petu-scout-/);
     expect(bodies.every((b) => b.prompt_cache_options?.prewarm === true)).toBe(true);
-    // Another page of the same document: only the answer prefix is new.
+    const scoutBody = bodies.find((b) => b.prompt_cache_key.startsWith('petu-scout-'));
+    expect(scoutBody.input[1].content).toHaveLength(2); // digest + the visible page's listing
+    // Another page of the same document: both prefixes are new (the scout's holds the visible listing).
     const res = fakeRes();
     await api.handle(fakeReq('POST', '/api/prewarm', JSON.stringify({ context: { ...good().context, page: 3 } })), res, () => {});
-    expect(bodies).toHaveLength(3);
-    expect(bodies[2].prompt_cache_key).toMatch(/^petu-p/);
+    expect(bodies).toHaveLength(4);
   });
 
-  it('POST /api/scout returns the pages and plan; a bad upstream reply falls back to the visible page', async () => {
-    const reply = (text: string) => (async () => new Response(JSON.stringify({ output: [{ type: 'message', content: [{ type: 'output_text', text }] }], usage: { input_tokens: 900, output_tokens: 40 } }), { status: 200 })) as unknown as typeof fetch;
-    const body = { question: 'How does it work?', docName: 'd.pdf', docHash: 'h', numPages: 9, page: 2, digest: 'DECK d.pdf (9 pages)\np1: a' };
+  it('POST /api/scout streams NDJSON: opener sentences, the verdict, the cost; a bad upstream reply falls back to the visible page', async () => {
+    const sseOf = (text: string) => [
+      `data: ${JSON.stringify({ type: 'response.output_item.added', item: { id: 's', type: 'message' } })}\n\n`,
+      ...text.match(/.{1,7}/gs)!.map((d) => `data: ${JSON.stringify({ type: 'response.output_text.delta', item_id: 's', delta: d })}\n\n`),
+      `data: ${JSON.stringify({ type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 900, output_tokens: 40 } } })}\n\n`,
+    ];
+    const reply = (text: string) => (async () => new Response(new ReadableStream<Uint8Array>({
+      start(c) { for (const x of sseOf(text)) c.enqueue(new TextEncoder().encode(x)); c.close(); },
+    }), { status: 200 })) as unknown as typeof fetch;
+    const body = { question: 'How does it work?', docName: 'd.pdf', docHash: 'h', numPages: 9, page: 2, digest: 'DECK d.pdf (9 pages)\np1: a', pageText: 'PAGE 2 (visible)' };
     const run = async (f: typeof fetch, b: object = body) => {
       const api = createApi({ env: env(), root, fetch: f });
       const res = fakeRes();
       await api.handle(fakeReq('POST', '/api/scout', JSON.stringify(b)), res, () => {});
-      return { status: res.statusCode, out: JSON.parse(res.body()) };
+      return { status: res.statusCode, type: String(res.getHeader('content-type')), out: res.statusCode === 200 ? lines(res) as any[] : JSON.parse(res.body()) };
     };
-    const ok = await run(reply('{"pages":[4,5,2],"plan":"walk 4 then 5"}'));
+    const ok = await run(reply(JSON.stringify({ opener: 'It votes. {{circle p=2 mark=#d1}}Here.', pages: [4, 5, 2], plan: 'walk 4 then 5' })));
     expect(ok.status).toBe(200);
-    expect(ok.out).toMatchObject({ pages: [4, 5, 2], plan: 'walk 4 then 5' });
-    expect(ok.out.fallback).toBeUndefined();
-    expect(ok.out.usd).toBeGreaterThan(0);
+    expect(ok.type).toMatch(/ndjson/);
+    expect(ok.out.map((e: any) => e.t)).toEqual(['opener', 'opener', 'scout', 'end']);
+    expect(ok.out[0].d + ok.out[1].d).toBe('It votes. {{circle p=2 mark=#d1}}Here.');
+    expect(ok.out[2]).toMatchObject({ pages: [4, 5, 2], plan: 'walk 4 then 5' });
+    expect(ok.out[2].fallback).toBeUndefined();
+    expect(ok.out[3].usd).toBeGreaterThan(0);
     const junk = await run(reply('I think page 4'));
-    expect(junk.out).toMatchObject({ pages: [2], fallback: expect.any(String) });
+    expect(junk.out.find((e: any) => e.t === 'scout')).toMatchObject({ pages: [2], fallback: expect.any(String) });
     const down = await run((async () => new Response('nope', { status: 500 })) as unknown as typeof fetch);
-    expect(down.out).toMatchObject({ pages: [2], fallback: expect.stringMatching(/scout failed/) });
+    expect(down.out.find((e: any) => e.t === 'scout')).toMatchObject({ pages: [2], fallback: expect.stringMatching(/scout failed/) });
     expect((await run(reply('{}'), { ...body, page: 10 })).status).toBe(400);
     expect((await run(reply('{}'), { ...body, digest: '' })).status).toBe(400);
+    expect((await run(reply('{}'), { ...body, pageText: 7 })).status).toBe(400);
   });
 
   it('POST /api/scout keeps the request guard', async () => {

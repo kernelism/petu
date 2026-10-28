@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { answerPages, imagePages, parseScout, SCOUT_MAX_PAGES } from '../../src/agent/scout';
-import { scoutPages } from '../../src/agent/client';
+import { scoutLive, scoutPages } from '../../src/agent/client';
 
 describe('parseScout', () => {
   it('reads strict JSON', () => {
@@ -40,27 +40,71 @@ describe('answer pages', () => {
   });
 });
 
-describe('scoutPages (client)', () => {
-  const req = { question: 'how?', docName: 'd.pdf', docHash: 'h', numPages: 20, page: 4, digest: 'D' };
+/** An NDJSON Response whose lines arrive one per pull (`hang`: then never ends until aborted). */
+function ndjson(lines: object[], o: { signal?: AbortSignal; hang?: boolean; status?: number } = {}) {
+  const enc = new TextEncoder();
+  let i = 0;
+  return new Response(new ReadableStream<Uint8Array>({
+    pull(c) {
+      if (i < lines.length) { c.enqueue(enc.encode(JSON.stringify(lines[i++]) + '\n')); return; }
+      if (!o.hang) { c.close(); return; }
+      return new Promise<void>((ok) => { const stop = () => { c.error(new DOMException('aborted', 'AbortError')); ok(); }; if (o.signal?.aborted) stop(); else o.signal?.addEventListener('abort', stop); });
+    },
+  }, { highWaterMark: 0 }), { status: o.status ?? 200 });
+}
+
+describe('scoutLive / scoutPages (client)', () => {
+  const req = { question: 'how?', docName: 'd.pdf', docHash: 'h', numPages: 20, page: 4, digest: 'D', pageText: 'PAGE 4' };
   const ctl = () => new AbortController();
-  it('posts JSON to /api/scout and returns the server verdict, re-checked', async () => {
-    const f = vi.fn(async () => new Response(JSON.stringify({ pages: [6, 99, 7], plan: 'p', ms: 640, usd: 0.001 }), { status: 200 }));
-    const r = await scoutPages(req, ctl().signal, f as unknown as typeof fetch);
-    expect(r).toEqual({ pages: [6, 7], plan: 'p', ms: 640, usd: 0.001 });
+  it('posts JSON to /api/scout; streams the opener in order, then the verdict (re-checked, with the whole opener), then the cost', async () => {
+    const f = vi.fn(async () => ndjson([
+      { t: 'opener', d: 'It votes. ', ms: 700 }, { t: 'opener', d: 'Outliers lose.', ms: 900 },
+      { t: 'scout', pages: [6, 99, 7], plan: 'p', ms: 1500 }, { t: 'end', usd: 0.001, ms: 1600, cached: 900, input: 1000 },
+    ]));
+    let t = 0;
+    const live = scoutLive(req, ctl().signal, f as unknown as typeof fetch, () => (t += 100));
+    const said: string[] = [];
+    for await (const s of live.opener) said.push(s);
+    expect(said).toEqual(['It votes. ', 'Outliers lose.']);
+    const v = await live.verdict;
+    expect(v).toMatchObject({ pages: [6, 7], plan: 'p', opener: 'It votes. Outliers lose.', openerMs: expect.any(Number) });
+    expect(await live.cost).toEqual({ usd: 0.001, cached: 900, input: 1000 });
     const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('/api/scout');
     expect((init.headers as Record<string, string>)['content-type']).toBe('application/json');
     expect(JSON.parse(String(init.body))).toEqual(req);
+    // The one-shot form.
+    const f2 = vi.fn(async () => ndjson([{ t: 'scout', pages: [6], plan: 'p', ms: 5 }, { t: 'end', usd: 0.002, ms: 6 }]));
+    expect(await scoutPages(req, ctl().signal, f2 as unknown as typeof fetch)).toMatchObject({ pages: [6], plan: 'p', usd: 0.002 });
   });
-  it('never throws: a server error or a network failure gives the visible page', async () => {
+  it('the opener ends when the verdict comes, even while the stream is still open', async () => {
+    const c = ctl();
+    const f = vi.fn(async () => ndjson([{ t: 'opener', d: 'A. ', ms: 1 }, { t: 'scout', pages: [2], plan: '', ms: 2 }], { hang: true, signal: c.signal }));
+    const live = scoutLive(req, c.signal, f as unknown as typeof fetch);
+    const said: string[] = [];
+    for await (const s of live.opener) said.push(s);
+    expect(said).toEqual(['A. ']);
+    expect((await live.verdict)?.pages).toEqual([2]);
+    c.abort();
+  });
+  it('never throws: a server error, a network failure or a stream without a verdict gives the visible page; an opener that came stays', async () => {
     const e500 = vi.fn(async () => new Response('x', { status: 500 }));
     expect(await scoutPages(req, ctl().signal, e500 as unknown as typeof fetch)).toMatchObject({ pages: [4], fallback: expect.any(String) });
     const net = vi.fn(async () => { throw new TypeError('down'); });
     expect(await scoutPages(req, ctl().signal, net as unknown as typeof fetch)).toMatchObject({ pages: [4], fallback: expect.any(String) });
+    const cut = vi.fn(async () => ndjson([{ t: 'opener', d: 'Half. ', ms: 1 }, 'garbage' as unknown as object]));
+    expect(await scoutPages(req, ctl().signal, cut as unknown as typeof fetch)).toMatchObject({ pages: [4], opener: 'Half. ', fallback: expect.any(String) });
   });
-  it('an abort returns null', async () => {
+  it('an abort returns null and ends the opener', async () => {
     const c = ctl();
     const f = vi.fn(async () => { c.abort(); throw new DOMException('aborted', 'AbortError'); });
     expect(await scoutPages(req, c.signal, f as unknown as typeof fetch)).toBeNull();
+    const c2 = ctl();
+    const f2 = vi.fn(async () => ndjson([{ t: 'opener', d: 'A. ', ms: 1 }], { hang: true, signal: c2.signal }));
+    const live = scoutLive(req, c2.signal, f2 as unknown as typeof fetch);
+    const said: string[] = [];
+    for await (const s of live.opener) { said.push(s); c2.abort(); }
+    expect(said).toEqual(['A. ']);
+    expect(await live.verdict).toBeNull();
   });
 });

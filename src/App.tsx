@@ -68,6 +68,8 @@ const NO_ANSWER = 'No answer came back.';
 /** No word this long after Enter: one static line under the question. */
 const STILL_THINKING_MS = 4000;
 const STILL_THINKING = 'Still thinking…';
+/** All words spoken and no new one for this long, mid-answer: the caption shows a faint ellipsis. */
+const PAUSE_GRACE_MS = 350;
 /** Demos and dev scripts send no page marks: every `mark=` is skipped. */
 const NO_MARKS: Grounding = { mark: () => undefined };
 
@@ -106,6 +108,8 @@ type DebugState = {
   meta?: Extract<AskEvent, { t: 'meta' }>; done?: DoneEvent; notes?: string[];
   /** Stage 1: the scout's pages (teaching order), plan, latency and cost. */
   scout?: Extract<AskEvent, { t: 'scout' }>;
+  /** Stage 2's first text reached the player (absolute ms), and when the opener's words were due to end then. */
+  handoff?: number; openerEnd?: number;
 };
 
 /** When the first ink of the answer started (the first drawing action, not layout). */
@@ -149,6 +153,9 @@ function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
   const cached = u && u.input_tokens > 0 ? `${Math.round((100 * (u.input_tokens_details?.cached_tokens ?? 0)) / u.input_tokens)}%` : '—';
   const notes = [...(done?.lint ?? []), ...(d.notes ?? [])];
   const ms = (t?: number) => (t == null ? '—' : `${Math.round(t - t0)}ms`);
+  // The first chunk was the opener when stage 2's first text came later.
+  const opener = d.chunk != null && d.handoff != null && d.handoff > d.chunk + 1 ? d.chunk : undefined;
+  const gap = d.handoff != null && d.openerEnd != null && opener != null ? Math.round(d.handoff - d.openerEnd) : undefined;
   // Start relative to the word: layout that starts ahead of its word (anticipatory scrolls) is negative.
   const rel = (d: number) => { const r = Math.round(d); return r > 0 ? `+${r}` : r < 0 ? `−${-r}` : '0'; };
   if (!open) {
@@ -161,6 +168,10 @@ function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
   return (
     <div className="debug" onClick={() => setOpen(false)} title="Click to collapse">
       {sc && <div className="debug-row" title={sc.fallback}><span>scout</span><span>p{sc.pages.join(' → p')} · {sc.ms}ms{sc.fallback ? ' · fallback' : ''}</span></div>}
+      {sc?.atMs != null && <div className="debug-row"><span>scout verdict</span><span>{sc.atMs}ms{sc.input ? ` · cached ${Math.round((100 * (sc.cached ?? 0)) / sc.input)}%` : ''}</span></div>}
+      {opener != null && <div className="debug-row"><span>opener</span><span>{ms(opener)}</span></div>}
+      {d.handoff != null && <div className="debug-row"><span>stage 2 first text</span><span>{ms(d.handoff)}</span></div>}
+      {gap != null && <div className="debug-row" title="+: silence between the opener's last word and stage 2's first; early: stage 2 was ready that long before the opener ended"><span>handoff gap</span><span>{gap >= 0 ? `+${gap}ms` : `0 (${-gap}ms early)`}</span></div>}
       {sc?.plan && (
         <button type="button" className="debug-plan" onClick={(e) => { e.stopPropagation(); setScoutOpen((o) => !o); }} aria-expanded={scoutOpen}>
           {scoutOpen ? <span className="debug-plan-text">{sc.plan}</span> : 'scout plan ▸'}
@@ -264,6 +275,9 @@ export default function App() {
   const [waiting, setWaiting] = useState(false);
   /** "Still thinking…" once no word has come for a while. */
   const [hint, setHint] = useState<string | undefined>();
+  /** Mid-answer, all words so far spoken and the next not yet in (e.g. the opener ended before stage 2). */
+  const [pausing, setPausing] = useState(false);
+  const pauseTimer = useRef<number>();
   /** A failed or cut-off answer: its line, and whether Retry is offered. */
   const [answerError, setAnswerError] = useState<{ message: string; retry: boolean } | null>(null);
   const [restore, setRestore] = useState<{ text: string; seq: number } | undefined>();
@@ -327,6 +341,7 @@ export default function App() {
 
   const clearHide = () => window.clearTimeout(hideTimer.current);
   const clearThink = () => { window.clearTimeout(thinkTimer.current); setHint(undefined); };
+  const clearPause = () => { window.clearTimeout(pauseTimer.current); setPausing(false); };
 
   const agent = useAgent({ doc, name: fileName, enabled: !DEMO_PATH || EVAL, make: MAKE_CONTEXT, warmSystem: !params.has('nogen') });
   const agentRef = useRef(agent);
@@ -410,6 +425,7 @@ export default function App() {
     s?.stop();
     director.stop();
     deskRef.current?.follow.setAnswering(false);
+    clearPause();
     setWaiting(false);
     clearThink();
     setBusy(false);
@@ -549,6 +565,13 @@ export default function App() {
       onEvent: (e) => run.rec?.event(e),
       onMeta: (e) => { if (DEBUG) setDebug((d) => ({ ...d, meta: e })); },
       onScout: (e) => { if (DEBUG) setDebug((d) => ({ ...d, scout: e })); },
+      onHandoff: (e) => {
+        // When the words queued so far (the opener) end: past it, the student heard a gap.
+        const end = clock.endsAt();
+        const tNow = performance.now();
+        if (spoke && Number.isFinite(end)) e.openerEndMs = Math.round(end - t0);
+        if (DEBUG) setDebug((d) => ({ ...d, handoff: tNow, ...(spoke && Number.isFinite(end) ? { openerEnd: end } : {}) }));
+      },
       onNote: (m) => { if (DEBUG) { console.info('[ask] note:', m); setDebug((d) => ({ ...d, notes: [...(d.notes ?? []), m] })); } },
       onDone: (e) => {
         if (DEBUG) setDebug((d) => ({ ...d, done: e }));
@@ -557,6 +580,9 @@ export default function App() {
       onCutOff: (m) => { cutOff = m; },
     };
 
+    const clock = new PacedClock(() => getSettings().wpm);
+    /** The script stream has not ended: a pause in it is a gap the student can see. */
+    let streamOpen = true;
     let firstChunk = true;
     let chunks = 0;
     const replay = run.replay;
@@ -587,12 +613,14 @@ export default function App() {
       } catch (e) {
         if (e instanceof AskError) askErr = e;
         throw e;
+      } finally {
+        streamOpen = false;
       }
     };
 
     const finish = () => { if (recRef.current === run.rec) recRef.current = null; settle(); };
     const session: AnswerSession = new AnswerSession({
-      clock: new PacedClock(() => getSettings().wpm),
+      clock,
       onParsed: (a) => director.prefetch(a),
       onAction: (a, at) => {
         if (sessionRef.current !== session) return;
@@ -604,6 +632,10 @@ export default function App() {
         if (sessionRef.current !== session) return;
         if (DEBUG && words.length === 1) { const t = performance.now(); setDebug((d) => ({ ...d, word: t })); }
         if (!spoke) { spoke = true; setWaiting(false); clearThink(); }
+        // Once these words are spoken, a faint ellipsis if nothing new has come (a gap in the stream).
+        window.clearTimeout(pauseTimer.current);
+        setPausing(false);
+        pauseTimer.current = window.setTimeout(() => { if (sessionRef.current === session && streamOpen) setPausing(true); }, Math.max(0, clock.endsAt() - clock.now()) + PAUSE_GRACE_MS);
         run.rec?.word(words[words.length - 1]);
         spoken = words;
         speak(words);
@@ -614,6 +646,7 @@ export default function App() {
         if (st === 'stopped') { finish(); return; }
         if (sessionRef.current !== session) return;
         if (st === 'loading' || st === 'playing') { setBusy(true); return; }
+        clearPause();
         setBusy(false);
         setWaiting(false);
         clearThink();
@@ -808,6 +841,7 @@ export default function App() {
           question={question}
           waiting={waiting}
           hint={hint}
+          pausing={pausing}
           error={answerError ? { message: answerError.message, onRetry: answerError.retry ? onRetry : undefined } : undefined}
         />
         <AskBar
