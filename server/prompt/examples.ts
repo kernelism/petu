@@ -1,7 +1,7 @@
 // server/prompt/examples.ts
 /**
  * Few-shot examples for the system prompt. RULE: invented documents on topics that appear in no eval
- * PDF and none of the founder's course material (music notation, shadows, levers), so the model
+ * PDF and none of the founder's course material (music notation, river deltas, levers), so the model
  * learns the moves, not the content. They differ in reach on purpose (one page and two sentences;
  * one page and a drawn what-if; three pages walked with one figure that grows), and none is a shape
  * to copy: the prompt says so, and they are kept short.
@@ -41,24 +41,17 @@ t4 420 128–140: ♯
     script: String.raw`{{circle p=2 "♯" near=134,432}} That's a sharp: it raises a note by a half step. {{highlight p=2 "apply to every note on that line or space"}} Written at the start of the staff, it holds for every note on its line through the whole piece, not just the next one.`,
   },
   {
-    title: 'one page, a what-if: the page states it, the board makes it happen',
-    question: 'What happens to my shadow if I stand twice as far from the lamp?',
-    page: 12,
-    pages: [12],
-    plan: 'The slide states that position matters but never shows why. Central illustration: a side view with the lamp, the person and the ray over their head to the ground; then the same person at twice the distance, so the longer shadow appears from the same construction.',
-    listing: String.raw`PAGE 12 (visible; 16:9 slide; image attached)
-t1 60 40–330: Shadows
-t2 170 40–760: Your shadow's length depends on where you stand.
-t3 205 120–185: lamp
-t4 520 165–215: post
-t5 610 435–480: you
-t6 890 500–590: shadow
-#d1 dot 150,250 "lamp"
-#a1 arrow 450,870→612,870 "shadow"
-#s1 line #d1→150,850 "post"
-#s2 line 450,850→450,640 "you"
-#s3 line 60,850→940,850`,
-    script: String.raw`{{circle p=12 mark=#a1}} Twice as far from the lamp, your shadow is twice as long. <plan>Side view, ground y=0, up is negative. Given: lamp foot O=0,0, lamp L=0,-400; you at P=200,0 with head H=200,-150. Ground is line O,P. Tip S=meet(L,H,O,P) = 320,0: shadow 120. Twice as far: P2=400,0, H2=400,-150, tip S2=meet(L,H2,O,P) = 640,0: shadow 240. Draw: lamp, you, ray L to S, shadow brace; you again, ray L to S2, brace (em). Braces run right to left so they hang below the ground.</plan>{{sketch id=s near=p12 fit}}{{let on=s O=0,0 L=0,-400 P=200,0 H=200,-150 P2=400,0 H2=400,-150 S=meet(L,H,O,P) S2=meet(L,H2,O,P)}} {{point on=s at=L "lamp" dir=w}} Here's the lamp, seen from the side. {{line on=s from=P to=H}} You stand a few steps away. {{line on=s from=L to=S weight=secondary}} The ray that just clears your head lands here, {{brace on=s from=S to=P "shadow"}} and everything between your feet and that spot is shadow. {{line on=s from=P2 to=H2}} Now step back to twice the distance. {{line on=s from=L to=S2 weight=secondary}} The ray over your head comes in flatter, {{brace on=s from=S2 to=P2 "2×" em}} and lands twice as far out.`,
+    title: 'one connected scene: things placed by relation, linked to each other and to the page, then transformed',
+    question: 'Why does most of the water end up in the east channel?',
+    page: 3,
+    pages: [3],
+    plan: 'The slide gives the rule (flow follows the easier channel) and the widths, but not why the split is so uneven. Central scene: the river, its three channels, links weighted by how much each takes, and the shares of the whole; then widen one channel and let the split change.',
+    listing: String.raw`PAGE 3 (visible; 16:9 slide; image attached)
+t1 60 40–520: Where a delta's water goes
+t2 170 40–900: Water divides between channels in proportion to how easily each one carries it.
+t3 240 40–620: Widths: west 2 m, middle 1 m, east 5 m
+#g1 figure 520,320 420×380 "delta"`,
+    script: String.raw`{{highlight p=3 "in proportion to how easily each one carries it"}} The east channel is the widest, so it carries the most: water splits by how easily each channel takes it. <plan>Scene: the river as a node; the three channels as a flow below it; the widths as bars (the page's values) beside the channels; shares from the widths; links from the river to every channel weighted by the shares. Then widen the middle channel (set) and the split follows.</plan>{{scene id=s near=p3}} Start with {{node on=s id=river "river"}} the river. {{flow on=s id=ch "west" "middle" "east" below=river}} It splits into three channels. {{connect from=p3:"Widths: west 2 m, middle 1 m, east 5 m" to=s:ch}} The slide gives their widths, {{bars on=s id=w vals=2,1,5 labels=west,middle,east right=ch}} two, one and five metres. {{shares on=s id=p op=normalize of=w labels=west,middle,east below=ch}} Each channel's share is its width over the total, {{link on=s from=river to=ch strength=p}} so the river feeds each one in that proportion, {{note on=s "over half" annotate=p[3]}} and the east takes well over half. {{set id=w vals=2,4,5}} Dredge the middle channel to four metres {{emph id=p[2]}} and its share grows, while the others shrink with nothing else changed.`,
   },
   {
     title: 'several pages walked, one figure that grows: point at the rule, draw the case',

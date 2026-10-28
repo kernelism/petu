@@ -72,8 +72,8 @@ describe('prompt examples', () => {
   it('four invented documents of different reach; at least one walks several pages, one works numbers with the kit', () => {
     expect(EXAMPLES).toHaveLength(4);
     const kit = EXAMPLES.filter((e) => run(e).acts.some((a) => a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table'));
-    expect(kit.length).toBe(1);
-    const acts = run(kit[0]).acts;
+    expect(kit.length).toBeGreaterThanOrEqual(1);
+    const acts = run(kit.find((e) => run(e).acts.some((a) => a.kind === 'step' || a.kind === 'sweep'))!).acts;
     expect(acts.some((a) => a.kind === 'step' || a.kind === 'sweep' || a.kind === 'col')).toBe(true);
     // the engine computes: a block from an operation (never a hand-written result)
     expect(acts.some((a) => 'src' in a && !('vals' in (a as { src: object }).src))).toBe(true);
@@ -160,11 +160,11 @@ describe('prompt examples', () => {
         const sketches = acts.filter((a) => a.kind === 'sketch');
         expect(Boolean(plan.trim())).toBe(sketches.length > 0);
         if (!sketches.length) return;
-        expect(ex.script.indexOf('<plan>')).toBeLessThan(ex.script.indexOf('{{sketch'));
+        expect(ex.script.indexOf('<plan>')).toBeLessThan(Math.max(ex.script.indexOf('{{sketch'), ex.script.indexOf('{{scene')));
         for (const s of sketches) {
           const i = acts.indexOf(s);
-          if (s.kind !== 'sketch') continue;
-          const kitOnly = acts.every((a) => !('region' in a) || a.region !== s.id || ['grid', 'bars', 'scatter', 'table', 'calc', 'fit'].includes(a.kind));
+          if (s.kind !== 'sketch' || s.scene) continue;
+          const kitOnly = acts.every((a) => !('region' in a) || a.region !== s.id || ['grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'shares'].includes(a.kind));
           if (kitOnly) continue;
           expect(s.fit).toBe(true);
           expect(acts[i + 1].kind).toBe('let');
@@ -173,19 +173,17 @@ describe('prompt examples', () => {
     });
   }
 
-  it('what-if: both shadow tips land where the geometry says (120, then 240 long)', () => {
-    const ex = EXAMPLES.find((e) => e.title.includes('what-if'))!;
-    const { figs, plan } = run(ex);
-    const fig = figs.figure({ region: 's' });
-    const at = (n: string) => fig.world({ ref: n }) as Pt;
-    expect(at('S').x).toBeCloseTo(320, 6);
-    expect(at('S').y).toBeCloseTo(0, 6);
-    expect(at('S2').x).toBeCloseTo(640, 6);
-    expect(at('S2').y).toBeCloseTo(0, 6);
-    // Twice the distance from the lamp's foot gives twice the shadow.
-    expect(at('S2').x - at('P2').x).toBeCloseTo(2 * (at('S').x - at('P').x), 6);
-    expect(at('P2').x - at('O').x).toBeCloseTo(2 * (at('P').x - at('O').x), 6);
-    expect(plan).toMatch(/meet\(L,H,O,P\)/);
+  it('scene: placed by relation, connected to each other and to the page, transformed, with a standard op', () => {
+    const ex = EXAMPLES.find((e) => e.title.includes('connected scene'))!;
+    const { acts } = run(ex);
+    expect(acts.some((a) => a.kind === 'sketch' && a.scene)).toBe(true);
+    expect(acts.some((a) => a.kind === 'link')).toBe(true);
+    expect(acts.some((a) => a.kind === 'connect')).toBe(true);
+    expect(acts.some((a) => a.kind === 'note' && a.annotate)).toBe(true);
+    expect(acts.some((a) => a.kind === 'set')).toBe(true);
+    expect(acts.some((a) => 'src' in a && 'op' in (a as { src: object }).src)).toBe(true);
+    // no coordinates in a scene
+    for (const a of acts) if ('region' in a && a.region) expect('at' in a, a.kind).toBe(false);
   });
 
   it('lever: the push end is three times as far from the pivot, and travels three times as far', () => {

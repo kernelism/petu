@@ -24,7 +24,7 @@ describe('system prompt', () => {
   it('is stable (one cacheable prefix) and within budget', () => {
     expect(systemPrompt()).toBe(s);
     expect(PROMPT_VERSION).toMatch(/^p\d+\.\d+$/);
-    expect(s.length / 3.6).toBeLessThan(6600); // ~tokens (the visual kit's card added ~1,000; views, plots and FORMULAS ~400)
+    expect(s.length / 3.6).toBeLessThan(7400); // ~tokens (the visual kit's card added ~1,000; views, plots and FORMULAS ~400; Board v2's scene ~700)
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
   });
 
@@ -75,6 +75,9 @@ describe('system prompt', () => {
     for (const w of ['mark=#', 'from=p4:#', 'through=', 'near=', ' fit', 'mid(', 'along(', 'meet(', 'foot(', '<plan>']) expect(s, w).toContain(w);
     for (const k of ['grid', 'bars', 'table', 'scatter', 'calc', 'col', 'fit', 'band', 'dist', 'step', 'sweep', 'set', 'level']) expect(kinds, k).toContain(k);
     for (const w of ['slide=', 'win=', 'reduce=', 'map=', 'zip=', 'right=', 'below=', 'op=', 'where=', 'center=']) expect(s, w).toContain(w);
+    // Board v2: one connected scene
+    for (const k of ['scene', 'node', 'flow', 'link', 'note', 'shares', 'blend', 'move']) expect(kinds, k).toContain(k);
+    for (const w of ['beside=', 'near=', 'annotate=', 'strength=', 'op=softmax', 'matmul', 'reduce=wavg', 'Transform rather than redraw', 'Connect everything']) expect(s, w).toContain(w);
   });
 
   it('states the kit principles: the engine computes, visible values, page values, input-operation-output, step then sweep', () => {

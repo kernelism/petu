@@ -15,6 +15,8 @@ export const SCENES: Scene[] = [
   { name: 'kit', query: 'script=kit', moments: [mid(10000), mid(30000), END] },
   { name: 'toolkit', query: 'script=toolkit', moments: [mid(10000), END] },
   { name: 'relational', query: 'script=relational', moments: [mid(8000), END] },
+  { name: 'scene', query: 'script=scene', moments: [mid(20000), END] },
+  { name: 'scene-econ', query: 'script=scene-econ', moments: [mid(20000), END] },
   { name: 'lec09', query: 'script=lec09', moments: [mid(14000), END], needs: 'public/dev/lec09_optical_flow.pdf' },
 ];
 
