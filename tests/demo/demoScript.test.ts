@@ -19,17 +19,25 @@ function parseAll(script: string): Action[] {
 const em = (as: Action[]) => as.filter((a) => 'em' in a && a.em).map((a) => a.kind);
 const ALL = [DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.values(SCRIPTS).map((x) => x.script)];
 
+const look = (a: Action) => ('weight' in a ? a.weight : undefined);
+
 describe('DEMO_SCRIPT (PDF only)', () => {
-  it('stays on the page and builds in six beats, ending on the slide\'s takeaway', () => {
+  it('stays on the page and builds in beats, ending on the slide\'s takeaway', () => {
     const as = parseAll(DEMO_SCRIPT);
-    expect(as.map((a) => a.kind)).toEqual(['scroll', 'circle', 'line', 'highlight', 'line', 'label', 'highlight', 'emph']);
+    expect(as.map((a) => a.kind)).toEqual(['scroll', 'circle', 'line', 'highlight', 'line', 'line', 'label', 'highlight', 'emph']);
     expect(as.some((a) => a.kind === 'sketch' || ('region' in a && a.region))).toBe(false);
     const payoff = as.at(-2);
     expect(payoff?.kind === 'highlight' && payoff.quote).toContain('search becomes 1-D');
   });
+  it('clips the ray inside image 1 and shows C′ looking at it with one faint sight line', () => {
+    const [ray, sight] = parseAll(DEMO_SCRIPT).filter((a) => a.kind === 'line');
+    expect(ray).toMatchObject({ weight: 'secondary', to: { x: 307, y: 362 } }); // image 1's top edge, not the bullets
+    expect(sight).toMatchObject({ dash: true });
+    expect(look(sight)).toBeUndefined(); // dash → faint by default
+  });
   it('labels and re-traces l′ by id', () => {
     const as = parseAll(DEMO_SCRIPT);
-    expect(as.find((a) => a.kind === 'label')).toMatchObject({ ref: 'lp' });
+    expect(as.find((a) => a.kind === 'label')).toMatchObject({ ref: 'lp', text: 'l′' });
     expect(as.at(-1)).toEqual({ kind: 'emph', ref: 'lp' });
   });
 });
@@ -45,8 +53,26 @@ describe('DEMO_SIDE_SCRIPT (C)', () => {
       kind: 'connect', from: { page: 3, at: { x: 305, y: 459 } }, to: { region: 'side', ref: 'x' },
     });
   });
-  it('accents only the takeaway: l′, its label, and where the sight lines land', () => {
-    expect(em(parseAll(DEMO_SIDE_SCRIPT))).toEqual(['line', 'label', 'point', 'point', 'point']);
+  it('draws and labels both images, then re-traces image 2 in accent as l′', () => {
+    const as = parseAll(DEMO_SIDE_SCRIPT);
+    expect(as.filter((a) => a.kind === 'label').map((a) => a.kind === 'label' && a.text)).toEqual(['image 1', 'image 2', 'l′']);
+    const im2 = as.find((a) => 'id' in a && a.id === 'im2'), lp = as.find((a) => 'id' in a && a.id === 'lp');
+    expect(im2?.kind === 'line' && lp?.kind === 'line').toBe(true);
+    if (im2?.kind === 'line' && lp?.kind === 'line') expect([lp.to, lp.from]).toEqual([im2.from, im2.to]); // same segment, traced inner end last
+  });
+  it('draws the ray secondary and the sight lines faint', () => {
+    const lines = parseAll(DEMO_SIDE_SCRIPT).filter((a) => a.kind === 'line');
+    expect(lines.filter((a) => look(a) === 'secondary')).toHaveLength(1);
+    expect(lines.filter((a) => a.kind === 'line' && a.dash)).toHaveLength(3);
+  });
+  it('spreads the hits along l′: ≥ 100 units apart and ≥ 200 from C′', () => {
+    const hits = parseAll(DEMO_SIDE_SCRIPT).flatMap((a) => (a.kind === 'point' && a.em ? [a.at] : []));
+    expect(hits).toHaveLength(3);
+    for (let i = 1; i < hits.length; i++) expect(Math.hypot(hits[i].x - hits[i - 1].x, hits[i].y - hits[i - 1].y)).toBeGreaterThan(100);
+    for (const h of hits) expect(Math.hypot(h.x - 840, h.y - 668)).toBeGreaterThan(200);
+  });
+  it('accents only the takeaway: l′, its label, where the sight lines land, and the payoff', () => {
+    expect(em(parseAll(DEMO_SIDE_SCRIPT))).toEqual(['line', 'label', 'point', 'point', 'point', 'write']);
   });
   it('ends on the written payoff', () => {
     const last = parseAll(DEMO_SIDE_SCRIPT).at(-1);
@@ -55,21 +81,49 @@ describe('DEMO_SIDE_SCRIPT (C)', () => {
 });
 
 describe('DEMO_PLANE_SCRIPT (B)', () => {
-  it('takes the stage with a large region and shades the plane', () => {
+  it('circles x in the first sentence and takes the stage right after it', () => {
+    const first = DEMO_PLANE_SCRIPT.indexOf('. ');
+    expect(DEMO_PLANE_SCRIPT.indexOf('{{circle')).toBeLessThan(first);
+    expect(DEMO_PLANE_SCRIPT.indexOf('{{sketch')).toBe(first + 2);
+    expect(parseAll(DEMO_PLANE_SCRIPT).find((a) => a.kind === 'sketch')).toMatchObject({ size: 'l' });
+  });
+  it('outlines and labels the image planes and tints the plane as the takeaway', () => {
     const as = parseAll(DEMO_PLANE_SCRIPT);
-    expect(as.find((a) => a.kind === 'sketch')).toMatchObject({ size: 'l' });
-    expect(as.filter((a) => a.kind === 'shade')).toHaveLength(3);
-    expect(em(as)).toEqual(['line', 'label']);
+    const shades = as.filter((a) => a.kind === 'shade');
+    expect(shades.map((a) => a.kind === 'shade' && (a.outline ? 'outline' : a.em ? 'em' : 'plain'))).toEqual(['outline', 'outline', 'em']);
+    expect(as.filter((a) => a.kind === 'write').map((a) => a.kind === 'write' && a.text).slice(0, 2)).toEqual(['image 1', 'image 2']);
+    expect(as.filter((a) => look(a) === 'secondary')).toHaveLength(2); // the rays to X
+    expect(em(as)).toEqual(['shade', 'line', 'label', 'write']);
   });
 });
 
-describe('lec09 (C, brace + math)', () => {
-  it('braces B and f, accents only the far offsets and the formula, ends on the formula', () => {
-    const as = parseAll(SCRIPTS.lec09.script);
-    expect(as.filter((a) => a.kind === 'brace').map((a) => a.kind === 'brace' && a.text)).toEqual(['B', 'f']);
-    expect(em(as)).toEqual(['arrow', 'arrow', 'math']);
-    const last = as.at(-1);
-    expect(last?.kind === 'math' && last.tex).toBe("x - x' = \\frac{B\\,f}{z}");
+describe('lec09 (C, near vs far)', () => {
+  const as = () => parseAll(SCRIPTS.lec09.script);
+  it('sketches only the comparison: no cameras, baseline, f or retyped formula', () => {
+    // math only sets the row labels; the slide's formula is circled on the page, never retyped
+    expect(as().flatMap((a) => (a.kind === 'math' ? [a.tex] : []))).toEqual(['z', '2z']);
+    expect(as().filter((a) => a.kind === 'brace').map((a) => a.kind === 'brace' && a.text)).toEqual(['x − x′', 'half']);
+  });
+  it('accents only the far brace, and points at the slide\'s own formula and line', () => {
+    expect(em(as())).toEqual(['brace']);
+    const page = as().filter((a) => 'page' in a && a.page === 40 && a.kind !== 'scroll' && a.kind !== 'sketch').map((a) => a.kind);
+    expect(page).toEqual(['box', 'circle', 'highlight']);
+    const last = as().at(-1);
+    expect(last?.kind === 'highlight' && last.quote).toBe('Disparity is inversely proportional to depth.');
+  });
+  it('lines the two offsets up on one centre, the far one half as long', () => {
+    const [near, far] = as().filter((a) => a.kind === 'brace');
+    if (near.kind !== 'brace' || far.kind !== 'brace') throw new Error('braces');
+    expect((near.from.x + near.to.x) / 2).toBe((far.from.x + far.to.x) / 2);
+    expect(Math.abs(far.from.x - far.to.x) * 2).toBe(Math.abs(near.from.x - near.to.x));
+  });
+});
+
+describe('toolkit', () => {
+  it('exercises every weight and every shade look', () => {
+    const as = parseAll(SCRIPTS.toolkit.script);
+    expect(new Set(as.map(look).filter(Boolean))).toEqual(new Set(['secondary', 'faint']));
+    expect(as.filter((a) => a.kind === 'shade').map((a) => a.kind === 'shade' && (a.outline ? 'outline' : a.em ? 'em' : 'plain'))).toEqual(['plain', 'outline', 'em']);
   });
 });
 

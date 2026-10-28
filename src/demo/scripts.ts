@@ -8,46 +8,46 @@ import type { Demo } from './demoScript';
  */
 export const SCRIPTS: Record<string, Demo & { src: string }> = {
   /**
-   * lec09 p40 "Depth from disparity" (1920 × 1080; page model coords measured on a render):
-   *   point x: label "x" (420,458), dot (433,498) → one ellipse around both at (427,478), rx 22 ry 30
-   *   point x': label "x’" (597,466), dot (580,498) → at (589,483), rx 24 ry 30
+   * lec09 p40 "Depth from disparity" (1920 × 1080; page model coords from pdf.js text runs).
+   * The slide already draws the cameras, baseline B, f and image planes, so the sketch draws none of
+   * them: it only compares a near point with one twice as far.
    *   "x − x′" inside the disparity equation: x 507–567, y 769–822 → box at (503,760), 68 × 72
-   * Region `side` (1000 × 700), true geometry with B 400, f 120:
-   *   cameras O (300,570), O' (700,570); B as a brace under them (310→690 at y 592, tip down)
-   *   image planes at y 450, x 190–440 and 560–810; f as a brace left of image 1 (y 560→456 at x 180)
-   *   near point (500,330), z 240 → its rays cross the planes at 400 / 600: offsets of 100 each
-   *   far point (500,90), z 480 (twice as far) → crossings at 350 / 650: offsets of 50 each
-   *   offsets as the slide's small arrows from each image center: near at y 428 (dark), far at
-   *   y 402 (accent); x / x' written under the near crossings at y 478
-   *   payoff: the slide's own formula, typeset, top left at (30,170): clear of the far rays (x ≥ 446 there) and
-   *   away from the window's right edge, where a narrow window clipped it at (620,170)
-   * Elements (6): cameras + B, image planes + f, near point + rays, near offsets, far point + rays,
-   * far offsets (accent); payoff: the formula (accent).
+   *   the fraction B·f / z: x 598–652, B·f cap top 737, z baseline 856 → circle at (627,800), rx 37 ry 50 (clear of the "=") (page radii
+   *     are in the page's x units on both axes)
+   *   "Disparity is inversely proportional to depth." is one text run: the highlighted payoff
+   * Region `side` (1000 × 700): the two images laid on top of each other, centres lined up (x 500).
+   *   depth z  : image row y 200 (150–850) + centre tick; x′ (300,200), x (700,200): offsets of 200
+   *              each (B f / 2z); brace 700→300 at y 240 (tip down) "x − x′"
+   *   depth 2z : image row y 470 + tick; x′ (400,470), x (600,470): offsets of 100 each; brace
+   *              600→400 at y 510, accent, "half": directly under the first, so the lengths compare
+   *   row labels z / 2z typeset as math left of each row (one voice: "2z" as a write would set in sans)
+   * Elements (6): row z (+ label), its x and x′, its brace; row 2z (+ label), its x and x′, its brace
+   * (accent). Page marks: the x − x′ box, then the payoff circles the slide's own B f / z and
+   * highlights its last line.
    */
   lec09: {
     src: '/dev/lec09_optical_flow.pdf',
     question: 'Why is disparity inversely proportional to depth?',
     script:
-      `{{scroll p=40}} Because a farther point shifts less between the two images. ` +
-      `The point lands at {{circle p=40 at=427,478 rx=22 ry=30}} x in the left image ` +
-      `and {{circle p=40 at=589,483 rx=24 ry=30}} x-prime in the right, and disparity is {{box p=40 at=503,760 size=68,72}} x minus x-prime. ` +
-      `{{sketch id=side near=p40 size=m}} Here's {{point on=side at=300,570 "O" dir=sw}} camera O ` +
-      `{{point on=side at=700,570 "O′" dir=se}} and camera O-prime, {{brace on=side from=690,592 to=310,592 "B"}} a baseline B apart, ` +
-      `{{line on=side from=190,450 to=440,450}} each with {{line on=side from=560,450 to=810,450}} its image ` +
-      `a distance {{brace on=side from=180,560 to=180,456 "f"}} f in front. ` +
-      `Take a {{line on=side from=306,562 to=500,330}} near {{line on=side from=694,562 to=500,330}} point. ` +
-      `{{point on=side at=500,330 "near" dir=n}} Its rays come in steeply, so they land far from each center: ` +
-      `{{arrow on=side from=300,428 to=398,428}} this far in the left image, {{write on=side at=392,478 "x"}} that's x, ` +
-      `{{arrow on=side from=700,428 to=602,428}} and this far in the right, {{write on=side at=574,478 "x′"}} that's x-prime. ` +
-      `x minus x-prime adds these two lengths. ` +
-      `Now a point {{line on=side from=304,561 to=500,90}} twice {{line on=side from=696,561 to=500,90}} as far. ` +
-      `{{point on=side at=500,90 "far" dir=e}} Its rays are nearly straight up, so they land ` +
-      `{{arrow on=side from=300,402 to=349,402 em}} half as far {{arrow on=side from=700,402 to=651,402 em}} from each center. ` +
-      `{{math on=side at=30,170 "x - x' = \\frac{B\\,f}{z}" em}} Disparity is B f over z: twice the depth, half the disparity.`,
+      `{{scroll p=40}} Disparity, {{box p=40 at=503,760 size=68,72}} x minus x-prime, is how far a point shifts between the two images, ` +
+      `and a farther point shifts less. ` +
+      `{{sketch id=side near=p40 size=m}} Lay the two images on top of each other, ` +
+      `{{line on=side from=150,200 to=850,200}} centres {{line on=side from=500,178 to=500,222 weight=secondary}} lined up. ` +
+      `A point at depth {{math on=side at=50,200 "z" size=s}} z lands {{point on=side at=700,200 "x" dir=n}} here in the left image ` +
+      `{{point on=side at=300,200 "x′" dir=n}} and here in the right, ` +
+      `{{brace on=side from=700,240 to=300,240 "x − x′"}} and this gap is its disparity. ` +
+      `Now a point {{math on=side at=50,470 "2z" size=s}} twice as far. ` +
+      `{{line on=side from=150,470 to=850,470}} Same images, {{line on=side from=500,448 to=500,492 weight=secondary}} same centres. ` +
+      `Its rays come in closer to parallel, so it lands {{point on=side at=600,470 "x" dir=n}} nearer ` +
+      `{{point on=side at=400,470 "x′" dir=n}} the centre in both: ` +
+      `{{brace on=side from=600,510 to=400,510 "half" em}} half the gap. ` +
+      `That's the slide's {{circle p=40 at=627,800 rx=37 ry=50}} B f over z: twice the depth, half the disparity. ` +
+      `{{highlight p=40 "Disparity is inversely proportional to depth."}} Disparity is inversely proportional to depth.`,
   },
   /**
    * Toolkit check (not a teaching demo): every v2 element once, in one region beside the sample
-   * deck's page 3, for screenshots and the timing audit.
+   * deck's page 3, for screenshots and the timing audit. Also every look flag: the three weights
+   * (primary default, secondary, faint), dash (faint by default), shade plain / outline / em.
    */
   toolkit: {
     src: '/fixtures/epipolar.pdf',
@@ -55,9 +55,12 @@ export const SCRIPTS: Record<string, Demo & { src: string }> = {
     script:
       `{{scroll p=3}} Toolkit check. {{sketch id=kit near=p3 size=m}} A point {{point on=kit at=120,120 "A" id=a}} here, ` +
       `a curve {{curve on=kit pts=200,120 300,60 400,140 500,80 dash}} through four points, ` +
-      `a shade {{shade on=kit at=760,120 rx=90 ry=50}} under the ink, ` +
-      `two {{line on=kit from=80,440 to=380,440}} rays {{line on=kit from=80,440 to=290,250}} and ` +
+      `a plain shade {{shade on=kit at=640,110 rx=70 ry=45}} under the ink, ` +
+      `an outlined {{shade on=kit pts=760,60 940,80 940,190 760,170 outline}} sheet, ` +
+      `two {{line on=kit from=80,440 to=380,440}} rays {{line on=kit from=80,440 to=290,250 weight=secondary}} and ` +
+      `an accent {{shade on=kit pts=80,440 380,440 290,250 em}} wedge, ` +
       `an angle {{angle on=kit at=80,440 from=380,440 to=290,250 r=90 "θ"}} between them, ` +
+      `a faint {{line on=kit from=290,250 to=290,440 weight=faint}} drop, ` +
       `a brace {{brace on=kit from=380,520 to=80,520 "B"}} under a span, ` +
       `axes {{axes on=kit at=560,640 size=380,300 x="depth z" y="disparity" id=ax}} with ` +
       `{{plot on=kit fn="1/x" domain=0.5,5 range=0,2.6 em id=pl}} one over x, ` +
