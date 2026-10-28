@@ -1,6 +1,10 @@
 // server/lint.ts
 /** Every tag name the parser knows (src/script/parseTag.ts). */
-export const TAG_NAMES = new Set(['scroll', 'highlight', 'underline', 'circle', 'box', 'line', 'arrow', 'point', 'label', 'curve', 'shade', 'angle', 'brace', 'write', 'math', 'axes', 'plot', 'let', 'sketch', 'connect', 'emph', 'move', 'fade', 'clear']);
+export const TAG_NAMES = new Set(['scroll', 'highlight', 'underline', 'circle', 'box', 'line', 'arrow', 'point', 'label', 'curve', 'shade', 'angle', 'brace', 'write', 'math', 'axes', 'plot', 'let', 'sketch', 'connect', 'emph', 'move', 'fade', 'clear',
+  // the visual kit (src/script/parseKit.ts)
+  'grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'step', 'sweep', 'set', 'band', 'dist', 'col', 'level']);
+/** Kit tags whose values come from the engine: a literal result in them (`result=`, `=…` after an op) is the model computing by hand. */
+const KIT_COMPUTED = /^\{\{\s*(grid|bars|calc)\b[^}]*\b(result|value|answer|out)=/i;
 
 /**
  * Grammar checks on the stream, for the debug panel and the eval (`done.lint`). Lessons v3: no
@@ -32,6 +36,7 @@ export class Lint {
     if (!name || !TAG_NAMES.has(name)) this.notes.push(`unknown tag ${JSON.stringify(t.slice(0, 40))}`);
     const quotes = (t.match(/"/g) ?? []).length;
     if (quotes % 2) this.notes.push(`unclosed quote in ${JSON.stringify(t.slice(0, 40))}`);
+    if (KIT_COMPUTED.test(t)) this.notes.push(`hand-computed result in ${JSON.stringify(t.slice(0, 40))}`);
     return t;
   }
 }

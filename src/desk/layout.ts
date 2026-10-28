@@ -172,10 +172,10 @@ export const CROP_PAD = 36;
  * The span a finished section keeps: its ink's vertical extent (section units) padded by CROP_PAD,
  * within the section. Nothing drawn (or no layout to measure): the whole section.
  */
-export function cropSpan(ink: { y: number; h: number } | null): { y0: number; y1: number } {
-  if (!ink || !(ink.h > 0) || !Number.isFinite(ink.y)) return { y0: 0, y1: SECTION_H };
-  const y0 = Math.max(0, ink.y - CROP_PAD), y1 = Math.min(SECTION_H, ink.y + ink.h + CROP_PAD);
-  return y1 - y0 >= 2 * CROP_PAD ? { y0, y1 } : { y0: 0, y1: SECTION_H };
+export function cropSpan(ink: { y: number; h: number } | null, full = SECTION_H): { y0: number; y1: number } {
+  if (!ink || !(ink.h > 0) || !Number.isFinite(ink.y)) return { y0: 0, y1: full };
+  const y0 = Math.max(0, ink.y - CROP_PAD), y1 = Math.min(full, ink.y + ink.h + CROP_PAD);
+  return y1 - y0 >= 2 * CROP_PAD ? { y0, y1 } : { y0: 0, y1: full };
 }
 
 /** Inner padding of the board, from its width. */

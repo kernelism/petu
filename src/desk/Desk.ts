@@ -12,7 +12,6 @@ import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, Desk
 export type { DeskHost } from './types';
 
 const SVG = 'http://www.w3.org/2000/svg';
-export const MAX_REGIONS = 2;
 /** The split glide: the slide column moving aside (or back) and the board sliding in (or out). */
 export const GLIDE_MS = 420;
 /** A board scroll that follows the ink glides at most this long. */
@@ -22,8 +21,11 @@ const WIRE_PAD = 8;
 const BOARD_AIR = 16;
 const WHOLE_REGION = { x: 0, y: 0, w: REGION_W, h: REGION_H };
 
-/** `y0`–`y1`: the part of the section's 700 units it shows (all of it until a later section crops it to its ink). */
-type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; y0: number; y1: number };
+/**
+ * `full`: the section's height in units (700, or more once kit blocks grow it). `y0`–`y1`: the part
+ * of it it shows (all of it until a later section crops it to its ink).
+ */
+type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; full: number; y0: number; y1: number };
 /** `stroke` is the handle's own array, rewritten in place on every re-route (emph re-traces the current path). */
 type Wire = { page: ConnectorEnd; region: ConnectorEnd; section: Section; reversed: boolean; svg: SVGSVGElement; group: SVGGElement; stroke: Stroke; avoid: SRect[] };
 
@@ -155,7 +157,6 @@ export class Desk implements DeskApi {
 
   async addRegion(spec: RegionSpec, before?: BeforeMove): Promise<RegionInfo | string> {
     const ep = this.epoch;
-    if (this.ids.size >= MAX_REGIONS) return `max ${MAX_REGIONS} regions per answer`;
     if (this.ids.has(spec.id)) return 'duplicate region id';
     // The sections above are finished: each keeps just its ink, so the board has no dead space between them.
     this.sections.forEach((s) => this.crop(s));
@@ -184,6 +185,15 @@ export class Desk implements DeskApi {
     }
     sec.el.classList.add('is-shown');
     return live() ? this.region(spec.id) ?? 'desk reset' : 'desk reset';
+  }
+
+  /** A section's content needs `h` units (kit blocks stacked past 700): it grows, never shrinks. */
+  growRegion(id: string, h: number): void {
+    const sec = this.ids.get(id);
+    if (!sec || !(h > sec.full) || sec.y0 !== 0 || sec.y1 !== sec.full) return;
+    sec.full = sec.y1 = Math.ceil(Math.min(h, 4 * REGION_H));
+    sec.el.querySelectorAll('svg').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${sec.full}`));
+    this.position();
   }
 
   noteInk(t: Target, r: SRect): void {
@@ -342,12 +352,12 @@ export class Desk implements DeskApi {
       return svg.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
     };
     const layers = { highlight: layer('desk-region-hl'), agent: layer('desk-region-ink') };
-    return { id: spec.id, page: spec.page, size: spec.size, body: spec.body ?? null, el, layers, y0: 0, y1: REGION_H };
+    return { id: spec.id, page: spec.page, size: spec.size, body: spec.body ?? null, el, layers, full: REGION_H, y0: 0, y1: REGION_H };
   }
 
   /** Crops a finished section to its ink (once): its svg shows only that band, the section's box shrinks to it. */
   private crop(sec: Section) {
-    if (sec.y0 !== 0 || sec.y1 !== REGION_H) return;
+    if (sec.y0 !== 0 || sec.y1 !== sec.full) return;
     let ink: { y: number; h: number } | null = null;
     for (const g of [sec.layers.agent, sec.layers.highlight]) {
       let b: { y: number; height: number } | null = null;
@@ -357,7 +367,7 @@ export class Desk implements DeskApi {
       const bottom: number = Math.max(ink ? ink.y + ink.h : -Infinity, b.y + b.height);
       ink = { y: top, h: bottom - top };
     }
-    const { y0, y1 } = cropSpan(ink);
+    const { y0, y1 } = cropSpan(ink, sec.full);
     sec.y0 = y0; sec.y1 = y1;
     sec.el.querySelectorAll('svg').forEach((svg) => svg.setAttribute('viewBox', `0 ${y0} ${REGION_W} ${y1 - y0}`));
   }

@@ -30,6 +30,25 @@ const ARITY = { mid: 2, along: 2, meet: 4, foot: 3 } as const;
 /** Coordinates beyond this are rejected (literals) or treated as degenerate (constructions). */
 export const MAX_ABS = 100_000;
 
+/**
+ * A part of a kit block (1-based): `v[3]` a bar or point, `g[2,3]` a cell, `g[1:2,1:3]` cells,
+ * `v[2:4]` bars. Resolved by the kit when the element is built (its layout exists only then).
+ */
+export const BLOCK_REF = /^([A-Za-z][A-Za-z0-9_]{0,23})\[(\d{1,2})(?::(\d{1,2}))?(?:,(\d{1,2})(?::(\d{1,2}))?)?\]$/;
+export const isBlockRef = (s: string) => BLOCK_REF.test(s);
+/** A parsed block part: rows r0–r1 and columns c0–c1, 0-based inclusive (a vector's index is its column, row 0). */
+export type BlockPart = { id: string; r0: number; r1: number; c0: number; c1: number; one?: boolean };
+export function blockPart(s: string): BlockPart | null {
+  const m = BLOCK_REF.exec(s);
+  if (!m) return null;
+  const n = (v?: string) => (v == null ? undefined : Number(v));
+  const a = n(m[2])!, b = n(m[3]) ?? a, c = n(m[4]), d = n(m[5]) ?? c;
+  if (a < 1 || b < a) return null;
+  if (c == null) return { id: m[1], r0: 0, r1: 0, c0: a - 1, c1: b - 1, one: true };
+  if (c < 1 || d! < c) return null;
+  return { id: m[1], r0: a - 1, r1: b - 1, c0: c - 1, c1: d! - 1 };
+}
+
 export const normName = (s: string) => s.replace(/'/g, '′').replace(/′′/g, '″');
 
 /** Parses one point argument; null when malformed. `lit` handles literals (the caller clamps pages). */
@@ -43,6 +62,7 @@ export function parsePtArg(s: string | undefined, lit: (s: string) => Pt | undef
 
 function ref(s: string): PtExpr | null {
   if (MARK.test(s)) return { ref: s };
+  if (BLOCK_REF.test(s)) return blockPart(s) ? { ref: s } : null;
   const dot = s.match(/^(.+)\.([ab])$/);
   const base = dot ? dot[1] : s;
   const n = normName(base);
@@ -54,8 +74,8 @@ function splitArgs(s: string): string[] | null {
   const out: string[] = [];
   let depth = 0, cur = '';
   for (const c of s) {
-    if (c === '(') depth++;
-    if (c === ')') depth--;
+    if (c === '(' || c === '[') depth++;
+    if (c === ')' || c === ']') depth--;
     if (depth < 0) return null;
     if (c === ',' && depth === 0) { out.push(cur); cur = ''; } else cur += c;
   }

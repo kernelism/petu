@@ -102,12 +102,20 @@ describe('Desk: the board', () => {
     expect(h.setSplit).toHaveBeenLastCalledWith('wide', GLIDE_MS);
     expect(d.state().split).toBe('wide');
   });
-  it('refuses a third region per answer and a duplicate id', async () => {
+  it('refuses a duplicate id, and has no cap on sections per answer', async () => {
     const d = new Desk(fakeHost(), stage);
     await d.addRegion(spec('a'));
     expect(await d.addRegion(spec('a'))).toBe('duplicate region id');
-    await d.addRegion(spec('b'));
-    expect(await d.addRegion(spec('c'))).toBe('max 2 regions per answer');
+    for (const id of ['b', 'c', 'd', 'e']) expect(typeof (await d.addRegion(spec(id)))).toBe('object');
+  });
+  it('grows a section past 700 units for kit blocks, never shrinking it', async () => {
+    const d = new Desk(fakeHost(), stage);
+    await d.addRegion(spec('a'));
+    const svg = stage.querySelector('.desk-region svg')!;
+    d.growRegion('a', 900);
+    expect(svg.getAttribute('viewBox')).toBe('0 0 1000 900');
+    d.growRegion('a', 800);
+    expect(svg.getAttribute('viewBox')).toBe('0 0 1000 900');
   });
   it('persists across answers: reset frees the ids and keeps the sections and the split', async () => {
     const h = fakeHost();

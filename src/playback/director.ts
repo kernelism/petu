@@ -150,6 +150,7 @@ export class Director {
     this.last = null;
     this.stagger = { at: NaN, n: 0 };
     this.drawing.clear();
+    this.registry.settle(); // kit animations (a sweep) land in their end state
     this.pendingReset = null; // an answer stopped before it acted leaves the desk as it is
     this.desk()?.abort(); // pans stop, and no desk move in flight (a column glide, entering B) lands later
     this.gen++;

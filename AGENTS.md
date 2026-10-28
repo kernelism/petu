@@ -62,6 +62,8 @@ Dev URLs (append to the dev server URL):
 - `?demo=1` — PDF-only demo on the fixture
 - `?demo=side` — a sketch on the board (normal split, 1:1), connected to the slide
 - `?demo=plane` — a `size=l` sketch: the wide split (slides 0.4, board 0.6)
+- `?script=kit` — the visual kit: six board sections (a sliding window, vectors as bars, a scatter
+  with a band, a demand table, a thrown ball's table, dice), half outside CS, all numbers engine-computed
 - `?script=lec09`, `?script=toolkit`, `?script=relational` — dev scripts, no API call (lec09 needs a
   local, gitignored PDF; relational shows the `let`/construction grammar on the fixture)
 - `?src=<pdf url>` — open a PDF by URL (e.g. `/api/dev-pdf/<name>.pdf` from `PETU_PDF_DIRS`)
@@ -136,7 +138,7 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   app: a loopback Host, an Origin (if any) equal to it, and `content-type: application/json` on POSTs
   (`guard` in `plugin.ts`; these routes run before Vite's own host check). Upstream calls time out
   (15s to headers, 20s between chunks, 60s for prewarm/judge).
-- **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p3.2**: hard answer shape (opener ≤ 16
+- **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p4.5** (kit card and WORKED NUMBERS principles): hard answer shape (opener ≤ 16
   words that starts with its mark, one new element per sentence, 3–7 elements, one `em`, a payoff),
   mechanism over definition, precise marks, per-question-type playbook, few-shot examples from the
   fixture and synthetic pages only. Bump `PROMPT_VERSION` on any change. `tests/server/prompt.test.ts`
@@ -157,7 +159,27 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   drops only that name.
 
 Action kinds: `scroll highlight underline circle box line arrow curve point label write math
-shade angle brace axes plot sketch connect emph move fade clear`.
+shade angle brace axes plot sketch connect emph move fade clear`, plus the visual kit's.
+
+**Visual kit v1** (`src/desk/kit/`, parser `src/script/parseKit.ts`; spec "Visual kit v1"). The model
+names data and operations; the engine lays blocks out from the board's type size, computes every
+number and animates.
+- Blocks (in a sketch, no `fit`/`let`): `grid` (matrix/table of cells, `shade`, `rows=`/`cols=` labels),
+  `bars` (a vector), `table` (headers + rows; empty columns filled by `col`), `scatter` (literal points
+  or a table's columns), `calc` (a live calculation line: expansion and result), `fit` (least squares
+  or `pick=i,j`). Placement `right=`/`below=` another block (bodies aligned, engine spacing; wraps at
+  the margin; `below` clears whatever sits under the anchor) with an `op=` glyph (⊛ · × = → − + ÷).
+- Computed sources: `map=`/`zip=` with `fn=` (expr.ts, now with variables and comparisons: x, y,
+  mean sum std norm min max n), `over=G slide=K` (sum of products; `same`, `flip`, `stride`),
+  `win=RxC reduce=…|fn=` (cells a b c…), `size=RxC fn="r+c"`, `vals=t.c` (a table column).
+- Verbs: `step id=o[r,c]`, `sweep id=o dur=`, `col id=t.c fn= dur=` (rows fill; a b… this row, pa pb…
+  the row above), `set` (an input changes, dependents recompute and tween), `band`, `dist`, `level`
+  (a reference line), `emph … where="x==7"`. Parts (`g[2,3]`, `g[1:2,1:3]`, `v[4]`, table `t[3]` = row)
+  are points and boxes for emph/fade/box/arrow/connect. `center=` places boxes and text by their centre.
+- One state animation per block: a later state change fast-forwards the running one (lands its end
+  state) and then starts; overlays (emph, fade) never interrupt. Sweeps never block the narration
+  (draw resolves once the first cell is under way). Reduced motion: no glides, discrete steps.
+- Sections have no per-answer cap and grow past 700 units for tall kit content (`growRegion`).
 
 ### Contracts not to break
 
@@ -173,7 +195,7 @@ shade angle brace axes plot sketch connect emph move fade clear`.
 - **Continuity.** Reveal a whole box before drawing in it; pan back before drawing off-screen;
   bring both ends of a connector on screen (slides and board scroll independently); ids unique;
   nothing drawn under the caption dock (the viewer's visible band ends above it); if the student
-  scrolls the slides or the board, show "Back to answer"; re-layout on resize; at most 2 sketches
+  scrolls the slides or the board, show "Back to answer"; re-layout on resize. No cap on sketches
   per answer. Board elements are never shifted individually: a section scales as a whole, text
   wraps at its `at`. The board's scroller carries `data-petu-board` (the eval captures it).
 

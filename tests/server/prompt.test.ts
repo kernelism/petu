@@ -24,7 +24,7 @@ describe('system prompt', () => {
   it('is stable (one cacheable prefix) and within budget', () => {
     expect(systemPrompt()).toBe(s);
     expect(PROMPT_VERSION).toMatch(/^p\d+\.\d+$/);
-    expect(s.length / 3.6).toBeLessThan(5000); // ~tokens
+    expect(s.length / 3.6).toBeLessThan(6200); // ~tokens (the visual kit's card added ~1,000)
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
   });
 
@@ -38,7 +38,7 @@ describe('system prompt', () => {
   });
 
   it('keeps the stable section order: identity → teach → no-dup → timing → context → pointing → board → tags → situations → examples', () => {
-    const order = ['You are petu', 'HOW YOU TEACH', 'THE BOARD NEVER DUPLICATES', 'TIMING', 'WHAT YOU GET', 'POINTING ON THE PAGE', 'THE BOARD (', 'TAGS', 'SITUATIONS', 'EXAMPLE 1', 'EXAMPLE 2', 'EXAMPLE 3'];
+    const order = ['You are petu', 'HOW YOU TEACH', 'THE BOARD NEVER DUPLICATES', 'TIMING', 'WHAT YOU GET', 'POINTING ON THE PAGE', 'THE BOARD (', 'TAGS', 'SITUATIONS', 'EXAMPLE 1', 'EXAMPLE 2', 'EXAMPLE 3', 'EXAMPLE 4'];
     const at = order.map((h) => s.indexOf(h));
     expect(at.every((i) => i >= 0), JSON.stringify(Object.fromEntries(order.map((h, i) => [h, at[i]])))).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
@@ -73,6 +73,12 @@ describe('system prompt', () => {
     const kinds = new Set([...s.matchAll(/\{\{(\w+)/g)].map((m) => m[1]));
     for (const k of ['scroll', 'highlight', 'underline', 'circle', 'box', 'line', 'arrow', 'point', 'label', 'curve', 'shade', 'angle', 'brace', 'write', 'math', 'axes', 'plot', 'let', 'sketch', 'connect', 'emph', 'fade']) expect(kinds, k).toContain(k);
     for (const w of ['mark=#', 'from=p4:#', 'through=', 'near=', ' fit', 'mid(', 'along(', 'meet(', 'foot(', '<plan>']) expect(s, w).toContain(w);
+    for (const k of ['grid', 'bars', 'table', 'scatter', 'calc', 'col', 'fit', 'band', 'dist', 'step', 'sweep', 'set', 'level']) expect(kinds, k).toContain(k);
+    for (const w of ['slide=', 'win=', 'reduce=', 'map=', 'zip=', 'right=', 'below=', 'op=', 'where=', 'center=']) expect(s, w).toContain(w);
+  });
+
+  it('states the kit principles: the engine computes, visible values, page values, input-operation-output, step then sweep', () => {
+    for (const p of [/Never write a computed number yourself/, /make the effect visible/, /use the page's/, /input, the operation and the output/, /step through the first case/, /sweep the rest/]) expect(s).toMatch(p);
   });
 
   it('covers the answer situations beyond a single question', () => {
