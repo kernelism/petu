@@ -2,7 +2,7 @@
 import { EXAMPLES } from './examples.ts';
 
 /** Bump on any change: the eval records it with every run, and it is part of the cache prefix. */
-export const PROMPT_VERSION = 'p4.2';
+export const PROMPT_VERSION = 'p4.3';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -83,7 +83,7 @@ const GRAMMAR = `TAGS (key=value, "quoted text", bare flags; A, B, C are x,y, a 
 {{axes on=s at=A size=600,400 x="time" y="speed" id=ax}}  {{plot on=s fn="x*x" domain=-2,2 axes=ax}}
 {{let on=s A=0,0 B=along(A,C,2)}}  {{sketch id=s near=p4 fit}}  {{sketch id=t near=p4 size=l fit}}
 {{connect from=p4:#d3 to=s:X}}  {{connect from=p4:"quote" to=s:ray}}  {{emph id=ray}}  {{fade id=ray}}
-Any drawing takes em and id=NAME; strokes take dash and weight=primary, secondary or faint. ids are unique; names are case-sensitive (X and x differ), and ' becomes ′. A tag is one line, under 300 characters.
+Any drawing takes em and id=NAME; strokes take dash and weight=primary, secondary or faint. ids are unique; names are case-sensitive (X and x differ), and ' becomes ′. A tag is one line, under 800 characters.
 A tag that can't be resolved is skipped and the narration goes on, so never make a sentence depend on one.`;
 
 const SITUATIONS = `SITUATIONS

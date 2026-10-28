@@ -72,7 +72,7 @@ export class ScriptFilter {
 }
 
 /** A `{{` with no `}}` within this many characters (`{{` included) is narration (Lint's rule). */
-export const MAX_TAG = 401;
+export const MAX_TAG = 801;
 /** An unclosed plan stops here. */
 export const PLAN_MAX = 1500;
 

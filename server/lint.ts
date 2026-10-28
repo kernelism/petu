@@ -22,7 +22,7 @@ export class Lint {
       }
       this.buf += c;
       if (this.buf.endsWith('}}')) { out += this.tag(this.buf); this.buf = ''; this.inTag = false; }
-      else if (this.buf.length > 400 || c === '\n') { out += this.buf; this.buf = ''; this.inTag = false; } // not a tag (parser rule)
+      else if (this.buf.length > 800 || c === '\n') { out += this.buf; this.buf = ''; this.inTag = false; } // not a tag (parser rule)
     }
     return out;
   }

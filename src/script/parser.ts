@@ -5,7 +5,8 @@ const words = (s: string): ScriptEvent[] =>
   s.split(/\s+/).filter(Boolean).map((text) => ({ type: 'word', text }));
 
 /** A `{{` with no `}}` within this many chars is not a tag. */
-export const MAX_TAG_CHARS = 300;
+/** Long enough for a figure's whole {{let}} (a fitted figure with ~20 named points runs ~400). */
+export const MAX_TAG_CHARS = 800;
 const QUOTE_CLOSE: Record<string, string> = { '"': '"', '“': '”' };
 
 type Scan = { kind: 'close'; end: number } | { kind: 'fail'; cut: number } | { kind: 'wait' };
