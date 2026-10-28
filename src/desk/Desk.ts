@@ -5,7 +5,7 @@ import { REGION_H, REGION_W, type RegionSize, type Target } from '../script/type
 import type { Stroke } from '../ink/agent/strokes';
 import { animateScrollTo } from '../pdf/scroll';
 import { Follow, ScrollOwner } from './follow';
-import { routeConnector, maskBlocker, type Edge } from './route';
+import { routeGutter, maskBlocker } from './route';
 import { boardLayout, bodyPx, cropSpan, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, ViewRect } from './types';
 
@@ -167,17 +167,14 @@ export class Desk implements DeskApi {
     const live = () => ep === this.epoch && this.ids.get(spec.id) === sec;
     // A size=l sketch widens the split; it stays wide while such a section is on the board.
     const want: Split = this.sections.some((s) => s.size === 'l') ? 'wide' : 'normal';
-    if (!this.open || want !== this.split) await this.openBoard(want, before);
+    const moved = !this.open || want !== this.split;
+    if (moved) await this.openBoard(want, before);
     else this.position();
     if (!live()) { sec.el.classList.add('is-shown'); return 'desk reset'; }
-    // The column changed width: the slide being explained is framed again (whole, when it fits), so the
-    // split never leaves it half under the dock or out of the slides' band.
-    if (this.follow.following()) {
-      const whole = this.deskRect(spec.page, { x: 0, y: 0, w: 1000, h: (1000 * this.host.aspect(spec.page)) });
-      if (whole && !inView(whole, this.view())) await this.host.glideTo(() => {
-        const r = this.deskRect(spec.page, { x: 0, y: 0, w: 1000, h: (1000 * this.host.aspect(spec.page)) });
-        return r ? frameTop(r, this.view()) : this.host.scrollTop();
-      }, 450);
+    // The column changed: the slide being explained is framed again, its top on the board's top edge
+    // (the viewer's split framing), so the two columns read as one fitted frame.
+    if (moved && this.follow.following()) {
+      await this.host.scrollToPage(spec.page);
       if (!live()) { sec.el.classList.add('is-shown'); return 'desk reset'; }
     }
     // Rule 1: the new section is framed as it lands, so its first ink needs no pan.
@@ -273,7 +270,8 @@ export class Desk implements DeskApi {
     const group = svg.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
     const w: Wire = { page, region, section, reversed, svg, group, stroke: [], avoid };
     const stroke = this.route(w);
-    if (!stroke) return 'connector end off screen';
+    // No way from the anchor to the gutter clear of slide content (or no gutter: stacked): no connector.
+    if (!stroke) return 'no clean connector route';
     w.stroke = stroke;
     this.wireLayer.appendChild(svg);
     this.wires.push(w);
@@ -492,20 +490,28 @@ export class Desk implements DeskApi {
     w.svg.classList.toggle('is-hidden', !vis);
   }
 
-  /** Routes a wire for the current layout (view px) and fits its svg around it. Null when an end can't be placed. */
+  /**
+   * Routes a wire for the current layout (view px) and fits its svg around it: out of the anchor,
+   * level to the page edge clear of content, through the gutter, into the board (routeGutter).
+   * Null when an end can't be placed or no clean route exists (stacked: there is no gutter).
+   */
   private route(w: Wire): Stroke | null {
     const L = this.host.layout();
     const pageNo = w.page.t.page!;
     const p0 = this.deskRect(pageNo, w.page.r), q = this.viewRect(w.section, w.region.r);
-    if (!L || !p0 || !q || !this.open) return null;
+    const f = this.frame();
+    if (!L || !p0 || !q || !this.open || f.stacked || !f.board) return null;
     const top = this.host.scrollTop(), i = pageNo - 1;
     const p = { ...p0, y: p0.y - top };
     const page = { x: L.pageX, y: L.tops[i] - top, w: L.pageW, h: L.heights[i] };
-    const edge: Edge = this.frame().stacked ? { side: 'bottom', at: page.y + page.h } : { side: 'right', at: page.x + page.w };
-    // Around the page's printed content (its rendered canvas), when known: never across a figure if a clear band exists.
     const mask = this.host.contentMask?.(pageNo) ?? null;
-    const avoid = w.avoid.map((b) => this.viewRect(w.section, b)).filter((r): r is ViewRect => !!r);
-    let s = routeConnector(p, q, edge, { page, blocked: mask ? maskBlocker(mask, page) : undefined, avoid });
+    const { H } = this.host.viewport();
+    let s = routeGutter(p, q, {
+      page, gutterX: (page.x + page.w + f.board.x) / 2,
+      blocked: mask ? maskBlocker(mask, page) : undefined,
+      band: { y0: SAFE_TOP, y1: H - safeBottom() },
+    });
+    if (!s) return null;
     if (w.reversed) s = s.slice().reverse();
     const xs = s.map((v) => v.x), ys = s.map((v) => v.y);
     const box = { x: Math.min(...xs) - WIRE_PAD, y: Math.min(...ys) - WIRE_PAD, w: Math.max(...xs) - Math.min(...xs) + 2 * WIRE_PAD, h: Math.max(...ys) - Math.min(...ys) + 2 * WIRE_PAD };

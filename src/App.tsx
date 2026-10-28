@@ -334,7 +334,9 @@ export default function App() {
 
   // The dock follows the window (and the desk's column, through its state).
   useEffect(() => {
-    const apply = () => setViewportW(window.innerWidth);
+    // --m (the window margin) from the same function the layout uses, so CSS and JS edges match to the pixel.
+    const apply = () => { setViewportW(window.innerWidth); document.documentElement.style.setProperty('--m', `${margin(window.innerWidth)}px`); };
+    apply();
     window.addEventListener('resize', apply);
     return () => window.removeEventListener('resize', apply);
   }, []);
