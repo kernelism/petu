@@ -120,7 +120,14 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
 - `src/agent/{client,useAgent,prewarm,history}.ts` — NDJSON client, cut-off handling (plays what
   arrived), prewarm on ask-bar intent, follow-up history (narration only). `evalHooks.ts` is
   dev-only (`?eval`).
-- `server/` — `plugin.ts` (routes: `/api/ask`, `/api/prewarm`, `/api/spend`, `/api/judge` (eval
+- **Two stages, one stream** (`src/agent/twoStage.ts`, `server/scoutStream.ts`): `/api/scout` streams
+  the scout's JSON `{opener, pages, plan}` as NDJSON. The opener (the answer's first sentence or two,
+  tags on the visible page only, released clause by clause) plays at once; the moment pages and plan
+  are parsed, stage 2 is built and asked with the opener verbatim (`context.opener`, ALREADY SPOKEN)
+  and its script follows the opener's last word. A failed scout = stage 2 alone on the visible page.
+  The dock shows a faint static "…" while thinking and after the last word if the stream pauses.
+  `?debug` shows scout verdict, opener, stage-2 first text and the handoff gap.
+- `server/` — `plugin.ts` (routes: `/api/ask`, `/api/scout`, `/api/prewarm`, `/api/spend`, `/api/judge` (eval
   token), `/api/dev-pdf/`), `env.ts` (the only reader of the key and `PETU_*` knobs), `openai.ts`
   (request builder: explicit cache breakpoints after the system prompt (12h) and the page block
   (30m), `prompt_cache_key` per document; one retry before the first text), `sse.ts`,
