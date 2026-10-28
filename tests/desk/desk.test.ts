@@ -108,6 +108,8 @@ describe('Desk', () => {
     const d = new Desk(h, stage);
     await d.addRegion(spec('side', 4));
     const box = { x: 0, y: 0, w: 1000, h: 700 };
+    expect(d.isVisible({ region: 'side' }, box)).toBe(true); // framed as it was placed
+    h.s.top = 0; // the view moved elsewhere since
     expect(d.isVisible({ region: 'side' }, box)).toBe(false);
     expect(await d.reveal({ region: 'side' }, box)).toBe(true);
     expect(d.isVisible({ region: 'side' }, box)).toBe(true);
@@ -127,6 +129,8 @@ describe('Desk', () => {
     const h = fakeHost();
     const d = new Desk(h, stage);
     await d.addRegion(spec('side', 4));
+    h.s.top = 0;
+    vi.mocked(h.glideTo).mockClear();
     await d.frameBoth({ t: { page: 4 }, r: { x: 100, y: 100, w: 10, h: 10 } }, { t: { region: 'side' }, r: { x: 10, y: 10, w: 10, h: 10 } });
     expect(d.state().mode).toBe('c');
     expect(h.glideTo).toHaveBeenCalled();
@@ -142,6 +146,8 @@ describe('Desk', () => {
     const d = new Desk(h, stage);
     d.follow.setAnswering(true);
     await d.addRegion(spec('side', 4));
+    h.s.top = 0;
+    vi.mocked(h.glideTo).mockClear();
     h.user();
     expect(d.following()).toBe(false);
     expect(await d.reveal({ region: 'side' }, { x: 0, y: 0, w: 1000, h: 700 })).toBe(false);
@@ -322,6 +328,61 @@ describe('Desk under interruption', () => {
     expect(d.state().mode).toBe('b');
     expect(d.state().card).toBe(3);
   });
+  it('a C region placed off screen is framed as it is placed: the scroll glides alongside the column (rule 1)', async () => {
+    const h = slowHost();
+    const glides: { at: number; maxMs?: number }[] = [];
+    h.glideTo = vi.fn(async (top: () => number, maxMs?: number) => {
+      glides.push({ at: performance.now(), maxMs });
+      await new Promise((r) => setTimeout(r, maxMs ?? 450));
+      h.s.top = top();
+    });
+    const d = new Desk(h, stage);
+    d.follow.setAnswering(true);
+    const box = { x: 0, y: 0, w: 1000, h: 700 };
+    const t0 = performance.now();
+    let doneAt = NaN;
+    const a = d.addRegion(spec('s', 3, { place: 'right' })).then((r) => { doneAt = performance.now(); return r; });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(typeof (await a)).not.toBe('string');
+    expect(h.setColumn).toHaveBeenCalledOnce();
+    expect(glides).toHaveLength(1);
+    expect(glides[0].at - t0).toBeLessThan(5); // starts with the column glide, not after it
+    expect(glides[0].maxMs).toBeLessThanOrEqual(420); // and ends before the column commits
+    expect(doneAt - t0).toBeLessThan(470);
+    expect(d.isVisible({ region: 's' }, box)).toBe(true);
+    // Already framed: the first ink's reveal moves nothing.
+    expect(await d.reveal({ region: 's' }, box)).toBe(false);
+    expect(glides).toHaveLength(1);
+  });
+  it('a region placed on screen, or while the student drives, does not scroll (rules 1, 6)', async () => {
+    const h = fakeHost();
+    const d = new Desk(h, stage);
+    await d.addRegion(spec('s', 1, { place: 'right' }));
+    expect(h.glideTo).not.toHaveBeenCalled();
+    const h2 = fakeHost();
+    const d2 = new Desk(h2, document.createElement('div'));
+    d2.follow.setAnswering(true);
+    h2.user();
+    await d2.addRegion(spec('s', 4, { place: 'right' }));
+    expect(h2.glideTo).not.toHaveBeenCalled();
+  });
+  it('a reset while a new region is being framed leaves the scroll where it is (epoch)', async () => {
+    const h = slowHost();
+    let top: (() => number) | null = null;
+    h.glideTo = vi.fn(async (t: () => number, maxMs?: number) => { top = t; await new Promise((r) => setTimeout(r, maxMs ?? 450)); h.s.top = t(); });
+    const d = new Desk(h, stage);
+    const a = d.addRegion(spec('s', 3, { place: 'right' }));
+    await vi.advanceTimersByTimeAsync(50);
+    const target = top!();
+    expect(target).toBeGreaterThan(0);
+    h.s.top = 120; // mid-glide
+    const r = d.reset(0, { keepLanes: true });
+    expect(top!()).toBe(target); // a gone region's target holds, so the glide doesn't drift back
+    await vi.advanceTimersByTimeAsync(1000);
+    await r;
+    expect(await a).toBe('desk reset');
+    expect(h.glideTo).toHaveBeenCalledOnce();
+  });
 });
 
 describe('Director on a real Desk', () => {
@@ -350,5 +411,29 @@ describe('Director on a real Desk', () => {
     await vi.advanceTimersByTimeAsync(2000);
     expect(inkAt - (t0 + 450)).toBeGreaterThanOrEqual(0);
     expect(inkAt - (t0 + 450)).toBeLessThan(40);
+  });
+  it('a sketch-first answer off screen: the first region ink starts within 150ms of the sketch glide, with no second glide', async () => {
+    const h = fakeHost();
+    h.setColumn = vi.fn(async (lanes: Lanes, gaps: ReadonlyMap<number, number>, ms: number) => {
+      await new Promise((r) => setTimeout(r, ms));
+      h.s.lanes = lanes; h.s.gaps = gaps;
+    });
+    h.glideTo = vi.fn(async (top: () => number, maxMs?: number) => { await new Promise((r) => setTimeout(r, maxMs ?? 450)); h.s.top = top(); });
+    const desk = new Desk(h, document.createElement('div'));
+    let inkAt = NaN;
+    const build: BuildElement = async () => ({ target: { region: 's' }, bbox: { x: 200, y: 450, w: 100, h: 100 }, draw: async () => { inkAt = performance.now(); } });
+    const viewer = { numPages: () => 5, allLayers: () => [] } as unknown as ViewerApi;
+    const d = new Director({ viewer: () => viewer, desk: () => desk, settings: () => DEFAULTS, onScrolledTo: () => {}, build });
+    void d.begin(300);
+    const t0 = performance.now();
+    // Word 0 (no lead): the view is on page 1, the sketch goes beside page 3.
+    d.run({ kind: 'sketch', id: 's', page: 3, size: 'm', place: 'auto' }, t0);
+    d.run({ kind: 'point', region: 's', at: { x: 240, y: 500 } }, t0);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(h.setColumn).toHaveBeenCalledOnce();
+    expect(h.glideTo).toHaveBeenCalledOnce(); // the sketch's own framing; the ink's reveal moves nothing
+    expect(desk.isVisible({ region: 's' }, { x: 0, y: 0, w: 1000, h: 700 })).toBe(true);
+    const glideEnd = t0 + 420; // GLIDE_MS
+    expect(inkAt - glideEnd).toBeLessThan(150);
   });
 });

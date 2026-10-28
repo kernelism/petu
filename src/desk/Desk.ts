@@ -118,9 +118,18 @@ export class Desk implements DeskApi {
     const r: Region = { req: { ...spec }, mode: 'b', el, layers };
     this.regions.set(spec.id, r);
     this.last = { t: { region: spec.id }, r: WHOLE_REGION };
-    await this.relayout(GLIDE_MS, before);
     const live = () => ep === this.epoch && this.regions.get(spec.id) === r;
+    // Rule 1: a C region is framed as it is placed. When it lands off screen, the scroll glides
+    // alongside the column glide (ending before the column commits), so its first ink needs no pan.
+    const offScreen = () => live() && r.mode !== 'b' && this.mode === 'c' && this.follow.following() && !this.isVisible({ region: spec.id }, WHOLE_REGION);
+    const along = () => (offScreen() ? this.frameRegion(spec.id, GLIDE_MS) : Promise.resolve());
+    await this.relayout(GLIDE_MS, before, along);
     if (live() && r.mode === 'b' && this.follow.following()) await this.enterB(spec.id, spec.page, before);
+    else if (offScreen()) {
+      // No column change to glide alongside (or it left B first, or the frame drifted): pan now.
+      await before?.();
+      if (offScreen()) await this.frameRegion(spec.id, 450);
+    }
     if (this.regions.get(spec.id) === r) el.classList.add('is-shown');
     return live() ? this.region(spec.id) ?? 'desk reset' : 'desk reset';
   }
@@ -272,12 +281,28 @@ export class Desk implements DeskApi {
   private stageNow(page: number) { const { W, H } = this.host.viewport(); return stageLayout(W, H, this.host.aspect(page)); }
   private placed(): Placed[] { return [...this.regions.values()].map((r) => ({ ...r.req, mode: r.mode })); }
 
-  /** Rule 7: re-places every region for the current window from its request; moves frames between the desk and the stage. */
-  private async relayout(ms: number, before?: BeforeMove): Promise<void> {
+  /**
+   * Glides the scroll to frame region `id` whole. The target is re-read every frame from the committed
+   * layout; if the region goes (a reset), the last target holds, so the glide doesn't drift back.
+   */
+  private frameRegion(id: string, maxMs: number): Promise<void> {
+    let last = NaN;
+    return this.host.glideTo(() => {
+      const w = this.regions.has(id) ? this.where({ region: id }, WHOLE_REGION) : null;
+      if (w) last = frameTop(w.rect, this.view());
+      return Number.isNaN(last) ? this.host.scrollTop() : last;
+    }, maxMs);
+  }
+
+  /**
+   * Rule 7: re-places every region for the current window from its request; moves frames between the desk and the stage.
+   * `along` runs alongside the column glide, when there is one.
+   */
+  private async relayout(ms: number, before?: BeforeMove, along?: () => Promise<void>): Promise<void> {
     const { W, H } = this.host.viewport();
     const placed = placeAll([...this.regions.values()].map((r) => r.req), W, H);
     for (const p of placed) { const r = this.regions.get(p.id); if (r) r.mode = p.mode; }
-    await this.applyColumn(placed, ms, before);
+    await this.applyColumn(placed, ms, before, along);
     // The stage shows a region that is no longer B (the window grew, or it was reset): back to C.
     if (this.mode === 'b' && this.active && this.regions.get(this.active)?.mode !== 'b') await this.exitB(before);
     this.position();
@@ -288,7 +313,7 @@ export class Desk implements DeskApi {
     }
   }
 
-  private async applyColumn(placed: Placed[], ms: number, before?: BeforeMove) {
+  private async applyColumn(placed: Placed[], ms: number, before?: BeforeMove, along?: () => Promise<void>) {
     const { W } = this.host.viewport();
     const lanes = lanesFor(placed, W);
     const gaps = gapsFor(placed, W, column(W, lanes));
@@ -299,7 +324,7 @@ export class Desk implements DeskApi {
     }
     this.lanes = lanes;
     this.gaps = gaps;
-    await this.host.setColumn(lanes, gaps, ms);
+    await Promise.all([this.host.setColumn(lanes, gaps, ms), along?.()]);
   }
 
   /** Puts every frame and wire where the current layout says. */
