@@ -282,9 +282,17 @@ export function buildScoutRequest(r: ScoutRequest, cfg: ModelConfig, prewarm = f
   const tail = [`The student is looking at page ${r.page}.`];
   if (r.prior) tail.push(`PREVIOUS QUESTION (page ${r.prior.page}): ${r.prior.q}\nPREVIOUS ANSWER (spoken): ${r.prior.a.length > PRIOR_CHARS ? `${r.prior.a.slice(0, PRIOR_CHARS)}…` : r.prior.a}`);
   tail.push(`QUESTION: ${r.question}`);
+  if (r.candidates) tail.splice(tail.length - 1, 0, r.candidates);
   const prefix: unknown[] = [{ type: 'input_text', text: r.digest, ...bp(cfg.explicitCache, '30m') }];
-  // The same listing the answer gets (so prewarm and ask agree byte for byte), minus the image.
-  if (r.pageText) prefix.push({ type: 'input_text', text: r.pageText.replace(/; image attached\)/, '; listing only, no image)'), ...bp(cfg.explicitCache, '30m') });
+  // ctx=new, huge documents: the visible section at full detail, cached per section.
+  if (r.section) prefix.push({ type: 'input_text', text: r.section, ...bp(cfg.explicitCache, '30m') });
+  // The same listing the answer gets (so prewarm and ask agree byte for byte), minus the image —
+  // unless the page is a scan or draws its equations as outlines: then its image, at low detail.
+  const listing = r.image ? r.pageText : r.pageText?.replace(/; image attached(?=[;)])/, '; listing only, no image');
+  if (listing) prefix.push({ type: 'input_text', text: listing, ...(r.image ? {} : bp(cfg.explicitCache, '30m')) });
+  if (r.image) prefix.push({ type: 'input_image', image_url: img(r.image.b64), detail: 'low', ...bp(cfg.explicitCache, '30m') });
+  // Session memory: append-only, so each turn reads the earlier turns from cache.
+  if (r.memory) prefix.push({ type: 'input_text', text: r.memory, ...bp(cfg.explicitCache, '30m') });
   return {
     model: cfg.model, store: false, max_output_tokens: cfg.maxOutput, reasoning: { effort: cfg.effort },
     prompt_cache_key: scoutCacheKey(),
@@ -322,11 +330,11 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
     if (openerMs == null) openerMs = ms();
     emit({ t: 'opener', d: s, ms: ms() });
   };
-  const decide = (v: { pages: number[]; plan: string; fallback?: string }) => {
+  const decide = (v: { pages: number[]; plan: string; fallback?: string; find?: string[] }) => {
     if (verdict) return;
     say(gate.end());
-    verdict = { pages: v.pages, plan: v.plan, ms: ms(), usd: 0, ...(v.fallback ? { fallback: v.fallback } : {}), ...(gate.said ? { opener: gate.said } : {}), ...(openerMs != null ? { openerMs } : {}) };
-    if (!signal?.aborted) emit({ t: 'scout', pages: verdict.pages, plan: verdict.plan, ms: verdict.ms, ...(v.fallback ? { fallback: v.fallback } : {}), ...(gate.notes.length ? { notes: gate.notes } : {}) });
+    verdict = { pages: v.pages, plan: v.plan, ms: ms(), usd: 0, ...(v.fallback ? { fallback: v.fallback } : {}), ...(v.find?.length ? { find: v.find } : {}), ...(gate.said ? { opener: gate.said } : {}), ...(openerMs != null ? { openerMs } : {}) };
+    if (!signal?.aborted) emit({ t: 'scout', pages: verdict.pages, plan: verdict.plan, ms: verdict.ms, ...(v.fallback ? { fallback: v.fallback } : {}), ...(v.find?.length ? { find: v.find } : {}), ...(gate.notes.length ? { notes: gate.notes } : {}) });
   };
   const finish = (usd: number, u?: Usage): ScoutResult => {
     if (!verdict) decide(fallbackScout(r.page, 'scout ended without a verdict'));
@@ -338,7 +346,7 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
   if (!PRICES[cfg.model]) { decide(fallbackScout(r.page, `no price for ${cfg.model}`)); return finish(0); }
 
   const body = buildScoutRequest(r, cfg);
-  const est = estimateInputTokens(body, []);
+  const est = estimateInputTokens(body, r.image ? [{ w: 512, h: 512 }] : []);
   const id = randomUUID();
   const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput, cfg.fast), { kind: 'scout', model: cfg.model });
   if (refused) { decide(fallbackScout(r.page, 'cap')); return finish(0); }
@@ -358,7 +366,7 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
       // The opener's last sentence plays as soon as its string closes, not when the verdict comes.
       if (k === 'opener') say(gate.end());
       // The verdict once pages and plan are both in (the opener, first in the schema, is complete by then).
-      if ((k === 'pages' || k === 'plan') && 'pages' in f && 'plan' in f) decide(parseScout(JSON.stringify({ pages: f.pages, plan: f.plan }), r.numPages, r.page));
+      if ((k === 'pages' || k === 'plan') && 'pages' in f && 'plan' in f) decide(parseScout(JSON.stringify({ pages: f.pages, plan: f.plan, find: f.find }), r.numPages, r.page));
     },
   });
   try {
@@ -412,7 +420,7 @@ export async function scout(r: ScoutRequest, cfg: ModelConfig, d: Deps, signal?:
 }
 
 /** Writes the scout's prefix (instructions + digest) without generating output. */
-export async function prewarmScout(r: Pick<ScoutRequest, 'digest' | 'docHash' | 'numPages' | 'page' | 'docName' | 'pageText'>, cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {
+export async function prewarmScout(r: Pick<ScoutRequest, 'digest' | 'docHash' | 'numPages' | 'page' | 'docName' | 'pageText' | 'section'>, cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {
   if (!cfg.explicitCache) return { ok: false, usd: 0, reason: 'prewarm needs explicit caching (PETU_EXPLICIT_CACHE=0)' };
   if (!d.key) return { ok: false, usd: 0, reason: 'no key' };
   if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };

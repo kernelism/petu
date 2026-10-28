@@ -56,8 +56,10 @@ const FAIL_AFTER = import.meta.env.DEV && params.has('fail') ? Number(params.get
 const DEMO_PATH = !!DEV_SCRIPT || demoParam != null || FAIL_AFTER != null;
 /** Dev-only: ?eval installs window.__petu for the eval runner (src/agent/evalHooks.ts). */
 const EVAL = import.meta.env.DEV && params.has('eval');
+/** ?ctx=new: the tiered huge-PDF context (src/agent/context/tiers.ts); default old until verified. */
+const CTX = params.get('ctx') === 'new' ? 'new' : 'old';
 /** One context builder per opened document (src/agent/context/build.ts). */
-const MAKE_CONTEXT: MakeContext = (doc, name) => new ContextBuilder(doc, name);
+const MAKE_CONTEXT: MakeContext = (doc, name) => new ContextBuilder(doc, name, { ctx: CTX });
 const SAMPLE_URL = '/fixtures/epipolar.pdf';
 const SAMPLE_NAME = 'Stereo Vision — sample.pdf';
 const CAPTION_LINGER_MS = 2200;
@@ -174,6 +176,9 @@ function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
   return (
     <div className="debug" onClick={() => setOpen(false)} title="Click to collapse">
       {sc && <div className="debug-row" title={sc.fallback}><span>scout</span><span>p{sc.pages.join(' → p')} · {sc.ms}ms{sc.fallback ? ' · fallback' : ''}</span></div>}
+      {sc?.ctx && <div className="debug-row" title={sc.ctx.candidates.join('\n')}><span>context {sc.ctx.mode}</span><span>{sc.ctx.tier} · {Object.entries(sc.ctx.tokens).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(' · ')} tok · {sc.ctx.ms}ms{sc.ctx.printedOffset ? ` · printed = PDF − ${sc.ctx.printedOffset}` : ''}</span></div>}
+      {sc?.ctx?.candidates.length ? <div className="debug-row"><span>candidates</span><span>{sc.ctx.candidates.join(' · ')}</span></div> : null}
+      {sc?.find?.length ? <div className="debug-row"><span>scout find</span><span>{sc.find.map((f) => `"${f}"`).join(' · ')}</span></div> : null}
       {sc?.atMs != null && <div className="debug-row"><span>scout verdict</span><span>{sc.atMs}ms{sc.input ? ` · cached ${Math.round((100 * (sc.cached ?? 0)) / sc.input)}%` : ''}</span></div>}
       {opener != null && <div className="debug-row"><span>opener</span><span>{ms(opener)}</span></div>}
       {d.handoff != null && <div className="debug-row"><span>stage 2 first text</span><span>{ms(d.handoff)}</span></div>}

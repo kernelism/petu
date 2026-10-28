@@ -146,9 +146,9 @@ export function scoutLive(req: ScoutRequest, signal: AbortSignal, f: typeof fetc
           q.push(e.d);
         } else if (e.t === 'scout') {
           // The server parses already; parse again so a bad reply can never pass a bad page on.
-          const p = parseScout(JSON.stringify({ pages: e.pages, plan: e.plan }), req.numPages, req.page);
+          const p = parseScout(JSON.stringify({ pages: e.pages, plan: e.plan, find: e.find }), req.numPages, req.page);
           const fb = e.fallback ?? p.fallback;
-          decide({ pages: p.pages, plan: p.plan, ms: Math.round(now() - t0), usd: 0, ...(fb ? { fallback: fb } : {}) });
+          decide({ pages: p.pages, plan: p.plan, ms: Math.round(now() - t0), usd: 0, ...(fb ? { fallback: fb } : {}), ...(p.find ? { find: p.find } : {}) });
         } else if (e.t === 'end') { usd = typeof e.usd === 'number' ? e.usd : 0; cached = e.cached; input = e.input; }
       };
       for (;;) {

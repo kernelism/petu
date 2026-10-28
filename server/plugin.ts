@@ -171,7 +171,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     const c = body.context as AskContext;
     // The scout's prefix (instructions + digest + the visible page's listing) is per (digest, page);
     // the answer's is per (doc, page).
-    const sk = `scout:${createHash('sha1').update(c.docText).digest('hex')}:${c.page}`;
+    const sk = `scout:${createHash('sha1').update(c.docText).update(c.scoutSection ?? '').digest('hex')}:${c.page}`;
     const k = `${c.docHash}:${c.page}`;
     const fresh = (key: string) => { const at = prewarmed.get(key); return at != null && now() - at < PREWARM_TTL_MS; };
     const doScout = !fresh(sk), doPage = !fresh(k);
@@ -180,7 +180,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     if (doPage) remember(k);
     const [a, b] = await Promise.all([
       doPage ? prewarm(c, env.model, deps) : Promise.resolve({ ok: true, usd: 0, reason: 'deduped' }),
-      doScout ? prewarmScout({ digest: c.docText, docHash: c.docHash, docName: c.docName, numPages: c.numPages, page: c.page, pageText: c.pageText }, env.scout, deps) : Promise.resolve({ ok: true, usd: 0, reason: 'deduped' }),
+      doScout ? prewarmScout({ digest: c.docText, docHash: c.docHash, docName: c.docName, numPages: c.numPages, page: c.page, pageText: c.pageText, ...(c.scoutSection ? { section: c.scoutSection } : {}) }, env.scout, deps) : Promise.resolve({ ok: true, usd: 0, reason: 'deduped' }),
     ]);
     if (!a.ok) prewarmed.delete(k);
     if (!b.ok) prewarmed.delete(sk);
@@ -303,7 +303,9 @@ async function readJson(req: IncomingMessage, res: ServerResponse): Promise<any>
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 const isStr = (v: unknown): v is string => typeof v === 'string';
 /** Sane maxima for what the browser sends (it sends ≤ 1280 px images and much shorter text). */
-export const LIMITS = { imageSide: 2048, docText: 120_000, pageText: 60_000, pagesText: 120_000, images: 3, plan: 2_000, opener: 2_000, scoutPages: 6, searchText: 20_000, inkSummary: 4_000 };
+export const LIMITS = { imageSide: 2048, docText: 120_000, pageText: 60_000, pagesText: 120_000, images: 3, plan: 2_000, opener: 2_000, scoutPages: 6, searchText: 20_000, inkSummary: 4_000,
+  /** Tiered context (ctx=new): the section card, session memory, candidates. */
+  section: 60_000, memory: 20_000, candidates: 20_000 };
 const isImage = (v: any) => v != null && isStr(v.b64) && v.b64.length > 0 && typeof v.w === 'number' && typeof v.h === 'number' && v.w > 0 && v.h > 0 && v.w <= LIMITS.imageSide && v.h <= LIMITS.imageSide;
 
 export function validateContext(c: any): string | null {
@@ -320,6 +322,7 @@ export function validateContext(c: any): string | null {
   if (c.opener != null && (!isStr(c.opener) || c.opener.length > LIMITS.opener)) return 'context.opener must be a string of at most 2,000 characters';
   if (c.searchText != null && (!isStr(c.searchText) || c.searchText.length > LIMITS.searchText)) return 'context.searchText must be a string of at most 20,000 characters';
   if (c.ink != null && (!isStr(c.ink.summary) || c.ink.summary.length > LIMITS.inkSummary || (c.ink.crop != null && !isImage(c.ink.crop)))) return 'context.ink is malformed';
+  if (c.scoutSection != null && (!isStr(c.scoutSection) || c.scoutSection.length > LIMITS.section)) return 'context.scoutSection is too long';
   return null;
 }
 
@@ -332,6 +335,8 @@ export function validateScout(b: any): string | null {
   if (!isStr(b.digest) || !b.digest || b.digest.length > LIMITS.docText) return 'digest must be a string of at most 120,000 characters';
   if (b.pageText != null && (!isStr(b.pageText) || b.pageText.length > LIMITS.pageText)) return 'pageText must be a string of at most 60,000 characters';
   if (b.prior != null && !(isStr(b.prior.q) && isStr(b.prior.a) && isInt(b.prior.page) && b.prior.q.length <= 2000 && b.prior.a.length <= 20_000)) return 'prior must be { q, a, page }';
+  for (const k of ['section', 'memory', 'candidates'] as const) if (b[k] != null && (!isStr(b[k]) || b[k].length > LIMITS[k])) return `${k} must be a string of at most ${LIMITS[k].toLocaleString('en-US')} characters`;
+  if (b.image != null && !isImage(b.image)) return 'image must be { b64, w, h }';
   return null;
 }
 

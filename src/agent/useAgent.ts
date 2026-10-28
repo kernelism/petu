@@ -5,6 +5,7 @@ import type { PdfDoc } from '../pdf/loadPdf';
 import type { StudentStroke } from '../ink/student/store';
 import type { Grounding } from '../geometry/resolve';
 import { groundingOf, type PageGround } from './context/types';
+import type { ScoutContext } from './context/build';
 import type { AskContext, SpendSummary } from './protocol';
 import { twoStage } from './twoStage';
 import { AskError, askStream, capLine, getSpend, scoutLive, spendBlocked, spendPhase, type AskHandlers } from './client';
@@ -16,8 +17,12 @@ export type ContextSource = {
   warm(page: number): void;
   /** Stage 1: the deck digest (every page, trimmed). */
   digest(page: number, question?: string): Promise<string>;
-  /** Stage 2: the visible page and the scout's pages, with their grounds. */
-  build(page: number, question: string, ink: StudentStroke[], scout?: { pages: number[]; plan: string }): Promise<{ context: AskContext; grounds: PageGround[] }>;
+  /** Stage 2: the visible page and the scout's pages (and its `find` strings, resolved locally), with their grounds. */
+  build(page: number, question: string, ink: StudentStroke[], scout?: { pages: number[]; plan: string; find?: string[] }): Promise<{ context: AskContext; grounds: PageGround[]; found?: { q: string; page: number; via: string }[] }>;
+  /** Stage 1, tiered (ctx=new; old mode returns the digest): everything the scout reads. */
+  scout?(page: number, question: string, prior?: { q: string }): Promise<ScoutContext>;
+  /** A finished answer, for the session memory. */
+  remember?(t: { question: string; page: number; pages: number[]; script: string }): void;
   pagePrefix(page: number): Promise<AskContext>;
   /** The visible page's listing and ground (the opener's grounding). */
   visible(page: number): Promise<{ pageText: string; ground: PageGround }>;
@@ -103,18 +108,31 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
       const hist = history.last();
       const prior = hist[hist.length - 1];
       const hash = doc?.fingerprints?.[0] ?? name;
-      const [digest, vis] = await Promise.all([b.digest(a.page, a.question), b.visible(a.page)]);
+      const sc0 = b.scout ? await b.scout(a.page, a.question, prior) : null;
+      const [digest, vis] = sc0 ? [sc0.digest, { pageText: sc0.pageText, ground: sc0.ground }] : await Promise.all([b.digest(a.page, a.question), b.visible(a.page)]);
       if (signal.aborted) return;
       const live = scoutLive({
         question: a.question, ...(prior ? { prior } : {}), docName: name, docHash: hash, numPages: doc?.numPages ?? a.page,
         page: a.page, digest, pageText: vis.pageText, ...(phase ? { phase } : {}),
+        ...(sc0?.section ? { section: sc0.section } : {}), ...(sc0?.memory ? { memory: sc0.memory } : {}),
+        ...(sc0?.candidates ? { candidates: sc0.candidates } : {}), ...(sc0?.image ? { image: sc0.image } : {}),
       }, signal);
-      yield* twoStage({
-        live, visible: vis.ground, handlers: a.handlers, since,
-        build: (sc) => b.build(a.page, a.question, a.ink(), { pages: sc.pages, plan: sc.plan }),
+      // The session memory records what this answer taught once it has played (new mode).
+      let script = '';
+      let taught: number[] = [];
+      const stream = twoStage({
+        live, visible: vis.ground, handlers: a.handlers, since, ...(sc0 ? { ctx: sc0.info } : {}),
+        build: async (sc) => {
+          const r = await b.build(a.page, a.question, a.ink(), { pages: sc.pages, plan: sc.plan, ...(sc.find?.length ? { find: sc.find } : {}) });
+          for (const f of r.found ?? []) a.handlers.onNote?.(`find "${f.q}" → p${f.page} (${f.via})`);
+          taught = r.context.scout?.pages ?? sc.pages;
+          return r;
+        },
         ask: (context) => askStream({ question: a.question, history: hist, context, ...(phase ? { phase } : {}) }, signal, a.handlers),
         onGrounding: (pages) => a.onGrounding(groundingOf(pages)),
       }, signal);
+      for await (const c of stream) { script += c; yield c; }
+      if (!signal.aborted) b.remember?.({ question: a.question, page: a.page, pages: taught, script });
     } finally {
       inFlight.current--;
     }

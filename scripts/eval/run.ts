@@ -100,7 +100,9 @@ export async function captureEnd(chrome: Chrome, qdir: string, prefix: string): 
   writeFileSync(join(qdir, `${prefix}board.jpg`), Buffer.from(out.split(',')[1], 'base64'));
 }
 
-const urlFor = (base: string, open: StoredQuestion['open'], nogen: boolean) => `${base}/?src=${encodeURIComponent(open.src)}&page=${open.page}&eval${nogen ? '&nogen' : ''}`;
+/** PETU_CTX=old|new: which scout context the app builds (?ctx=; src/agent/context/tiers.ts). */
+const CTX = process.env.PETU_CTX === 'new' ? '&ctx=new' : '';
+const urlFor = (base: string, open: StoredQuestion['open'], nogen: boolean) => `${base}/?src=${encodeURIComponent(open.src)}&page=${open.page}&eval${nogen ? '&nogen' : ''}${CTX}`;
 const sha = (b: Buffer | string) => createHash('sha1').update(b).digest('hex');
 
 type Ctx = { base: string; dir: string; args: Args; phase: string; judge: boolean; replay: Record<string, StoredQuestion> | null };

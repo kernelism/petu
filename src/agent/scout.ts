@@ -23,10 +23,21 @@ export type ScoutRequest = {
   /** The visible page's listing (lines + marks, no image): what the opener may point at. */
   pageText?: string;
   phase?: string;
+  // Tiered context (ctx=new; src/agent/context/tiers.ts). All optional: without them the request is as before.
+  /** Huge documents: the visible section at full detail (cached after the digest/map). */
+  section?: string;
+  /** A scanned page or one whose equations are drawn as outlines: its image, read at low detail. */
+  image?: { b64: string; w: number; h: number };
+  /** Session memory: earlier answers on this document (append-only, cached at its end). */
+  memory?: string;
+  /** Per question (uncached, before the question): CANDIDATES and the printed-page note. */
+  candidates?: string;
 };
 
 /** The scout's verdict. `fallback` says why the visible page alone is used. */
 export type ScoutResult = { pages: number[]; plan: string; ms: number; usd: number; fallback?: string;
+  /** Labels or phrases the scout wants found (resolved locally into pages before stage 2). */
+  find?: string[];
   /** The opener as spoken (tags included; only what passed the visible-page filter). */
   opener?: string;
   /** From the scout request to its first opener sentence. */
@@ -38,12 +49,15 @@ export type ScoutResult = { pages: number[]; plan: string; ms: number; usd: numb
  */
 export type ScoutEvent =
   | { t: 'opener'; d: string; ms: number }
-  | { t: 'scout'; pages: number[]; plan: string; ms: number; fallback?: string; notes?: string[] }
+  | { t: 'scout'; pages: number[]; plan: string; ms: number; fallback?: string; notes?: string[]; find?: string[] }
   | { t: 'end'; usd: number; ms: number; cached?: number; input?: number };
 
 export const SCOUT_MAX_PAGES = 6;
 /** ≈ 80 words. */
 export const SCOUT_PLAN_CHARS = 600;
+/** The scout's `find` list: at most this many short strings. */
+export const SCOUT_FIND = 3;
+const FIND_CHARS = 80;
 
 /** The structured-output schema the scout model must follow. */
 export const SCOUT_SCHEMA = {
@@ -66,7 +80,7 @@ export const fallbackScout = (page: number, why: string, ms = 0, usd = 0): Scout
  * strings, duplicates and out-of-range pages (dropped), more than 6 pages (cut), a long plan (cut at
  * a word). No usable page → the visible page.
  */
-export function parseScout(text: string, numPages: number, visible: number): { pages: number[]; plan: string; fallback?: string } {
+export function parseScout(text: string, numPages: number, visible: number): { pages: number[]; plan: string; fallback?: string; find?: string[] } {
   let raw: unknown;
   const s = text.trim();
   try { raw = JSON.parse(s); } catch {
@@ -75,7 +89,7 @@ export function parseScout(text: string, numPages: number, visible: number): { p
     try { raw = JSON.parse(s.slice(a, b + 1)); } catch { return { pages: [visible], plan: '', fallback: 'scout returned bad JSON' }; }
   }
   if (raw == null || typeof raw !== 'object') return { pages: [visible], plan: '', fallback: 'scout returned no object' };
-  const o = raw as { pages?: unknown; plan?: unknown };
+  const o = raw as { pages?: unknown; plan?: unknown; find?: unknown };
   const pages: number[] = [];
   for (const v of Array.isArray(o.pages) ? o.pages : []) {
     const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v.replace(/^p/i, '')) : NaN;
@@ -83,8 +97,9 @@ export function parseScout(text: string, numPages: number, visible: number): { p
     if (pages.length >= SCOUT_MAX_PAGES) break;
   }
   const plan = clipWords(typeof o.plan === 'string' ? o.plan.replace(/\s+/g, ' ').trim() : '', SCOUT_PLAN_CHARS);
-  if (!pages.length) return { pages: [visible], plan, fallback: 'scout chose no valid page' };
-  return { pages, plan };
+  const find = (Array.isArray(o.find) ? o.find : []).filter((x): x is string => typeof x === 'string').map((x) => x.replace(/\s+/g, ' ').trim().slice(0, FIND_CHARS)).filter(Boolean).slice(0, SCOUT_FIND);
+  if (!pages.length) return { pages: [visible], plan, fallback: 'scout chose no valid page', ...(find.length ? { find } : {}) };
+  return { pages, plan, ...(find.length ? { find } : {}) };
 }
 
 function clipWords(s: string, n: number): string {

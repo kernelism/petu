@@ -23,6 +23,8 @@ export type AskContext = {
   docText: string;
   /** Cached block, part 2: the visible page's listing (text lines + marks). */
   pageText: string;
+  /** Prewarm only (ctx=new, huge documents): the scout's section card, so prewarm writes the scout's whole prefix. */
+  scoutSection?: string;
   /** JPEG of the visible page, base64 (no data: prefix). */
   image: { b64: string; w: number; h: number };
   /** Volatile tail: the listings (lines + marks) of the scout's other pages, in teaching order. */
@@ -49,7 +51,9 @@ export type AskEvent =
   | { t: 'scout'; pages: number[]; plan: string; ms: number; usd: number; fallback?: string;
       /** `ms`: the scout call to its verdict. `atMs`: the verdict, from Enter. `openerMs`: the call to its
        * first opener sentence. `opener`: what the opener said (script). `cached`/`input`: its tokens. */
-      atMs?: number; openerMs?: number; opener?: string; cached?: number; input?: number }
+      atMs?: number; openerMs?: number; opener?: string; cached?: number; input?: number;
+      /** The scout's `find` strings, and the context it read (?debug: tier, tokens per block, candidate pages). */
+      find?: string[]; ctx?: { mode: string; tier: string; tokens: Record<string, number>; candidates: string[]; printedOffset?: number; ms: number } }
   /** Client-side: stage 2's first text reached the player (ms from Enter); the opener's words were then due to end at `openerEndMs`. */
   | { t: 'handoff'; ms: number; openerEndMs?: number }
   /**

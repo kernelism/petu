@@ -22,6 +22,8 @@ export type TwoStage = {
   handlers: AskHandlers;
   /** ms since Enter. */
   since(): number;
+  /** ?debug: the context the scout read (tier, tokens per block, candidate pages). */
+  ctx?: NonNullable<Extract<AskEvent, { t: 'scout' }>['ctx']>;
 };
 
 export async function* twoStage(o: TwoStage, signal: AbortSignal): AsyncGenerator<string> {
@@ -35,6 +37,7 @@ export async function* twoStage(o: TwoStage, signal: AbortSignal): AsyncGenerato
         t: 'scout', pages: sc.pages, plan: sc.plan, ms: sc.ms, atMs, usd: c.usd, ...(sc.fallback ? { fallback: sc.fallback } : {}),
         ...(sc.openerMs != null ? { openerMs: sc.openerMs } : {}), ...(sc.opener ? { opener: sc.opener } : {}),
         ...(c.cached != null ? { cached: c.cached } : {}), ...(c.input != null ? { input: c.input } : {}),
+        ...(sc.find?.length ? { find: sc.find } : {}), ...(o.ctx ? { ctx: o.ctx } : {}),
       };
       o.handlers.onEvent?.(ev);
       o.handlers.onScout?.(ev);
