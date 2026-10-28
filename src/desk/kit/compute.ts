@@ -10,6 +10,21 @@ import { compileVars, lex, ExprError, type VarFn } from '../expr';
 
 export type Mat = number[][];
 export const MAX_DIM = 12;
+/** A generated grid (size=RxC fn=…) or one computed from it may be this large; past MAX_DIM it shows as an image. */
+export const MAX_IMG = 48;
+
+/** A seeded uniform generator (mulberry32 over a hash of `seed`): a block's noise is the same on every replay. */
+export function seededRand(seed: string): () => number {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) { h ^= seed.charCodeAt(i); h = Math.imul(h, 16777619); }
+  let a = h >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 /** "1,2,3;4,5,6" or "1 2 3; 4 5 6" → rows. Null unless every row has the same length (≤ 12×12) and every cell is a finite number. */
 export function parseVals(s: string | undefined): Mat | null {
@@ -48,8 +63,12 @@ export function stats(m: Mat): Stats {
 // Number formatting: tabular numerals, a true minus sign, no trailing zeros.
 
 const MINUS = '−';
-/** A value as the board writes it. `dp` fixes the decimals; otherwise integers stay whole and others get ~2 significant decimals. */
-export function fmt(v: number, dp?: number, frac = true): string {
+/**
+ * A value as the board writes it. `dp` fixes the decimals; otherwise integers stay whole and others
+ * get ~2 significant decimals (133.3, 0.33). Computed values are always decimals; `frac` is only for
+ * values the model itself wrote as fractions (kernel weights 1/9), which keep that form.
+ */
+export function fmt(v: number, dp?: number, frac = false): string {
   if (!Number.isFinite(v)) return Number.isNaN(v) ? '' : v > 0 ? '∞' : `${MINUS}∞`;
   let s: string;
   if (dp != null) s = v.toFixed(dp);
@@ -60,7 +79,7 @@ export function fmt(v: number, dp?: number, frac = true): string {
     else if (q) s = `${Math.round(v * q)}/${q}`;
     else {
       const a = Math.abs(v);
-      s = a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : v.toPrecision(2);
+      s = a >= 10 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : v.toPrecision(2);
       if (s.includes('.') && !s.includes('e')) s = s.replace(/0+$/, '').replace(/\.$/, '');
     }
   }
@@ -78,11 +97,11 @@ function fracDen(v: number): number | null {
   return null;
 }
 
-/** Whether a set of values reads well with fractions: every one is whole, a short decimal or a third/sixth/ninth. One 0.714… and the set stays decimal, so a column never mixes 1/3 with 0.71. */
+/** Whether a set of literal values reads well with fractions: every one is whole, a short decimal or a third/sixth/ninth. One 0.714… and the set stays decimal, so a column never mixes 1/3 with 0.71. */
 export const fractions = (xs: number[]) => xs.every((v) => !Number.isFinite(v) || Math.abs(v * 100 - Math.round(v * 100)) < 1e-9 || fracDen(v) != null);
 
 /** A value inside an expansion: negatives in parentheses, so `9·(−1)` reads right. */
-export const term = (v: number, dp?: number) => (v < 0 && fmt(v, dp) !== '0' ? `(${fmt(v, dp)})` : fmt(v, dp));
+export const term = (v: number, dp?: number, frac = false) => (v < 0 && fmt(v, dp, frac) !== '0' ? `(${fmt(v, dp, frac)})` : fmt(v, dp, frac));
 
 // ------------------------------------------------------------------------------------------------
 // Element-wise maps and zips over the safe expression parser.
@@ -90,8 +109,35 @@ export const term = (v: number, dp?: number) => (v < 0 && fmt(v, dp) !== '0' ? `
 /** Names a map's fn may use: x (the cell), y (the other block's cell, in a zip), and the source's stats. */
 export const MAP_VARS = ['x', 'y', 'mean', 'sum', 'min', 'max', 'norm', 'std', 'n', 'i'] as const;
 
-export function compileFn(src: string, names: readonly string[] = MAP_VARS): VarFn | null {
-  try { return compileVars(src, names); } catch (e) { if (e instanceof ExprError) return null; throw e; }
+export function compileFn(src: string, names: readonly string[] = MAP_VARS, rand?: () => number): VarFn | null {
+  try { return compileVars(src, names, rand ? { rand } : {}); } catch (e) { if (e instanceof ExprError) return null; throw e; }
+}
+
+/**
+ * The step a fn of the form (A) / B adds to its expansion: "1200 / 9 = " (the numerator and
+ * denominator evaluated), so a mean written out reads "(106 + … + 194) / 9 = 1200 / 9 = 133.3". Null otherwise.
+ */
+export function divisionStep(src: string, env: Record<string, number>, names: readonly string[], dp?: number): string | null {
+  const s = src.trim();
+  if (s[0] !== '(') return null;
+  let depth = 0, close = -1;
+  for (let i = 0; i < s.length; i++) { if (s[i] === '(') depth++; else if (s[i] === ')' && --depth === 0) { close = i; break; } }
+  if (close < 0) return null;
+  const rest = s.slice(close + 1).trim();
+  if (!/^[/÷]/.test(rest)) return null;
+  // The divisor must be one term (a number, a name, or one parenthesised group): in (A)/B*C the
+  // division is not the last step, so there is no "sum / n" to show.
+  const d = rest.slice(1).trim();
+  if (!/^(\d+(\.\d+)?|[A-Za-z]+)$/.test(d)) {
+    if (d[0] !== '(') return null;
+    let k = 0, end = -1;
+    for (let i = 0; i < d.length; i++) { if (d[i] === '(') k++; else if (d[i] === ')' && --k === 0) { end = i; break; } }
+    if (end !== d.length - 1) return null;
+  }
+  const num = compileFn(s.slice(1, close), names), den = compileFn(d, names);
+  if (!num || !den) return null;
+  const a = num(env), b = den(env);
+  return Number.isFinite(a) && Number.isFinite(b) ? `${fmt(a, dp)} / ${fmt(b, dp)} = ` : null;
 }
 
 const statEnv = (s: Stats) => ({ mean: s.mean, sum: s.sum, min: s.min, max: s.max, norm: s.norm, std: s.std, n: s.n });
@@ -136,7 +182,8 @@ export function substitute(src: string, env: Record<string, number>, dp?: number
     if (k.t === 'op' && k.v === '(') { opens.push(false); out.push('('); continue; }
     if (k.t === 'op' && k.v === ')') { out.push(opens.pop() ? '|' : ')'); continue; }
     if (k.t === 'num') out.push(fmt(k.v));
-    else if (k.t === 'id') out.push(k.v in env ? term(env[k.v], dp) : k.v === 'pi' ? 'π' : k.v === 'sqrt' ? '√' : k.v);
+    else if (k.t === 'id') out.push(k.v in env && toks[i + 1]?.v !== '(' ? term(env[k.v], dp) : k.v === 'pi' ? 'π' : k.v === 'sqrt' ? '√' : k.v);
+    else if (k.v === ',') out.push(', ');
     else if (k.v === '^') {
       const n = toks[i + 1];
       if (n?.t === 'num' && (n.v === 2 || n.v === 3)) { out.push(n.v === 2 ? '²' : '³'); i++; }
@@ -170,7 +217,7 @@ export function reduce(op: Reduce, xs: number[], ys?: number[], dp?: number, sho
   const done = (parts: string[], value: number): Expansion => ({ parts, result: fmt(value, dp), value });
   switch (op) {
     case 'sum': { const v = X.reduce((s, x) => s + x, 0); return done(n > 1 ? [...joinTerms(T), ' = '] : [], v); }
-    case 'mean': { const v = n ? X.reduce((s, x) => s + x, 0) / n : NaN; return done(['(', ...joinTerms(T), `) / ${n} = `], v); }
+    case 'mean': { const s = X.reduce((a, x) => a + x, 0), v = n ? s / n : NaN; return done(['(', ...joinTerms(T), `) / ${n} = `, ...(n > 1 ? [`${fmt(s, dp)} / ${n} = `] : [])], v); }
     case 'max':
     case 'min': { const v = n ? (op === 'max' ? Math.max(...X) : Math.min(...X)) : NaN; return done([`${op}(`, ...joinTerms(T, ', '), ') = '], v); }
     case 'norm': { const v = Math.sqrt(X.reduce((s, x) => s + x * x, 0)); return done(['√(', ...joinTerms(X.map((x) => `${term(x, dp)}²`)), ') = '], v); }
@@ -189,7 +236,7 @@ export function reduce(op: Reduce, xs: number[], ys?: number[], dp?: number, sho
 
 export type WinOp = 'sum' | 'mean' | 'max' | 'min';
 export type Window =
-  | { kind: 'weights'; w: Mat; flip?: boolean }
+  | { kind: 'weights'; w: Mat; flip?: boolean; /** the weights were written as fractions (1/9): keep that form */ frac?: boolean }
   | { kind: 'reduce'; kr: number; kc: number; op: WinOp }
   | { kind: 'fn'; kr: number; kc: number; src: string; fn: VarFn };
 export type WinSpec = Window & { same?: boolean; stride?: number };
@@ -243,7 +290,7 @@ export function winCell(input: Mat, r: number, c: number, s: WinSpec, dp?: numbe
   if (!wv) return null;
   const { v } = wv;
   if (s.kind === 'weights') {
-    const terms = v.map((x, k) => `${term(weightAt(s, k))}·${term(x)}`);
+    const terms = v.map((x, k) => `${term(weightAt(s, k), undefined, s.frac)}·${term(x)}`);
     const value = v.reduce((acc, x, k) => acc + weightAt(s, k) * x, 0);
     return { parts: [...joinTerms(terms), ' = '], result: fmt(value, dp), value };
   }
@@ -251,7 +298,8 @@ export function winCell(input: Mat, r: number, c: number, s: WinSpec, dp?: numbe
   const env: Record<string, number> = {};
   v.forEach((x, k) => { if (k < WIN_LETTERS.length) env[WIN_LETTERS[k]] = x; });
   const value = s.fn(env);
-  return { parts: [substitute(s.src, env), ' = '], result: fmt(value, dp), value };
+  const div = divisionStep(s.src, env, WIN_LETTERS.slice(0, v.length), dp);
+  return { parts: [substitute(s.src, env), ' = ', ...(div ? [div] : [])], result: fmt(value, dp), value };
 }
 
 /** The whole output of a window op (NaN where the fn is undefined). */

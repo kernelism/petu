@@ -7,6 +7,7 @@ import { rng } from '../ink/agent/strokes';
 import { fadeOut } from '../ink/agent/marks';
 import type { Settings } from '../settings/settings';
 import { Registry } from '../desk/registry';
+import { kitStore } from '../desk/kit/kit';
 import { regionRuns } from '../desk/runs';
 import { buildElement } from '../desk/elements';
 import { preloadMath } from '../desk/math';
@@ -95,6 +96,7 @@ export class Director {
    */
   run(raw: RawAction, at: number = now()): void {
     if (raw.kind === 'let') return; // definitions were taken when it was parsed (prefetch)
+    if (raw.kind === 'const') { if (!this.seen.has(raw)) kitStore(this.registry).defineConsts(raw.defs); return; }
     if (!this.seen.has(raw)) this.figures.note(raw); // callers that skip prefetch (tests, demos)
     const isInk = !isLayout(raw as Action);
     const a = (isInk ? raw : this.figures.resolve(raw)) as Action;
@@ -130,6 +132,7 @@ export class Director {
   /** As soon as an action is parsed: takes its point definitions (lookahead), warms caches (text runs, KaTeX). */
   prefetch(raw: RawAction): void {
     this.seen.add(raw);
+    if (raw.kind === 'const') { kitStore(this.registry).defineConsts(raw.defs); return; }
     this.figures.note(raw);
     if (raw.kind === 'let' || 'mark' in raw || 'through' in raw) return;
     const a = raw as Action;

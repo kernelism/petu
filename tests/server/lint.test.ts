@@ -9,7 +9,7 @@ const run = (s: string, cuts: number[] = []) => {
   return { out: out + l.end(), notes: l.notes };
 };
 
-const circles = (n: number) => Array.from({ length: n }, (_, i) => `Look ${i}. {{circle p=1 at=${i},${i} em}} `).join('');
+const circles = (n: number) => Array.from({ length: n }, (_, i) => `Look ${i}. {{circle p=1 at=${i},${i} r=30 em}} `).join('');
 
 describe('Lint (grammar checks only)', () => {
   it('passes text outside tags through untouched', () => {
@@ -25,7 +25,16 @@ describe('Lint (grammar checks only)', () => {
     const s = 'A {{wiggle p=1}} B {{highlight p=1 "open}} C {{ point on=s at=1,1 "P"}}';
     const { out, notes } = run(s);
     expect(out).toBe(s);
-    expect(notes).toEqual(['unknown tag "{{wiggle p=1}}"', 'unclosed quote in "{{highlight p=1 \\"open}}"']);
+    expect(notes).toEqual(['unknown tag "{{wiggle p=1}}"', 'unclosed quote in "{{highlight p=1 \\"open}}"', 'malformed (dropped): {{highlight p=1 "open}}']);
+  });
+  it('notes a malformed tag with its raw text, a hand-placed curve and a duplicated drawing; changes nothing', () => {
+    const s = 'A {{grid on=s id=g vals=1,2;3}} B {{curve on=s pts=O A B C L}} C {{arrow on=s from=O to=A}} D {{arrow on=s from=O to=A em}} E {{arrow on=s from=O to=B}}';
+    const { out, notes } = run(s);
+    expect(out).toBe(s);
+    expect(notes[0]).toBe('malformed (dropped): {{grid on=s id=g vals=1,2;3}}');
+    expect(notes[1]).toMatch(/^hand-placed curve \(5 points\)/);
+    expect(notes[2]).toMatch(/^duplicate drawing/);
+    expect(notes).toHaveLength(3);
   });
   it('gives identical results when the input is split at every offset', () => {
     const s = circles(4) + '{{sketch id=a near=p1}}{{bogus}} {{math on=a at=1,1 "\\frac{a}{b}" em}} {x} done';

@@ -1,5 +1,7 @@
 // scripts/eval/configs.ts — named model configs. Each sets env for the dev server the runner starts.
 import { worstCaseUsd } from '../../server/prices.ts';
+import { JUDGE_MAX_OUTPUT, SCOUT_MAX_OUTPUT } from '../../server/limits.ts';
+export { JUDGE_MAX_OUTPUT };
 
 export type Config = {
   name: string;
@@ -43,10 +45,11 @@ export const JUDGE_INPUT_TOKENS = 6000;
  * estimate), the deck digest (~3k) and the transcript.
  */
 export const JUDGE_INPUT_TOKENS_R3 = 16000;
-/** The server's judge max_output_tokens (server/openai.ts JUDGE_MAX_OUTPUT). */
-export const JUDGE_MAX_OUTPUT = 800;
+/** The scout's worst case per answer (stage 1, gpt-6.1-terra): system + deck digest + visible listing + question. */
+export const SCOUT_MODEL = 'gpt-6.1-terra';
+export const SCOUT_INPUT_TOKENS = 8000;
 
 export function plannedWorstUsd(c: Config, answers: number, judged: number, rubric: 'r2' | 'r3' = 'r2'): number {
-  return answers * worstCaseUsd(c.model, ASSUMED_INPUT_TOKENS, ASSUMED_MAX_OUTPUT, !!c.fast) +
+  return answers * (worstCaseUsd(c.model, ASSUMED_INPUT_TOKENS, ASSUMED_MAX_OUTPUT, !!c.fast) + worstCaseUsd(SCOUT_MODEL, SCOUT_INPUT_TOKENS, SCOUT_MAX_OUTPUT)) +
     judged * worstCaseUsd('gpt-6.1-sol', rubric === 'r3' ? JUDGE_INPUT_TOKENS_R3 : JUDGE_INPUT_TOKENS, JUDGE_MAX_OUTPUT);
 }

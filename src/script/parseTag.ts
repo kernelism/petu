@@ -16,7 +16,8 @@ const clamp = (n: number, hi: number) => Math.min(hi, Math.max(0, n));
 /** Region ids (`sketch id=`, `on=`): lowercased. */
 const id = (s?: string) => (s && ID.test(s.toLowerCase()) ? s.toLowerCase() : undefined);
 /** Element ids double as point names: case-sensitive (X and x are different points), ' → ′. */
-const eid = (s?: string) => { const n = s ? normName(s) : ''; return n && NAME.test(n) ? n : undefined; };
+/** An element id; a hyphen reads as an underscore (id=row-column is row_column everywhere). */
+const eid = (s?: string) => { const n = s ? normName(s.trim().replace(/-/g, '_')) : ''; return n && NAME.test(n) ? n : undefined; };
 const MARK_ID = /^#[a-z]\d{1,3}$/;
 /** An element id, or a part of a kit block (`g[2,3]`, `v[1:3]`). */
 const rid = (s?: string) => (s && isBlockRef(s) ? s : eid(s));
@@ -72,9 +73,19 @@ export function parseTag(body: string): RawAction | null {
 
   // {{let}}: its own keys are point names (case-sensitive, so `P=` is a point, not a page): the
   // target comes from the exact keys `on` / `p`, and every other key=value is a definition.
+  // {{const v=20 g=9.8}}: named numbers (expressions over earlier ones), case kept as written.
+  if (name === 'const') {
+    const defs = Object.entries(rawArgs).filter(([k, v]) => !dupKeys.has(k) && /^[A-Za-z][A-Za-z0-9_]{0,15}$/.test(k) && v.trim() && v.length <= 120).map(([k, v]) => [k, v.trim()] as [string, string]);
+    return defs.length ? { kind: 'const', defs } : null;
+  }
   if (name === 'let') {
     const on = rawArgs.on !== undefined ? id(rawArgs.on) : undefined;
     const page = on === undefined ? num(rawArgs.p) : undefined;
+    const scalarOf = (k: string, v: string) => k !== 'on' && k !== 'p' && !dupKeys.has(k) && /^[A-Za-z][A-Za-z0-9_]{0,15}$/.test(k) && !v.includes(',') && /^[-−+(.\d]|^(sqrt|pi|rad|deg|sin|cos|tan)\b/i.test(v.trim());
+    // Numbers in a let (v=20 g=9.8, no comma: not points) are constants, as a {{const}} would make them.
+    const scalars = Object.entries(rawArgs).filter(([k, v]) => scalarOf(k, v));
+    const allScalar = scalars.length > 0 && Object.keys(rawArgs).every((k) => k === 'on' || k === 'p' || scalars.some(([s]) => s === k));
+    if (allScalar && !flags.size && !quotes.length) return { kind: 'const', defs: scalars.map(([k, v]) => [k, v.trim()]) };
     if (on === undefined && (page === undefined || page < 1 || !Number.isInteger(page))) return null;
     const lit = on !== undefined ? worldPt : (v: string) => pt(v, 1000);
     const parsed: [string, PtArg][] = [];
@@ -269,10 +280,30 @@ export function parseTag(body: string): RawAction | null {
       };
     }
     case 'plot': {
-      const fn = args.fn?.trim(), domain = pair(args.domain), range = pair(args.range), axes = eid(args.axes);
-      if (!inRegion || !fn || fn.length > MAX_FN_CHARS || !domain || !(domain[1] > domain[0])) return null;
+      // Two expressions "a,b" (numbers or formulas over constants: t=0,2*v/g); split at the top-level comma.
+      const two = (s?: string): [string, string] | undefined => {
+        if (!s) return undefined;
+        let d = 0;
+        for (let i = 0; i < s.length; i++) { const ch = s[i]; if (ch === '(') d++; else if (ch === ')') d--; else if (ch === ',' && d === 0) { const a = s.slice(0, i).trim(), b = s.slice(i + 1).trim(); return a && b ? [a, b] : undefined; } }
+        return undefined;
+      };
+      const fn = args.fn?.trim(), range = pair(args.range), axes = eid(args.axes);
+      const tr = two(args.t);
+      const param = !!(tr && args.x && args.y);
+      const dsrc = two(args.domain);
+      const dnum = pair(args.domain);
+      if (!inRegion) return null;
+      if (!param && (!fn || fn.length > MAX_FN_CHARS || !dsrc)) return null;
+      if (!param && dnum && !(dnum[1] > dnum[0])) return null;
+      if (param && (args.x!.length > MAX_FN_CHARS || args.y!.length > MAX_FN_CHARS)) return null;
       if (range && !(range[1] > range[0])) return null;
-      return { kind: 'plot', ...target, fn, domain, ...(range ? { range } : {}), ...(axes ? { axes } : {}), ...dash, ...weight, ...mark };
+      const labelAt = args.label?.toLowerCase() === 'top' ? { labelAt: 'top' as const } : {};
+      const axisLabels = { ...(args.xlabel ? { xLabel: args.xlabel.slice(0, 40) } : !param && args.x ? { xLabel: args.x.slice(0, 40) } : {}), ...(args.ylabel ? { yLabel: args.ylabel.slice(0, 40) } : !param && args.y ? { yLabel: args.y.slice(0, 40) } : {}) };
+      return {
+        kind: 'plot', ...target,
+        ...(param ? { x: args.x!.trim(), y: args.y!.trim(), t: tr } : { fn, domainSrc: dsrc, ...(dnum && dnum[1] > dnum[0] ? { domain: dnum } : {}) }),
+        ...(range ? { range } : {}), ...(axes ? { axes } : {}), ...(quote ? { label: quote.slice(0, 40) } : {}), ...labelAt, ...axisLabels, ...dash, ...weight, ...mark,
+      };
     }
     case 'math': {
       const c = args.at ? undefined : P(args.center);

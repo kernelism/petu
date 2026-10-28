@@ -216,14 +216,14 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const cfg = CONFIGS[args.config];
   const phase = process.env.PETU_PHASE ?? 'dev';
-  const QUESTIONS = QSETS[args.qset];
-  const QSET = qsetId(QUESTIONS, args.qset);
+  const QUESTIONS: Question[] = args.ask ? [...QSETS[args.qset], { id: 'X1', split: 'dev', deck: args.ask.deck, page: args.ask.page, pick: 'hand', type: 'narrow', question: args.ask.question }] : QSETS[args.qset];
+  const QSET = qsetId(QSETS[args.qset], args.qset);
   const rubric = RUBRICS[args.rubric];
-  const errs = validateSet(QUESTIONS);
+  const errs = validateSet(QSETS[args.qset]);
   if (errs.length) throw new Error(`question set invalid: ${errs.join('; ')}`);
   await freeze(EVAL_DIR, args.qset);
   if (args.finish && args.replay) throw new Error('--finish and --replay are exclusive');
-  let qs = selectQuestions(args, cfg);
+  let qs = selectQuestions(args, cfg, QUESTIONS);
   // --finish completes a run that already generated (e.g. a crash in the judge step): it makes no new
   // answers, so it is not a new use of the test split.
   if (args.finish) qs = qs.filter((q) => existsSync(join(RUNS, args.finish!, q.id, 'result.json')));
@@ -232,7 +232,7 @@ async function main(): Promise<void> {
   const judge = wantsJudge(args, cfg);
 
   const date = new Date().toISOString().slice(0, 10);
-  const tag = args.config + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '') + (args.rubric !== 'r3' ? `-${args.rubric}` : '');
+  const tag = args.config + (args.ask ? '-ask' : '') + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '') + (args.rubric !== 'r3' ? `-${args.rubric}` : '');
   let runId = args.finish ?? runIdOf(date, tag, PROMPT_VERSION, QSET);
   if (!args.finish) for (let i = 2; existsSync(join(RUNS, runId)); i++) runId = `${runIdOf(date, tag, PROMPT_VERSION, QSET)}-${i}`;
   const dir = join(RUNS, runId);
@@ -354,7 +354,7 @@ async function main(): Promise<void> {
     writeJson(join(dir, 'summary.json'), summary);
     writeJson(join(dir, 'run.json'), { args, config: cfg, phase, replayOf: args.replay, ...(args.finish ? { finishedAt: new Date().toISOString() } : {}) });
     writeFileSync(join(dir, 'report.html'), renderReport(summary, items, readCalibration(dir, args.fakeJudge)));
-    console.log(`run ${runId}\n  answers ${summary.run.n}  judge mean ${summary.judge.mean?.toFixed(2) ?? '-'}  fatal ${summary.judge.fatal}  gen $${summary.genUsd.toFixed(3)}  judge $${summary.judge.usd.toFixed(3)}\n  open ${join(dir, 'report.html')}`);
+    console.log(`run ${runId}\n  skipped ${summary.run.sum.skippedTotal}  malformed ${summary.run.sum.malformed}  skip defects ${summary.run.skipDefects}/${summary.run.n}  first word p50 ${summary.run.firstWordMs.p50?.toFixed(0) ?? '-'} p90 ${summary.run.firstWordMs.p90?.toFixed(0) ?? '-'} ms\n  answers ${summary.run.n}  judge mean ${summary.judge.mean?.toFixed(2) ?? '-'}  fatal ${summary.judge.fatal}  gen $${summary.genUsd.toFixed(3)}  judge $${summary.judge.usd.toFixed(3)}\n  open ${join(dir, 'report.html')}`);
   } finally {
     for (const c of chromes) await c.close();
     server.stop();

@@ -131,7 +131,7 @@ export function renderTranscript(r: Pick<EvalResult, 'chunks' | 'timings'>): str
 // ---------------------------------------------------------------------------------------------
 // r3 (Eval v3): does the answer teach? Judged on a timeline of frames + the transcript.
 export const CRITERIA_R3 = ['understanding', 'illustration', 'deck', 'craft', 'economy'] as const;
-export const DEFECTS_R3 = ['board_copies_page', 'board_repeats_narration', 'written_not_drawn', 'drawing_appears_at_once', 'single_slide', 'wrong_page', 'padded', 'too_shallow', 'out_of_sync', 'cluttered'] as const;
+export const DEFECTS_R3 = ['board_copies_page', 'board_repeats_narration', 'written_not_drawn', 'drawing_appears_at_once', 'single_slide', 'wrong_page', 'padded', 'too_shallow', 'out_of_sync', 'cluttered', 'skipped_actions'] as const;
 
 export const RUBRIC_R3 = `You are judging a tutor. A student opened a PDF (lecture slides, a handout or a book), was looking at one page, and asked a question. The tutor answers by talking (the transcript) while it acts on screen: it scrolls to pages, highlights and marks things on the slides, and draws on a board beside them (sketches, plots, labelled diagrams, short equations). The bar is a great teacher at a whiteboard with the slides projected next to it: the student should come away understanding, not just holding an answer.
 
@@ -156,20 +156,20 @@ Score each criterion 1-5 (integers). Give a 5 only when you cannot name a concre
   2 a mark on the wrong thing, or a misread page. 1 ignores or contradicts the document.
   For a narrow question about the visible page, staying on it is right.
 - craft: is it well performed?
-  5 ink appears as its words are said; the board is laid out cleanly (aligned, spaced, nothing overlapping or cut off); every piece of board text is a label on a drawn thing or a new value or step the student must see written.
-  4 one lapse: one mark early or late, one cramped spot, or one redundant piece of board text.
+  5 ink appears as its words are said; the board is laid out cleanly (aligned, spaced, nothing overlapping or cut off); every drawn thing the student must tell apart is labelled; things compared share one scale; every piece of board text is a label on a drawn thing or a new value or step the student must see written; and everything the narration describes actually appears. Give 5 only when you cannot point to a single lapse.
+  4 one lapse: one mark early or late, one cramped spot, one unlabelled or mislabelled element, one stray or redundant piece of board text, or one action that never appeared (✗ in the transcript) while the narration talks about it.
   3 several lapses; or the board copies a formula or sentence the page already shows (it should point at it on the page instead); or the board writes out what the narration is saying (the voice carries the words, the board carries the picture).
   2 cluttered, overlapping or out of sync throughout. 1 unwatchable.
 - economy: does the depth fit the question?
-  5 exactly as long as understanding takes: a narrow question gets a focused answer, a broad one the walk it needs; no padding, no recap of what was just shown, no tangents.
-  4 slightly long or slightly thin in one place.
+  5 exactly as long as understanding takes: a narrow question gets a focused answer, a broad one the walk it needs; no padding, no recap of what was just shown, no tangents. Give 5 only when no sentence could be cut and no needed step is missing.
+  4 slightly long or slightly thin in one place: one restated point, one tangent or closing caveat the student did not need, or one step asserted where it needed a sentence more.
   3 noticeably padded (repetition, recap, filler, steps the student did not need) or noticeably too shallow (a one-liner for a broad question, skipping the step the student was stuck on).
   2 far too long or far too short for the question. 1 the length defeats the answer.
   Too shallow is as much a defect as too long.
 Off-topic questions (nothing to do with the document): one polite sentence that redirects to the document, with no drawing, is the intended answer. Score it 4-5 on every criterion and do not flag ignored_question.
 
 "defects": every one that applies, else an empty list:
-board_copies_page (board text repeats a formula or sentence that is on the page), board_repeats_narration (board text writes out what is being said), written_not_drawn (a list or text block where a drawing was needed), drawing_appears_at_once (the main illustration appears finished instead of building), single_slide (stays on one page when the idea needs others), wrong_page (goes to a page that does not help), padded, too_shallow, out_of_sync (ink lands away from its words), cluttered (overlapping, cramped or cut-off elements).
+board_copies_page (board text repeats a formula or sentence that is on the page), board_repeats_narration (board text writes out what is being said), written_not_drawn (a list or text block where a drawing was needed), drawing_appears_at_once (the main illustration appears finished instead of building), single_slide (stays on one page when the idea needs others), wrong_page (goes to a page that does not help), padded, too_shallow, out_of_sync (ink lands away from its words), cluttered (overlapping, cramped or cut-off elements), skipped_actions (more than two actions skipped, or a skipped one that the narration or later drawing depends on: the student never saw it).
 "fatal": every one that applies, else an empty list: wrong_fact, mark_on_wrong_thing, drawing_contradicts_narration, unreadable_overlap, ignored_question.
 "notes": at most 400 characters: the single change that would most improve this as a lesson.`;
 
@@ -261,7 +261,14 @@ export function buildJudgeRequestR3(a: { phase: string; question: string; result
   if (a.final) content.push({ type: 'input_text', text: 'Final state, after the answer finished:' }, { type: 'input_image', ...a.final, detail: 'high' });
   if (a.board) content.push({ type: 'input_text', text: 'The whole board at the end (scrolled content stitched top to bottom):' }, { type: 'input_image', ...a.board, detail: 'high' });
   content.push({ type: 'input_text', text: `Transcript:\n${renderTranscript(a.result)}` });
+  const sk = skippedOf(a.result);
+  content.push({ type: 'input_text', text: sk.length ? `Engine: ${sk.length} action(s) were skipped and never appeared: ${sk.join('; ')}.` : 'Engine: no action was skipped.' });
   return { phase: a.phase, instructions: RUBRIC_R3, schema: JUDGE_SCHEMA_R3.schema, name: JUDGE_SCHEMA_R3.name, content };
+}
+
+/** The engine's skip reasons for one turn ("grid id=o: unknown block img"), in order. */
+export function skippedOf(r: Pick<EvalResult, 'timings'>): string[] {
+  return r.timings.filter((t) => t.skipped).map((t) => `${String(t.action.kind ?? '?')}${t.action.id ? ` id=${String(t.action.id)}` : ''}: ${t.skipped}`);
 }
 
 /**

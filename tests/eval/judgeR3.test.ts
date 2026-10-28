@@ -39,12 +39,15 @@ describe('rubric r3', () => {
       frames: [{ ...img, caption: 'After sentence 1 of 2' }, { ...img, caption: 'After sentence 2 of 2' }], final: img, board: img });
     expect(r.instructions).toBe(RUBRIC_R3);
     expect(r.schema).toBe(JUDGE_SCHEMA_R3.schema);
-    expect(r.content.map((c) => c.type)).toEqual(['input_text', 'input_image', 'input_text', 'input_text', 'input_text', 'input_image', 'input_text', 'input_image', 'input_text', 'input_image', 'input_text', 'input_image', 'input_text']);
+    expect(r.content.map((c) => c.type)).toEqual(['input_text', 'input_image', 'input_text', 'input_text', 'input_text', 'input_image', 'input_text', 'input_image', 'input_text', 'input_image', 'input_text', 'input_image', 'input_text', 'input_text']);
     const texts = r.content.flatMap((c) => (c.type === 'input_text' ? [c.text] : []));
     expect(texts[1]).toContain('p1: x');
     expect(texts[3]).toBe('Frame 1. After sentence 1 of 2');
     expect(texts[4]).toBe('Frame 2. After sentence 2 of 2');
-    expect(texts.at(-1)).toContain('[circle p=2 mark=#d1 ✗ not parsed]');
+    expect(texts.at(-2)).toContain('[circle p=2 mark=#d1 ✗ not parsed]');
+    expect(texts.at(-1)).toBe('Engine: no action was skipped.');
+    const sk = buildJudgeRequestR3({ phase: 'x', question: 'Q', result: { chunks: [], timings: [{ action: { kind: 'grid', id: 'o' }, firedAt: 0, queuedAt: 0, startedAt: 0, endedAt: 0, skipped: 'unknown block img' }] }, page: img, digest: '', frames: [{ ...img, caption: 'c' }] });
+    expect((sk.content.at(-1) as { text: string }).text).toBe('Engine: 1 action(s) were skipped and never appeared: grid id=o: unknown block img.');
     const noBoard = buildJudgeRequestR3({ phase: 'x', question: 'Q', result: { chunks: [], timings: [] }, page: img, digest: '', frames: [{ ...img, caption: 'c' }] });
     expect(JSON.stringify(noBoard.content)).not.toContain('whole board');
   });

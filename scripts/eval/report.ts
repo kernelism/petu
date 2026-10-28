@@ -103,7 +103,7 @@ ${it.webkit ? imgs(it.webkit, 'WebKit still') : ''}
 <div><h3>Judge</h3>${scoresHtml(s)}
 <h3>Metrics</h3><table>${row('first word', ms(m.firstWordMs))}${row('first mark', ms(m.firstMarkMs))}${row('total', ms(m.totalMs))}
 ${row('cost', `$${m.usd.toFixed(4)}${m.estimated ? ' (est.)' : ''}`)}${row('cached', `${Math.round(m.cachedShare * 100)}%`)}
-${row('elements', m.elements)}${row('skipped', sk)}${row('malformed', m.malformed)}${row('linted', m.linted)}
+${row('elements', m.elements)}${row('skipped', sk + (m.skipDefect ? ' · SKIP DEFECT' : '') + (m.skippedDeps ? ` · ${m.skippedDeps} with dependents` : ''))}${row('malformed', m.malformed)}${row('linted', m.linted)}
 ${row('floating points', m.floatingPoints)}${row('label hits / clipped', `${m.labelHits} / ${m.labelsClipped}`)}${row('out of frame', m.outOfFrame)}
 ${row('words', m.words)}${row('leaks', m.leaks)}</table></div></div></article>`;
 }

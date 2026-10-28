@@ -9,6 +9,10 @@ export type Metrics = {
   ttftMs: number | null; firstWordMs: number | null; firstMarkMs: number | null; totalMs: number | null;
   usd: number; cachedShare: number; estimated: boolean;
   tags: number; malformed: number; linted: number; skipped: Record<string, number>; skippedTotal: number;
+  /** Skipped actions whose id a later action names (the student never saw what came after them either). */
+  skippedDeps: number;
+  /** A skip defect: more than two skips (malformed tags count), or a skipped action others depend on. */
+  skipDefect: boolean;
   elements: number; maxNewPerSentence: number;
   floatingPoints: number; onLineErrors: number;
   labelHits: number; labelsClipped: number; outOfFrame: number;
@@ -84,7 +88,7 @@ export function computeMetrics(r: EvalResult): Metrics {
   const text = r.chunks.map((c) => c.d).join('');
   const tags = (text.match(/\{\{/g) ?? []).length;
   // {{let}} only names points: it never becomes a timed action, so it is not a malformed tag.
-  const lets = (text.match(/\{\{\s*let\b/g) ?? []).length;
+  const lets = (text.match(/\{\{\s*(let|const)\b/g) ?? []).length;
   const drawn = r.timings.filter(drew);
   const firstDraw = drawn.reduce<SerialTiming | null>((m, t) => (m == null || (t.firedAt ?? Infinity) < (m.firedAt ?? Infinity) ? t : m), null);
   const firstMark = drawn.filter((t) => !LAYOUT.has(kindOf(t))).reduce<number | null>((m, t) => (m == null || t.startedAt! < m ? t.startedAt! : m), null);
@@ -113,6 +117,15 @@ export function computeMetrics(r: EvalResult): Metrics {
   const takeaway = !!first && wordCount(first.text) <= 18 && !HEDGE.test(first.text.trim()) &&
     r.timings.some((t) => drew(t) && !LAYOUT.has(kindOf(t)) && (t.firedAt ?? Infinity) <= first.endMs);
   const cached = done?.usage?.input_tokens_details?.cached_tokens ?? 0;
+  // A skipped block (or element) that later actions name by id: they lose their source or anchor too.
+  const order = r.timings.map((t, i) => ({ t, i })).sort((a, b) => (a.t.firedAt ?? 0) - (b.t.firedAt ?? 0) || a.i - b.i).map((x) => x.t);
+  const deps = order.filter((t, i) => {
+    const id = t.skipped ? t.action.id : undefined;
+    if (typeof id !== 'string' || !id) return false;
+    const re = new RegExp(`(^|[^A-Za-z0-9_])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9_]|$)`);
+    const strs = (v: unknown): string[] => (typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(strs) : v && typeof v === 'object' ? Object.values(v).flatMap(strs) : []);
+    return order.slice(i + 1).some((u) => { const { kind: _k, ...rest } = u.action; void _k; return strs(rest).some((x) => re.test(x)); });
+  }).length;
   const labels = labelStats(r.registry);
 
   return {
@@ -128,6 +141,8 @@ export function computeMetrics(r: EvalResult): Metrics {
     linted: done?.lint?.length ?? 0,
     skipped,
     skippedTotal: Object.values(skipped).reduce((a, b) => a + b, 0),
+    skippedDeps: deps,
+    skipDefect: Object.values(skipped).reduce((a, b) => a + b, 0) + Math.max(0, tags - lets - r.timings.length) > 2 || deps > 0,
     elements: drawn.filter((t) => !LAYOUT.has(kindOf(t))).length,
     maxNewPerSentence: maxNew,
     floatingPoints: floatingPoints(r.registry),
@@ -166,6 +181,8 @@ export type RunMetrics = {
   totalMs: { p50: number | null; p90: number | null };
   usd: number; meanUsd: number; cachedShare: number;
   takeawayFirstRate: number;
+  /** Answers with a skip defect (see Metrics.skipDefect). */
+  skipDefects: number;
   sum: Record<'tags' | 'malformed' | 'linted' | 'skippedTotal' | 'elements' | 'floatingPoints' | 'onLineErrors' | 'labelHits' | 'labelsClipped' | 'outOfFrame' | 'leaks' | 'droppedMessages', number>;
   mean: Record<'words' | 'longestSentence' | 'wordsBeforeFirstMark' | 'maxNewPerSentence' | 'planChars', number>;
   skipped: Record<string, number>;
@@ -183,6 +200,7 @@ export function aggregate(ms: Metrics[]): RunMetrics {
     ttftMs: pp('ttftMs'), firstWordMs: pp('firstWordMs'), firstMarkMs: pp('firstMarkMs'), totalMs: pp('totalMs'),
     usd: sum('usd'), meanUsd: mean('usd'), cachedShare: mean('cachedShare'),
     takeawayFirstRate: n ? ms.filter((m) => m.takeawayFirst).length / n : 0,
+    skipDefects: ms.filter((m) => m.skipDefect).length,
     sum: {
       tags: sum('tags'), malformed: sum('malformed'), linted: sum('linted'), skippedTotal: sum('skippedTotal'), elements: sum('elements'),
       floatingPoints: sum('floatingPoints'), onLineErrors: sum('onLineErrors'), labelHits: sum('labelHits'), labelsClipped: sum('labelsClipped'),

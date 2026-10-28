@@ -118,7 +118,7 @@ describe('kit blocks on the board', () => {
     await tag(e, 'scatter on=s id=d pts=1,1 2,2 3,3 4,4 2,4');
     await tag(e, 'fit on=s id=f of=d pick=1,4');
     await tag(e, 'band id=f w=0.2 "inside"');
-    expect(texts(layers.agent, '[data-kit] text').join(' ')).toContain('inside: 4');
+    expect(texts(layers.agent, '[data-kit] text').join(' ')).toContain('inside band: 4');
     await tag(e, 'fit on=s id=g of=d');
     await settle(e);
     expect(texts(layers.agent, '[data-kit] text').join(' ')).toMatch(/y = /);
@@ -166,10 +166,150 @@ describe('kit blocks on the board', () => {
     const glyph = (id: string) => st.get(id)!.placed.op?.glyph;
     expect(glyph('v')).toBeUndefined();
     expect(glyph('d')).toBe('→');
-    expect(glyph('c')).toBeUndefined(); // below: no default
+    expect(glyph('c')).toBe('↓'); // below its own source: ↓
     expect(glyph('n')).toBe('=');
     expect(glyph('m')).toBeUndefined();
     expect(glyph('q')).toBeUndefined(); // right of a block it is not computed from
+  });
+
+  it('below its source: ↓ by default, op= wins, op=none suppresses, → stacked points down, a plain block below gets none', async () => {
+    const { e } = env();
+    await tag(e, 'bars on=s id=u vals=1,2,3');
+    await tag(e, 'bars on=s id=a map=u fn="2*x" below=u');
+    await tag(e, 'bars on=s id=b map=a fn="x+1" below=a op==');
+    await tag(e, 'bars on=s id=c map=b fn="x+1" below=b op=none');
+    await tag(e, 'bars on=s id=d map=c fn="x+1" below=c op=→');
+    await tag(e, 'bars on=s id=f vals=4,5,6 below=d');
+    await tag(e, 'grid on=s id=g vals=1,2;3,4');
+    await tag(e, 'grid on=s id=h over=g win=1x2 reduce=sum below=g');
+    const st = kitStore(e.registry);
+    const glyph = (id: string) => st.get(id)!.placed.op?.glyph;
+    expect(glyph('a')).toBe('↓');
+    expect(glyph('b')).toBe('=');
+    expect(glyph('c')).toBeUndefined();
+    expect(glyph('d')).toBe('↓');
+    expect(glyph('f')).toBeUndefined();
+    expect(glyph('h')).toBe('↓');
+    // the glyph sits between the two blocks, under the source
+    const g = st.get('g')!, h = st.get('h')!;
+    expect(h.placed.op!.y).toBeGreaterThan(g.placed.rect.y + g.placed.rect.h - 1);
+    expect(h.placed.op!.y).toBeLessThan(h.placed.rect.y + 1);
+  });
+
+  it('a table column by its header: col fills it, map/zip/vals/scatter/labels/level read it; an unknown header appends', async () => {
+    const { e } = env();
+    await tag(e, 'table on=s id=t cols=P,Q,Ed vals=10,10;8,20;6,30');
+    await tag(e, 'col id=t.Ed fn="abs((b-pb)/pb)" dur=0');
+    await settle(e);
+    const st = kitStore(e.registry);
+    expect(st.get('t')!.vals!.map((r) => r[2])).toEqual([NaN, 1, 0.5]);
+    expect(st.get('t')!.tab!.heads).toEqual(['P', 'Q', 'Ed']);
+    await tag(e, 'bars on=s id=q vals=t.Q labels=t.P');
+    expect(st.get('q')!.vals).toEqual([[10, 20, 30]]);
+    await tag(e, 'bars on=s id=m map=t.q fn="x/10"'); // case-insensitive
+    expect(st.get('m')!.vals).toEqual([[1, 2, 3]]);
+    await tag(e, 'bars on=s id=z zip=t.P,t.Q fn="x*y"');
+    expect(st.get('z')!.vals).toEqual([[100, 160, 180]]);
+    await tag(e, 'scatter on=s id=d pts=t.P,t.Q');
+    expect(st.get('d')!.data!.map((p) => [p.x, p.y])).toEqual([[10, 10], [8, 20], [6, 30]]);
+    expect(typeof (await tag(e, 'level id=t.Q at=15 "15"'))).not.toBe('string');
+    expect(await tag(e, 'level id=t.Nope at=15')).toMatch(/no column Nope/);
+    expect(await tag(e, 'bars on=s id=n vals=t.Nope')).toMatch(/no column Nope/);
+    // a header the table lacks: a new column under that name
+    await tag(e, 'col id=t.R fn="a*b" dur=0');
+    await settle(e);
+    expect(st.get('t')!.tab!.heads).toEqual(['P', 'Q', 'Ed', 'R']);
+    expect(st.get('t')!.vals!.map((r) => r[3])).toEqual([100, 160, 180]);
+  });
+
+  it('view=image: a generated noisy image, shaded pixels and no numerals; a window sweeps it into an image', async () => {
+    const { e, layers } = env();
+    await tag(e, 'grid on=s id=img size=24x24 fn="(c>12)*100+20*randn()" view=image');
+    await tag(e, 'grid on=s id=k vals=1/9,1/9,1/9;1/9,1/9,1/9;1/9,1/9,1/9 right=img op=⊛');
+    expect(await tag(e, 'grid on=s id=o over=img slide=k right=k op==')).not.toBeTypeOf('string');
+    const st = kitStore(e.registry);
+    const img = st.get('img')!, o = st.get('o')!;
+    expect(img.view).toBe('image');
+    expect(o.view).toBe('image'); // 22×22: past 12, an image by default
+    expect(texts(layers.agent, '[data-kit="grid"] text').filter((t) => /\d/.test(t ?? '')).length).toBeLessThan(12); // only the kernel's numerals
+    expect(layers.agent.querySelectorAll('[data-kit="grid"] rect').length).toBeGreaterThan(24 * 24);
+    // the kernel keeps its literal fractions; a computed output never shows one
+    expect(texts(layers.agent, '[data-kit="grid"] text')).toContain('1/9');
+    // same noise on a rebuild (seeded by the id)
+    const again = env();
+    await tag(again.e, 'grid on=s id=img size=24x24 fn="(c>12)*100+20*randn()" view=image');
+    expect(kitStore(again.e.registry).get('img')!.vals).toEqual(img.vals);
+    await tag(e, 'sweep id=o dur=0.5');
+    await new Promise((r) => setTimeout(r, 1200));
+    await settle(e);
+    expect(o.win!.filled.flat().every(Boolean)).toBe(true);
+    expect(o.vals![0][0]).toBeCloseTo(o.full![0][0], 9);
+    const calc = texts(layers.agent, '[data-kit="calc"] text').join(' ');
+    expect(calc).not.toMatch(/\d+\/3\b/);
+  });
+
+  it('view=line: a vector as a curve; a second line shares its axes; set moves it and leaves a ghost', async () => {
+    const { e, layers } = env();
+    await tag(e, 'bars on=s id=y size=1x40 fn="sin(c/5)+0.3*randn()" view=line "noisy"');
+    await tag(e, 'bars on=s id=sm over=y win=1x5 reduce=mean axes=y "smoothed"');
+    const st = kitStore(e.registry);
+    const y = st.get('y')!, sm = st.get('sm')!;
+    expect(y.view).toBe('line');
+    expect(sm.plot).toBe(y.plot);
+    expect(sm.vals![0].length).toBe(36);
+    expect(sm.xs![0]).toBe(3); // a window's value sits at its centre
+    expect(layers.agent.querySelectorAll('[data-kit="bars"] path').length).toBeGreaterThanOrEqual(4);
+    const lbl = texts(layers.agent, '[data-kit="bars"] text');
+    expect(lbl).toContain('noisy');
+    expect(lbl).toContain('smoothed');
+    // a long vector is a line by default; a short one stays bars
+    await tag(e, 'bars on=s id=z size=1x30 fn="c"');
+    expect(st.get('z')!.view).toBe('line');
+    await tag(e, 'bars on=s id=w vals=1,2,3');
+    expect(st.get('w')!.view).toBeUndefined();
+    // a part of a line is its point; set tweens and widens the plot
+    await tag(e, 'bars on=s id=d vals=3,5,4 labels=1,2,4 view=line');
+    expect(st.get('d')!.xs).toEqual([1, 2, 4]);
+    expect(typeof (await tag(e, 'emph id=d[2]'))).not.toBe('string');
+    await tag(e, 'set id=d fn="x*3"');
+    await settle(e);
+    expect(st.get('d')!.vals).toEqual([[9, 15, 12]]);
+    expect(st.get('d')!.plot!.dom.y1).toBeGreaterThan(15);
+    expect(await tag(e, 'bars on=s id=q vals=1,2 axes=nope')).toMatch(/no line or plot nope/);
+  });
+
+  it('engine graphs: three trajectories from one formula and shared constants, one scale, apex labels', async () => {
+    const { e, layers } = env();
+    kitStore(e.registry).defineConsts([['v', '20'], ['g', '9.8']]);
+    const traj = (id: string, deg: number, extra = '') => `plot on=s id=${id} x="v*cos(rad(${deg}))*t" y="v*sin(rad(${deg}))*t-g*t^2/2" t=0,2*v*sin(rad(${deg}))/g "${deg}°" label=top ${extra}`;
+    expect(typeof (await tag(e, traj('p45', 45, 'xlabel=distance ylabel=height')))).not.toBe('string');
+    await tag(e, traj('p30', 30, 'axes=p45'));
+    await tag(e, traj('p60', 60, 'axes=p45'));
+    const st = kitStore(e.registry);
+    const top = (id: string) => Math.max(...st.get(id)!.vals![0].filter(Number.isFinite));
+    const land = (id: string) => st.get(id)!.xs!.at(-1)!;
+    expect(top('p60') / top('p30')).toBeCloseTo(3, 2); // sin²60 / sin²30
+    expect(top('p45') / top('p30')).toBeCloseTo(2, 2);
+    expect(land('p30')).toBeCloseTo(land('p60'), 6); // same range
+    expect(land('p45')).toBeCloseTo(400 / 9.8, 6);
+    expect(st.get('p30')!.plot).toBe(st.get('p45')!.plot); // one set of axes, one scale
+    const lbl = texts(layers.agent, '[data-kit="bars"] text');
+    for (const t of ['30°', '45°', '60°', 'distance', 'height']) expect(lbl).toContain(t);
+    // fn= over a domain written with constants; a bad formula is a reason, not a crash
+    expect(typeof (await tag(e, 'plot on=s id=r fn="v^2*sin(rad(2*x))/g" domain=0,90 "range"'))).not.toBe('string');
+    expect(Math.max(...st.get('r')!.vals![0])).toBeCloseTo(400 / 9.8, 3);
+    expect(await tag(e, 'plot on=s fn="q*x" domain=0,1')).toMatch(/bad fn/);
+    // points onto a plot's axes: one scale with the curve
+    await tag(e, 'scatter on=s id=pts pts=10,5 20,8 axes=r');
+    expect(st.get('pts')!.placed.body).toEqual(st.get('r')!.placed.body);
+    expect(st.get('pts')!.dom).toEqual(st.get('r')!.plot!.dom);
+  });
+
+  it('a letter past the width falls back to a header of that name (cols=x,y: t.y is y)', async () => {
+    const { e } = env();
+    await tag(e, 'table on=s id=t cols=x,y vals=1,2;3,4');
+    await tag(e, 'bars on=s id=v vals=t.y');
+    expect(kitStore(e.registry).get('v')!.vals).toEqual([[2, 4]]);
   });
 
   it('map and zip take any block as source: bars with a grid, a table column, a column grid with bars', async () => {

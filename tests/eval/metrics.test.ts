@@ -44,6 +44,19 @@ describe('computeMetrics', () => {
     expect(m.linted).toBe(2);
     expect(m.skipped).toEqual({ 'unknown point Q': 1 });
     expect(m.skippedTotal).toBe(1);
+    expect(m.skippedDeps).toBe(0);
+    expect(m.skipDefect).toBe(false);
+  });
+  it('a skipped block that later tags name is a skip defect; so are more than two skips', () => {
+    const r = base();
+    r.timings = [
+      tm('grid', 1000, null, null, { action: { kind: 'grid', id: 'img' }, skipped: 'bad fn' }),
+      tm('grid', 1100, 1100, 1200, { action: { kind: 'grid', id: 'o', src: { over: 'img', slide: 'k' } }, skipped: 'unknown block img' }),
+      tm('sweep', 1200, 1200, 1300, { action: { kind: 'sweep', ref: 'o' }, skipped: 'o is not a window\'s output' }),
+    ];
+    const d = computeMetrics(r);
+    expect(d.skippedDeps).toBe(2); // img is o's source; o is the sweep's target
+    expect(d.skipDefect).toBe(true);
   });
   it('elements and max per sentence', () => {
     expect(m.elements).toBe(2);

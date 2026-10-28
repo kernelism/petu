@@ -2,7 +2,7 @@
 import { EXAMPLES } from './examples.ts';
 
 /** Bump on any change: the eval records it with every run, and it is part of the cache prefix. */
-export const PROMPT_VERSION = 'p4.6';
+export const PROMPT_VERSION = 'p4.9';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -67,12 +67,14 @@ Right after the sketch tag, declare the figure in ONE {{let on=s O=0,0 L=0,-400 
   {{line on=s from=O through=M}}   a ray from O through M, on to the section's edge
 Constructions nest, as in meet(O,mid(A,B),C,D); no spaces inside a value. Never work out a crossing, a midpoint or "twice as far" yourself: write the construction, so every point lies exactly on its lines and nothing floats.
 Just before a sketch tag, write a short plan inside <plan>…</plan>: the given points, how each other point is constructed, the draw order. It is never shown or spoken.
-A graph of one quantity against another: an axes tag, then a plot tag. A curve's pts run in order along it (a wave through chosen points: left to right); a curve that doubles back on itself is skipped. One value per key: a bent path is several lines.
+A graph of one quantity against another: a plot tag; the engine draws its axes and ticks. A curve's pts run in order along it (a wave through chosen points: left to right); a curve that doubles back on itself is skipped. One value per key: a bent path is several lines.
 Look: main shapes plain; rays and sight lines weight=secondary; construction lines dash; surfaces {{shade on=s pts=O L P outline}}. Label a point as you draw it, {{point on=s at=P "P" dir=s}}; a line by naming it aloud, or {{label id=ray "light" dir=n}} on a line drawn with id=ray. em is the accent colour: keep it for what the student should leave with. {{emph id=ray}} draws attention back to something already drawn; {{fade id=ray}} dims what no longer matters.
 When the board redraws or extends something on a page, tie them: {{connect from=p4:#d3 to=s:X}} from a page mark, or {{connect from=p4:"words on the page" to=s:ray}} from words.
 WORKED NUMBERS. When the idea is a computation (values in a table or matrix, a vector, data points, a rule applied case by case), use the kit blocks below instead of strokes: the engine lays them out and computes every number. Never write a computed number yourself, on the board or in a tag; name the operation and let the engine show its result; in words, say what the result means (it jumps, it doubles, it stays put) rather than reciting the numbers. Pick example values that make the effect visible; when the page gives values, use the page's. Show the input, the operation and the output side by side, then let the computation happen on the board: step through the first case or two while you explain them, then sweep the rest while you say what the pattern shows.
+Then show the picture at scale: after one worked case, show what the computation does across the whole set (as a picture, a curve or a plot), so the student sees the effect, not only the arithmetic. When the student asks to see or visualize something, that picture is the answer.
 When the confusion is about what changes when an input changes, change the input on the board (set) and let the student watch what follows and what stays put.
-A block shows its id as its name, so the student knows what they are looking at: use the document's symbol (u, v) or a short word.`;
+A block shows its id as its name, so the student knows what they are looking at: use the document's symbol (u, v) or a short word. Name a block or a readout by the quantity it shows.
+FORMULAS. Anything that follows from a formula (a curve, a path, a table column, a length or height that depends on a value) is drawn by the engine from that formula: name its numbers once with const, then plot or compute from them; never place its points, heights or lengths by hand. Curves built from the same constants share one set of axes (axes=), so they compare on one scale. Label every curve and line you draw. To come back to something already drawn, use its id (emph it, point an arrow at it) rather than drawing it again.`;
 
 const GRAMMAR = `TAGS (key=value, "quoted text", bare flags; A, B, C are x,y, a name, a #mark or a construction)
 {{scroll p=4}}  {{scroll p=4 y=600}}
@@ -83,24 +85,28 @@ const GRAMMAR = `TAGS (key=value, "quoted text", bare flags; A, B, C are x,y, a 
 {{curve on=s pts=A B C}}  {{shade on=s pts=A B C outline}}  {{angle on=s at=B from=A to=C "θ"}}
 {{brace on=s from=A to=B "text"}} (bulges to the left of A→B, so right-to-left hangs below)
 {{write on=s at=A "label" size=m}}  {{math on=s at=A "a^2 + b^2 = c^2" size=m}} (at = left edge; TeX only inside math)
-{{axes on=s at=A size=600,400 x="time" y="speed" id=ax}}  {{plot on=s fn="x*x" domain=-2,2 axes=ax}}
+{{axes on=s at=A size=600,400 x="time" y="speed" id=ax}} bare axes for a sketch
+{{const a=2 T=3*a}} named numbers, for every formula after it (a value may use the ones before it)
+{{plot on=s id=p fn="a*x^2" domain=0,T xlabel="x" ylabel="y" "a·x²"}}  {{plot on=s id=c x="a*cos(t)" y="a*sin(t)" t=0,2*pi axes=p "circle" label=top}} (axes= draws onto p's axes, one scale, and works for a scatter too; label=top puts the label at the curve's highest point)
 {{let on=s A=0,0 B=along(A,C,2)}}  {{sketch id=s near=p4 fit}}  {{sketch id=t near=p4 size=l fit}}
 {{connect from=p4:#d3 to=s:X}}  {{connect from=p4:"quote" to=s:ray}}  {{emph id=ray}}  {{fade id=ray}}
 {{box on=s center=A size=200,120}}  {{write on=s center=A "label" size=m}} (centred on A)
 KIT (no fit or let needed; blocks place themselves; parts count from 1: g[2,3], g[1:2,1:3], v[4], t[3] is a table row)
 {{grid on=s id=g vals=0,0,9;0,0,9 shade cols=a,b,c "caption"}} (a value may be a fraction: 1/9)  {{bars on=s id=v vals=3,-1,2 labels=a,b,c}}
+{{grid on=s id=h size=20x20 fn="r*c+5*randn()" view=image}} cells as shaded squares, no numerals (always past 12×12); rand() and randn() are noise, the same on every replay
+{{bars on=s id=y size=1x40 fn="sin(c/4)+0.3*randn()" view=line "values"}} values as a curve (always past 16)  {{bars on=s id=z over=y win=1x5 reduce=mean axes=y "smoothed"}} on y's axes
 {{table on=s id=t cols=x,y,z vals=1,10;2,20}} (z has no values yet)  {{scatter on=s id=d pts=1,2 2,3.5 4,3 x="hours" y="score"}}
 right=g or below=g places a block beside another, op=⊛ (or · × = → − + ÷) between them
 {{grid on=s id=o over=g slide=k right=k op==}} k's weights slide over g, each cell a sum of products (same keeps g's size, flip flips k)
 {{grid on=s id=o over=g win=1x3 reduce=mean below=g}} (reduce=sum, max, min)  {{grid on=s id=o over=g win=2x2 fn="(d-c)/(b-a)"}} (a b c d: the window's cells)
-{{bars on=s id=z map=v fn="(x-mean)/std"}}  {{grid on=s id=z zip=g,h fn="(x-y)^2"}} (map and zip read any block or a column t.c: never redraw data in another form; right= its source draws →)  {{grid on=s id=z size=6x6 fn="r+c"}}  {{bars on=s id=w vals=t.c}} (column c of t)
+{{bars on=s id=z map=v fn="(x-mean)/std"}}  {{grid on=s id=z zip=g,h fn="(x-y)^2"}} (map and zip read any block or a column t.c, by letter or by header: t.price; never redraw data in another form; right= its source draws →, below= it ↓)  {{grid on=s id=z size=6x6 fn="r+c"}}  {{bars on=s id=w vals=t.c}} (column c of t)
 {{calc on=s of=v reduce=sum "total"}} a calculation line, expansion and result: reduce=sum, mean, max, min, norm, count, dot or cos; of=u,v fn="(x-y)^2"
 {{col id=t.c fn="(b-pb)/pb" dur=4}} fills column c row by row (a b c: this row, pa pb: the row above)  {{scatter on=s id=d pts=t.a,t.b}} follows t
 {{fit on=s id=f of=d}} least squares (pick=2,7: through points 2 and 7)  {{band id=f w=0.5 "inside"}}  {{dist from=d[4] to=f}}
 {{step id=o[1,2]}} the window moves to make that cell, the calc line shows its sum  {{sweep id=o dur=5}} the rest, cell by cell
 {{set id=v fn="x+20"}} changes an input; everything computed from it follows  {{level id=t.c at=1 "1"}} a reference line
 {{emph id=g[2,2]}}  {{emph id=g where="x>5"}}  {{fade id=g[1:2,1:3]}}  {{arrow on=s from=g[2,3] to=o[1,2]}}  {{box on=s at=g[1:3,1:3]}}  {{connect from=p4:"quote" to=s:g[2,2]}}
-fn: numbers, + - * / ^, abs sqrt exp log, == < >; x is the cell (y the second block's), with mean sum std norm min max n of the source.
+fn: numbers, + - * / ^, abs sqrt exp log sin cos tan rad deg round, min(a,b) max(a,b), == < >, and const names; x is the cell (y the second block's), with mean sum std norm min max n of the source.
 Any drawing takes em and id=NAME; strokes take dash and weight=primary, secondary or faint. ids are unique; names are case-sensitive (X and x differ), and ' becomes ′. A tag is one line, under 800 characters.
 A tag that can't be resolved is skipped and the narration goes on, so never make a sentence depend on one.`;
 
@@ -110,7 +116,13 @@ Earlier questions and your earlier answers come as narration only; their drawing
 If the document doesn't cover the question, say so, then scroll to the closest thing it does cover and point at it. Never present outside knowledge as the page's.
 Off-topic (nothing to do with the document): one friendly sentence and no tags, such as: That's outside these pages, but ask me anything about them.`;
 
+let cached: string | null = null;
+/** The developer prompt (built once: it is constant for a PROMPT_VERSION). */
 export function systemPrompt(): string {
+  return (cached ??= buildSystemPrompt());
+}
+
+function buildSystemPrompt(): string {
   const ex = EXAMPLES.map((e, i) => `EXAMPLE ${i + 1}\n${e.listing}${e.plan ? `\nPLAN (a first read of the whole document; pages in teaching order: ${e.pages.join(', ')}): ${e.plan}` : ''}\nQUESTION (the student is looking at page ${e.page}): ${e.question}\nSCRIPT:\n${e.script}`).join('\n\n');
   const head = 'EXAMPLES (invented documents: they show the moves, not a shape to copy; never reuse their wording, topics or length)';
   return [IDENTITY, TEACH, NO_DUP, TIMING, CONTEXT, POINTING, BOARD, GRAMMAR, SITUATIONS, head, ex].join('\n\n');
