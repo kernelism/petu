@@ -14,10 +14,12 @@ export type Args = {
   judge: boolean | null; // null = the config's default
   webkit: boolean;
   parallel: number;
+  /** Latency run (plan P3.2): focus the ask bar, wait this long (page prewarm on intent), then ask. 0 = ask at once. */
+  prewarmMs: number;
 };
 
 export function parseArgs(argv: string[]): Args {
-  const a: Args = { split: 'dev', config: 'terra-none', only: null, n: 1, replay: null, finish: null, judge: null, webkit: false, parallel: 4 };
+  const a: Args = { split: 'dev', config: 'terra-none', only: null, n: 1, replay: null, finish: null, judge: null, webkit: false, parallel: 4, prewarmMs: 0 };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const val = () => { const v = argv[++i]; if (v == null) throw new Error(`${k} needs a value`); return v; };
@@ -31,6 +33,7 @@ export function parseArgs(argv: string[]): Args {
       case '--judge': a.judge = true; break;
       case '--no-judge': a.judge = false; break;
       case '--webkit': a.webkit = true; break;
+      case '--prewarm': a.prewarmMs = 4000; break;
       case '--parallel': a.parallel = Math.min(4, Math.max(1, Math.floor(Number(val())))); break;
       default: throw new Error(`unknown flag ${k}`);
     }

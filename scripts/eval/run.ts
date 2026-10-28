@@ -1,6 +1,6 @@
 // scripts/eval/run.ts — the eval runner.
 //   node --experimental-strip-types scripts/eval/run.ts --split dev --config terra-none [--only D4,T2] [--n 2]
-//        [--replay <runId>] [--judge|--no-judge] [--webkit]
+//        [--replay <runId>] [--judge|--no-judge] [--webkit] [--prewarm]
 // Real app, real speed, headless Chrome over CDP. Outputs live in .petu/eval/ (gitignored).
 // Every model/judge call goes through the dev server (and its ledger); this file holds no key.
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -102,6 +102,8 @@ async function runQuestion(chrome: Chrome, ctx: Ctx, q: Question, rep: number): 
     for (const log of prior.turns) { turn = turns.length; turns.push(await chrome.eval<EvalResult>(`window.__petu.replay(${JSON.stringify(log)}).then(() => window.__petu.result())`)); }
   } else {
     if (q.ink) await chrome.eval(`window.__petu.inkAroundLargestMark(${q.page})`);
+    // --prewarm: the student's intent (ask bar focus) warms the page's cache, as typing would, before Enter.
+    if (ctx.args.prewarmMs) { await chrome.eval(`document.querySelector('.askbar input, .askbar textarea')?.focus()`); await sleep(ctx.args.prewarmMs); }
     turns.push(await chrome.eval<EvalResult>(`window.__petu.ask(${JSON.stringify(q.question)}).then(() => window.__petu.result())`));
     if (q.followUp) { turn = 1; turns.push(await chrome.eval<EvalResult>(`window.__petu.ask(${JSON.stringify(q.followUp)}).then(() => window.__petu.result())`)); }
   }
@@ -157,8 +159,9 @@ async function main(): Promise<void> {
   const judge = wantsJudge(args, cfg);
 
   const date = new Date().toISOString().slice(0, 10);
-  let runId = args.finish ?? runIdOf(date, args.config + (args.replay ? '-replay' : ''), PROMPT_VERSION, QSET);
-  if (!args.finish) for (let i = 2; existsSync(join(RUNS, runId)); i++) runId = `${runIdOf(date, args.config + (args.replay ? '-replay' : ''), PROMPT_VERSION, QSET)}-${i}`;
+  const tag = args.config + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '');
+  let runId = args.finish ?? runIdOf(date, tag, PROMPT_VERSION, QSET);
+  if (!args.finish) for (let i = 2; existsSync(join(RUNS, runId)); i++) runId = `${runIdOf(date, tag, PROMPT_VERSION, QSET)}-${i}`;
   const dir = join(RUNS, runId);
   mkdirSync(dir, { recursive: true });
 
@@ -186,9 +189,11 @@ async function main(): Promise<void> {
     const done: { q: Question; rep: number; stored: StoredQuestion; qdir: string; pageShot: Buffer }[] = [];
     let next = 0;
     if (args.finish) {
-      for (const q of todo) {
-        const qdir = join(dir, q.id);
-        done.push({ q, rep: 0, stored: readJson<StoredQuestion>(join(qdir, 'result.json')), qdir, pageShot: readFileSync(join(qdir, 'page.png')) });
+      // Every repetition the run made (D1, D1.2, …), not just the first.
+      for (const q of todo) for (let rep = 0; ; rep++) {
+        const qdir = join(dir, rep ? `${q.id}.${rep + 1}` : q.id);
+        if (!existsSync(join(qdir, 'result.json'))) break;
+        done.push({ q, rep, stored: readJson<StoredQuestion>(join(qdir, 'result.json')), qdir, pageShot: readFileSync(join(qdir, 'page.png')) });
       }
       next = jobs.length;
     }
@@ -220,7 +225,7 @@ async function main(): Promise<void> {
         let judgeRes: JudgeResult | undefined; let judgeUsd = 0;
         if (judge && last && sheet) {
           const key = sha(`${sha(sheet)}|${transcript}|${res.question}|${sha(RUBRIC)}`); // a rubric change re-judges
-          const old = priorRun ? join(priorRun, d.q.id, 'judge.json') : null;
+          const old = priorRun ? join(priorRun, args.finish ? id : d.q.id, 'judge.json') : null;
           if (old && existsSync(old) && readJson<{ key: string; judge: JudgeResult }>(old).key === key) {
             const prev = readJson<{ key: string; judge: JudgeResult; usd?: number }>(old);
             judgeRes = prev.judge; // unchanged answer: no new spend

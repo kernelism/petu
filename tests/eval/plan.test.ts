@@ -12,6 +12,10 @@ describe('args', () => {
     const a = parseArgs(['--split', 'both', '--config', 'sol-low', '--only', 'D4,T2', '--n', '2', '--replay', 'r1', '--no-judge', '--webkit']);
     expect(a).toMatchObject({ split: 'both', config: 'sol-low', only: ['D4', 'T2'], n: 2, replay: 'r1', judge: false, webkit: true });
   });
+  it('--prewarm waits 4s after focusing the ask bar (latency run, plan P3.2)', () => {
+    expect(parseArgs([]).prewarmMs).toBe(0);
+    expect(parseArgs(['--prewarm']).prewarmMs).toBe(4000);
+  });
   it('rejects bad input', () => {
     expect(() => parseArgs(['--split', 'x'])).toThrow();
     expect(() => parseArgs(['--config', 'nope'])).toThrow(/unknown config/);
