@@ -116,7 +116,13 @@ Earlier questions and your earlier answers come as narration only; their drawing
 If the document doesn't cover the question, say so, then scroll to the closest thing it does cover and point at it. Never present outside knowledge as the page's.
 Off-topic (nothing to do with the document): one friendly sentence and no tags, such as: That's outside these pages, but ask me anything about them.`;
 
+let cached: string | null = null;
+/** The developer prompt (built once: it is constant for a PROMPT_VERSION). */
 export function systemPrompt(): string {
+  return (cached ??= buildSystemPrompt());
+}
+
+function buildSystemPrompt(): string {
   const ex = EXAMPLES.map((e, i) => `EXAMPLE ${i + 1}\n${e.listing}${e.plan ? `\nPLAN (a first read of the whole document; pages in teaching order: ${e.pages.join(', ')}): ${e.plan}` : ''}\nQUESTION (the student is looking at page ${e.page}): ${e.question}\nSCRIPT:\n${e.script}`).join('\n\n');
   const head = 'EXAMPLES (invented documents: they show the moves, not a shape to copy; never reuse their wording, topics or length)';
   return [IDENTITY, TEACH, NO_DUP, TIMING, CONTEXT, POINTING, BOARD, GRAMMAR, SITUATIONS, head, ex].join('\n\n');

@@ -462,5 +462,5 @@ describe('createApi', () => {
     const res = fakeRes();
     await api.handle(fakeReq('POST', '/api/prewarm', JSON.stringify({ context: good().context })), res, () => {});
     expect(api.prewarmedCount()).toBe(2); // this page's answer prefix and the document's scout prefix
-  });
+  }, 20_000); // 300 prewarms, each through the ledger's file lock: ~3.5s alone, slower under a parallel run
 });
