@@ -54,3 +54,16 @@ describe('format', () => {
     expect(lineText(L('t9', 'B f', 10.4, 99.6, 20))).toBe('t9 100 10–30: B f');
   });
 });
+
+describe('format bounds', () => {
+  it('caps the visible page block at ~6k tokens, keeping the header and the marks', async () => {
+    const { VISIBLE_TOKENS } = await import('../../../src/agent/context/format');
+    const lines = Array.from({ length: 3000 }, (_, i) => L(`t${i + 1}`, `a fairly long line of tiny print number ${i + 1} on a dense page`, 50, i / 3, 500));
+    const s = formatVisible({ ...page, lines });
+    expect(s.length).toBeLessThanOrEqual(VISIBLE_TOKENS * 3.3 + 200);
+    expect(s.split('\n')[0]).toMatch(/^PAGE 40 \(visible/);
+    expect(s).toContain('\n…\n#d1 dot');
+    expect(s.endsWith('#i1 image 121,344 318×522')).toBe(true);
+    expect(formatVisible(page)).not.toContain('…');
+  });
+});

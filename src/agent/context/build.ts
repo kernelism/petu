@@ -31,16 +31,26 @@ export function textUsable(chars: string): { usable: boolean; few: boolean } {
  * One page's ground: text lines and figure marks in model coords. `OPS` is pdf.js's OPS table
  * (passed in so this runs with the browser build and with Node's legacy build alike).
  */
-export async function groundPage(page: PDFPageProxy, OPS: Record<string, number>): Promise<PageGround> {
+/** How long a page's operator list may take before the page is grounded from its text alone. */
+export const OPS_MS = 3000;
+
+export async function groundPage(page: PDFPageProxy, OPS: Record<string, number>, opts: { opsMs?: number } = {}): Promise<PageGround> {
   const vp = page.getViewport({ scale: 1 });
   const aspect = vp.height / vp.width;
   const tc = await page.getTextContent();
   const items = (tc.items as unknown[]).filter((i): i is TextItem => typeof (i as TextItem).str === 'string');
   // The operator list first: it loads the page's fonts, which the math-font repair reads.
-  const ol = await page.getOperatorList();
+  // A pathological page (huge pattern fills, thousands of images) can take seconds: past OPS_MS it
+  // is grounded from its text alone (no marks), so a question never waits on it.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const ol = await Promise.race([
+    page.getOperatorList().catch(() => null),
+    new Promise<null>((ok) => { timer = setTimeout(() => ok(null), opts.opsMs ?? OPS_MS); }),
+  ]);
+  clearTimeout(timer);
   const runs = itemsToRuns(items, vp.transform, vp.width, vp.height, tc.styles as Styles, fontLookup(page.commonObjs as never));
   const text = textUsable(runs.map((r) => r.text).join(''));
-  const { paths, images } = paintedFromOperatorList(ol as unknown as { fnArray: number[]; argsArray: unknown[][] }, OPS, vp.transform, vp.width, vp.height);
+  const { paths, images } = ol ? paintedFromOperatorList(ol as unknown as { fnArray: number[]; argsArray: unknown[][] }, OPS, vp.transform, vp.width, vp.height) : { paths: [], images: [] };
   const largeImage = images.some((im) => im.rect.w * im.rect.h > 0.25e6);
   // Few characters on a page that paints a scan or outlined glyphs, or a broken text layer.
   const noText = (text.few && (largeImage || paths.length >= 20)) || (!text.few && !text.usable);

@@ -151,3 +151,40 @@ describe('figureMarks', () => {
     expect(ms.length).toBeLessThanOrEqual(MAX_MARKS);
   });
 });
+
+describe('clusters', () => {
+  type B = { x0: number; y0: number; x1: number; y1: number };
+  /** The reference: merge any two clusters whose boxes are within pad, until none are. */
+  const slow = (bs: B[], pad: number) => {
+    let cs = bs.map((b) => ({ box: { ...b }, n: 1 }));
+    const near = (a: B, b: B) => a.x0 - pad <= b.x1 && b.x0 - pad <= a.x1 && a.y0 - pad <= b.y1 && b.y0 - pad <= a.y1;
+    for (let again = true; again;) {
+      again = false;
+      outer: for (let i = 0; i < cs.length; i++) for (let j = i + 1; j < cs.length; j++) if (near(cs[i].box, cs[j].box)) {
+        const a = cs[i].box, b = cs[j].box;
+        cs[i] = { box: { x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) }, n: cs[i].n + cs[j].n };
+        cs.splice(j, 1); again = true; break outer;
+      }
+    }
+    return cs;
+  };
+  const key = (cs: { box: B; n: number }[]) => cs.map((c) => `${c.box.x0},${c.box.y0},${c.box.x1},${c.box.y1}:${c.n}`).sort();
+  it('matches the reference single-linkage result', async () => {
+    const { clusters } = await import('../../../src/agent/context/marks');
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let k = 0; k < 20; k++) {
+      const bs = Array.from({ length: 60 }, () => { const x = rnd() * 1000, y = rnd() * 700, w = rnd() * 60, h = rnd() * 40; return { x0: x, y0: y, x1: x + w, y1: y + h }; });
+      expect(key(clusters(bs, 10))).toEqual(key(slow(bs, 10)));
+    }
+  });
+  it('is fast on thousands of boxes, chained or scattered', async () => {
+    const { clusters } = await import('../../../src/agent/context/marks');
+    const chain = Array.from({ length: 6000 }, (_, i) => ({ x0: i * 0.15, y0: (i % 7) * 50, x1: i * 0.15 + 0.1, y1: (i % 7) * 50 + 60 })).reverse();
+    const grid = Array.from({ length: 6000 }, (_, i) => ({ x0: (i % 80) * 12, y0: Math.floor(i / 80) * 12, x1: (i % 80) * 12 + 1, y1: Math.floor(i / 80) * 12 + 1 }));
+    const t0 = performance.now();
+    expect(clusters(chain, 10)).toHaveLength(1);
+    expect(clusters(grid, 2)).toHaveLength(6000);
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+});

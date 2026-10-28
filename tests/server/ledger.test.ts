@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from '../../server/ledger';
@@ -113,5 +113,76 @@ describe('prices', () => {
     const split = costUsd('gpt-6.1-terra', { input_tokens: 7265, output_tokens: 129, input_tokens_details: { cached_tokens: 0, cache_write_tokens: 7094, cache_write_tokens_details: { ttl_12h_tokens: 4092, ttl_30m_tokens: 3002 } } }, '12h');
     expect(split).toBeCloseTo((171 * 1 + 4092 * 2.5 + 3002 * 1.25 + 129 * 5) / 1e6, 10);
     expect(() => costUsd('gpt-9', { input_tokens: 1, output_tokens: 1 })).toThrow();
+  });
+});
+
+describe('Ledger across processes', () => {
+  it('concurrent writers in separate processes lose no entries (lockfile around every read-modify-write)', async () => {
+    const { buildSync } = await import('esbuild');
+    const { spawn } = await import('node:child_process');
+    const dir = mkdtempSync(join(tmpdir(), 'ledger-mp-'));
+    const bundle = join(dir, 'ledger.mjs');
+    buildSync({ entryPoints: [join(__dirname, '../../server/ledger.ts')], bundle: true, platform: 'node', format: 'esm', outfile: bundle, logLevel: 'silent' });
+    const worker = join(dir, 'worker.mjs');
+    writeFileSync(worker, `import { Ledger } from ${JSON.stringify(bundle)};
+const [path, tag, n] = process.argv.slice(2);
+const l = new Ledger(path, { totalUsd: 1000 });
+for (let i = 0; i < Number(n); i++) {
+  const id = tag + '-' + i;
+  if (l.reserve(id, 'dev', 0.01)) throw new Error('refused');
+  l.settle({ id, phase: 'dev', kind: 'answer', model: 'm', usd: 0.001 });
+}
+`);
+    const P = 6, N = 40;
+    await Promise.all(Array.from({ length: P }, (_, k) => new Promise<void>((ok, bad) => {
+      const c = spawn(process.execPath, [worker, path, `w${k}`, String(N)], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let err = '';
+      c.stderr.on('data', (d) => { err += d; });
+      c.on('exit', (code) => (code === 0 ? ok() : bad(new Error(`worker ${k} exited ${code}: ${err}`))));
+    })));
+    const f = JSON.parse(readFileSync(path, 'utf8'));
+    expect(f.entries).toHaveLength(P * N);
+    expect(new Set(f.entries.map((e: { id: string }) => e.id)).size).toBe(P * N);
+    expect(f.open ?? {}).toEqual({});
+    expect(existsSync(`${path}.lock`)).toBe(false);
+  }, 60_000);
+
+  it('takes over a lock left by a dead process, and one older than the stale limit', () => {
+    const l = new Ledger(path, { totalUsd: 40 }, day('2026-10-28'));
+    writeFileSync(`${path}.lock`, '999999 0');
+    l.settle({ id: 'a', phase: 'dev', kind: 'answer', model: 'm', usd: 0.01 });
+    writeFileSync(`${path}.lock`, `${process.pid} ${Date.now() - 60_000}`);
+    l.settle({ id: 'b', phase: 'dev', kind: 'answer', model: 'm', usd: 0.01 });
+    expect(JSON.parse(readFileSync(path, 'utf8')).entries.map((e: { id: string }) => e.id)).toEqual(['a', 'b']);
+    expect(existsSync(`${path}.lock`)).toBe(false);
+  });
+
+  it('keeps an existing file exactly: entries, prior and total are unchanged on open', () => {
+    const entries = Array.from({ length: 50 }, (_, i) => ({ id: `e${i}`, at: '2026-10-27T10:00:00.000Z', phase: 'iterate', kind: 'answer', model: 'gpt-6.1-terra', usd: 0.0123456789 * (i + 1) }));
+    writeFileSync(path, JSON.stringify({ version: 1, priorUsd: 0.0076, entries }));
+    const before = entries.reduce((s, e) => s + e.usd, 0.0076);
+    const l = new Ledger(path, { totalUsd: 40 }, day('2026-10-28'), 0);
+    expect(l.spent()).toBe(before);
+    expect(JSON.parse(readFileSync(path, 'utf8')).entries).toEqual(entries);
+  });
+});
+
+describe('Ledger daily cap', () => {
+  it('counts "today" in local time, not UTC', () => {
+    const tz = process.env.TZ;
+    process.env.TZ = 'America/New_York';
+    try {
+      // 22:00 New York on the 28th is 02:00 UTC on the 29th.
+      const l = new Ledger(path, { totalUsd: 40, dailyUsd: 0.1 }, () => new Date('2026-10-29T02:00:00Z'));
+      l.settle({ id: 'a', phase: 'founder', kind: 'answer', model: 'm', usd: 0.05 });
+      const f = JSON.parse(readFileSync(path, 'utf8'));
+      f.entries.push({ id: 'b', at: '2026-10-28T14:00:00.000Z', phase: 'founder', kind: 'answer', model: 'm', usd: 0.04 }); // 10:00 NY, same local day
+      f.entries.push({ id: 'c', at: '2026-10-28T03:00:00.000Z', phase: 'founder', kind: 'answer', model: 'm', usd: 0.5 }); // 23:00 NY the 27th
+      writeFileSync(path, JSON.stringify(f));
+      expect(l.summary().todayUsd).toBeCloseTo(0.09, 10);
+      expect(l.reserve('d', 'founder', 0.02)?.code).toBe('daily');
+    } finally {
+      if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz;
+    }
   });
 });

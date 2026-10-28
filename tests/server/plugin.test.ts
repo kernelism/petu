@@ -50,9 +50,11 @@ describe('parseEnv', () => {
 // ---- fake req / res -------------------------------------------------------------------------
 
 type FakeRes = ServerResponse & { body(): string; headersSent_: Record<string, string | number> };
-function fakeReq(method: string, url: string, body: string | Buffer = '', headers: Record<string, string> = {}): IncomingMessage {
+function fakeReq(method: string, url: string, body: string | Buffer = '', headers: Record<string, string | undefined> = {}): IncomingMessage {
   const r = Readable.from(body.length ? [Buffer.from(body)] : []) as unknown as IncomingMessage;
-  Object.assign(r, { method, url, headers });
+  // A same-origin request from the app by default; tests override any header (undefined removes it).
+  const h: Record<string, string | undefined> = { host: 'localhost:5180', ...(method === 'POST' ? { 'content-type': 'application/json' } : {}), ...headers };
+  Object.assign(r, { method, url, headers: Object.fromEntries(Object.entries(h).filter(([, v]) => v !== undefined)) });
   return r;
 }
 function fakeRes(): FakeRes {
@@ -135,6 +137,11 @@ describe('createApi', () => {
       { ...good(), context: { ...good().context, page: 4 } },
       { ...good(), context: { ...good().context, image: undefined } },
       { ...good(), context: { ...good().context, image: { b64: '', w: 1, h: 1 } } },
+      { ...good(), context: { ...good().context, image: { b64: 'AAAA', w: 4000, h: 100 } } },
+      { ...good(), context: { ...good().context, docText: 'x'.repeat(40_001) } },
+      { ...good(), context: { ...good().context, pageText: 'x'.repeat(60_001) } },
+      { ...good(), context: { ...good().context, searchText: 'x'.repeat(20_001) } },
+      { ...good(), context: { ...good().context, ink: { summary: 'x'.repeat(4_001) } } },
     ];
     for (const b of bad) {
       const res = fakeRes();
@@ -276,5 +283,106 @@ describe('createApi', () => {
     await api.handle(fakeReq('GET', '/src/main.tsx'), fakeRes(), () => { nexted = true; });
     expect(nexted).toBe(true);
     expect(existsSync(join(root, '.petu'))).toBe(true);
+  });
+
+  describe('only the app itself may call /api/* (DNS rebinding, cross-site POSTs)', () => {
+    const call = async (method: string, url: string, headers: Record<string, string | undefined>, body = '') => {
+      const { f, seen } = upstream(okChunks);
+      const api = createApi({ env: env(), root, fetch: f });
+      const res = fakeRes();
+      let nexted = false;
+      await api.handle(fakeReq(method, url, body, headers), res, () => { nexted = true; });
+      if (!nexted && !res.writableEnded) await new Promise((ok) => res.on('finish', ok));
+      return { res, seen, nexted };
+    };
+    const ask = JSON.stringify(good());
+
+    it('allows the app: localhost, 127.0.0.1 and [::1] hosts, same-origin Origin or none', async () => {
+      for (const h of [
+        { host: 'localhost:5180', origin: 'http://localhost:5180' },
+        { host: '127.0.0.1:5186', origin: 'http://127.0.0.1:5186' },
+        { host: '[::1]:5180', origin: 'http://[::1]:5180' },
+        { host: 'localhost:5180', origin: undefined },
+        { host: 'LOCALHOST:5180', origin: 'https://localhost:5180' },
+      ]) {
+        const { res, seen } = await call('POST', '/api/ask', h, ask);
+        expect(res.statusCode, JSON.stringify(h)).toBe(200);
+        expect(seen).toHaveLength(1);
+      }
+      expect((await call('GET', '/api/spend', { host: '127.0.0.1:5199' })).res.statusCode).toBe(200);
+      expect((await call('GET', '/api/dev-pdf/lec.pdf', { host: 'localhost:5180' })).res.statusCode).toBe(200);
+    });
+
+    it('403 on any other Host (a rebound DNS name), nothing sent upstream, no PDF served', async () => {
+      for (const host of ['evil.example:5180', 'localhost.evil.example:5180', '192.168.1.5:5180', '0.0.0.0:5180', undefined]) {
+        const a = await call('POST', '/api/ask', { host }, ask);
+        expect(a.res.statusCode, String(host)).toBe(403);
+        expect(a.seen).toHaveLength(0);
+        expect((await call('GET', '/api/dev-pdf/lec.pdf', { host })).res.statusCode).toBe(403);
+        expect((await call('GET', '/api/spend', { host })).res.statusCode).toBe(403);
+      }
+    });
+
+    it('403 on a foreign or mismatched Origin', async () => {
+      for (const origin of ['https://evil.example', 'http://localhost:5181', 'http://127.0.0.1:5180', 'null', 'file://']) {
+        const a = await call('POST', '/api/ask', { origin }, ask);
+        expect(a.res.statusCode, origin).toBe(403);
+        expect(a.seen).toHaveLength(0);
+        expect((await call('GET', '/api/spend', { origin })).res.statusCode).toBe(403);
+      }
+    });
+
+    it('415 on a POST that is not application/json (a no-preflight text/plain or form POST)', async () => {
+      for (const ct of ['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data; boundary=x', undefined]) {
+        for (const url of ['/api/ask', '/api/prewarm']) {
+          const a = await call('POST', url, { 'content-type': ct }, ask);
+          expect(a.res.statusCode, `${url} ${ct}`).toBe(415);
+          expect(a.seen).toHaveLength(0);
+        }
+      }
+      expect((await call('POST', '/api/ask', { 'content-type': 'application/json; charset=utf-8' }, ask)).res.statusCode).toBe(200);
+    });
+
+    it('OPTIONS (a CORS preflight) is refused without CORS headers', async () => {
+      const a = await call('OPTIONS', '/api/ask', { origin: 'https://evil.example', 'access-control-request-method': 'POST' });
+      expect([403, 405]).toContain(a.res.statusCode);
+      expect(a.res.headersSent_['access-control-allow-origin']).toBeUndefined();
+      const b = await call('OPTIONS', '/api/ask', {});
+      expect(b.res.statusCode).toBe(405);
+    });
+
+    it('leaves non-API paths to Vite (its own host check applies there)', async () => {
+      expect((await call('GET', '/src/main.tsx', { host: 'evil.example' })).nexted).toBe(true);
+    });
+  });
+
+  it('a hung system prewarm times out and frees the one-at-a-time slot', async () => {
+    let calls = 0;
+    const f = (async (_u: string, init: RequestInit) => {
+      calls++;
+      return new Promise((_ok, bad) => init.signal!.addEventListener('abort', () => bad(new DOMException('timeout', 'TimeoutError'))));
+    }) as unknown as typeof fetch;
+    const api = createApi({ env: env(), root, fetch: f, timeouts: { callMs: 20 } });
+    const post = async () => { const res = fakeRes(); await api.handle(fakeReq('POST', '/api/prewarm', JSON.stringify({ scope: 'system' })), res, () => {}); return JSON.parse(res.body()); };
+    expect(await post()).toMatchObject({ ok: false });
+    const n = calls;
+    expect(n).toBeGreaterThan(0);
+    expect(await post()).toMatchObject({ ok: false });
+    expect(calls).toBeGreaterThan(n); // not 'deduped' by a stuck slot
+  });
+
+  it('the prewarm dedupe map stays bounded', async () => {
+    const f = (async () => new Response(JSON.stringify({ usage: { input_tokens: 100, output_tokens: 0 } }), { status: 200 })) as unknown as typeof fetch;
+    let t = 0;
+    const api = createApi({ env: env(), root, fetch: f, now: () => t });
+    for (let p = 1; p <= 300; p++) {
+      const res = fakeRes();
+      await api.handle(fakeReq('POST', '/api/prewarm', JSON.stringify({ context: { ...good().context, numPages: 400, page: p } })), res, () => {});
+    }
+    expect(api.prewarmedCount()).toBe(256);
+    t += 26 * 60 * 1000; // past the TTL: the next prewarm clears every expired key
+    const res = fakeRes();
+    await api.handle(fakeReq('POST', '/api/prewarm', JSON.stringify({ context: good().context })), res, () => {});
+    expect(api.prewarmedCount()).toBe(1);
   });
 });

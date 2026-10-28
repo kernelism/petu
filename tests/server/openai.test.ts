@@ -340,3 +340,144 @@ describe('judge', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+// ---- timeouts, incomplete streams, booking of failed attempts -------------------------------
+
+/** A fetch whose replies can hang: 'hang' never answers (until aborted); { chunks, hang } streams then stalls. */
+function hangFetch(replies: ('hang' | { chunks: string[]; hang?: boolean } | { status: number; text?: string })[]) {
+  const calls: Call[] = [];
+  const f = (async (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    const r = replies.shift();
+    if (!r) throw new Error('unexpected fetch');
+    const signal = init.signal!;
+    const aborted = () => new DOMException('aborted', 'AbortError');
+    if (r === 'hang') return new Promise((_ok, bad) => { if (signal.aborted) bad(aborted()); signal.addEventListener('abort', () => bad(aborted())); });
+    if ('status' in r) return new Response(r.text ?? '', { status: r.status });
+    const enc = new TextEncoder();
+    let i = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (i < r.chunks.length) { c.enqueue(enc.encode(r.chunks[i++])); return; }
+        if (!r.hang) { c.close(); return; }
+        return new Promise<void>((ok) => { const stop = () => { c.error(aborted()); ok(); }; if (signal.aborted) stop(); else signal.addEventListener('abort', stop); });
+      },
+    }, { highWaterMark: 0 });
+    return new Response(body, { status: 200 });
+  }) as unknown as typeof fetch;
+  return { f, calls };
+}
+const fast = { headersMs: 30, idleMs: 30, callMs: 30 };
+const entries = () => JSON.parse(readFileSync(join(dir, 'spend.json'), 'utf8')).entries as any[];
+
+describe('ask: upstream timeouts', () => {
+  it('no response headers within the timeout: retried once (before any text), the stalled attempt is booked', async () => {
+    const { f, calls } = hangFetch(['hang', { chunks: okBody(['Hi there.']) }]);
+    const out = await run(req(), deps(f, { timeouts: fast }));
+    expect(calls).toHaveLength(2);
+    expect((calls[0].init.signal as AbortSignal).aborted).toBe(true);
+    expect(texts(out)).toBe('Hi there.');
+    expect(out[out.length - 1]).toMatchObject({ t: 'done', estimated: false });
+    // attempt 0 may have reached OpenAI: booked as an estimate next to the real answer
+    expect(entries()).toEqual([expect.objectContaining({ estimated: true, kind: 'answer' }), expect.objectContaining({ estimated: false, kind: 'answer' })]);
+    expect(JSON.parse(readFileSync(join(dir, 'spend.json'), 'utf8')).open).toEqual({});
+  });
+  it('both attempts time out: a network error, and both are booked', async () => {
+    const { f } = hangFetch(['hang', 'hang']);
+    const out = await run(req(), deps(f, { timeouts: fast }));
+    expect(out[out.length - 1]).toMatchObject({ t: 'error', code: 'network', retryable: true });
+    expect(entries()).toHaveLength(2);
+    expect(entries().every((e) => e.estimated)).toBe(true);
+  });
+  it('a stream that stalls after text: plays what arrived, then done and cut_off', async () => {
+    const chunks = [sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message' } }), ...textEvents('m1', ['Part one. '])];
+    const { f, calls } = hangFetch([{ chunks, hang: true }]);
+    const out = await run(req(), deps(f, { timeouts: fast }));
+    expect(texts(out)).toBe('Part one. ');
+    expect(out[out.length - 2]).toMatchObject({ t: 'done', estimated: true });
+    expect(out[out.length - 1]).toMatchObject({ t: 'error', code: 'cut_off' });
+    expect((calls[0].init.signal as AbortSignal).aborted).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+  it('a stream that stalls before any text: a network error, booked as an estimate', async () => {
+    const { f } = hangFetch([{ chunks: [sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message' } })], hang: true }]);
+    const out = await run(req(), deps(f, { timeouts: fast }));
+    expect(out[out.length - 1]).toMatchObject({ t: 'error', code: 'network' });
+    expect(out.some((e) => e.t === 'done')).toBe(false);
+    expect(entries()).toEqual([expect.objectContaining({ estimated: true })]);
+  });
+  it('non-streamed calls (judge, prewarm) time out and book the worst case', async () => {
+    const { f } = hangFetch(['hang', 'hang']);
+    const r = await prewarmSystem(cfg, deps(f, { timeouts: fast }));
+    expect(r).toMatchObject({ ok: false, reason: expect.stringMatching(/abort|timeout/i) });
+    expect(entries()).toEqual([expect.objectContaining({ kind: 'prewarm', estimated: true }), expect.objectContaining({ kind: 'prewarm', estimated: true })]);
+  });
+  it('a non-streamed call whose first try fails after sending books that try when the retry succeeds', async () => {
+    const { f } = hangFetch(['hang', { status: 200, text: JSON.stringify({ usage: { input_tokens: 4100, output_tokens: 0 } }) }]);
+    const r = await prewarmSystem(cfg, deps(f, { timeouts: fast }));
+    expect(r.ok).toBe(true);
+    expect(entries().map((e) => !!e.estimated)).toEqual([true, false]);
+  });
+});
+
+describe('ask: incomplete streams', () => {
+  const head = [sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message' } }), ...textEvents('m1', ['Part one. '])];
+  it('response.incomplete after text: done (with usage), then cut_off', async () => {
+    const { f } = fakeFetch([{ chunks: [...head, sse({ type: 'response.incomplete', response: { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, usage } })] }]);
+    const out = await run(req(), deps(f));
+    expect(out[out.length - 2]).toMatchObject({ t: 'done', estimated: false });
+    expect(out[out.length - 1]).toMatchObject({ t: 'error', code: 'cut_off' });
+  });
+  it('a body that ends without a terminal event: done, then cut_off', async () => {
+    const { f } = fakeFetch([{ chunks: head }]);
+    const out = await run(req(), deps(f));
+    expect(texts(out)).toBe('Part one. ');
+    expect(out[out.length - 2]).toMatchObject({ t: 'done', estimated: true });
+    expect(out[out.length - 1]).toMatchObject({ t: 'error', code: 'cut_off' });
+  });
+  it('a body that ends without any text or terminal event is an error, not an empty answer', async () => {
+    const { f } = fakeFetch([{ chunks: [sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message' } })] }]);
+    const out = await run(req(), deps(f));
+    expect(out[out.length - 1]).toMatchObject({ t: 'error', code: 'upstream' });
+    expect(out.some((e) => e.t === 'done')).toBe(false);
+  });
+  it('a complete answer has no cut_off', async () => {
+    const { f } = fakeFetch([{ chunks: okBody(['All here.']) }]);
+    const out = await run(req(), deps(f));
+    expect(out[out.length - 1]).toMatchObject({ t: 'done' });
+  });
+});
+
+describe('ask: abort estimates count everything generated', () => {
+  it('text held back from the client (the plan) counts toward the estimated output', async () => {
+    const plan = 'x'.repeat(1200);
+    const { f } = fakeFetch([{ chunks: okBody([`One. <plan>${plan}`, '</plan> Two.']) }]);
+    const ctl = new AbortController();
+    await run(req(), deps(f), (e) => { if (e.t === 'text') ctl.abort(); }, ctl.signal);
+    const [e] = entries();
+    expect(e.estimated).toBe(true);
+    expect(e.tokens.out).toBeGreaterThanOrEqual(Math.ceil((5 + 6 + 1200) / 3.2));
+  });
+});
+
+describe('estimateInputTokens: worst cases', () => {
+  it('counts non-ASCII text at one token per character', () => {
+    const ascii = estimateInputTokens(buildRequest(req({ context: { ...context, pageText: 'e'.repeat(3200) } }), cfg), []);
+    const accented = estimateInputTokens(buildRequest(req({ context: { ...context, pageText: 'é'.repeat(3200) } }), cfg), []);
+    const cjk = estimateInputTokens(buildRequest(req({ context: { ...context, pageText: '視'.repeat(3200) } }), cfg), []);
+    expect(accented - ascii).toBeGreaterThanOrEqual(3200 - 1000 - 1);
+    expect(cjk - ascii).toBeGreaterThanOrEqual(3200 - 1000 - 1);
+  });
+  it('sizes a JPEG by its own header when the claimed size is smaller', async () => {
+    const { jpegSize } = await import('../../server/openai');
+    // SOI, APP0 (len 16), SOF0 (len 17: precision 8, h=1500, w=2000, 3 components), EOI
+    const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, ...Array(14).fill(0), 0xff, 0xc0, 0x00, 0x11, 0x08, 0x05, 0xdc, 0x07, 0xd0, 0x03, ...Array(9).fill(0), 0xff, 0xd9]);
+    expect(jpegSize(bytes.toString('base64'))).toEqual({ w: 2000, h: 1500 });
+    expect(jpegSize('AAAA')).toBeNull();
+    const b64 = bytes.toString('base64');
+    const lie = buildRequest(req({ context: { ...context, image: { b64, w: 10, h: 10 } } }), cfg);
+    const { askImages } = await import('../../server/openai');
+    expect(askImages({ ...context, image: { b64, w: 10, h: 10 } })).toEqual([{ w: 2000, h: 1500 }]);
+    expect(estimateInputTokens(lie, askImages({ ...context, image: { b64, w: 10, h: 10 } }))).toBeGreaterThan(estimateInputTokens(lie, [{ w: 10, h: 10 }]) + 2000);
+  });
+});

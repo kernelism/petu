@@ -1,7 +1,7 @@
 // src/geometry/figure.ts
 import type { Pt } from '../script/types';
 import { REGION_H, REGION_W } from '../script/types';
-import { isLiteral, type PtArg, type PtExpr } from '../script/pointExpr';
+import { isLiteral, MAX_ABS, type PtArg, type PtExpr } from '../script/pointExpr';
 
 /** Room kept around a fitted figure for labels (region units). */
 export const FIT_MX = 80;
@@ -23,6 +23,10 @@ export type Unresolved = { missing: string } | { degenerate: string };
  */
 export class Figure {
   private defs = new Map<string, PtArg>();
+  /** Resolved names. Definitions are first-wins and never change, so a resolved name stays resolved;
+   *  misses and degenerate results are not kept (a later definition may fix them). Keeps resolution
+   *  linear in the number of names (each name's chain is walked once). */
+  private resolved = new Map<string, Pt>();
   private literals: Pt[] = [];
   private spans: { at: PtArg; offsets: Pt[] }[] = [];
   private fit: Fit | null;
@@ -54,12 +58,15 @@ export class Figure {
   private evalExpr(e: PtExpr, seen: Set<string>): Pt | Unresolved {
     if ('ref' in e) {
       if (e.ref.startsWith('#')) return this.marks(e.ref) ?? { missing: e.ref };
+      const hit = this.resolved.get(e.ref);
+      if (hit) return hit;
       if (seen.has(e.ref)) return { degenerate: `cycle at ${e.ref}` };
       const d = this.defs.get(e.ref);
       if (!d) return { missing: e.ref };
       seen.add(e.ref);
       const r = this.world(d, seen);
       seen.delete(e.ref);
+      if ('x' in r) this.resolved.set(e.ref, r);
       return r;
     }
     const pts: Pt[] = [];
@@ -68,6 +75,11 @@ export class Figure {
       if (!('x' in r)) return r;
       pts.push(r);
     }
+    const r = this.construct(e, pts);
+    return 'x' in r && !inRange(r) ? { degenerate: `${e.fn}() lands too far out` } : r;
+  }
+
+  private construct(e: Exclude<PtExpr, { ref: string }>, pts: Pt[]): Pt | Unresolved {
     switch (e.fn) {
       case 'mid': return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
       case 'along': return { x: pts[0].x + e.t * (pts[1].x - pts[0].x), y: pts[0].y + e.t * (pts[1].y - pts[0].y) };
@@ -84,7 +96,9 @@ export class Figure {
       const a = this.world(sp.at);
       if ('x' in a) for (const o of sp.offsets) pts.push({ x: a.x + o.x, y: a.y + o.y });
     }
-    if (!pts.length) return null;
+    const ok = pts.filter(inRange); // a far-out point would shrink the whole figure to a dot
+    if (!ok.length) return null;
+    pts.length = 0; pts.push(...ok);
     return {
       x0: Math.min(...pts.map((p) => p.x)), y0: Math.min(...pts.map((p) => p.y)),
       x1: Math.max(...pts.map((p) => p.x)), y1: Math.max(...pts.map((p) => p.y)),
@@ -121,13 +135,24 @@ export function fitBox(b: { x0: number; y0: number; x1: number; y1: number } | n
   return { s, dx: REGION_W / 2 - s * (b.x0 + w / 2), dy: REGION_H / 2 - s * (b.y0 + h / 2) };
 }
 
+const inRange = (p: Pt) => Number.isFinite(p.x) && Number.isFinite(p.y) && Math.abs(p.x) <= MAX_ABS && Math.abs(p.y) <= MAX_ABS;
+/** A crossing farther than this many segment lengths from BOTH segments is treated as parallel. */
+export const MEET_MAX_T = 20;
+
+/**
+ * Where line AB crosses line CD; null when they are parallel, nearly parallel (the crossing lies
+ * more than MEET_MAX_T lengths of AB from A and of CD from C), or out of range.
+ */
 export function meet(a: Pt, b: Pt, c: Pt, d: Pt): Pt | null {
   const r = { x: b.x - a.x, y: b.y - a.y }, s = { x: d.x - c.x, y: d.y - c.y };
   const den = r.x * s.y - r.y * s.x;
   const scale = Math.hypot(r.x, r.y) * Math.hypot(s.x, s.y);
   if (!scale || Math.abs(den) < 1e-9 * scale) return null;
   const t = ((c.x - a.x) * s.y - (c.y - a.y) * s.x) / den;
-  return { x: a.x + t * r.x, y: a.y + t * r.y };
+  const u = ((c.x - a.x) * r.y - (c.y - a.y) * r.x) / den;
+  if (Math.min(Math.abs(t), Math.abs(u)) > MEET_MAX_T) return null;
+  const p = { x: a.x + t * r.x, y: a.y + t * r.y };
+  return inRange(p) ? p : null;
 }
 
 export function foot(p: Pt, a: Pt, b: Pt): Pt | null {

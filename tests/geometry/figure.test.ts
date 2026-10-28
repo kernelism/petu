@@ -88,3 +88,51 @@ describe('constructions', () => {
     expect(d.y).toBeCloseTo(12); expect(d.x).toBeCloseTo(688);
   });
 });
+
+describe('nearly parallel meet() and far points', () => {
+  it('meet() of nearly parallel lines is degenerate, not a point thousands of units away', () => {
+    // two lines 1° apart: they cross ~5,700 units out
+    const a = { x: 0, y: 0 }, b = { x: 100, y: 0 }, c = { x: 0, y: 100 }, d = { x: 100, y: 100 - 100 * Math.tan(Math.PI / 180) };
+    expect(meet(a, b, c, d)).toBeNull();
+    // a well-conditioned crossing outside both segments still resolves
+    expect(meet({ x: 0, y: -400 }, { x: 200, y: -150 }, { x: 0, y: 0 }, { x: 200, y: 0 })).toEqual({ x: 320, y: 0 });
+    // a short direction pair meeting a long line within its span still resolves
+    expect(meet({ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 500 }, { x: 1000, y: 500 })).toEqual({ x: 500, y: 500 });
+  });
+  it('a nearly parallel meet in a fitted figure is skipped and does not collapse the fit', () => {
+    const f = new Figure(true);
+    f.define('A', { x: 0, y: 0 }); f.define('B', { x: 100, y: 0 });
+    f.define('C', { x: 0, y: 100 }); f.define('D', { x: 100, y: 99.9 });
+    f.define('X', P('meet(A,B,C,D)'));
+    expect(f.world({ ref: 'X' })).toMatchObject({ degenerate: expect.any(String) });
+    expect(f.extent()).toEqual({ x0: 0, y0: 0, x1: 100, y1: 100 });
+  });
+  it('extent() ignores points beyond the coordinate limit', () => {
+    const f = new Figure(true);
+    f.define('A', { x: 0, y: 0 }); f.define('B', { x: 100, y: 100 });
+    f.define('Far', { x: -250_000, y: 40 }); // not parseable from a tag, but reachable by construction
+    f.define('M', P('mid(A,Far)'));
+    expect(f.world({ ref: 'M' })).toMatchObject({ degenerate: expect.any(String) });
+    expect(f.extent()).toEqual({ x0: 0, y0: 0, x1: 100, y1: 100 });
+  });
+});
+
+describe('name resolution cost', () => {
+  it('resolves a deep chain of names that each reference two earlier names in linear time', () => {
+    const f = new Figure(true);
+    f.define('A0', { x: 0, y: 0 }); f.define('B0', { x: 100, y: 50 });
+    for (let i = 1; i <= 60; i++) { f.define(`A${i}`, P(`mid(A${i - 1},B${i - 1})`)); f.define(`B${i}`, P(`along(A${i - 1},B${i - 1},0.75)`)); }
+    const t0 = performance.now();
+    const r = f.world({ ref: 'A60' });
+    expect('x' in r).toBe(true);
+    f.extent();
+    expect(performance.now() - t0).toBeLessThan(200);
+  });
+  it('a name missing now resolves once it is defined (misses are not cached)', () => {
+    const f = new Figure(true);
+    f.define('M', P('mid(A,B)'));
+    expect(f.world({ ref: 'M' })).toEqual({ missing: 'A' });
+    f.define('A', { x: 0, y: 0 }); f.define('B', { x: 10, y: 0 });
+    expect(f.world({ ref: 'M' })).toEqual({ x: 5, y: 0 });
+  });
+});

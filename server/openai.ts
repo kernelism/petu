@@ -53,7 +53,16 @@ export type Deps = {
   sleep?: (ms: number) => Promise<void>;
   /** What the prompt cache likely holds: abort and crash estimates read it, usage feeds it. */
   cache?: CacheStats;
+  /** Upstream timeouts (tests pass short ones). */
+  timeouts?: Partial<Timeouts>;
 };
+/**
+ * `headersMs`: no response headers → the attempt is abandoned (retried once, before any text).
+ * `idleMs`: a streamed answer that sends nothing for this long is ended (cut_off after text).
+ * `callMs`: a non-streamed call (prewarm, judge) as a whole.
+ */
+export type Timeouts = { headersMs: number; idleMs: number; callMs: number };
+export const TIMEOUTS: Timeouts = { headersMs: 15_000, idleMs: 20_000, callMs: 60_000 };
 const URL_ = 'https://api.openai.com/v1/responses';
 export const JUDGE_MODEL = 'gpt-6.1-sol';
 const JUDGE_MAX_OUTPUT = 800;
@@ -110,12 +119,39 @@ export function buildSystemPrewarm(cfg: ModelConfig) {
   return { ...common(cfg), input: [developer(cfg)], stream: false, prompt_cache_options: { mode: 'explicit', prewarm: true }, metadata: { prompt: PROMPT_VERSION } };
 }
 
-/** Upper bound on input tokens: text at 3.2 chars/token, images by the 32-px patch rule × 1.2. */
+/**
+ * Upper bound on input tokens: ASCII text at 3.2 chars/token, any other character as a whole token
+ * (accents, CJK, math symbols), images by the 32-px patch rule × 1.2.
+ */
 export function estimateInputTokens(body: { input: unknown }, images: { w: number; h: number }[]): number {
-  const chars = JSON.stringify(body.input).replace(/data:image\/jpeg;base64,[A-Za-z0-9+/=]+/g, '').length;
+  const text = JSON.stringify(body.input).replace(/data:image\/jpeg;base64,[A-Za-z0-9+/=]+/g, '');
+  const wide = text.match(/[^\x00-\x7f]/g)?.length ?? 0;
   const patches = images.reduce((n, i) => n + Math.ceil(i.w / 32) * Math.ceil(i.h / 32), 0);
-  return Math.ceil(chars / 3.2 + patches * 1.2) + 50;
+  return Math.ceil((text.length - wide) / 3.2 + wide + patches * 1.2) + 50;
 }
+
+const SOF = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+/** A base64 JPEG's pixel size from its frame header, or null when it is not a readable JPEG. */
+export function jpegSize(b64: string): { w: number; h: number } | null {
+  const b = Buffer.from(b64.slice(0, 1 << 17), 'base64');
+  if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
+  for (let i = 2; i + 3 < b.length;) {
+    if (b[i] !== 0xff) return null;
+    const m = b[i + 1];
+    if (m === 0xff) { i++; continue; } // fill byte
+    if (m === 0x01 || (m >= 0xd0 && m <= 0xd9)) { i += 2; continue; } // no length
+    if (SOF.has(m)) return i + 8 < b.length ? { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) } : null;
+    i += 2 + b.readUInt16BE(i + 2);
+  }
+  return null;
+}
+/** An image's size for the worst case: the larger of what the client claims and what the JPEG says. */
+const imageDims = (im: { b64: string; w: number; h: number }) => {
+  const real = jpegSize(im.b64);
+  return { w: Math.max(im.w, real?.w ?? 0), h: Math.max(im.h, real?.h ?? 0) };
+};
+/** The images of an answer request, sized for the worst case. */
+export const askImages = (c: AskContext) => [c.image, ...(c.ink?.crop ? [c.ink.crop] : [])].map(imageDims);
 
 /** One answer: gate → stream → filters → book. Emits AskEvents; resolves when done. */
 export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: AskEvent) => void, signal: AbortSignal): Promise<void> {
@@ -123,8 +159,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   if (!d.key) { emit({ t: 'error', code: 'no_key', message: 'Add OPENAI_API_KEY to .env and restart npm run dev.', retryable: false }); return; }
   if (!PRICES[cfg.model]) { emit({ t: 'error', code: 'bad_request', message: `No price for ${cfg.model}.`, retryable: false }); return; }
   const body = buildRequest(r, cfg);
-  const images = [r.context.image, ...(r.context.ink?.crop ? [r.context.ink.crop] : [])];
-  const est = estimateInputTokens(body, images);
+  const est = estimateInputTokens(body, askImages(r.context));
   const ck = { model: cfg.model, version: PROMPT_VERSION, docHash: r.context.docHash, page: r.context.page };
   const cachedGuess = d.cache?.expectedCached(ck, est) ?? 0;
   const estUsd = costUsd(cfg.model, estimatedUsage(est, cachedGuess, cfg.maxOutput), '12h', cfg.fast);
@@ -134,28 +169,43 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
 
   const now = d.now ?? (() => performance.now());
   const sleep = d.sleep ?? sleepDefault;
+  const T = { ...TIMEOUTS, ...d.timeouts };
   const t0 = now();
   const up = new AbortController();
   const onAbort = () => up.abort();
   signal.addEventListener('abort', onAbort);
   if (signal.aborted) up.abort();
   const filter = new ScriptFilter(), lint = new Lint(), sse = new SseParser(), events = new ResponseEvents();
-  let outChars = 0, ttft = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
-  let sent = false;
+  let outChars = 0, rawChars = 0, ttft = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
+  let sent = false, terminal = false, complete = false, idle = false;
   const send = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; if (Number.isNaN(ttft)) ttft = now() - t0; emit({ t: 'text', d: s }); };
   try {
     let res: Response | null = null;
+    let live: AbortController | null = null;
     for (let attempt = 0; attempt < 2 && !res; attempt++) {
+      // Each attempt has its own controller: the client's abort ends it, and so does the headers timeout.
+      const att = new AbortController();
+      const onUp = () => att.abort();
+      up.signal.addEventListener('abort', onUp);
+      if (up.signal.aborted) att.abort();
+      const timer = setTimeout(() => att.abort(), T.headersMs);
       try {
         sent = true;
-        const r0 = await d.fetch(URL_, { method: 'POST', signal: up.signal, headers: headers(d.key), body: JSON.stringify(body) });
-        if (r0.ok) { res = r0; break; }
+        const r0 = await d.fetch(URL_, { method: 'POST', signal: att.signal, headers: headers(d.key), body: JSON.stringify(body) });
+        clearTimeout(timer);
+        if (r0.ok) { res = r0; live = att; break; }
+        up.signal.removeEventListener('abort', onUp);
         const retryable = r0.status === 429 || r0.status >= 500;
         const text = scrub((await r0.text()).slice(0, 300), d.key);
         if (!retryable || attempt === 1) { failed = { t: 'error', code: r0.status === 429 ? 'rate_limited' : r0.status === 400 ? 'bad_request' : 'upstream', message: `OpenAI ${r0.status}: ${text}`, retryable }; break; }
       } catch (e) {
+        clearTimeout(timer);
+        up.signal.removeEventListener('abort', onUp);
         if (signal.aborted) throw e;
         if (attempt === 1) { failed = { t: 'error', code: 'network', message: 'Network error reaching OpenAI.', retryable: true }; break; }
+        // A network failure or timeout may have reached OpenAI and been billed: book it on its own
+        // (the request's reservation covers the retry).
+        d.ledger.settle({ id: `${reqId}:a0`, phase: d.phase, kind: 'answer', model: cfg.model, usd: estUsd, estimated: true });
       }
       await sleep(500 + Math.random() * 300);
     }
@@ -165,19 +215,31 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
       if (failed && failed.code !== 'network') { d.ledger.release(reqId); emit(failed); signal.removeEventListener('abort', onAbort); return; }
     } else {
       const dec = new TextDecoder();
-      for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-        if (signal.aborted) break;
-        for (const ev of sse.push(dec.decode(chunk, { stream: true }))) {
+      const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+      for (;;) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const r = await Promise.race([reader.read(), new Promise<'idle'>((ok) => { timer = setTimeout(() => ok('idle'), T.idleMs); })]);
+        clearTimeout(timer);
+        if (r === 'idle') { idle = true; live?.abort(); reader.cancel().catch(() => undefined); break; }
+        if (r.done || signal.aborted) break;
+        for (const ev of sse.push(dec.decode(r.value, { stream: true }))) {
+          if ((ev as { type?: string })?.type === 'response.output_text.delta') rawChars += String((ev as { delta?: unknown }).delta ?? '').length;
           for (const u of events.handle(ev)) {
             if (u.t === 'text') send(lint.push(filter.push(u.d)));
             else if (u.t === 'note') emit({ t: 'note', message: u.message });
-            else if (u.t === 'usage') usage = u.usage;
-            else if (u.t === 'error') failed = { t: 'error', code: 'upstream', message: scrub(u.message, d.key), retryable: true };
+            else if (u.t === 'usage') { usage = u.usage; terminal = true; complete = u.complete; }
+            else if (u.t === 'error') { terminal = true; failed = { t: 'error', code: 'upstream', message: scrub(u.message, d.key), retryable: true }; }
           }
         }
       }
       if (signal.aborted) up.abort();
       send(lint.push(filter.end()) + lint.end());
+      // Stalled, cut short upstream (response.incomplete), or ended without a terminal event: what
+      // arrived plays, then the client hears cut_off; with no text at all it is an error.
+      if (!signal.aborted && !failed && (idle || !terminal || !complete)) {
+        const why = idle ? 'OpenAI stopped sending.' : terminal ? 'OpenAI ended the answer early.' : 'The stream from OpenAI ended early.';
+        failed = { t: 'error', code: outChars ? 'cut_off' : idle ? 'network' : 'upstream', message: why, retryable: true };
+      }
     }
   } catch (e) {
     if (!signal.aborted) failed = { t: 'error', code: outChars ? 'cut_off' : 'network', message: scrub(String(e), d.key).slice(0, 200), retryable: true };
@@ -185,11 +247,12 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
     signal.removeEventListener('abort', onAbort);
   }
   // Book it: real usage when we have it, else an estimate: the input this (doc, page) most likely
-  // read from cache at the cached rate, the rest at the 12h write rate, output as streamed.
+  // read from cache at the cached rate, the rest at the 12h write rate, output as generated (the
+  // plan and anything held back count too, not only what reached the client).
   const estimated = !usage;
   if (!sent) { d.ledger.release(reqId); return; }
   if (usage) d.cache?.observe(ck, usage, systemTokensLow());
-  const u: Usage = usage ?? estimatedUsage(est, cachedGuess, Math.ceil(outChars / 3.2));
+  const u: Usage = usage ?? estimatedUsage(est, cachedGuess, Math.ceil(Math.max(rawChars, outChars) / 3.2));
   const usd = costUsd(cfg.model, u, '12h', cfg.fast);
   d.ledger.settle({ id: reqId, phase: d.phase, kind: 'answer', model: cfg.model, usd, estimated, tokens: tokens(u) });
   if (signal.aborted) return;
@@ -207,7 +270,7 @@ export async function prewarm(context: AskContext, cfg: ModelConfig, d: Deps): P
   if (!d.key) return { ok: false, usd: 0, reason: 'no key' };
   if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };
   const body = buildRequest({ question: '', history: [], context }, cfg, true);
-  const r = await callJson(body, cfg.model, estimateInputTokens(body, [context.image]), cfg.maxOutput, cfg.fast, 'prewarm', d);
+  const r = await callJson(body, cfg.model, estimateInputTokens(body, askImages(context)), cfg.maxOutput, cfg.fast, 'prewarm', d);
   if (r.ok && r.json?.usage) d.cache?.observe({ model: cfg.model, version: PROMPT_VERSION, docHash: context.docHash, page: context.page }, r.json.usage, systemTokensLow());
   return r.ok ? { ok: true, usd: r.usd } : { ok: false, usd: r.usd, reason: r.message };
 }
@@ -249,7 +312,7 @@ export async function judge(j: JudgeRequest, d: Deps): Promise<JudgeResult> {
     ],
     text: { format: { type: 'json_schema', name: j.name ?? 'judgement', schema: j.schema, strict: true } },
   };
-  const images = j.content.flatMap((p) => (p.type === 'input_image' ? [{ w: p.w, h: p.h }] : []));
+  const images = j.content.flatMap((p) => (p.type === 'input_image' ? [imageDims(p)] : []));
   const r = await callJson(body, JUDGE_MODEL, estimateInputTokens(body, images), JUDGE_MAX_OUTPUT, false, 'judge', d);
   if (!r.ok) return { ok: false, code: r.code, message: r.message, usd: r.usd };
   const text = outputText(r.json);
@@ -264,11 +327,12 @@ async function callJson(body: unknown, model: string, est: number, maxOutput: nu
   const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(model, est, maxOutput, fast), { kind, model });
   if (refused) return { ok: false, code: 'cap', message: capHint(refused.code, refused.message, d.phase), usd: 0 };
   const sleep = d.sleep ?? sleepDefault;
+  const T = { ...TIMEOUTS, ...d.timeouts };
   let last: CallResult = { ok: false, code: 'network', message: 'Network error reaching OpenAI.', usd: 0 };
   let reached = false;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await d.fetch(URL_, { method: 'POST', headers: headers(d.key), body: JSON.stringify(body) });
+      const res = await d.fetch(URL_, { method: 'POST', signal: AbortSignal.timeout(T.callMs), headers: headers(d.key), body: JSON.stringify(body) });
       const text = await res.text();
       if (res.ok) {
         const json = JSON.parse(text);
@@ -282,8 +346,11 @@ async function callJson(body: unknown, model: string, est: number, maxOutput: nu
       last = { ok: false, code: res.status === 429 ? 'rate_limited' : res.status === 400 ? 'bad_request' : 'upstream', message: `OpenAI ${res.status}: ${scrub(text.slice(0, 300), d.key)}`, usd: 0 };
       if (!(res.status === 429 || res.status >= 500)) break;
     } catch (e) {
-      reached = true; // a network error after sending may still bill; book the worst case below
+      // A network error or timeout after sending may still bill: the last try is booked below at its
+      // worst case; a first try that a retry follows is booked now, on its own.
       last = { ok: false, code: 'network', message: scrub(String(e), d.key).slice(0, 200), usd: 0 };
+      if (attempt === 0) d.ledger.settle({ id: `${id}:a0`, phase: d.phase, kind, model, usd: worstCaseUsd(model, est, maxOutput, fast), estimated: true });
+      else reached = true;
     }
     if (attempt === 0) await sleep(500 + Math.random() * 300);
   }

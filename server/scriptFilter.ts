@@ -12,6 +12,8 @@ export class ScriptFilter {
   private buf = '';
   private inPlan = false;
   private inTag = false;
+  /** Characters of the current tag passed so far, `{{` included. */
+  private tagLen = 0;
   plan = '';
   push(chunk: string): string { this.buf += chunk; return this.drain(false); }
   end(): string { return this.drain(true); }
@@ -20,21 +22,38 @@ export class ScriptFilter {
     let out = '';
     for (;;) {
       if (this.inPlan) {
-        const close = this.buf.indexOf('</plan>');
-        if (close < 0) { const keep = final ? 0 : 6; this.plan += this.buf.slice(0, Math.max(0, this.buf.length - keep)); this.buf = this.buf.slice(Math.max(0, this.buf.length - keep)); if (final) this.buf = ''; return out; }
-        this.plan += this.buf.slice(0, close);
-        this.buf = this.buf.slice(close + 7);
-        this.inPlan = false;
-        continue;
+        // A plan ends at </plan>; an unclosed one at a blank line or the next tag, and never runs
+        // past PLAN_MAX characters (so it cannot swallow the answer or leak into captions).
+        const room = PLAN_MAX - this.plan.length;
+        const ends = [[this.buf.indexOf('</plan>'), 7], [this.buf.indexOf('\n\n'), 2], [this.buf.indexOf('{{'), 0]].filter(([i]) => i >= 0).sort((a, b) => a[0] - b[0]);
+        const [at, skip] = ends[0] ?? [-1, 0];
+        if (at >= 0 && at <= room) { this.plan += this.buf.slice(0, at); this.buf = this.buf.slice(at + skip); this.inPlan = false; continue; }
+        const avail = Math.max(0, this.buf.length - (final ? 0 : 6)); // "</plan" may be split
+        if (at > room || avail >= room) { this.plan += this.buf.slice(0, room); this.buf = this.buf.slice(room); this.inPlan = false; continue; }
+        this.plan += this.buf.slice(0, avail);
+        this.buf = final ? '' : this.buf.slice(avail);
+        return out;
       }
       if (!this.buf.length) return out;
       if (this.inTag) {
-        const close = this.buf.indexOf('}}');
-        if (close < 0) { if (final) { out += this.buf; this.buf = ''; return out; } const cut = this.buf.endsWith('}') ? this.buf.length - 1 : this.buf.length; out += this.buf.slice(0, cut); this.buf = this.buf.slice(cut); return out; }
-        out += this.buf.slice(0, close + 2);
-        this.buf = this.buf.slice(close + 2);
-        this.inTag = false;
-        continue;
+        // The same rule as Lint (and, within its tighter length, the parser): a tag ends at `}}`;
+        // a newline or MAX_TAG characters without one means it was never a tag.
+        const room = MAX_TAG - this.tagLen;
+        const close = this.buf.indexOf('}}'), nl = this.buf.indexOf('\n');
+        if (close >= 0 && (nl < 0 || close < nl) && close + 2 <= room) {
+          out += this.buf.slice(0, close + 2);
+          this.buf = this.buf.slice(close + 2);
+          this.inTag = false;
+          continue;
+        }
+        const fail = nl >= 0 && nl < room ? nl : this.buf.length >= room ? room : -1;
+        if (fail >= 0) { out += this.buf.slice(0, fail); this.buf = this.buf.slice(fail); this.inTag = false; continue; }
+        if (final) { out += this.buf; this.buf = ''; return out; }
+        const cut = this.buf.endsWith('}') ? this.buf.length - 1 : this.buf.length;
+        out += this.buf.slice(0, cut);
+        this.tagLen += cut;
+        this.buf = this.buf.slice(cut);
+        return out;
       }
       const tag = this.buf.indexOf('{{'), plan = this.buf.indexOf('<plan>');
       const next = [tag, plan].filter((i) => i >= 0).sort((a, b) => a - b)[0];
@@ -46,11 +65,16 @@ export class ScriptFilter {
         return out;
       }
       out += clean(this.buf.slice(0, next));
-      if (next === tag) { this.inTag = true; out += '{{'; this.buf = this.buf.slice(next + 2); }
+      if (next === tag) { this.inTag = true; this.tagLen = 2; out += '{{'; this.buf = this.buf.slice(next + 2); }
       else { this.inPlan = true; this.buf = this.buf.slice(next + 6); }
     }
   }
 }
+
+/** A `{{` with no `}}` within this many characters (`{{` included) is narration (Lint's rule). */
+export const MAX_TAG = 401;
+/** An unclosed plan stops here. */
+export const PLAN_MAX = 1500;
 
 function partialTail(s: string): number {
   for (let k = Math.min(6, s.length); k > 0; k--) if ('<plan>'.startsWith(s.slice(-k))) return k;

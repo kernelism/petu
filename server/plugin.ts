@@ -7,6 +7,11 @@
 //   POST /api/judge            eval only; header x-petu-eval: <.petu/eval-token> → JudgeResult
 //   GET  /api/dev-pdf/<n>.pdf  <n>.pdf from the first PETU_PDF_DIRS directory that has it
 //
+// Every /api/* request must come from the app itself (`guard`): a loopback Host (no rebound DNS
+// name), an Origin, when present, equal to that host, and `content-type: application/json` on POSTs
+// (a cross-site page can then only send them after a CORS preflight, which is refused). These routes
+// run before Vite's own host check and CORS, so they cannot rely on them.
+//
 // Logging: route + message only. Never request headers, bodies or the key.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createReadStream, mkdirSync, statSync, writeFileSync } from 'node:fs';
@@ -15,13 +20,15 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
 import type { AskContext, AskEvent, AskRequest } from '../src/agent/protocol';
 import { Ledger } from './ledger';
-import { ask, judge, prewarm, prewarmSystem, type Deps, type JudgeRequest } from './openai';
+import { ask, judge, prewarm, prewarmSystem, type Deps, type JudgeRequest, type Timeouts } from './openai';
 import { CacheStats } from './cacheStats';
 import { worstCaseUsd } from './prices';
 import { loadPetuEnv, type PetuEnv } from './env';
 
 export const BODY_LIMIT = 12 * 1024 * 1024;
 const PREWARM_TTL_MS = 25 * 60 * 1000;
+/** Prewarmed (doc, page) keys kept for the dedupe; older ones are forgotten first. */
+export const PREWARM_MAX = 256;
 /** A typical answer's input (system prompt + page block + image) for the /api/spend "blocked" check. */
 const TYPICAL_INPUT_TOKENS = 12000;
 
@@ -31,9 +38,11 @@ export type Api = {
   ledger: Ledger;
   token: string;
   statusLine(): string;
+  /** Size of the prewarm dedupe map (bounded by PREWARM_MAX and the TTL). */
+  prewarmedCount(): number;
 };
 
-export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch; now?: () => number }): Api {
+export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch; now?: () => number; timeouts?: Partial<Timeouts> }): Api {
   const { env } = o;
   const dir = join(o.root, '.petu');
   mkdirSync(dir, { recursive: true });
@@ -43,16 +52,29 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   const token = env.evalToken ?? randomBytes(24).toString('hex');
   if (!env.evalToken) writeFileSync(join(dir, 'eval-token'), token, { mode: 0o600 });
   const cache = new CacheStats(join(dir, 'cache.json'), o.now);
-  const deps: Deps = { key: env.key, ledger, phase: env.phase, fetch: o.fetch ?? fetch, cache };
+  const deps: Deps = { key: env.key, ledger, phase: env.phase, fetch: o.fetch ?? fetch, cache, ...(o.timeouts ? { timeouts: o.timeouts } : {}) };
   let systemWarming: Promise<unknown> | null = null;
   const now = o.now ?? Date.now;
   const prewarmed = new Map<string, number>();
+
+  /** Marks `k` prewarmed now; drops expired keys and, past PREWARM_MAX, the oldest. */
+  const remember = (k: string) => {
+    const t = now();
+    prewarmed.delete(k);
+    for (const [key, at] of prewarmed) if (t - at >= PREWARM_TTL_MS) prewarmed.delete(key);
+    prewarmed.set(k, t);
+    while (prewarmed.size > PREWARM_MAX) prewarmed.delete(prewarmed.keys().next().value!);
+  };
 
   const statusLine = () =>
     `petu: model ${env.model.model}/${env.model.effort} · spent $${ledger.spent().toFixed(2)} of $${env.caps.totalUsd} · phase ${env.phase}${env.key ? '' : ' · no OPENAI_API_KEY in .env'}`;
 
   async function handle(req: IncomingMessage, res: ServerResponse, next: Next): Promise<void> {
     const path = (req.url ?? '').split('?')[0];
+    if (path.startsWith('/api/')) {
+      const refused = guard(req);
+      if (refused) return json(res, refused.status, { error: refused.error });
+    }
     try {
       if (path === '/api/ask') return await routeAsk(req, res);
       if (path === '/api/prewarm') return await routePrewarm(req, res);
@@ -97,7 +119,8 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     const body = await readJson(req, res);
     if (body === undefined) return;
     if (body?.scope === 'system') {
-      // One at a time; prewarmSystem itself skips a block read or written in the last 11.5h.
+      // One at a time; prewarmSystem itself skips a block read or written in the last 11.5h. It
+      // always settles (its upstream call has a timeout), and `finally` frees the slot on any outcome.
       if (systemWarming) return json(res, 200, { ok: true, usd: 0, reason: 'deduped' });
       const p = prewarmSystem(env.model, deps);
       systemWarming = p;
@@ -109,7 +132,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     const k = `${c.docHash}:${c.page}`;
     const at = prewarmed.get(k);
     if (at != null && now() - at < PREWARM_TTL_MS) return json(res, 200, { ok: true, usd: 0, reason: 'deduped' });
-    prewarmed.set(k, now());
+    remember(k);
     const r = await prewarm(c, env.model, deps);
     if (!r.ok) prewarmed.delete(k);
     return json(res, 200, r);
@@ -154,7 +177,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     return json(res, 404, { error: 'not found' });
   }
 
-  return { handle, ledger, token, statusLine };
+  return { handle, ledger, token, statusLine, prewarmedCount: () => prewarmed.size };
 }
 
 /** The Vite plugin: `plugins: [react(), petuApi()]`. */
@@ -171,6 +194,28 @@ export function petuApi(): Plugin {
       server.config.logger.info(api.statusLine());
     },
   };
+}
+
+// ---- request guard ----------------------------------------------------------------------------
+
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** Why a /api/* request is refused, or null for the app's own requests. */
+export function guard(req: IncomingMessage): { status: number; error: string } | null {
+  const host = String(req.headers.host ?? '').toLowerCase();
+  const m = /^(localhost|127\.0\.0\.1|\[::1\])(?::(\d{1,5}))?$/.exec(host);
+  if (!m || !LOOPBACK.has(m[1])) return { status: 403, error: 'forbidden host' };
+  const origin = req.headers.origin;
+  if (origin != null) {
+    const o = String(origin).toLowerCase();
+    if (o !== `http://${host}` && o !== `https://${host}`) return { status: 403, error: 'forbidden origin' };
+  }
+  if (req.method === 'OPTIONS') return { status: 405, error: 'no CORS' };
+  if (req.method === 'POST') {
+    const ct = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+    if (ct !== 'application/json') return { status: 415, error: 'content-type must be application/json' };
+  }
+  return null;
 }
 
 // ---- helpers ----------------------------------------------------------------------------------
@@ -205,7 +250,9 @@ async function readJson(req: IncomingMessage, res: ServerResponse): Promise<any>
 
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 const isStr = (v: unknown): v is string => typeof v === 'string';
-const isImage = (v: any) => v != null && isStr(v.b64) && v.b64.length > 0 && typeof v.w === 'number' && typeof v.h === 'number' && v.w > 0 && v.h > 0 && v.w <= 10000 && v.h <= 10000;
+/** Sane maxima for what the browser sends (it sends ≤ 1280 px images and much shorter text). */
+export const LIMITS = { imageSide: 2048, docText: 40_000, pageText: 60_000, searchText: 20_000, inkSummary: 4_000 };
+const isImage = (v: any) => v != null && isStr(v.b64) && v.b64.length > 0 && typeof v.w === 'number' && typeof v.h === 'number' && v.w > 0 && v.h > 0 && v.w <= LIMITS.imageSide && v.h <= LIMITS.imageSide;
 
 export function validateContext(c: any): string | null {
   if (c == null || typeof c !== 'object') return 'context is required';
@@ -213,9 +260,10 @@ export function validateContext(c: any): string | null {
   if (!isInt(c.numPages) || c.numPages < 1) return 'context.numPages must be a positive integer';
   if (!isInt(c.page) || c.page < 1 || c.page > c.numPages) return 'context.page is out of range';
   if (!isStr(c.docText) || !isStr(c.pageText)) return 'context.docText and context.pageText are required';
+  if (c.docText.length > LIMITS.docText || c.pageText.length > LIMITS.pageText) return 'context.docText or context.pageText is too long';
   if (!isImage(c.image)) return 'context.image { b64, w, h } is required';
-  if (c.searchText != null && !isStr(c.searchText)) return 'context.searchText must be a string';
-  if (c.ink != null && (!isStr(c.ink.summary) || (c.ink.crop != null && !isImage(c.ink.crop)))) return 'context.ink is malformed';
+  if (c.searchText != null && (!isStr(c.searchText) || c.searchText.length > LIMITS.searchText)) return 'context.searchText must be a string of at most 20,000 characters';
+  if (c.ink != null && (!isStr(c.ink.summary) || c.ink.summary.length > LIMITS.inkSummary || (c.ink.crop != null && !isImage(c.ink.crop)))) return 'context.ink is malformed';
   return null;
 }
 

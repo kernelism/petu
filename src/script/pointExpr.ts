@@ -27,7 +27,8 @@ export const NAME = /^[A-Za-zͰ-Ͽ][A-Za-z0-9_Ͱ-Ͽ′″]{0,23}$/u;
 /** Page marks from the grounding: #d3, #s1.a, #t12. */
 const MARK = /^#[a-z]\d{1,3}(\.[ab])?$/;
 const ARITY = { mid: 2, along: 2, meet: 4, foot: 3 } as const;
-const MAX_ABS = 100_000;
+/** Coordinates beyond this are rejected (literals) or treated as degenerate (constructions). */
+export const MAX_ABS = 100_000;
 
 export const normName = (s: string) => s.replace(/'/g, '′').replace(/′′/g, '″');
 

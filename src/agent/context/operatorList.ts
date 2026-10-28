@@ -10,6 +10,8 @@ const mul = (m: Mat, n: Mat): Mat => [
 /** Painted paths kept per page. Pages past this (text drawn as outlines, pattern fills, dense
  *  plots) keep the first ones: marks cluster them into figures anyway. */
 export const MAX_PATHS = 6000;
+/** Images kept per page (a page tiled from thousands of tiny images keeps the first ones). */
+export const MAX_IMAGES = 1000;
 /** Points kept per path (a 10k-point plot curve only needs its outline for a bbox). */
 const MAX_PTS = 400;
 
@@ -67,6 +69,7 @@ export function paintedFromOperatorList(ol: { fnArray: number[]; argsArray: unkn
       pending = null;
     } else if (f === OPS.endPath) pending = null;
     else if (f === OPS.paintImageXObject || f === OPS.paintInlineImageXObject || f === OPS.paintImageMaskXObject || f === OPS.paintImageXObjectRepeat) {
+      if (images.length >= MAX_IMAGES) continue;
       const c = [ap(0, 0), ap(1, 0), ap(0, 1), ap(1, 1)];
       const xs = c.map((q) => q.x), ys = c.map((q) => q.y);
       images.push({ rect: { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) } });

@@ -1,5 +1,5 @@
 // server/ledger.ts
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { formatUsd, type SpendSummary } from '../src/agent/protocol';
 
@@ -24,6 +24,10 @@ export type Refusal = { code: 'total' | 'daily' | 'phase'; message: string; spen
  * check and write, so several processes on one file (the founder's dev server and the eval runner's
  * dev servers) all count each other's settled spend and open reservations.
  *
+ * Every read-modify-write runs under an exclusive lockfile (`<path>.lock`, created with O_EXCL),
+ * so two processes never overwrite each other's entries, and a check and its reservation are one
+ * step (two processes cannot both pass a cap that only one fits under). The file format is unchanged.
+ *
  * Open reservations are persisted with their process id. One whose process is gone (the dev server
  * crashed or was killed mid-request) is booked as an estimate (`recovered`) at the next read: it may
  * have been billed, so it is never silently dropped.
@@ -33,9 +37,8 @@ export class Ledger {
   private alive: (pid: number) => boolean;
   constructor(private path: string, private caps: Caps, private now: () => Date = () => new Date(), priorUsd = 0, opts: { alive?: (pid: number) => boolean } = {}) {
     this.alive = opts.alive ?? pidAlive;
-    this.f = this.read() ?? { version: 1, priorUsd, entries: [] };
-    this.recover();
-    this.flush();
+    this.f = { version: 1, priorUsd, entries: [] };
+    this.mutate(() => undefined, true);
   }
 
   private read(): File | null {
@@ -44,7 +47,29 @@ export class Ledger {
   /** Picks up entries other processes booked since the last read, and books dead processes' reservations. */
   private sync() {
     this.f = this.read() ?? this.f;
-    if (this.recover()) this.flush();
+    if (this.deadOpen()) this.mutate(() => undefined);
+  }
+  /**
+   * Under the lock: re-reads the file, books dead reservations, applies `fn`, writes the file if
+   * anything changed (or `always`). The only way the file is written.
+   */
+  private mutate<T>(fn: () => T, always = false): T {
+    mkdirSync(dirname(this.path), { recursive: true });
+    const release = acquireLock(`${this.path}.lock`, this.alive);
+    try {
+      const disk = this.read();
+      this.f = disk ?? this.f;
+      const before = JSON.stringify(this.f);
+      this.recover();
+      const r = fn();
+      if (always && !disk || JSON.stringify(this.f) !== before) this.flush();
+      return r;
+    } finally {
+      release();
+    }
+  }
+  private deadOpen(): boolean {
+    return Object.values(this.f.open ?? {}).some((o) => o.pid !== process.pid && !this.alive(o.pid));
   }
   /** Books every open reservation whose process is gone, as an estimate. True if any was booked. */
   private recover(): boolean {
@@ -62,24 +87,27 @@ export class Ledger {
     return this.f.entries.filter(filter).reduce((s, e) => s + e.usd, filter(PRIOR) ? this.f.priorUsd : 0);
   }
   private heldUsd(): number { let s = 0; for (const o of Object.values(this.f.open ?? {})) s += o.worstUsd; return s; }
-  private today = (e: Entry) => e.at.slice(0, 10) === this.now().toISOString().slice(0, 10);
+  /** The daily cap follows the local calendar day (the founder's day), not UTC. */
+  private today = (e: Entry) => localDay(new Date(e.at)) === localDay(this.now());
 
   /**
    * Books `worstUsd` for request `id`, or refuses. `meta.estUsd` is what a crash mid-request books
    * (a cache-aware estimate with the full output budget); without it the worst case is booked.
    */
   reserve(id: string, phase: Phase, worstUsd: number, meta: { kind?: Entry['kind']; model?: string; estUsd?: number } = {}): Refusal | null {
-    const r = this.check(phase, worstUsd);
-    if (!r) {
-      (this.f.open ??= {})[id] = { at: this.now().toISOString(), pid: process.pid, phase, kind: meta.kind ?? 'answer', model: meta.model ?? 'unknown', worstUsd, ...(meta.estUsd != null ? { estUsd: meta.estUsd } : {}) };
-      this.flush();
-    }
-    return r;
+    return this.mutate(() => {
+      const r = this.refusal(phase, worstUsd);
+      if (!r) (this.f.open ??= {})[id] = { at: this.now().toISOString(), pid: process.pid, phase, kind: meta.kind ?? 'answer', model: meta.model ?? 'unknown', worstUsd, ...(meta.estUsd != null ? { estUsd: meta.estUsd } : {}) };
+      return r;
+    });
   }
 
   /** Would a request of `worstUsd` be refused right now? (Reserves nothing.) */
   check(phase: Phase, worstUsd: number): Refusal | null {
     this.sync();
+    return this.refusal(phase, worstUsd);
+  }
+  private refusal(phase: Phase, worstUsd: number): Refusal | null {
     const held = this.heldUsd();
     const total = this.spent() + held;
     if (total + worstUsd > this.caps.totalUsd) return refusal('total', total, this.caps.totalUsd);
@@ -97,15 +125,14 @@ export class Ledger {
 
   /** Replaces the reservation with the real (or estimated) cost and persists it. */
   settle(e: Omit<Entry, 'at'>): void {
-    this.sync();
-    if (this.f.open) delete this.f.open[e.id];
-    this.f.entries.push({ ...e, at: this.now().toISOString() });
-    this.flush();
+    this.mutate(() => {
+      if (this.f.open) delete this.f.open[e.id];
+      this.f.entries.push({ ...e, at: this.now().toISOString() });
+    });
   }
   /** Drops a reservation that sent nothing (refused upstream before any token). */
   release(id: string): void {
-    this.sync();
-    if (this.f.open?.[id]) { delete this.f.open[id]; this.flush(); }
+    this.mutate(() => { if (this.f.open?.[id]) delete this.f.open[id]; });
   }
 
   summary(): SpendSummary & Required<Pick<SpendSummary, 'byPhase' | 'byModel' | 'n'>> {
@@ -114,11 +141,55 @@ export class Ledger {
     return { totalUsd: this.spent(), capUsd: this.caps.totalUsd, ...(this.caps.dailyUsd != null ? { dailyCapUsd: this.caps.dailyUsd } : {}), todayUsd: this.spent((e) => e !== PRIOR && this.today(e)), byPhase: by('phase'), byModel: by('model'), n: this.f.entries.length };
   }
 
+  /** Atomic replace (temp file + rename). Called only under the lock. */
   private flush() {
-    mkdirSync(dirname(this.path), { recursive: true });
     const tmp = `${this.path}.${process.pid}.tmp`;
     writeFileSync(tmp, JSON.stringify(this.f, null, 1));
     renameSync(tmp, this.path);
+  }
+}
+
+const localDay = (d: Date) => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+
+/** A lock older than this is stale (a read-modify-write takes milliseconds). */
+export const LOCK_STALE_MS = 5000;
+const LOCK_WAIT_MS = 15000;
+const nap = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * Takes the exclusive lock at `lock` (O_EXCL create holding "<pid> <ms> <nonce>"), waiting with
+ * back-off. A lock whose holder is dead, or older than LOCK_STALE_MS, is taken over: renamed aside,
+ * checked to be the one judged stale (else put back), removed. Returns the release function, which
+ * removes the lock only while it is still ours.
+ */
+export function acquireLock(lock: string, alive: (pid: number) => boolean = pidAlive): () => void {
+  const mine = `${process.pid} ${Date.now()} ${Math.random().toString(36).slice(2)}`;
+  const t0 = Date.now();
+  for (let i = 0; ; i++) {
+    try {
+      const fd = openSync(lock, 'wx');
+      try { writeSync(fd, mine); } finally { closeSync(fd); }
+      return () => { try { if (readFileSync(lock, 'utf8') === mine) unlinkSync(lock); } catch { /* already gone */ } };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+    }
+    let held = '';
+    let age = 0;
+    try { held = readFileSync(lock, 'utf8'); age = Date.now() - statSync(lock).mtimeMs; } catch { continue; } // released meanwhile
+    const [pid, at] = held.split(' ').map(Number);
+    const written = Number.isFinite(at) ? Date.now() - at : age;
+    const stale = held !== '' && ((Number.isInteger(pid) && pid > 0 && pid !== process.pid && !alive(pid)) || Math.max(written, age) > LOCK_STALE_MS);
+    if (stale || (held === '' && age > LOCK_STALE_MS)) {
+      const aside = `${lock}.${process.pid}.${i}.stale`;
+      try {
+        renameSync(lock, aside);
+        if (readFileSync(aside, 'utf8') !== held) { try { linkSync(aside, lock); } catch { /* someone else holds it now */ } }
+        unlinkSync(aside);
+      } catch { /* another process took it over first */ }
+      continue;
+    }
+    if (Date.now() - t0 > LOCK_WAIT_MS) throw new Error(`ledger: lock ${lock} held too long`);
+    nap(Math.min(50, 1 + i) + Math.random() * 3);
   }
 }
 

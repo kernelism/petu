@@ -75,3 +75,11 @@ describe('paintedFromOperatorList', () => {
     expect(paths).toHaveLength(0);
   });
 });
+
+describe('paintedFromOperatorList bounds', () => {
+  it('keeps at most MAX_IMAGES images', async () => {
+    const { MAX_IMAGES } = await import('../../../src/agent/context/operatorList');
+    const ops: [number, unknown[]][] = Array.from({ length: MAX_IMAGES + 500 }, () => [O.paintImageXObject, ['img', 1, 1]]);
+    expect(run(ops).images).toHaveLength(MAX_IMAGES);
+  });
+});

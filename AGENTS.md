@@ -108,7 +108,10 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   (request builder: explicit cache breakpoints after the system prompt (12h) and the page block
   (30m), `prompt_cache_key` per document; one retry before the first text), `sse.ts`,
   `scriptFilter.ts` (strips the private `<plan>` and markdown/TeX from narration), `lint.ts`,
-  `ledger.ts`, `prices.ts`, `prompt/{system,examples}.ts`.
+  `ledger.ts`, `prices.ts`, `prompt/{system,examples}.ts`. Every `/api/*` request must come from the
+  app: a loopback Host, an Origin (if any) equal to it, and `content-type: application/json` on POSTs
+  (`guard` in `plugin.ts`; these routes run before Vite's own host check). Upstream calls time out
+  (15s to headers, 20s between chunks, 60s for prewarm/judge).
 - **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p3.2**: hard answer shape (opener ≤ 16
   words that starts with its mark, one new element per sentence, 3–7 elements, one `em`, a payoff),
   mechanism over definition, precise marks, per-question-type playbook, few-shot examples from the
@@ -177,7 +180,8 @@ mobile layouts.
 - **Private material.** `public/dev/` holds the user's course PDFs: gitignored, never commit or
   copy them. The committed fixture is `public/fixtures/epipolar.pdf` (generated).
 - **OpenAI spend.** Every call (answers, prewarm, the eval judge) goes through the persistent
-  ledger `.petu/spend.json` (`server/ledger.ts`): it reserves a request's worst case (all input at
+  ledger `.petu/spend.json` (`server/ledger.ts`, every write under a lockfile so several processes
+  never lose each other's entries): it reserves a request's worst case (all input at
   the 12h cache-write rate + full `max_output_tokens`) and refuses before sending if any cap would
   be crossed; recorded cost comes from `usage` at the prices pinned in `server/prices.ts`; an abort
   or crash books an estimate. Caps: **$40 hard stop** for checkpoint 2 (`PETU_TOTAL_CAP_USD` may

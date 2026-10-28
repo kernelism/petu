@@ -255,26 +255,52 @@ function segDist(p: Pt, a: Pt, b: Pt, d: (a: Pt, b: Pt) => number): number {
 }
 /**
  * Union of overlapping or near boxes (the curves of one plot become one figure; image tiles one
- * image). Single-linkage: merges repeat until no two clusters are within `pad`.
+ * image). Merges repeat until no two clusters' boxes are within `pad` (the result does not depend on
+ * order). Each pass finds near pairs through a coarse grid and joins them with union-find, so a pass
+ * costs about n·(boxes per cell) instead of n²; listed in order of each cluster's first box.
  */
-function clusters(bs: Box[], pad: number): { box: Box; n: number }[] {
+export function clusters(bs: Box[], pad: number): { box: Box; n: number }[] {
   const near = (a: Box, b: Box) => a.x0 - pad <= b.x1 && b.x0 - pad <= a.x1 && a.y0 - pad <= b.y1 && b.y0 - pad <= a.y1;
   const join = (a: Box, b: Box): Box => ({ x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) });
-  let out: { box: Box; n: number }[] = [];
-  for (const b of bs) {
-    const hit = out.find((c) => near(c.box, b));
-    if (hit) { hit.box = join(hit.box, b); hit.n++; } else out.push({ box: { ...b }, n: 1 });
+  let out = bs.map((b) => ({ box: { ...b }, n: 1 }));
+  for (;;) {
+    if (out.length < 2) return out;
+    let X0 = Infinity, Y0 = Infinity, X1 = -Infinity, Y1 = -Infinity;
+    for (const { box: b } of out) { X0 = Math.min(X0, b.x0); Y0 = Math.min(Y0, b.y0); X1 = Math.max(X1, b.x1); Y1 = Math.max(Y1, b.y1); }
+    const G = 48;
+    const cw = Math.max((X1 - X0) / G, pad, 1e-6), ch = Math.max((Y1 - Y0) / G, pad, 1e-6);
+    const cx = (x: number) => Math.min(G, Math.max(0, Math.floor((x - X0) / cw)));
+    const cy = (y: number) => Math.min(G, Math.max(0, Math.floor((y - Y0) / ch)));
+    const parent = out.map((_, i) => i);
+    const find = (i: number): number => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+    const cells = new Map<number, number[]>();
+    let merged = false;
+    out.forEach((c, i) => {
+      const b = c.box;
+      const seen = new Set<number>();
+      for (let gx = cx(b.x0 - pad); gx <= cx(b.x1 + pad); gx++) for (let gy = cy(b.y0 - pad); gy <= cy(b.y1 + pad); gy++) {
+        const k = gx * (G + 1) + gy;
+        for (const j of cells.get(k) ?? []) {
+          if (seen.has(j)) continue;
+          seen.add(j);
+          if (find(i) !== find(j) && near(b, out[j].box)) { parent[Math.max(find(i), find(j))] = Math.min(find(i), find(j)); merged = true; }
+        }
+      }
+      for (let gx = cx(b.x0); gx <= cx(b.x1); gx++) for (let gy = cy(b.y0); gy <= cy(b.y1); gy++) {
+        const k = gx * (G + 1) + gy;
+        const list = cells.get(k);
+        if (list) list.push(i); else cells.set(k, [i]);
+      }
+    });
+    if (!merged) return out;
+    const groups = new Map<number, { box: Box; n: number }>();
+    out.forEach((c, i) => {
+      const r = find(i);
+      const g = groups.get(r);
+      if (g) { g.box = join(g.box, c.box); g.n += c.n; } else groups.set(r, { box: { ...c.box }, n: c.n });
+    });
+    out = [...groups.entries()].sort((a, b) => a[0] - b[0]).map(([, g]) => g);
   }
-  for (let changed = true; changed;) {
-    changed = false;
-    const next: { box: Box; n: number }[] = [];
-    for (const c of out) {
-      const hit = next.find((o) => near(o.box, c.box));
-      if (hit) { hit.box = join(hit.box, c.box); hit.n += c.n; changed = true; } else next.push(c);
-    }
-    out = next;
-  }
-  return out;
 }
 const round = (p: Pt): Pt => ({ x: Math.round(p.x), y: Math.round(p.y) });
 const rect = (b: Box): PageRect => ({ x: Math.round(b.x0), y: Math.round(b.y0), w: Math.round(b.x1 - b.x0), h: Math.round(b.y1 - b.y0) });

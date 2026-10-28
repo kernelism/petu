@@ -154,3 +154,17 @@ describe('ContextBuilder', () => {
     vi.useRealTimers();
   });
 });
+
+describe('groundPage bounds', () => {
+  it('falls back to text only when the operator list is slow', async () => {
+    const { doc } = fakeDoc(deck);
+    const p = await doc.getPage(1) as unknown as Record<string, unknown>;
+    const slow = { ...p, getOperatorList: () => new Promise(() => {}) };
+    const t0 = Date.now();
+    const g = await groundPage(slow as never, O, { opsMs: 50 });
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(g.lines.map((l) => l.text)).toEqual(['Slide 1 title', 'body of slide 1']);
+    expect(g.marks).toEqual([]);
+    expect(g.noText).toBe(false);
+  });
+});
