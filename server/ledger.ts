@@ -86,9 +86,11 @@ export class Ledger {
   spent(filter: (e: Entry) => boolean = () => true): number {
     return this.f.entries.filter(filter).reduce((s, e) => s + e.usd, filter(PRIOR) ? this.f.priorUsd : 0);
   }
-  private heldUsd(): number { let s = 0; for (const o of Object.values(this.f.open ?? {})) s += o.worstUsd; return s; }
-  /** The daily cap follows the local calendar day (the founder's day), not UTC. */
+  private heldUsd(phase?: Phase): number { let s = 0; for (const o of Object.values(this.f.open ?? {})) if (phase == null || o.phase === phase) s += o.worstUsd; return s; }
+  /** The local calendar day (the founder's day), not UTC. */
   private today = (e: Entry) => localDay(new Date(e.at)) === localDay(this.now());
+  /** The daily cap limits the founder's own testing: only founder-phase entries of the local day count. */
+  private todayFounder = (e: Entry) => e !== PRIOR && e.phase === 'founder' && this.today(e);
 
   /**
    * Books `worstUsd` for request `id`, or refuses. `meta.estUsd` is what a crash mid-request books
@@ -111,8 +113,8 @@ export class Ledger {
     const held = this.heldUsd();
     const total = this.spent() + held;
     if (total + worstUsd > this.caps.totalUsd) return refusal('total', total, this.caps.totalUsd);
-    if (this.caps.dailyUsd != null) {
-      const day = this.spent((e) => e !== PRIOR && this.today(e)) + held;
+    if (this.caps.dailyUsd != null && phase === 'founder') {
+      const day = this.spent(this.todayFounder) + this.heldUsd('founder');
       if (day + worstUsd > this.caps.dailyUsd) return refusal('daily', day, this.caps.dailyUsd);
     }
     const pc = this.caps.phaseUsd?.[phase];
@@ -138,7 +140,7 @@ export class Ledger {
   summary(): SpendSummary & Required<Pick<SpendSummary, 'byPhase' | 'byModel' | 'n'>> {
     this.sync();
     const by = (k: keyof Entry) => this.f.entries.reduce<Record<string, number>>((m, e) => ({ ...m, [String(e[k])]: (m[String(e[k])] ?? 0) + e.usd }), {});
-    return { totalUsd: this.spent(), capUsd: this.caps.totalUsd, ...(this.caps.dailyUsd != null ? { dailyCapUsd: this.caps.dailyUsd } : {}), todayUsd: this.spent((e) => e !== PRIOR && this.today(e)), byPhase: by('phase'), byModel: by('model'), n: this.f.entries.length };
+    return { totalUsd: this.spent(), capUsd: this.caps.totalUsd, ...(this.caps.dailyUsd != null ? { dailyCapUsd: this.caps.dailyUsd } : {}), todayUsd: this.spent(this.todayFounder), todayAllUsd: this.spent((e) => e !== PRIOR && this.today(e)), byPhase: by('phase'), byModel: by('model'), n: this.f.entries.length };
   }
 
   /** Atomic replace (temp file + rename). Called only under the lock. */

@@ -49,7 +49,9 @@ describe('budget preflight', () => {
   const spend = (o: Partial<{ totalUsd: number; capUsd: number; todayUsd: number; dailyCapUsd: number; blocked: string; phase: string; phaseCapUsd: number; byPhase: Record<string, number> }> = {}) => ({ totalUsd: 0, capUsd: 6, todayUsd: 0, ...o });
   const dev = QUESTIONS.filter((q) => q.split === 'dev');
   it('remaining is the nearest cap', () => {
-    expect(remainingUsd(spend({ totalUsd: 1, dailyCapUsd: 3, todayUsd: 2.5 }))).toBeCloseTo(0.5);
+    expect(remainingUsd(spend({ totalUsd: 1, dailyCapUsd: 3, todayUsd: 2.5, phase: 'founder' }))).toBeCloseTo(0.5);
+    // eval phases are not limited by the founder's daily cap
+    expect(remainingUsd(spend({ totalUsd: 1, dailyCapUsd: 3, todayUsd: 2.9, phase: 'dev' }))).toBeCloseTo(5);
     expect(remainingUsd(spend({ totalUsd: 7 }))).toBe(0);
     expect(remainingUsd(spend({ totalUsd: 1, phase: 'bakeoff', phaseCapUsd: 6, byPhase: { bakeoff: 5.5, dev: 0.5 } }))).toBeCloseTo(0.5);
   });

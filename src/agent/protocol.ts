@@ -44,7 +44,10 @@ export type AskErrorCode = 'no_key' | 'cap' | 'rate_limited' | 'upstream' | 'net
 export type SpendSummary = {
   totalUsd: number;
   capUsd: number;
+  /** Founder-phase spend of the local day: what the daily cap counts. */
   todayUsd: number;
+  /** Spend of the local day across all phases. */
+  todayAllUsd?: number;
   dailyCapUsd?: number;
   /** The server's spend phase (dev | bakeoff | iterate | validate | founder). */
   phase?: string;

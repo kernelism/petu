@@ -63,7 +63,8 @@ export type BudgetCheck = { ok: boolean; planned: number; remaining: number; mes
 /** Remaining spend the server allows right now: the nearest of the total/phase cap and the daily cap. */
 export function remainingUsd(s: SpendSummary): number {
   const left = [s.capUsd - s.totalUsd];
-  if (s.dailyCapUsd != null) left.push(s.dailyCapUsd - s.todayUsd);
+  // the daily cap counts founder-phase spend only, so it limits founder runs alone
+  if (s.dailyCapUsd != null && s.phase === 'founder') left.push(s.dailyCapUsd - s.todayUsd);
   // The server's phase budget (the per-request refusal the run would otherwise hit midway).
   if (s.phaseCapUsd != null && s.phase) left.push(s.phaseCapUsd - (s.byPhase?.[s.phase] ?? 0));
   return Math.max(0, Math.min(...left));

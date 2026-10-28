@@ -28,10 +28,10 @@ describe('Ledger', () => {
   });
   it('daily and phase caps', () => {
     const l = new Ledger(path, { totalUsd: 40, dailyUsd: 0.1, phaseUsd: { bakeoff: 0.05 } }, day('2026-10-28'));
-    l.settle({ id: 'a', phase: 'dev', kind: 'answer', model: 'm', usd: 0.08 });
-    expect(l.reserve('b', 'dev', 0.03)?.code).toBe('daily');
+    l.settle({ id: 'a', phase: 'founder', kind: 'answer', model: 'm', usd: 0.08 });
+    expect(l.reserve('b', 'founder', 0.03)?.code).toBe('daily');
     const tomorrow = new Ledger(path, { totalUsd: 40, dailyUsd: 0.1, phaseUsd: { bakeoff: 0.05 } }, day('2026-10-29'));
-    expect(tomorrow.reserve('c', 'dev', 0.03)).toBeNull();
+    expect(tomorrow.reserve('c', 'founder', 0.03)).toBeNull();
     expect(tomorrow.reserve('d', 'bakeoff', 0.06)?.code).toBe('phase');
   });
   it('seeds the prior (spike) spend once: it counts toward the total only and survives a restart', () => {
@@ -184,5 +184,31 @@ describe('Ledger daily cap', () => {
     } finally {
       if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz;
     }
+  });
+});
+
+describe('Ledger daily cap is founder-only', () => {
+  it('ignores dev/eval spend, counts founder spend, keeps total and phase caps on everything', () => {
+    const caps = { totalUsd: 10, dailyUsd: 3, phaseUsd: { dev: 9 } };
+    const l = new Ledger(path, caps, day('2026-10-28'));
+    l.settle({ id: 'a', phase: 'dev', kind: 'answer', model: 'm', usd: 4 });
+    l.settle({ id: 'b', phase: 'bakeoff', kind: 'answer', model: 'm', usd: 3.95 });
+    expect(l.summary()).toMatchObject({ totalUsd: 7.95, todayUsd: 0, todayAllUsd: 7.95 });
+    expect(l.check('founder', 0.5)).toBeNull();
+    expect(l.check('dev', 0.5)).toBeNull(); // daily cap does not apply to dev
+    l.settle({ id: 'c', phase: 'founder', kind: 'answer', model: 'm', usd: 2.8 });
+    expect(l.summary()).toMatchObject({ todayUsd: 2.8, todayAllUsd: 10.75 });
+    expect(l.check('founder', 0.1)?.code).toBe('total');
+    const fresh = new Ledger(path, { totalUsd: 40, dailyUsd: 3 }, day('2026-10-28'));
+    expect(fresh.check('founder', 0.3)?.code).toBe('daily');
+    expect(fresh.check('founder', 0.1)).toBeNull();
+    const tomorrow = new Ledger(path, { totalUsd: 40, dailyUsd: 3 }, day('2026-10-29'));
+    expect(tomorrow.check('founder', 2.9)).toBeNull();
+  });
+  it('counts only founder reservations in flight toward the daily cap', () => {
+    const l = new Ledger(path, { totalUsd: 40, dailyUsd: 1 }, day('2026-10-28'));
+    expect(l.reserve('e', 'dev', 5)).toBeNull();
+    expect(l.reserve('f', 'founder', 0.9)).toBeNull();
+    expect(l.reserve('g', 'founder', 0.2)?.code).toBe('daily');
   });
 });
