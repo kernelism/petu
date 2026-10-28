@@ -86,6 +86,9 @@ function readingOrder(lines: Seg[]): Seg[] {
   return out;
 }
 
+/** The two-column gutter x (model coords) that reading order used for these lines, or null (diagnostics). */
+export const columnGutter = (lines: Seg[]): number | null => gutter([...lines].sort(rowOrder));
+
 function gutter(rows: Seg[]): number | null {
   if (rows.length < 2 * MIN_COLUMN_LINES) return null;
   let best: number | null = null, bestScore = -1;

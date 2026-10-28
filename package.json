@@ -11,7 +11,9 @@
     "fixture": "node --experimental-strip-types scripts/make-fixture.ts",
     "decks": "node --experimental-strip-types scripts/make-decks.ts",
     "eval": "node --experimental-strip-types scripts/eval/run.ts",
-    "ground": "node --experimental-strip-types scripts/ground.ts"
+    "ground": "node --experimental-strip-types scripts/ground.ts",
+    "corpus-profile": "node --expose-gc --max-old-space-size=8192 --experimental-strip-types scripts/corpus/profile.ts",
+    "corpus-bench": "node --experimental-strip-types scripts/corpus/browserBench.ts"
   },
   "dependencies": {
     "katex": "0.18.11",
