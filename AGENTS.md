@@ -119,8 +119,10 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
 - `src/agent/context/` — **grounding**. pdf.js text runs become text lines (`t7 436 415–470: …`,
   equations tagged `math`); the operator list becomes figure marks (`#d` dots, `#s` segments with
   dot topology `#s3 line #d1→#d3`, `#a` arrows, `#b` boxes, `#i` images, `#g` figures, `#e`
-  equations; ≤ 60 per page). The model gets the outline, the visible page (listing + one JPEG),
-  neighbour text (p±2), search hits, student ink and earlier narration. **What the model sees is
+  equations; ≤ 60 per page). The scout gets the deck digest (every page, trimmed; `digest.ts`) and
+  the visible page's listing. Stage 2 gets the same digest, the visible page (listing + JPEG), the
+  scout's pages (listings, up to 4 images in all with the visible page) and plan, student ink and
+  earlier narration (p±2 are only warmed ahead; `searchText` is a v2 leftover). **What the model sees is
   what the locator searches**: quotes resolve against the same line index. `npm run ground` prints
   it.
 - `src/agent/{client,useAgent,prewarm,history}.ts` — NDJSON client, cut-off handling (plays what
@@ -130,23 +132,27 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   the scout's JSON `{opener, pages, plan}` as NDJSON. The opener (the answer's first sentence or two,
   tags on the visible page only, released clause by clause) plays at once; the moment pages and plan
   are parsed, stage 2 is built and asked with the opener verbatim (`context.opener`, ALREADY SPOKEN)
-  and its script follows the opener's last word; the note tells it never to restate the opener's claim and to open on something new (the mechanism, the first drawn step). A failed scout = stage 2 alone on the visible page.
+  and its script follows the opener's last word; the note tells it never to restate the opener's claim and to open on something new (the mechanism, the first drawn step). A failed scout, or no verdict within 8s (`SCOUT_TIMEOUT_MS`), = stage 2 alone on the visible page.
   The dock shows a faint static "…" while thinking and after the last word if the stream pauses.
   `?debug` shows scout verdict, opener, stage-2 first text and the handoff gap.
 - `server/` — `plugin.ts` (routes: `/api/ask`, `/api/scout`, `/api/prewarm`, `/api/spend`, `/api/judge` (eval
   token), `/api/dev-pdf/`), `env.ts` (the only reader of the key and `PETU_*` knobs), `openai.ts`
   (request builder: explicit cache breakpoints after the system prompt (12h) and the page block
-  (30m), `prompt_cache_key` per document; one retry before the first text), `sse.ts`,
+  (30m), `prompt_cache_key` = `petu-<PROMPT_VERSION>` shared by every document (scout:
+  `petu-scout-<SCOUT_VERSION>`); one retry before the first text), `sse.ts`,
   `scriptFilter.ts` (strips the private `<plan>` and markdown/TeX from narration), `lint.ts`,
   `ledger.ts`, `prices.ts`, `prompt/{system,examples}.ts`. Every `/api/*` request must come from the
   app: a loopback Host, an Origin (if any) equal to it, and `content-type: application/json` on POSTs
   (`guard` in `plugin.ts`; these routes run before Vite's own host check). Upstream calls time out
   (15s to headers, 20s between chunks, 60s for prewarm/judge).
-- **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p4.6** (kit card and WORKED NUMBERS principles; change an input with `set`, name blocks): hard answer shape (opener ≤ 16
-  words that starts with its mark, one new element per sentence, 3–7 elements, one `em`, a payoff),
-  mechanism over definition, precise marks, per-question-type playbook, few-shot examples from the
-  fixture and synthetic pages only. Bump `PROMPT_VERSION` on any change. `tests/server/prompt.test.ts`
-  keeps every tag parseable, the size bounded and eval-deck vocabulary out.
+- **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p4.6** (kit card and WORKED NUMBERS principles; change an input with `set`, name blocks): a brief, not a rulebook —
+  identity → how to teach (answer first, walk the pages, show the mechanism on one growing figure) →
+  the board never duplicates → timing → context → pointing → board → tags → situations → examples.
+  No modes, no per-question-type recipes, no length or element caps (the test fails on them).
+  Few-shot examples (`prompt/examples.ts`) are invented documents in other domains (music notation,
+  shadows, levers), each executable (`tests/server/examples.test.ts`). Bump `PROMPT_VERSION` on any
+  change. `tests/server/prompt.test.ts` keeps every tag parseable, the size bounded and eval-deck
+  vocabulary out. The scout's prompt is `prompt/scout.ts` (`SCOUT_VERSION`).
 - **Model**: `gpt-6.1-terra`, `reasoning.effort: none`, Standard tier (P1 bake-off, the only config
   under the latency gate). Override per run with `PETU_MODEL` / `PETU_EFFORT`.
 
@@ -210,7 +216,7 @@ number and animates.
 ## Explanation quality (applies to demo scripts and the agent prompt)
 
 One idea per answer. Takeaway first. At most one new element per sentence, labelled as it is
-drawn. Reuse the slide's own notation and figures. About 6 elements max. Accent colour only for
+drawn. Reuse the slide's own notation and figures. Accent colour only for
 the takeaway. End on a payoff. Diagrams build up with the narration — never appear finished.
 
 UI bar: calm and precise; no blinking or pulsing indicators, no gradient text, no visible
@@ -224,6 +230,7 @@ scrollbars; every control has hover, focus-visible and active states; text ≥ 1
 | Canvas v2 + Toolkit v2 | Desk canvas, free movement, connectors, follow mode, full drawing toolkit, visual language | done (placement replaced by Lessons v3 L) |
 | Lessons v3 L | Split layout: slides left, board right, persistent board, dock under the slide column | done |
 | 2 | Agent: grounding (lines + marks), relational geometry, `/api/ask` streaming from OpenAI with a spend ledger, prompt p3.2, `?debug` latency/cost, judged eval (24 questions, 12 PDFs, held-out test split) | done; held-out test judge 4.61 (P1 4.45), first word p50 1.28s, ~$0.004/answer; awaiting founder review |
+| Lessons v3 A + Visual kit v1 + Eval v3 | Two stages (scout opener + stage 2), deck digest, visual kit, prompt p4.6; eval q2 (40 questions, 20 dev / 20 test), rubric r3 | in progress: current prompt p4.6, scout s2.1; r3 trusted only once `calibrate.ts` passes |
 | 3 | Polish: settings panel, history, text selection, anchored-bubble captions setting, error states | later |
 | Voice | Own design pass (TTS clock drives the same timeline) | after 3 |
 
@@ -243,7 +250,7 @@ mobile layouts.
   be crossed; recorded cost comes from `usage` at the prices pinned in `server/prices.ts`; an abort
   or crash books an estimate. Caps: **$40 hard stop** for checkpoint 2 (`PETU_TOTAL_CAP_USD` may
   only lower it), per-phase budgets selected by `PETU_PHASE` (dev 1, bakeoff 6, iterate 7,
-  validate 2, founder 21.99; override one run with `PETU_CAP_<PHASE>=…`), and **$3/day** in the
+  validate 2, founder 21.99, lessondev 1.5, lessonbake 3, lessoniter 3.5, lessonval 2; override one run with `PETU_CAP_<PHASE>=…`), and **$3/day** in the
   founder phase (`PETU_DAILY_CAP_USD`). Knobs go on the command line (`PETU_PHASE=iterate npm run
   eval …`); nobody edits `.env` for them. No ad-hoc scripts call the API; `?debug` shows per-answer
   cost and spent/cap; `GET /api/spend` shows totals by phase.
