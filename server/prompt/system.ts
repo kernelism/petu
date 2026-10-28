@@ -2,7 +2,7 @@
 import { EXAMPLES } from './examples.ts';
 
 /** Bump on any change: the eval records it with every run, and it is part of the cache prefix. */
-export const PROMPT_VERSION = 'p4.6';
+export const PROMPT_VERSION = 'p4.7';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -93,7 +93,7 @@ KIT (no fit or let needed; blocks place themselves; parts count from 1: g[2,3], 
 right=g or below=g places a block beside another, op=⊛ (or · × = → − + ÷) between them
 {{grid on=s id=o over=g slide=k right=k op==}} k's weights slide over g, each cell a sum of products (same keeps g's size, flip flips k)
 {{grid on=s id=o over=g win=1x3 reduce=mean below=g}} (reduce=sum, max, min)  {{grid on=s id=o over=g win=2x2 fn="(d-c)/(b-a)"}} (a b c d: the window's cells)
-{{bars on=s id=z map=v fn="(x-mean)/std"}}  {{grid on=s id=z zip=g,h fn="(x-y)^2"}} (map and zip read any block or a column t.c: never redraw data in another form; right= its source draws →)  {{grid on=s id=z size=6x6 fn="r+c"}}  {{bars on=s id=w vals=t.c}} (column c of t)
+{{bars on=s id=z map=v fn="(x-mean)/std"}}  {{grid on=s id=z zip=g,h fn="(x-y)^2"}} (map and zip read any block or a column t.c, by letter or by header: t.price; never redraw data in another form; right= its source draws →, below= it ↓)  {{grid on=s id=z size=6x6 fn="r+c"}}  {{bars on=s id=w vals=t.c}} (column c of t)
 {{calc on=s of=v reduce=sum "total"}} a calculation line, expansion and result: reduce=sum, mean, max, min, norm, count, dot or cos; of=u,v fn="(x-y)^2"
 {{col id=t.c fn="(b-pb)/pb" dur=4}} fills column c row by row (a b c: this row, pa pb: the row above)  {{scatter on=s id=d pts=t.a,t.b}} follows t
 {{fit on=s id=f of=d}} least squares (pick=2,7: through points 2 and 7)  {{band id=f w=0.5 "inside"}}  {{dist from=d[4] to=f}}

@@ -73,6 +73,13 @@ describe('kit verbs and parts', () => {
     expect(P('col id=t.c fn="(b-pb)/pb" dur=4')).toEqual({ kind: 'col', ref: 't.c', head: '', fn: '(b-pb)/pb', dur: 4 });
     expect(P('col id=t "v" fn="20-10*a"')).toEqual({ kind: 'col', ref: 't', head: 'v', fn: '20-10*a' });
     expect(P('level id=t.c at=1 "|ε| = 1"')).toEqual({ kind: 'level', ref: 't', at: 1, col: 2, label: '|ε| = 1' });
+    // a column by its header
+    expect(P('col id=t.Ed fn="(b-pb)/pb"')).toEqual({ kind: 'col', ref: 't.Ed', head: '', fn: '(b-pb)/pb' });
+    expect(P('level id=t.price at=3')).toEqual({ kind: 'level', ref: 't', at: 3, col: -1, colName: 'price' });
+    expect(P('bars on=s id=w vals=t.Q labels=t.P')).toMatchObject({ src: { col: ['t', -1, 'Q'] }, labelsFrom: ['t', -1, 'P'] });
+    expect(P('bars on=s id=w map=t.Q fn="2*x"')).toMatchObject({ src: { map: 't.Q' } });
+    expect(P('scatter on=s id=d pts=t.P,t.Q')).toMatchObject({ cols: { id: 't', x: -1, y: -1, xName: 'P', yName: 'Q' } });
+    expect(P('bars on=s id=w vals=1,2 below=u op=↓')).toMatchObject({ below: 'u', op: '↓' });
     expect(P('emph id=s where="x==7"')).toEqual({ kind: 'emph', ref: 's', where: 'x==7' });
     expect(P('emph id=g[1:2,2:3]')).toEqual({ kind: 'emph', ref: 'g[1:2,2:3]' });
     expect(P('sweep id=o[1,1]')).toBeNull();

@@ -12,7 +12,7 @@
  *   {{calc on=s of=d reduce=sum "total"}}  {{calc on=s of=u,v reduce=dot}}  {{fit on=s id=f of=p pick=2,7}}
  *   {{step id=o[1,2]}}  {{sweep id=o dur=6}}  {{set id=b fn="x+20"}}  {{band id=f w=0.5}}  {{dist from=p[4] to=f}}
  */
-import type { KitBlock, KitReduce, KitSource, KitVerb, WinReduce, Pt } from './types';
+import type { ColRef, KitBlock, KitReduce, KitSource, KitVerb, WinReduce, Pt } from './types';
 import type { PtArg } from './pointExpr';
 import { isBlockRef, NAME, normName } from './pointExpr';
 import { parseVals, MAX_DIM } from '../desk/kit/compute';
@@ -24,7 +24,7 @@ const REDUCES = new Set<KitReduce>(['sum', 'mean', 'max', 'min', 'norm', 'count'
 const WIN_REDUCES = new Set<WinReduce>(['sum', 'mean', 'max', 'min']);
 /** Operator glyphs between blocks; ASCII spellings map to the glyph. */
 const GLYPHS: Record<string, string> = {
-  '⊛': '⊛', '*': '⊛', '·': '·', '.': '·', '×': '×', x: '×', '=': '=', '→': '→', '->': '→', '−': '−', '-': '−', '+': '+', '÷': '÷', '/': '÷', '≈': '≈',
+  '↓': '↓', '⊛': '⊛', '*': '⊛', '·': '·', '.': '·', '×': '×', x: '×', '=': '=', '→': '→', '->': '→', '−': '−', '-': '−', '+': '+', '÷': '÷', '/': '÷', '≈': '≈',
 };
 
 const eid = (s?: string) => { const n = s ? normName(s) : ''; return n && NAME.test(n) ? n : undefined; };
@@ -63,15 +63,21 @@ function place(args: Args, P: (s?: string) => PtArg | undefined): Record<string,
   return out;
 }
 
-/** `t.c`: column c (a letter: a is the first) of block t. */
-const COLREF = /^([A-Za-z][A-Za-z0-9_]{0,23})\.([a-z])$/;
-export const colRef = (s?: string): [string, number] | null => {
+/**
+ * `t.c`: a column of table t, by letter (a is the first) or by its header (`t.price`, `t.Ed`).
+ * A letter gives [t, index]; a header gives [t, -1, header], resolved against the table when it builds.
+ */
+const COLREF = /^([A-Za-z][A-Za-z0-9_]{0,23})\.([^\s.,;=[\](){}"]{1,24})$/;
+export const colRef = (s?: string): ColRef | null => {
   const m = s ? COLREF.exec(s.trim()) : null;
-  return m ? [normName(m[1]), m[2].charCodeAt(0) - 97] : null;
+  if (!m) return null;
+  return /^[a-z]$/.test(m[2]) ? [normName(m[1]), m[2].charCodeAt(0) - 97] : [normName(m[1]), -1, m[2]];
 };
+/** A column ref as one string: `t.c` (by letter) or `t.Header`. */
+export const colStr = (cr: ColRef) => `${cr[0]}.${cr[2] ?? String.fromCharCode(97 + cr[1])}`;
 
-/** A source block for map= / zip=: a block id, or a table column `t.c` (normalised to `t.c`). */
-const srcRef = (s?: string) => { const cr = colRef(s); return cr ? `${cr[0]}.${String.fromCharCode(97 + cr[1])}` : eid(s); };
+/** A source block for map= / zip=: a block id, or a table column `t.c` / `t.Header`. */
+const srcRef = (s?: string) => { const cr = colRef(s); return cr ? colStr(cr) : eid(s); };
 
 /** vals= / map= fn= / zip= fn= / over= (slide= | win= reduce=|fn=) / size= fn=: where a block's values come from. */
 function source(args: Args, flags: Set<string>): KitSource | null {
@@ -167,7 +173,8 @@ export function parseKitBlock(name: string, args: Args, quotes: string[], flags:
       const cx = two?.length === 2 ? colRef(two[0]) : null, cy = two?.length === 2 ? colRef(two[1]) : null;
       const d = cx && cy ? null : data(args.pts);
       if (!d && !(cx && cy && cx[0] === cy[0])) return null;
-      return { kind: 'scatter', ...(d ? { data: d } : { cols: { id: cx![0], x: cx![1], y: cy![1] } }), ...(args.x ? { xLabel: args.x.slice(0, MAX_LABEL) } : {}), ...(args.y ? { yLabel: args.y.slice(0, MAX_LABEL) } : {}), ...caption, ...pl } as KitBlock<PtArg>;
+      const named = cx && cy ? { ...(cx[2] ? { xName: cx[2] } : {}), ...(cy[2] ? { yName: cy[2] } : {}) } : {};
+      return { kind: 'scatter', ...(d ? { data: d } : { cols: { id: cx![0], x: cx![1], y: cy![1], ...named } }), ...(args.x ? { xLabel: args.x.slice(0, MAX_LABEL) } : {}), ...(args.y ? { yLabel: args.y.slice(0, MAX_LABEL) } : {}), ...caption, ...pl } as KitBlock<PtArg>;
     }
     case 'calc': {
       const of = (args.of ?? '').split(',').map((x) => eid(x.trim()));
@@ -217,7 +224,7 @@ export function parseKitVerb(name: string, args: Args, quotes: string[], _flags:
     }
     case 'col': {
       const cr = colRef(args.id);
-      const r = cr ? `${cr[0]}.${String.fromCharCode(97 + cr[1])}` : ref;
+      const r = cr ? colStr(cr) : ref;
       const head = quotes[0]?.trim() ?? '', fn = fnOk(args.fn), dur = num(args.dur);
       if (!r || isBlockRef(r) || (!head && !cr) || head.length > MAX_LABEL || !fn || (args.dur != null && !(dur != null && dur >= 0 && dur <= 30))) return null;
       return { kind: 'col', ref: r, head, fn, ...(dur != null ? { dur } : {}) };
@@ -226,7 +233,7 @@ export function parseKitVerb(name: string, args: Args, quotes: string[], _flags:
       const at = num(args.at), cr = colRef(args.id);
       const r = cr ? cr[0] : ref;
       if (!r || (r && isBlockRef(r)) || at == null) return null;
-      return { kind: 'level', ref: r, at, ...(cr ? { col: cr[1] } : {}), ...(quotes[0]?.trim() ? { label: quotes[0].trim().slice(0, MAX_LABEL) } : {}) };
+      return { kind: 'level', ref: r, at, ...(cr ? { col: cr[1], ...(cr[2] ? { colName: cr[2] } : {}) } : {}), ...(quotes[0]?.trim() ? { label: quotes[0].trim().slice(0, MAX_LABEL) } : {}) };
     }
     case 'dist': {
       const line = eid(args.to), from = args.from;

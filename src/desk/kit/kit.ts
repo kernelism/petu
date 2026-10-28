@@ -14,9 +14,9 @@
  * fixed when it is built: the section scales as one picture.
  */
 import type { SRect } from '../../geometry/space';
-import type { InkAction, KitBlock, KitSource, KitVerb, Pt, RefAction, Target } from '../../script/types';
+import type { ColRef, InkAction, KitBlock, KitSource, KitVerb, Pt, RefAction, Target } from '../../script/types';
 import { blockPart, isBlockRef, type BlockPart } from '../../script/pointExpr';
-import { colRef } from '../../script/parseKit';
+import { colRef, colStr } from '../../script/parseKit';
 import type { BuildEnv, ElementPlan, Pace, TargetCtx } from '../types';
 import type { Registry } from '../registry';
 import { token } from '../../ink/agent/tokens';
@@ -179,7 +179,7 @@ export function computeSource(src: KitSource, get: (id: string) => Block | undef
   // Any block with values is a source (a grid, bars, a table); `t.c` is a table's column, as a row.
   const valsOf = (id: string): C.Mat | null => {
     const cr = colRef(id);
-    if (cr) { const t = get(cr[0]); return t?.kind === 'table' && cr[1] < t.vals![0].length ? [t.vals!.map((r) => r[cr[1]])] : null; }
+    if (cr) { const t = get(cr[0]); return t?.kind === 'table' && cr[1] >= 0 && cr[1] < t.vals![0].length ? [t.vals!.map((r) => r[cr[1]])] : null; }
     const b = get(id);
     return b?.vals ? b.vals : null;
   };
@@ -193,7 +193,7 @@ export function computeSource(src: KitSource, get: (id: string) => Block | undef
   if ('col' in src) {
     const t = get(src.col[0]);
     if (!t || t.kind !== 'table') return `no table ${src.col[0]}`;
-    if (src.col[1] >= t.vals![0].length) return 'no such column';
+    if (src.col[1] < 0 || src.col[1] >= t.vals![0].length) return `no column ${src.col[2] ?? src.col[1]}`;
     return { full: [t.vals!.map((r) => r[src.col[1]])], deps: [t.id] };
   }
   if ('map' in src) {
@@ -244,6 +244,52 @@ function asShapeOf(v: C.Mat, like: C.Mat): C.Mat {
 /** Bars draw any vector: a column (a grid's) lies down as a row. */
 const asRow = (m: C.Mat): C.Mat => (m.length > 1 && m.every((r) => r.length === 1) ? [m.map((r) => r[0])] : m);
 
+/**
+ * A table column's index: by letter, or by header (exact, then ignoring case, spaces, _ and -); a
+ * letter past the table's width falls back to a header of that name (cols=x,y: t.x is x). -1: none.
+ */
+export function colIndex(heads: readonly string[], idx: number, name?: string): number {
+  if (name == null) {
+    if (idx >= 0 && idx < heads.length) return idx;
+    name = String.fromCharCode(97 + idx);
+  }
+  const k = heads.indexOf(name);
+  if (k >= 0) return k;
+  const loose = (x: string) => x.toLowerCase().replace(/[\s_\-]/g, '');
+  return heads.findIndex((h) => loose(h) === loose(name!));
+}
+
+/** A parsed column ref against its table (waiting for the table only when it is not built yet). */
+async function resolveCol(cr: ColRef, store: KitStore): Promise<ColRef> {
+  const t = store.get(cr[0]) ?? (cr[2] != null ? await store.wait(cr[0]) : undefined);
+  if (!t?.tab) return cr;
+  const k = colIndex(t.tab.heads, cr[1], cr[2]);
+  return k >= 0 ? [cr[0], k] : cr;
+}
+/** A column ref written as a string (map=t.Ed): by letter once resolved; anything else unchanged. */
+async function resolveColStr(s: string, store: KitStore): Promise<string> {
+  const cr = colRef(s);
+  if (!cr) return s;
+  const r = await resolveCol(cr, store);
+  return r[2] == null && r[1] >= 0 && r[1] < 26 ? colStr(r) : s;
+}
+/** Every column a block reads, by header → by index (unknown headers stay, and the build skips with a reason). */
+async function withColumns<T extends KitBlock>(a: T, store: KitStore): Promise<T> {
+  if (a.kind === 'grid' || a.kind === 'bars') {
+    let src = a.src;
+    if ('col' in src) src = { col: await resolveCol(src.col, store) };
+    else if ('map' in src) src = { ...src, map: await resolveColStr(src.map, store) };
+    else if ('zip' in src) src = { ...src, zip: [await resolveColStr(src.zip[0], store), await resolveColStr(src.zip[1], store)] };
+    const lf = a.kind === 'bars' && a.labelsFrom ? await resolveCol(a.labelsFrom, store) : undefined;
+    return { ...a, src, ...(lf ? { labelsFrom: lf } : {}) };
+  }
+  if (a.kind === 'scatter' && a.cols) {
+    const x = await resolveCol([a.cols.id, a.cols.x, a.cols.xName], store), y = await resolveCol([a.cols.id, a.cols.y, a.cols.yName], store);
+    return { ...a, cols: { id: a.cols.id, x: x[1], y: y[1], ...(x[2] ? { xName: x[2] } : {}), ...(y[2] ? { yName: y[2] } : {}) } };
+  }
+  return a;
+}
+
 /** Ids a computed source reads from (a table column counts as its table). */
 function sourceIds(src: KitSource): string[] {
   const t = (id: string) => colRef(id)?.[0] ?? id;
@@ -264,7 +310,7 @@ export const isVarName = (s: string) => /^[A-Za-z][′']*$/.test(s);
 const regionOf = (t: Target) => t.region!;
 /** What a block will show once everything fills: a table column's computed values, else its values. */
 function eventual(src: KitSource, shown: C.Mat, get: (id: string) => Block | undefined): C.Mat {
-  if ('col' in src) { const t = get(src.col[0]); if (t?.full) return [t.full.map((r) => r[src.col[1]])]; }
+  if ('col' in src) { const t = get(src.col[0]); if (t?.full && src.col[1] >= 0) return [t.full.map((r) => r[src.col[1]])]; }
   return shown;
 }
 const fmtAll = (m: C.Mat, dp?: number) => m.flat().map((v) => C.fmt(v, dp, C.fractions(m.flat())));
@@ -298,14 +344,16 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
   if (a.kind === 'fit') return buildFit(a, ctx, env, store, m);
   const id = a.id ?? store.anonId();
   if (a.id && store.get(a.id)) return 'duplicate id';
+  a = await withColumns(a, store);
   const anchor = await anchorOf(store, a);
   // A neighbour that was skipped: the block still draws, in the default place (one skip never cascades).
   if ((a.right || a.below) && !anchor) { console.warn('[kit] unknown neighbour, placed below:', a.right ?? a.below); a = { ...a, right: undefined, below: undefined, op: undefined }; }
   // Defaults: a grid or bars is named on the board (its id, when it has no caption; tables and plots
-  // name themselves by their headers and axes), and a computed block placed right of its own source
-  // reads as "source → result" unless op= says otherwise.
+  // name themselves by their headers and axes), and a computed block placed right of (below) its own
+  // source reads as "source → result" (↓) unless op= says otherwise. An → between stacked blocks points down.
   if ((a.kind === 'grid' || a.kind === 'bars') && !a.caption && idCaption(a.id)) a = { ...a, caption: idCaption(a.id) };
-  if ((a.kind === 'grid' || a.kind === 'bars') && a.right && a.op == null && anchor && sourceIds(a.src).includes(anchor.id)) a = { ...a, op: '→' };
+  if ((a.kind === 'grid' || a.kind === 'bars') && (a.right || a.below) && a.op == null && anchor && sourceIds(a.src).includes(anchor.id)) a = { ...a, op: a.right ? '→' : '↓' };
+  if (a.below && a.op === '→') a = { ...a, op: '↓' };
   const others = store.inRegion(region).map((b) => b.placed);
   const spacing = { gap: m.gap, opW: m.opW, margin: m.margin, top: m.top, width: 1000 };
   const P = (w: number, h: number, pad: Pad) => place(w, h, pad, { right: a.right, below: a.below, op: a.op, at: a.at as Pt | undefined }, anchor?.placed, others, spacing);
@@ -349,7 +397,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     } else {
       const slot = cs, H = cs * 3.2;
       const ev = eventual(a.src, got.full, (x) => store.get(x));
-      const lf = a.labelsFrom ? store.get(a.labelsFrom[0]) : undefined;
+      const lf = a.labelsFrom && a.labelsFrom[1] >= 0 ? store.get(a.labelsFrom[0]) : undefined;
       const labels = (lf?.full ? lf.full.map((r) => C.fmt(r[a.labelsFrom![1]], lf.dp)) : a.labels)?.slice(0, Cn);
       const neg = ev[0].some((v) => v < 0);
       const pad: Pad = { l: 0, t: m.label * 1.5, r: 0, b: (neg ? m.label * 1.4 : 0) + (labels ? m.label * 1.7 : 0) + (a.caption ? m.label * 1.9 : 0) + m.label * 0.4 };
@@ -395,6 +443,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
       const t = await store.wait(a.cols.id);
       if (!t || t.kind !== 'table') return `no table ${a.cols.id}`;
       const n = t.vals![0].length;
+      if (a.cols.x < 0 || a.cols.y < 0) return `no column ${a.cols.x < 0 ? a.cols.xName : a.cols.yName}`;
       if (a.cols.x >= n || a.cols.y >= n) return 'no such column';
       data = t.vals!.map((r) => ({ x: r[a.cols!.x], y: r[a.cols!.y] }));
       all = t.full!.map((r) => ({ x: r[a.cols!.x], y: r[a.cols!.y] }));
@@ -1270,11 +1319,18 @@ export async function buildKitRef(a: RefAction, env: BuildEnv): Promise<ElementP
     case 'set': return setVerb(a, env, store);
     case 'band': return band(a, env, store);
     case 'dist': return dist(a, env, store);
-    case 'level': return levelVerb(a, env, store);
+    case 'level': {
+      if (a.colName == null) return levelVerb(a, env, store);
+      const r = await resolveCol([a.ref, -1, a.colName], store);
+      return r[2] == null ? levelVerb({ ...a, col: r[1], colName: undefined }, env, store) : `no column ${a.colName}`;
+    }
     case 'col': {
-      // `t.c` fills column c (declared empty in the table); a bare id appends a column.
-      const m = /^(.+)\.([a-z])$/.exec(a.ref);
-      return m ? colVerb({ ...a, ref: m[1] }, env, store, m[2].charCodeAt(0) - 97) : colVerb(a, env, store);
+      // `t.c` or `t.Header` fills that column (declared empty in the table); a header the table does
+      // not have yet appends a column under that name; a bare id appends a column.
+      const cr = colRef(a.ref);
+      if (!cr) return colVerb(a, env, store);
+      const r = await resolveCol(cr, store);
+      return r[2] == null ? colVerb({ ...a, ref: r[0] }, env, store, r[1]) : colVerb({ ...a, ref: r[0], head: a.head || r[2] }, env, store);
     }
     case 'emph': if (a.where) return emphWhere(a, env, store); // falls through
     // eslint-disable-next-line no-fallthrough

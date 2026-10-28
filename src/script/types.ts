@@ -102,13 +102,15 @@ export type KitSource =
   /** An R×C grid whose cells are fn(r, c) (1-based row and column). */
   | { gen: [number, number]; fn: string }
   /** A table's column (0-based index) as a vector: it follows the table as rows fill. */
-  | { col: [string, number] };
+  | { col: ColRef };
+/** A table column: [table, index] by letter, or [table, -1, header] by its header (resolved when the table is known). */
+export type ColRef = [string, number, string?];
 export type KitReduce = 'sum' | 'mean' | 'max' | 'min' | 'norm' | 'count' | 'dot' | 'cos';
 export type KitBlock<P = Pt> =
   | ({ kind: 'grid'; src: KitSource; rows?: string[]; cols?: string[]; shade?: 'heat' | 'image'; dp?: number; caption?: string } & KitPlace<P>)
-  | ({ kind: 'bars'; src: KitSource; labels?: string[]; labelsFrom?: [string, number]; ghost?: string; dp?: number; caption?: string } & KitPlace<P>)
+  | ({ kind: 'bars'; src: KitSource; labels?: string[]; labelsFrom?: ColRef; ghost?: string; dp?: number; caption?: string } & KitPlace<P>)
   /** Data points, literal or two of a table's columns (x, y: 0-based), which appear as the rows fill. */
-  | ({ kind: 'scatter'; data?: Pt[]; cols?: { id: string; x: number; y: number }; xLabel?: string; yLabel?: string; caption?: string } & KitPlace<P>)
+  | ({ kind: 'scatter'; data?: Pt[]; cols?: { id: string; x: number; y: number; xName?: string; yName?: string }; xLabel?: string; yLabel?: string; caption?: string } & KitPlace<P>)
   /** A table: a header per column, rows of values; `col` adds computed columns that fill row by row. */
   | ({ kind: 'table'; vals: number[][]; heads: string[]; dp?: number; caption?: string } & KitPlace<P>)
   /** A live calculation line: a reduction of one block (two for dot / cos), its expansion and result. */
@@ -144,7 +146,7 @@ export type KitVerb =
   /** A computed column added to a table, filled row by row over `dur` seconds (a b c… this row's cells, pa pb… the row above's, i the row number). */
   | { kind: 'col'; ref: string; head: string; fn: string; dur?: number }
   /** A reference line at value `at` across bars, a scatter (y = at) or a table column (`t.c`), labelled. */
-  | { kind: 'level'; ref: string; at: number; col?: number; label?: string };
+  | { kind: 'level'; ref: string; at: number; col?: number; colName?: string; label?: string };
 export const KIT_VERBS = new Set(['step', 'sweep', 'set', 'band', 'dist', 'col', 'level']);
 
 export type ConnectAction = { kind: 'connect'; from: End; to: End; id?: string };
