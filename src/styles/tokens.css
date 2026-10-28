@@ -1,0 +1,21 @@
+:root {
+  --canvas-bg: #E9E7E1;
+  --surface: #FFFFFF;
+  --ink: #1D1D1F;
+  --ink-2: #3A3A3C;
+  --muted: #6E6E73;
+  --hairline: rgba(0,0,0,.08);
+  --caption-bg: rgba(28,28,30,.92);
+  --caption-fg: #FFFFFF;
+  --focus: #0A84FF;
+  --radius-l: 14px;
+  --radius-m: 10px;
+  --shadow-float: 0 1px 2px rgba(0,0,0,.06), 0 8px 28px rgba(0,0,0,.12);
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+  --ease-out: cubic-bezier(.2,.8,.2,1);
+  /* interaction fills on light surfaces */
+  --hover: rgba(0,0,0,.05);
+  --press: rgba(0,0,0,.09);
+}
+html, body, #root { height: 100%; margin: 0; background: var(--canvas-bg); color: var(--ink); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+*:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
