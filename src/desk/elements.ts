@@ -12,7 +12,7 @@ import { plotStrokes } from './plot';
 import { nudge, placeLabel } from './nudge';
 import { boxOf, strokeBoxes, union, type ElementEntry } from './registry';
 import { TEXT_PX, MATH_PX, own, makeText, measureText, reveal, drawDot, drawShade, emphPass, moveGroupTo, translateOf, fadeGroup, textSegments, type TextOpts, type ShadeShape, type ShadeLook } from './render';
-import { preloadMath, texToHtml, placeMath, revealMath } from './math';
+import { preloadMath, texToHtml, placeMath, revealMath, setMathAt } from './math';
 import type { BuildElement, BuildEnv, ElementPlan, Pace, TargetCtx } from './types';
 
 /** Closed shapes (circle, box) read as rushed below this, however small… */
@@ -325,11 +325,7 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
           const m = placeMath(g, at, html, px(MATH_PX[a.size]), colorOf(ctx.target, a.em, env));
           // Rule 5: the measured formula stays inside its target (a payoff at x=950 shifts left, not off the region).
           const fit = inside({ ...m.box, w: m.box.w + 2, h: m.box.h + 2 }, bounds(ctx));
-          if (fit.x !== m.box.x || fit.y !== m.box.y) {
-            m.box = { ...m.box, x: fit.x, y: fit.y };
-            m.fo.setAttribute('x', String(fit.x));
-            m.fo.setAttribute('y', String(fit.y));
-          }
+          if (fit.x !== m.box.x || fit.y !== m.box.y) setMathAt(m, fit.x, fit.y);
           env.registry.define({ id: a.id, kind: 'math', target: ctx.target, bbox: m.box, boxes: [m.box], anchor: { x: m.box.x, y: m.box.y + m.box.h / 2 }, group: g });
           await revealMath(g, m, { style: env.settings.inkStyle, signal, ...k });
         },

@@ -375,7 +375,9 @@ export class Desk implements DeskApi {
     try {
       await Promise.all([this.host.setColumn(lanes, gaps, ms), along?.()]);
     } finally {
-      if (this.heading === heading) this.heading = null;
+      // Landed: the state names the committed column again. Published here, not left to the caller:
+      // abort() collapses with no caller to emit, and a dock left on the heading would miss a later change.
+      if (this.heading === heading) { this.heading = null; this.emit(); }
     }
   }
 

@@ -227,14 +227,31 @@ describe('buildElement', () => {
     const p = await buildElement({ kind: 'math', region: 'side', at: { x: 950, y: 690 }, tex: 'x - x\' = \\frac{Bf}{z}', size: 'l' }, e);
     expect(typeof p).not.toBe('string');
     await run(p);
-    const fo = layers.agent.querySelector('foreignObject')!;
-    const x = Number(fo.getAttribute('x')), y = Number(fo.getAttribute('y'));
-    const w = Number(fo.getAttribute('width')), h = Number(fo.getAttribute('height'));
-    expect(x).toBeGreaterThanOrEqual(0);
-    expect(x + w).toBeLessThanOrEqual(1000 + 2);
-    expect(y + h).toBeLessThanOrEqual(700 + 2);
+    const el = layers.agent.querySelector('.desk-math')!;
+    const [x, y] = /translate\(([-\d.e]+) ([-\d.e]+)\)/.exec(el.getAttribute('transform')!)!.slice(1).map(Number);
     const box = [...e.registry.obstacles({ region: 'side' })][0];
+    expect([box.x, box.y]).toEqual([x, y]);
+    expect(x).toBeGreaterThanOrEqual(0);
+    expect(y + box.h).toBeLessThanOrEqual(700 + 2);
     expect(box.x + box.w).toBeLessThanOrEqual(1000);
+  });
+  it('math, write and label keep their `at` y whatever the region scale (WebKit drift regression)', async () => {
+    const mids: number[][] = [];
+    for (const scale of [0.3, 0.518, 0.6, 1, 1.4]) {
+      const { e } = env();
+      const ctx = await e.ctx({ region: 'side' }) as TargetCtx;
+      const e2 = { ...e, ctx: async () => ({ ...ctx, scale: () => scale }) };
+      await run(await buildElement({ kind: 'math', region: 'side', at: { x: 50, y: 200 }, tex: 'z', size: 's', id: 'm' }, e2));
+      await run(await buildElement({ kind: 'math', region: 'side', at: { x: 50, y: 470 }, tex: '2z', size: 's', id: 'm2' }, e2));
+      await run(await buildElement({ kind: 'write', region: 'side', at: { x: 300, y: 350 }, text: "depth z, x'", size: 'm', id: 'w' }, e2));
+      const mid = (id: string) => { const b = e2.registry.get(id)!.bbox; return b.y + b.h / 2; };
+      mids.push([mid('m'), mid('m2'), mid('w')]);
+    }
+    for (const m of mids) {
+      expect(m[0]).toBeCloseTo(200, 0);
+      expect(m[1]).toBeCloseTo(470, 0);
+      expect(m[2]).toBeCloseTo(350, 0);
+    }
   });
   it('written text near the edge stays inside the region (rule 5)', async () => {
     const { e, layers } = env();

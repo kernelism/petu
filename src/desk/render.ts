@@ -170,6 +170,7 @@ function splitTexts(g: SVGGElement): { units: Unit[]; undo(): void } {
   const units: Unit[] = [];
   const undo: (() => void)[] = [];
   for (const t of g.querySelectorAll('text')) {
+    if (t.closest('.desk-math')) continue; // typeset math reveals by its own pieces
     const whole = t.textContent ?? '';
     const holders: Element[] = t.children.length ? [...t.children] : [t];
     const words = Array.from(whole).length > WORDS_FROM;
@@ -188,20 +189,9 @@ function splitTexts(g: SVGGElement): { units: Unit[]; undo(): void } {
   return { units, undo: () => undo.forEach((f) => f()) };
 }
 
-/** Typeset math's smallest pieces (glyph runs, fraction rules, radicals), in writing order (left to right). */
+/** Typeset math's pieces (text runs, rules, KaTeX svg), already in writing order (left to right). */
 function mathUnits(g: SVGGElement): Unit[] {
-  const leaves: HTMLElement[] = [];
-  const walk = (el: Element) => {
-    const kids = el.children;
-    if (el.namespaceURI === SVG && el.tagName.toLowerCase() === 'svg') { leaves.push(el as HTMLElement); return; }
-    if (!kids.length) { leaves.push(el as HTMLElement); return; } // glyph runs, and empty spans that draw (fraction rules)
-    for (const k of kids) walk(k);
-  };
-  for (const fo of g.querySelectorAll('foreignObject')) for (const k of fo.children) walk(k);
-  const x = leaves.map((el) => { const r = el.getBoundingClientRect?.(); return r && r.width + r.height > 0 ? r.left : NaN; });
-  const order = leaves.map((_, i) => i);
-  if (x.every((v) => !Number.isNaN(v))) order.sort((a, b) => x[a] - x[b] || a - b);
-  return order.map((i) => ({ el: leaves[i], prop: 'opacity' as const }));
+  return [...g.querySelectorAll('.desk-math > *')].map((el) => ({ el: el as SVGElement, prop: 'opacity' as const }));
 }
 
 /**

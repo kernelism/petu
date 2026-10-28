@@ -6,6 +6,7 @@ import { Director } from '../../src/playback/director';
 import { DEFAULTS } from '../../src/settings/settings';
 import type { ViewerApi } from '../../src/pdf/viewerApi';
 import type { BuildElement } from '../../src/desk/types';
+import { dockPlacement } from '../../src/ui/layout';
 
 /** A viewer stand-in: real layout math, no pdf.js. */
 function fakeHost(W = 1440, H = 900, pages = 5) {
@@ -283,6 +284,32 @@ describe('Desk under interruption', () => {
     d.abort();
     await flush();
     expect(h.s.lanes).toEqual({ left: 0, right: 0 });
+  });
+  it('after the lanes collapse the dock is centred under the column again, at every window size (reset and abort)', async () => {
+    for (const [W, H] of [[1280, 800], [1440, 900], [1700, 1000], [1920, 1080], [2560, 1440]]) {
+      for (const how of ['reset', 'abort'] as const) {
+        const h = fakeHost(W, H);
+        const d = new Desk(h, stage);
+        let last: ReturnType<Desk['state']> | null = null;
+        d.subscribe((s) => { last = s; });
+        await d.addRegion(spec('side', 2, { place: 'right' }));
+        expect(dockPlacement(W, last).x).toBeLessThan(W / 2 - 1); // beside its lane
+        if (how === 'reset') {
+          const r = d.reset(300);
+          await vi.advanceTimersByTimeAsync(300);
+          await r;
+        } else {
+          const r = d.reset(300, { keepLanes: true });
+          await vi.advanceTimersByTimeAsync(300);
+          await r;
+          d.abort();
+          await flush();
+        }
+        expect(h.s.lanes).toEqual({ left: 0, right: 0 });
+        expect(dockPlacement(W, last).x, `${W}x${H} ${how}`).toBeCloseTo(W / 2, 0);
+        expect(dockPlacement(W, d.state()).x).toBeCloseTo(W / 2, 0);
+      }
+    }
   });
   it('reset with nothing to leave does not hold for the fade (M4)', async () => {
     const h = fakeHost();
