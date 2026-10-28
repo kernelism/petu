@@ -1,6 +1,7 @@
 // scripts/eval/run.ts — the eval runner.
 //   node --experimental-strip-types scripts/eval/run.ts --split dev --config terra-none [--only D4,T2] [--n 2]
-//        [--replay <runId>] [--judge|--no-judge] [--webkit] [--prewarm]
+//        [--replay <runId>] [--judge|--no-judge] [--webkit] [--prewarm] [--qset q2|q1] [--rubric r3|r2]
+// Eval v3 defaults: question set q2, rubric r3 (judged on a timeline of frames: see frames.ts).
 // Real app, real speed, headless Chrome over CDP. Outputs live in .petu/eval/ (gitignored).
 // Every model/judge call goes through the dev server (and its ledger); this file holds no key.
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -11,10 +12,14 @@ import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { Chrome } from './cdp.ts';
 import { CONFIGS, configEnv } from './configs.ts';
-import { deckUrlPath, pdfDirs } from './decks.ts';
+import { deckUrlPath, pathOfSrc, pdfDirs } from './decks.ts';
 import { computeMetrics, type Metrics } from './metrics.ts';
-import { buildJudgeRequest, judgeAnswer, renderTranscript, RUBRIC, type JudgeResult } from './judge.ts';
-import { assertSplitAllowed, QSET, QUESTIONS, validateSet, freeze, type Question } from './questions.ts';
+import { buildJudgeRequest, buildJudgeRequestR3, estimateJudgeTokens, fakeJudgeFetch, judgeAnswer, JUDGE_MODEL, renderTranscript, RUBRICS, type JudgeFrame, type JudgeRequest, type JudgeResult } from './judge.ts';
+import { JUDGE_MAX_OUTPUT } from './configs.ts';
+import { worstCaseUsd } from '../../server/prices.ts';
+import { readCalibration } from './calibrate.ts';
+import { assertSplitAllowed, QSETS, qsetId, validateSet, freeze, type Question } from './questions.ts';
+import { boardProbeScript, boardScrollScript, boardSegments, downscaleScript, frameCaptions, frameSchedule, pagesTouched, pdfDigest, stitchScript } from './frames.ts';
 import { checkBudget, parseArgs, selectQuestions, wantsJudge, type Args } from './plan.ts';
 import { renderReport, type ReportItem } from './report.ts';
 import { composeScript, pickStills } from './sheet.ts';
@@ -35,8 +40,11 @@ export type StoredQuestion = { open: { src: string; page: number }; turns: EvalR
 const readJson = <T,>(p: string): T => JSON.parse(readFileSync(p, 'utf8')) as T;
 const writeJson = (p: string, v: unknown) => { mkdirSync(join(p, '..'), { recursive: true }); writeFileSync(p, JSON.stringify(v, null, 1)); };
 
-const testUses = (): number => (existsSync(TEST_USES) ? readJson<unknown[]>(TEST_USES).length : 0);
-const noteTestUse = (runId: string) => writeJson(TEST_USES, [...(existsSync(TEST_USES) ? readJson<unknown[]>(TEST_USES) : []), { runId, at: new Date().toISOString() }]);
+type TestUse = { runId: string; at: string; qset?: string };
+/** Earlier runs that touched this set's test split (entries without a set are q1's, from checkpoint 2). */
+export const testUsesOf = (uses: TestUse[], qset: string): number => uses.filter((u) => (u.qset ?? 'q1') === qset).length;
+const allTestUses = (): TestUse[] => (existsSync(TEST_USES) ? readJson<TestUse[]>(TEST_USES) : []);
+const noteTestUse = (runId: string, qset: string) => writeJson(TEST_USES, [...allTestUses(), { runId, at: new Date().toISOString(), qset }]);
 
 /** Eval dev servers use ports from PETU_EVAL_PORTS (default 5186-5195), never the founder's 5180. */
 export function evalPorts(spec = process.env.PETU_EVAL_PORTS ?? '5186-5195'): number[] {
@@ -75,6 +83,23 @@ async function startServer(env: Record<string, string>): Promise<{ base: string;
   throw new Error('dev server did not come up (is Lane S in place? GET /api/spend)');
 }
 
+/** After a turn: the settled final state, and the whole board when the layout has one (stitched strips). */
+export async function captureEnd(chrome: Chrome, qdir: string, prefix: string): Promise<void> {
+  await sleep(700); // trailing ink and layout settle
+  writeFileSync(join(qdir, `${prefix}final.png`), await chrome.shot());
+  const probe = await chrome.eval<{ x: number; y: number; w: number; h: number; scrollHeight: number; clientHeight: number; scrollTop: number } | null>(boardProbeScript);
+  if (!probe) return;
+  const ys = boardSegments(probe.scrollHeight, probe.clientHeight);
+  const urls: string[] = [];
+  for (const y of ys) {
+    await chrome.eval(boardScrollScript(y));
+    urls.push(`data:image/png;base64,${(await chrome.shot('png', probe)).toString('base64')}`);
+  }
+  await chrome.eval(boardScrollScript(probe.scrollTop));
+  const out = await chrome.eval<string>(stitchScript(urls, ys, probe.h));
+  writeFileSync(join(qdir, `${prefix}board.jpg`), Buffer.from(out.split(',')[1], 'base64'));
+}
+
 const urlFor = (base: string, open: StoredQuestion['open'], nogen: boolean) => `${base}/?src=${encodeURIComponent(open.src)}&page=${open.page}&eval${nogen ? '&nogen' : ''}`;
 const sha = (b: Buffer | string) => createHash('sha1').update(b).digest('hex');
 
@@ -99,13 +124,22 @@ async function runQuestion(chrome: Chrome, ctx: Ctx, q: Question, rep: number): 
   writeFileSync(join(qdir, 'page.png'), pageShot);
   const turns: EvalResult[] = [];
   if (prior) {
-    for (const log of prior.turns) { turn = turns.length; turns.push(await chrome.eval<EvalResult>(`window.__petu.replay(${JSON.stringify(log)}).then(() => window.__petu.result())`)); }
+    for (const log of prior.turns) {
+      turn = turns.length;
+      turns.push(await chrome.eval<EvalResult>(`window.__petu.replay(${JSON.stringify(log)}).then(() => window.__petu.result())`));
+      await Promise.all(shots); await captureEnd(chrome, qdir, turn ? `t${turn + 1}-` : '');
+    }
   } else {
     if (q.ink) await chrome.eval(`window.__petu.inkAroundLargestMark(${q.page})`);
     // --prewarm: the student's intent (ask bar focus) warms the page's cache, as typing would, before Enter.
     if (ctx.args.prewarmMs) { await chrome.eval(`document.querySelector('.askbar input, .askbar textarea')?.focus()`); await sleep(ctx.args.prewarmMs); }
     turns.push(await chrome.eval<EvalResult>(`window.__petu.ask(${JSON.stringify(q.question)}).then(() => window.__petu.result())`));
-    if (q.followUp) { turn = 1; turns.push(await chrome.eval<EvalResult>(`window.__petu.ask(${JSON.stringify(q.followUp)}).then(() => window.__petu.result())`)); }
+    await Promise.all(shots); await captureEnd(chrome, qdir, '');
+    if (q.followUp) {
+      turn = 1;
+      turns.push(await chrome.eval<EvalResult>(`window.__petu.ask(${JSON.stringify(q.followUp)}).then(() => window.__petu.result())`));
+      await Promise.all(shots); await captureEnd(chrome, qdir, 't2-');
+    }
   }
   await Promise.all(shots);
   const stored: StoredQuestion = { open, turns, errors: [...chrome.errors] };
@@ -119,6 +153,42 @@ async function sheetOf(chrome: Chrome, qdir: string, turn: number, nStills: numb
   const urls = files.map((f) => `data:image/png;base64,${readFileSync(f).toString('base64')}`);
   const out = await chrome.eval<string>(composeScript(urls));
   return Buffer.from(out.split(',')[1], 'base64');
+}
+
+/** The r3 judge's images for one turn: scheduled sentence-end stills, final state, board (JPEG ≤ 1152 px wide, written next to the stills). */
+export type TurnFrames = { frames: (JudgeFrame & { file: string; sentence: number })[]; final?: { b64: string; w: number; h: number; file: string }; board?: { b64: string; w: number; h: number; file: string } };
+async function judgeFramesOf(chrome: Chrome, qdir: string, turn: number, res: EvalResult, reuse: boolean): Promise<TurnFrames> {
+  const pre = turn ? `t${turn + 1}-` : '';
+  const jpeg = async (src: string, dst: string): Promise<{ b64: string; w: number; h: number; file: string } | undefined> => {
+    if (!existsSync(join(qdir, src))) return undefined;
+    if (!(reuse && existsSync(join(qdir, dst)))) {
+      const url = `data:image/${src.endsWith('.jpg') ? 'jpeg' : 'png'};base64,${readFileSync(join(qdir, src)).toString('base64')}`;
+      const out = await chrome.eval<string>(downscaleScript(url));
+      writeFileSync(join(qdir, dst), Buffer.from(out.split(',')[1], 'base64'));
+    }
+    const b = readFileSync(join(qdir, dst));
+    const size = jpegDims(b);
+    return { b64: b.toString('base64'), ...size, file: dst };
+  };
+  const picks = frameSchedule(res.sentences);
+  const caps = frameCaptions(res.sentences, picks);
+  const frames: TurnFrames['frames'] = [];
+  for (let k = 0; k < picks.length; k++) {
+    const f = await jpeg(`${pre}s${picks[k]}.png`, `${pre}f${k + 1}.jpg`);
+    if (f) frames.push({ ...f, caption: caps[k], sentence: picks[k] });
+  }
+  return { frames, final: await jpeg(`${pre}final.png`, `${pre}final.jpg`), board: await jpeg(`${pre}board.jpg`, `${pre}board-judge.jpg`) };
+}
+
+/** Width and height from a JPEG's SOF header. */
+export function jpegDims(b: Buffer): { w: number; h: number } {
+  for (let i = 2; i + 9 < b.length;) {
+    if (b[i] !== 0xff) { i++; continue; }
+    const m = b[i + 1];
+    if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) };
+    i += 2 + b.readUInt16BE(i + 2);
+  }
+  return { w: 0, h: 0 };
 }
 
 /** Renders each final state in WebKit by replay (no generation). playwright-core is looked up, not installed. */
@@ -146,20 +216,23 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const cfg = CONFIGS[args.config];
   const phase = process.env.PETU_PHASE ?? 'dev';
+  const QUESTIONS = QSETS[args.qset];
+  const QSET = qsetId(QUESTIONS, args.qset);
+  const rubric = RUBRICS[args.rubric];
   const errs = validateSet(QUESTIONS);
   if (errs.length) throw new Error(`question set invalid: ${errs.join('; ')}`);
-  await freeze(EVAL_DIR);
+  await freeze(EVAL_DIR, args.qset);
   if (args.finish && args.replay) throw new Error('--finish and --replay are exclusive');
   let qs = selectQuestions(args, cfg);
   // --finish completes a run that already generated (e.g. a crash in the judge step): it makes no new
   // answers, so it is not a new use of the test split.
   if (args.finish) qs = qs.filter((q) => existsSync(join(RUNS, args.finish!, q.id, 'result.json')));
   if (!qs.length) throw new Error('no questions selected');
-  if (!args.finish) assertSplitAllowed(qs.map((q) => q.id), phase, testUses());
+  if (!args.finish) assertSplitAllowed(qs.map((q) => q.id), phase, testUsesOf(allTestUses(), args.qset), QUESTIONS);
   const judge = wantsJudge(args, cfg);
 
   const date = new Date().toISOString().slice(0, 10);
-  const tag = args.config + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '');
+  const tag = args.config + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '') + (args.rubric !== 'r3' ? `-${args.rubric}` : '');
   let runId = args.finish ?? runIdOf(date, tag, PROMPT_VERSION, QSET);
   if (!args.finish) for (let i = 2; existsSync(join(RUNS, runId)); i++) runId = `${runIdOf(date, tag, PROMPT_VERSION, QSET)}-${i}`;
   const dir = join(RUNS, runId);
@@ -179,10 +252,10 @@ async function main(): Promise<void> {
   try {
     const spend = (await (await fetch(`${server.base}/api/spend`)).json()) as SpendSummary;
     const planGenerates = !replay && !args.finish;
-    const budget = checkBudget(spend, cfg, planGenerates ? todo : [], args.n, judge);
+    const budget = checkBudget(spend, cfg, planGenerates ? todo : [], args.n, judge && !args.fakeJudge, args.rubric);
     console.log(`budget: ${budget.message}`);
     if (!budget.ok) throw new Error(`refusing to start: ${budget.message}`);
-    if (!args.finish && todo.some((q) => q.split === 'test')) noteTestUse(runId);
+    if (!args.finish && todo.some((q) => q.split === 'test')) noteTestUse(runId, args.qset);
 
     for (let i = 0; i < (args.finish ? 1 : Math.min(args.parallel, todo.length * args.n)); i++) chromes.push(await Chrome.launch({ dir: join(EVAL_DIR, 'tmp') }));
     const jobs = todo.flatMap((q) => Array.from({ length: replay ? 1 : args.n }, (_, rep) => ({ q, rep })));
@@ -219,43 +292,68 @@ async function main(): Promise<void> {
         const last = t === d.stored.turns.length - 1;
         const sheetName = `${t ? `t${t + 1}-` : ''}sheet.jpg`;
         // --finish keeps the sheet the run already composed (its judgement key hashes it).
-        const sheet = args.finish && existsSync(join(d.qdir, sheetName)) ? readFileSync(join(d.qdir, sheetName)) : await sheetOf(sheeter, d.qdir, t, res.sentences.length);
-        if (sheet) writeFileSync(join(d.qdir, sheetName), sheet);
         const transcript = renderTranscript(res);
+        const pre = t ? `t${t + 1}-` : '';
+        // r2 judges a contact sheet; r3 a timeline of frames (made for every turn: the report shows them).
+        // --finish keeps the images the run already composed (the judgement key hashes them).
+        const sheet = rubric.version === 'r2'
+          ? (args.finish && existsSync(join(d.qdir, sheetName)) ? readFileSync(join(d.qdir, sheetName)) : await sheetOf(sheeter, d.qdir, t, res.sentences.length))
+          : null;
+        if (sheet) writeFileSync(join(d.qdir, sheetName), sheet);
+        const tf = rubric.version === 'r3' ? await judgeFramesOf(sheeter, d.qdir, t, res, !!args.finish) : null;
         let judgeRes: JudgeResult | undefined; let judgeUsd = 0;
+        const page = { b64: d.pageShot.toString('base64'), w: 1440, h: 900 };
+        let req: JudgeRequest | null = null, key = '';
         if (judge && last && sheet) {
-          const key = sha(`${sha(sheet)}|${transcript}|${res.question}|${sha(RUBRIC)}`); // a rubric change re-judges
+          req = buildJudgeRequest({ phase, question: res.question, result: res, page, sheet: { b64: sheet.toString('base64'), w: 1536, h: 864 } });
+          key = sha(`${sha(sheet)}|${transcript}|${res.question}|${sha(rubric.text)}`); // a rubric change re-judges
+        } else if (judge && last && tf && tf.frames.length) {
+          const src = pathOfSrc(d.stored.open.src);
+          const digest = src ? await pdfDigest(src, { visible: d.stored.open.page, touched: pagesTouched(res) }) : '(document text unavailable)';
+          req = buildJudgeRequestR3({ phase, question: res.question, result: res, page, digest, frames: tf.frames, final: tf.final, board: tf.board });
+          key = sha(`${req.instructions}|${JSON.stringify(req.content)}`);
+          writeJson(join(d.qdir, `${pre}judge-request.json`), { estTokens: estimateJudgeTokens(req), worstUsd: worstCaseUsd(JUDGE_MODEL, estimateJudgeTokens(req), JUDGE_MAX_OUTPUT),
+            content: req.content.map((c) => (c.type === 'input_text' ? c : { type: c.type, w: c.w, h: c.h, detail: c.detail, bytes: Math.round(c.b64.length * 0.75) })) });
+        }
+        if (req) {
           const old = priorRun ? join(priorRun, args.finish ? id : d.q.id, 'judge.json') : null;
-          if (old && existsSync(old) && readJson<{ key: string; judge: JudgeResult }>(old).key === key) {
-            const prev = readJson<{ key: string; judge: JudgeResult; usd?: number }>(old);
+          // Reuse an unchanged answer's judgement, unless it was a fake one (or this run is fake).
+          const prev = old && existsSync(old) ? readJson<{ key: string; judge: JudgeResult; usd?: number; fake?: boolean }>(old) : null;
+          if (!args.fakeJudge && prev && !prev.fake && prev.key === key) {
             judgeRes = prev.judge; // unchanged answer: no new spend
             if (args.finish) judgeUsd = prev.usd ?? 0; // the same run: keep what it cost
           } else try {
-            const out = await judgeAnswer(buildJudgeRequest({ phase, question: res.question, result: res,
-              page: { b64: d.pageShot.toString('base64'), w: 1440, h: 900 }, sheet: { b64: sheet.toString('base64'), w: 1536, h: 864 } }), { base: server.base, token: server.token });
+            const out = await judgeAnswer(req, { base: server.base, token: server.token, rubric, ...(args.fakeJudge ? { fetch: fakeJudgeFetch(rubric) } : {}) });
             judgeRes = out.judge; judgeUsd = out.usd;
           } catch (e) {
             // One failed judgement must not lose the run: the answer stays unjudged (finish it later with --finish).
             if (/cap/.test(String(e))) throw e;
             console.error(`${id} judge failed: ${(e as Error).message}`);
           }
-          if (judgeRes) writeJson(join(d.qdir, 'judge.json'), { key, judge: judgeRes, usd: judgeUsd });
+          if (judgeRes) writeJson(join(d.qdir, 'judge.json'), { key, judge: judgeRes, usd: judgeUsd, ...(args.fakeJudge ? { fake: true } : {}) });
         }
         const qsum: QuestionSummary = { id, split: d.q.split, type: d.q.type, ...(t ? { turn: t } : {}), metrics: metrics[t], judge: judgeRes, judgeUsd };
         summaries.push(qsum);
         const n = res.sentences.length;
-        items.push({ q: d.q, summary: qsum, asked: res.question, transcript, sheet: sheet ? `${id}/${sheetName}` : undefined,
-          stills: Array.from({ length: n }, (_, i) => `${id}/${t ? `t${t + 1}-` : ''}s${i}.png`).filter((p) => existsSync(join(dir, p))),
-          page: `${id}/page.png`, webkit: args.webkit ? [`${id}/${t ? `t${t + 1}-` : ''}webkit.png`] : undefined });
+        const rel = (f: string) => `${id}/${f}`;
+        items.push({ q: d.q, summary: qsum, asked: res.question, transcript, sheet: sheet ? rel(sheetName) : undefined,
+          stills: Array.from({ length: n }, (_, i) => `${id}/${pre}s${i}.png`).filter((p) => existsSync(join(dir, p))),
+          page: `${id}/page.png`, webkit: args.webkit ? [`${id}/${pre}webkit.png`] : undefined,
+          ...(tf ? { timeline: {
+            frames: tf.frames.map((f) => ({ src: rel(`${pre}s${f.sentence}.png`), caption: f.caption, sentence: f.sentence })),
+            final: existsSync(join(d.qdir, `${pre}final.png`)) ? rel(`${pre}final.png`) : undefined,
+            board: existsSync(join(d.qdir, `${pre}board.jpg`)) ? rel(`${pre}board.jpg`) : undefined,
+          } } : {}) });
       }
     }
     if (args.webkit) {
       await webkitStills(server.base, done.map((d) => ({ id: d.q.id, stored: d.stored, qdir: d.qdir })));
     }
-    const summary = buildSummary({ runId, config: args.config, qset: QSET, promptVersion: PROMPT_VERSION, phase, questions: summaries });
+    const summary = buildSummary({ runId, config: args.config, qset: QSET, promptVersion: PROMPT_VERSION, phase, rubric: rubric.version, questions: summaries });
+    if (args.fakeJudge) summary.fakeJudge = true;
     writeJson(join(dir, 'summary.json'), summary);
     writeJson(join(dir, 'run.json'), { args, config: cfg, phase, replayOf: args.replay, ...(args.finish ? { finishedAt: new Date().toISOString() } : {}) });
-    writeFileSync(join(dir, 'report.html'), renderReport(summary, items));
+    writeFileSync(join(dir, 'report.html'), renderReport(summary, items, readCalibration(dir, args.fakeJudge)));
     console.log(`run ${runId}\n  answers ${summary.run.n}  judge mean ${summary.judge.mean?.toFixed(2) ?? '-'}  fatal ${summary.judge.fatal}  gen $${summary.genUsd.toFixed(3)}  judge $${summary.judge.usd.toFixed(3)}\n  open ${join(dir, 'report.html')}`);
   } finally {
     for (const c of chromes) await c.close();

@@ -49,3 +49,20 @@ describe('compare', () => {
     expect(format(A, B, compare(A, B))).toMatch(/VERDICT: ACCEPT/);
   });
 });
+
+describe('compare under r3', () => {
+  const r3 = (id: string, score: number, takeaway = true): QuestionSummary => {
+    const m = computeMetrics(emptyResult(id, 0)); m.firstWordMs = 1000; m.takeawayFirst = takeaway;
+    return { id, split: 'dev', type: 'broad', metrics: m, judge: { rubric: 'r3', scores: { understanding: score, illustration: score, deck: score, craft: score, economy: score }, defects: [], fatal: [], notes: '' } };
+  };
+  const R = (id: string, s: number[], takeaway = true) => S(id, s.map((x, i) => r3(`D${i + 1}`, x, takeaway)));
+  it('deltas per r3 criterion; the r2 takeaway-first gate does not apply', () => {
+    const c = compare(R('a', [3, 3, 3]), R('b', [4, 4, 4], false));
+    expect(c.verdict).toBe('ACCEPT');
+    expect(Object.keys(c.rows[0].criteria!)).toEqual(['understanding', 'illustration', 'deck', 'craft', 'economy']);
+    expect(format(R('a', [3]), R('b', [4]), compare(R('a', [3]), R('b', [4])))).toContain('unde');
+  });
+  it('refuses to compare runs judged with different rubrics', () => {
+    expect(() => compare(S('a', four([3, 3])), R('b', [4, 4]))).toThrow(/different rubrics/);
+  });
+});

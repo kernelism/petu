@@ -25,6 +25,7 @@ npm test             # vitest run
 npm run typecheck    # tsc --noEmit
 npm run build        # typecheck + vite build
 npm run fixture      # regenerate public/fixtures/epipolar.pdf
+npm run decks        # regenerate the synthetic eval decks public/fixtures/{econ,mechanics}.pdf
 ```
 
 Every change ends green on `npx tsc --noEmit && npx vitest run && npm run build`.
@@ -36,13 +37,26 @@ npm run ground -- <pdf> <page…>   # prints exactly what the model sees for tho
 npm run eval -- --split dev --config terra-none [--n 2] [--only D4,D11] [--replay <runId>] [--no-judge] [--webkit] [--prewarm]
 npm run eval -- --split dev --finish <runId>    # re-do a run's missing judgements/summary, no generation
 node --experimental-strip-types scripts/eval/compare.ts <runIdA> <runIdB>   # judge deltas + verdict
+npm run eval -- … --qset q1 --rubric r2       # checkpoint-2 set / rubric (defaults: q2, r3)
+npm run eval -- … --replay <runId> --fake-judge   # offline: full judge path with a placeholder judgement, $0
+node --experimental-strip-types scripts/eval/calibrate.ts dump|compare <runId> [--n 8]   # hand-vs-judge
 ```
+
+**Eval v3** (`scripts/eval/`): question set **q2** (`q2.ts`, 40 questions written by an agent that
+saw only the PDFs: 34 course + 6 on the synthetic decks, 20 dev / 20 test stratified by deck) and
+rubric **r3** (`judge.ts`: understanding, illustration, deck, craft, economy, plus defect flags such
+as `board_copies_page`, `board_repeats_narration`, `single_slide`). r3 judges a timeline of frames
+(`frames.ts`: a sentence-end still every ~35 spoken words, ≤ 6, plus the settled final state and the
+whole board, stitched from the element marked `data-petu-board`), a deck digest and the transcript.
+r3 is not trusted until `calibrate.ts` shows ≥ 80% ±1 agreement and |bias| ≤ 0.5 on 8 hand-scored
+answers.
 
 Eval runs start their own dev server on ports 5186–5195 (never 5180, the default `npm run dev`
 port) and write everything to `.petu/eval/runs/<date>-<config>-<prompt>-<qset>/` (gitignored):
 `result.json` recordings (replayable for free), metrics, judge notes and `report.html`, the review
-artefact (stills per sentence, transcript, metrics, judge notes). The test split is held out: only
-`PETU_PHASE=validate` may run it.
+artefact (frame timeline, transcript, metrics, per-criterion scores, calibration). The test split is
+held out: only `PETU_PHASE=validate`/`lessonval` may run it (plus one baseline in `bakeoff`/`lessonbake`,
+counted per question set).
 
 Dev URLs (append to the dev server URL):
 - `?demo=1` — PDF-only demo on the fixture

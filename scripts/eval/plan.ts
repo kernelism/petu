@@ -1,6 +1,7 @@
 // scripts/eval/plan.ts — the runner's pure decisions: flags, which questions, budget preflight.
-import { QUESTIONS, assertSplitAllowed, type Question } from './questions.ts';
+import { DEFAULT_QSET, QSETS, assertSplitAllowed, type QSetName, type Question } from './questions.ts';
 import { CONFIGS, plannedWorstUsd, type Config } from './configs.ts';
+import { DEFAULT_RUBRIC, RUBRICS, type RubricVersion } from './judge.ts';
 import type { SpendSummary } from '../../src/agent/protocol.ts';
 
 export type Args = {
@@ -16,10 +17,16 @@ export type Args = {
   parallel: number;
   /** Latency run (plan P3.2): focus the ask bar, wait this long (page prewarm on intent), then ask. 0 = ask at once. */
   prewarmMs: number;
+  /** Question set (q2 default; q1 = checkpoint 2). */
+  qset: QSetName;
+  /** Judge rubric (r3 default; r2 = checkpoint 2, for comparison). */
+  rubric: RubricVersion;
+  /** Offline check of the judge path: build every request, answer it with a fixed fake judgement (no server call, $0). */
+  fakeJudge: boolean;
 };
 
 export function parseArgs(argv: string[]): Args {
-  const a: Args = { split: 'dev', config: 'terra-none', only: null, n: 1, replay: null, finish: null, judge: null, webkit: false, parallel: 4, prewarmMs: 0 };
+  const a: Args = { split: 'dev', config: 'terra-none', only: null, n: 1, replay: null, finish: null, judge: null, webkit: false, parallel: 4, prewarmMs: 0, qset: DEFAULT_QSET, rubric: DEFAULT_RUBRIC, fakeJudge: false };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const val = () => { const v = argv[++i]; if (v == null) throw new Error(`${k} needs a value`); return v; };
@@ -32,8 +39,11 @@ export function parseArgs(argv: string[]): Args {
       case '--finish': a.finish = val(); break;
       case '--judge': a.judge = true; break;
       case '--no-judge': a.judge = false; break;
+      case '--fake-judge': a.fakeJudge = true; a.judge = true; break;
       case '--webkit': a.webkit = true; break;
       case '--prewarm': a.prewarmMs = 4000; break;
+      case '--qset': { const v = val(); if (!(v in QSETS)) throw new Error(`bad --qset ${v} (have: ${Object.keys(QSETS).join(', ')})`); a.qset = v as QSetName; break; }
+      case '--rubric': { const v = val(); if (!(v in RUBRICS)) throw new Error(`bad --rubric ${v} (have: ${Object.keys(RUBRICS).join(', ')})`); a.rubric = v as RubricVersion; break; }
       case '--parallel': a.parallel = Math.min(4, Math.max(1, Math.floor(Number(val())))); break;
       default: throw new Error(`unknown flag ${k}`);
     }
@@ -43,13 +53,13 @@ export function parseArgs(argv: string[]): Args {
 }
 
 /** Questions to run, in set order, after --split, --only and the config's own restriction. */
-export function selectQuestions(a: Args, cfg: Config = CONFIGS[a.config], qs: Question[] = QUESTIONS): Question[] {
+export function selectQuestions(a: Args, cfg: Config = CONFIGS[a.config], qs: Question[] = QSETS[a.qset]): Question[] {
   let out = a.split === 'both' ? qs : qs.filter((q) => q.split === a.split);
   if (a.only) {
     const unknown = a.only.filter((id) => !qs.some((q) => q.id === id));
     if (unknown.length) throw new Error(`unknown question id(s): ${unknown.join(', ')}`);
     out = qs.filter((q) => a.only!.includes(q.id));
-  } else if (cfg.only) out = out.filter((q) => cfg.only!.includes(q.id));
+  } else if (cfg.only) out = out.filter((q) => cfg.only!.includes(q.id)); // cost control: a config may name ids
   return out;
 }
 
@@ -70,9 +80,10 @@ export function remainingUsd(s: SpendSummary): number {
   return Math.max(0, Math.min(...left));
 }
 
-export function checkBudget(spend: SpendSummary, cfg: Config, qs: Question[], n: number, judge: boolean): BudgetCheck {
+export function checkBudget(spend: SpendSummary, cfg: Config, qs: Question[], n: number, judge: boolean, rubric: RubricVersion = 'r2'): BudgetCheck {
+  // (a fake judge costs nothing: the runner passes judge=false for it)
   const answers = answersOf(qs, n);
-  const planned = plannedWorstUsd(cfg, answers, judge ? qs.length * n : 0);
+  const planned = plannedWorstUsd(cfg, answers, judge ? qs.length * n : 0, rubric);
   const remaining = remainingUsd(spend);
   if (spend.blocked) return { ok: false, planned, remaining, message: `server is blocked: ${spend.blocked}` };
   const ok = planned <= remaining;

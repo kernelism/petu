@@ -1,6 +1,6 @@
 // scripts/eval/compare.ts — A vs B: per-question deltas, aggregates, and a verdict.
 //   node --experimental-strip-types scripts/eval/compare.ts <runIdA> <runIdB>
-import { CRITERIA, meanScore } from './judge.ts';
+import { criteriaOf, meanScore } from './judge.ts';
 import type { Summary } from './summary.ts';
 
 export type Verdict = 'ACCEPT' | 'REJECT' | 'RERUN n=2';
@@ -20,7 +20,16 @@ export type Comparison = {
 
 export const THRESHOLDS = { acceptDelta: 0.15, rerunBand: 0.25, skippedSlack: 2, malformedSlack: 1, firstWordSlack: 0.15 };
 
+/** Criteria both runs were judged on (r2 or r3); comparing across rubrics is refused. */
+export function sharedCriteria(A: Summary, B: Summary): string[] {
+  const of = (S: Summary) => { const j = S.questions.find((q) => q.judge)?.judge; return j ? [...criteriaOf(j)] : []; };
+  const a = of(A), b = of(B);
+  if (a.length && b.length && a.join() !== b.join()) throw new Error(`runs were judged with different rubrics (${a.join(',')} vs ${b.join(',')}): re-judge one with --finish/--rubric`);
+  return a.length ? a : b;
+}
+
 export function compare(A: Summary, B: Summary): Comparison {
+  const criteria = sharedCriteria(A, B);
   const key = (q: { id: string; turn?: number }) => `${q.id}#${q.turn ?? 0}`;
   const a = new Map(A.questions.map((q) => [key(q), q]));
   const rows: Row[] = [];
@@ -31,7 +40,7 @@ export function compare(A: Summary, B: Summary): Comparison {
     rows.push({
       id: key(qb).replace(/#0$/, ''),
       judgeDelta: both ? meanScore(qb.judge!) - meanScore(qa.judge!) : null,
-      criteria: both ? Object.fromEntries(CRITERIA.map((c) => [c, qb.judge!.scores[c] - qa.judge!.scores[c]])) : null,
+      criteria: both ? Object.fromEntries(criteria.map((c) => [c, qb.judge!.scores[c] - qa.judge!.scores[c]])) : null,
       fatalDelta: (qb.judge?.fatal.length ?? 0) - (qa.judge?.fatal.length ?? 0),
       skippedDelta: qb.metrics.skippedTotal - qa.metrics.skippedTotal,
       firstWordA: qa.metrics.firstWordMs, firstWordB: qb.metrics.firstWordMs,
@@ -53,7 +62,8 @@ export function compare(A: Summary, B: Summary): Comparison {
   if (skipped.b - skipped.a > T.skippedSlack) reasons.push(`skipped up by ${skipped.b - skipped.a} (> ${T.skippedSlack})`);
   if (malformed.b - malformed.a > T.malformedSlack) reasons.push(`malformed up by ${malformed.b - malformed.a} (> ${T.malformedSlack})`);
   if (fw.a != null && fw.b != null && fw.b > fw.a * (1 + T.firstWordSlack)) reasons.push(`p50 first word worse by ${(((fw.b - fw.a) / fw.a) * 100).toFixed(0)}% (> 15%)`);
-  if (tk.b < tk.a) reasons.push(`takeawayFirst rate down (${pct(tk.a)} -> ${pct(tk.b)})`);
+  // The takeaway-first gate belongs to the r2 answer shape; Lessons v3 dropped that rule (r3 runs skip it).
+  if (!criteria.includes('understanding') && tk.b < tk.a) reasons.push(`takeawayFirst rate down (${pct(tk.a)} -> ${pct(tk.b)})`);
 
   let verdict: Verdict;
   const d = meanJudgeDelta;
@@ -69,10 +79,11 @@ const pct = (x: number) => `${Math.round(x * 100)}%`;
 const f2 = (x: number | null) => (x == null ? '  - ' : `${x >= 0 ? '+' : ''}${x.toFixed(2)}`);
 
 export function format(A: Summary, B: Summary, c: Comparison): string {
-  const L: string[] = [`A ${A.runId}`, `B ${B.runId}`, '', 'question  judge   int   sync  corr  simp  fatal  skip  firstWord A -> B   $'];
+  const criteria = sharedCriteria(A, B);
+  const L: string[] = [`A ${A.runId}`, `B ${B.runId}`, '', ['question  judge', ...criteria.map((c) => c.slice(0, 4).padStart(5)), ' fatal  skip  firstWord A -> B   $'].join(' ')];
   for (const r of c.rows) {
     const k = r.criteria;
-    L.push([r.id.padEnd(9), f2(r.judgeDelta).padStart(5), ...CRITERIA.map((x) => f2(k ? k[x] : null).padStart(5)), String(r.fatalDelta).padStart(5), String(r.skippedDelta).padStart(5),
+    L.push([r.id.padEnd(9), f2(r.judgeDelta).padStart(5), ...criteria.map((x) => f2(k ? k[x] : null).padStart(5)), String(r.fatalDelta).padStart(5), String(r.skippedDelta).padStart(5),
       `${r.firstWordA ?? '-'} -> ${r.firstWordB ?? '-'}`.padStart(16), (r.usdDelta >= 0 ? '+' : '') + r.usdDelta.toFixed(4)].join(' '));
   }
   L.push('', `mean judge delta ${f2(c.meanJudgeDelta)}  (up ${c.signs.up}, down ${c.signs.down})`,

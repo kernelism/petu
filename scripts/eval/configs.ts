@@ -36,11 +36,17 @@ export function configEnv(c: Config, phase: string): Record<string, string> {
 /** What one answer can cost at worst, as the ledger would reserve it (assumed ~12k input, 1.5k output). */
 export const ASSUMED_INPUT_TOKENS = 12000;
 export const ASSUMED_MAX_OUTPUT = 1500;
-/** The judge's worst case: page + sheet images, transcript, a short structured answer. */
+/** The judge's worst case: page + sheet images, transcript, a short structured answer (r2). */
 export const JUDGE_INPUT_TOKENS = 6000;
-export const JUDGE_MAX_OUTPUT = 500;
+/**
+ * r3: page + up to 6 timeline frames + final + board (1152 px JPEGs, ~1k tokens each by the server's
+ * estimate), the deck digest (~3k) and the transcript.
+ */
+export const JUDGE_INPUT_TOKENS_R3 = 16000;
+/** The server's judge max_output_tokens (server/openai.ts JUDGE_MAX_OUTPUT). */
+export const JUDGE_MAX_OUTPUT = 800;
 
-export function plannedWorstUsd(c: Config, answers: number, judged: number): number {
+export function plannedWorstUsd(c: Config, answers: number, judged: number, rubric: 'r2' | 'r3' = 'r2'): number {
   return answers * worstCaseUsd(c.model, ASSUMED_INPUT_TOKENS, ASSUMED_MAX_OUTPUT, !!c.fast) +
-    judged * worstCaseUsd('gpt-6.1-sol', JUDGE_INPUT_TOKENS, JUDGE_MAX_OUTPUT);
+    judged * worstCaseUsd('gpt-6.1-sol', rubric === 'r3' ? JUDGE_INPUT_TOKENS_R3 : JUDGE_INPUT_TOKENS, JUDGE_MAX_OUTPUT);
 }

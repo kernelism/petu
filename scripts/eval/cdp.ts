@@ -68,9 +68,10 @@ export class Chrome {
 
   async goto(url: string): Promise<void> { await this.send('Page.navigate', { url }); }
 
-  /** Image bytes of the viewport. */
-  async shot(format: 'png' | 'jpeg' = 'png'): Promise<Buffer> {
-    const r = await this.send<{ data: string }>('Page.captureScreenshot', { format, ...(format === 'jpeg' ? { quality: 85 } : {}) });
+  /** Image bytes of the viewport, or of `clip` (CSS px in the viewport). */
+  async shot(format: 'png' | 'jpeg' = 'png', clip?: { x: number; y: number; w: number; h: number }): Promise<Buffer> {
+    const r = await this.send<{ data: string }>('Page.captureScreenshot', { format, ...(format === 'jpeg' ? { quality: 85 } : {}),
+      ...(clip ? { clip: { x: clip.x, y: clip.y, width: clip.w, height: clip.h, scale: 1 } } : {}) });
     return Buffer.from(r.data, 'base64');
   }
 
