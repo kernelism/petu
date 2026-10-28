@@ -6,5 +6,6 @@ export type PdfDoc = pdfjs.PDFDocumentProxy;
 
 export async function loadPdf(data: ArrayBuffer | string): Promise<PdfDoc> {
   const src = typeof data === 'string' ? { url: data } : { data: new Uint8Array(data) };
-  return pdfjs.getDocument(src).promise;
+  // No eval: PDF fonts are never compiled to JS functions (smaller attack surface, CSP-friendly).
+  return pdfjs.getDocument({ ...src, isEvalSupported: false }).promise;
 }

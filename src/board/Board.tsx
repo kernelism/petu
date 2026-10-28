@@ -5,6 +5,7 @@ import type { SPt } from '../geometry/space';
 import { StudentInkLayer } from '../ink/student/StudentInkLayer';
 import { BOARD_H, BOARD_INK, BOARD_W, boardRuns, type BoardHandle, type WriteOpts } from './boardText';
 import { BOARD_PAGE } from '../script/types';
+import { prefersReducedMotion } from '../ink/agent/animate';
 import './board.css';
 
 export type { BoardHandle } from './boardText';
@@ -12,7 +13,10 @@ export type { BoardHandle } from './boardText';
 const SVG = 'http://www.w3.org/2000/svg';
 /** Font sizes in board-space units. */
 const SIZES = { s: 22, m: 30, l: 40 } as const;
-const CHARS_PER_SEC = 22;
+const CHARS_PER_SEC = 34;
+/** A single write never takes longer than this. */
+const WRITE_MAX_MS = 900;
+const FADE_MS = 250;
 const SYSTEM = '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
 const HAND = '"Bradley Hand", "Segoe Print", "Comic Sans MS", cursive';
 
@@ -33,12 +37,14 @@ async function writeText(g: SVGGElement, at: SPt, text: string, size: 's' | 'm' 
   t.textContent = text;
   own.appendChild(t);
 
-  if (o.style === 'clean') {
+  const speed = o.speed ?? 1;
+  if (o.style === 'clean' || o.fadeMs != null || prefersReducedMotion()) {
+    const ms = o.fadeMs ?? FADE_MS;
     own.style.opacity = '0';
-    own.style.transition = 'opacity 250ms ease-out';
+    own.style.transition = `opacity ${ms}ms ease-out`;
     await frame();
     own.style.opacity = '1';
-    if (!o.signal?.aborted) await wait(250);
+    if (!o.signal?.aborted) await wait(ms);
     return;
   }
 
@@ -53,7 +59,7 @@ async function writeText(g: SVGGElement, at: SPt, text: string, size: 's' | 'm' 
   own.insertBefore(clip, t);
   t.setAttribute('clip-path', `url(#${id})`);
   const full = b.width + 12;
-  const dur = Math.max(220, (Array.from(text).length / CHARS_PER_SEC) * 1000);
+  const dur = Math.min(WRITE_MAX_MS, Math.max(220, (Array.from(text).length / CHARS_PER_SEC) * 1000)) * speed;
   const t0 = performance.now();
   for (;;) {
     const k = o.signal?.aborted ? 1 : Math.min(1, (performance.now() - t0) / dur);

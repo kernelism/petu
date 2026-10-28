@@ -10,7 +10,8 @@ export const BOARD_H = 700;
 /** Board ink is dark by default; `em` shapes use the accent ink color. */
 export const BOARD_INK = '#1D1D1F';
 
-export type WriteOpts = { style: InkStyle; signal?: AbortSignal };
+/** When the ink is behind the narration: `speed` ≤ 1 compresses the writing; `fadeMs` fades it in instead. */
+export type WriteOpts = { style: InkStyle; signal?: AbortSignal; speed?: number; fadeMs?: number };
 
 /** What the director and the viewer passthrough need from the board. */
 export type BoardHandle = {

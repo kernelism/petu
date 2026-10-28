@@ -6,6 +6,7 @@ import type { PageLayers, ViewerApi } from './viewerApi';
 import type { TextRun } from '../locate/locateQuote';
 import { getTextRuns } from './textRuns';
 import { animateScrollTo } from './scroll';
+import { prefersReducedMotion } from '../ink/agent/animate';
 import { PageSlot, type SlotHandle } from './PageSlot';
 import './viewer.css';
 
@@ -23,7 +24,7 @@ const MAX_W = 860;
 const SIDE = 64;
 const MIN_W = 200;
 /** Pages further than this from the current page lose their canvas once they leave the render range. */
-const KEEP_RADIUS = 6;
+const KEEP_RADIUS = 3;
 /** Concurrent pdf.js renders. More than 2 starves the main thread while scrolling. */
 const MAX_INFLIGHT = 2;
 /** Canvas backing-store cap (iOS Safari refuses canvases above ~16.7M px). */
@@ -37,6 +38,8 @@ const VISIBLE_BAND = 0.15;
 const SAFE_TOP = 64;
 const SAFE_BOTTOM = 156;
 const RESIZE_RERENDER_MS = 160;
+/** A reveal (making an ink target visible) glides at most this long. */
+const REVEAL_MAX_MS = 450;
 
 const dpr = () => Math.min(2, window.devicePixelRatio || 1);
 /** Page width for a scroller of `w` CSS px. */
@@ -79,8 +82,8 @@ type PageState = { canvas: HTMLCanvasElement | null; key: string; task: RenderTa
 
 class PageRenderer {
   near = new Set<number>();
-  /** Pages wanted regardless of the viewport (destination of a programmatic scroll). */
-  pinned = new Set<number>();
+  /** Pages wanted regardless of the viewport (destinations of programmatic scrolls), refcounted. */
+  pinned = new Map<number, number>();
   private states = new Map<number, PageState>();
   private inflight = 0;
   private dead = false;
@@ -101,6 +104,11 @@ class PageRenderer {
     return s;
   }
   private wanted(p: number) { return this.near.has(p) || this.pinned.has(p); }
+  pin(p: number) { this.pinned.set(p, (this.pinned.get(p) ?? 0) + 1); this.pump(); }
+  unpin(p: number) {
+    const n = (this.pinned.get(p) ?? 0) - 1;
+    if (n > 0) this.pinned.set(p, n); else this.pinned.delete(p);
+  }
 
   setNear(p: number, isNear: boolean) {
     if (isNear) { this.near.add(p); this.pump(); return; }
@@ -124,12 +132,13 @@ class PageRenderer {
     const cur = this.current();
     while (this.inflight < MAX_INFLIGHT) {
       let best = -1, bestScore = Infinity;
-      for (const set of [this.pinned, this.near]) {
+      for (const set of [this.pinned.keys(), this.near]) {
+        const isPinned = set !== this.near;
         for (const p of set) {
           const s = this.states.get(p);
           if (s && (s.key === key || s.taskKey === key)) continue; // done, or already in flight
           // Pinned pages jump the queue; otherwise closest to the current page first.
-          const score = Math.abs(p - cur) - (set === this.pinned ? 1e6 : 0);
+          const score = Math.abs(p - cur) - (isPinned ? 1e6 : 0);
           if (score < bestScore) { bestScore = score; best = p; }
         }
       }
@@ -148,7 +157,8 @@ class PageRenderer {
       const page = await this.doc.getPage(p);
       const base = page.getViewport({ scale: 1 });
       this.onAspect(p, base.height / base.width);
-      if (this.dead || !this.wanted(p) || s.taskKey !== key) return;
+      // The state may have been released (and recreated) while we waited: never write into a stale one.
+      if (this.dead || this.states.get(p) !== s || !this.wanted(p) || s.taskKey !== key) return;
       let scale = (this.renderW * dpr()) / base.width;
       const px = base.width * base.height * scale * scale;
       if (px > MAX_CANVAS_PX) scale *= Math.sqrt(MAX_CANVAS_PX / px);
@@ -160,7 +170,7 @@ class PageRenderer {
       const task = page.render({ canvasContext: ctx, viewport: vp });
       s.task = task;
       await task.promise;
-      if (this.dead || s.taskKey !== key) return;
+      if (this.dead || this.states.get(p) !== s || s.taskKey !== key) return;
       const host = this.slot(p)?.canvasHost;
       if (!host) return;
       const fresh = !s.canvas;
@@ -245,7 +255,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       const vp = p.getViewport({ scale: 1 });
       aspectsRef.current = new Float64Array(doc.numPages).fill(vp.height / vp.width);
       setAspectsVersion((v) => v + 1);
-    });
+    }).catch((e) => console.warn('[viewer] could not read page 1', e));
     return () => { live = false; };
   }, [doc]);
 
@@ -381,21 +391,30 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       const L = layoutRef.current!;
       return L.tops[page - 1] + (Math.max(0, Math.min(1000, y)) / 1000) * L.heights[page - 1];
     };
-    let animating = false;
-    /** Glides so content-y `top` sits at the top of the viewport. */
-    const glideTo = async (page: number, top: number) => {
-      // Preempt a glide still in flight (scroll.ts stops on 'wheel'), so two never fight.
-      if (animating) el.dispatchEvent(new Event('wheel'));
-      renderer.pinned.add(page);
-      renderer.pump(); // destination starts painting at the start of the glide, not on arrival
-      animating = true;
+    /** The glide in flight. A new glide (or cancelScroll) aborts it, so two never fight. */
+    let glide: AbortController | null = null;
+    /**
+     * Glides so `top()` sits at the top of the viewport. `top` is re-read every frame from the live
+     * layout, so a page's true size arriving mid-glide still lands on the target.
+     */
+    const glideTo = async (page: number, top: () => number, maxMs?: number) => {
+      glide?.abort();
+      const ctrl = (glide = new AbortController());
+      renderer.pin(page); // destination starts painting at the start of the glide, not on arrival
       try {
-        await animateScrollTo(el, top);
+        await animateScrollTo(el, top, { signal: ctrl.signal, maxMs });
       } finally {
-        animating = false;
-        renderer.pinned.delete(page);
+        renderer.unpin(page);
+        if (glide === ctrl) glide = null;
         publishCurrent();
       }
+    };
+    /** The comfortable band for ink: clear of the chrome, and of the outer 15% when `strict`. */
+    const inBand = (at: number, strict: boolean) => {
+      const top = el.scrollTop, h = el.clientHeight;
+      const lo = strict ? Math.max(h * VISIBLE_BAND, SAFE_TOP) : SAFE_TOP;
+      const hi = strict ? Math.max(h * VISIBLE_BAND, SAFE_BOTTOM) : SAFE_BOTTOM;
+      return at >= top + lo && at <= top + h - hi;
     };
 
     const api: ViewerApi = {
@@ -419,24 +438,37 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       scrollToPage: async (page, y) => {
         page = clampPage(page);
         await ensureSize(page);
-        if (y != null) { await glideTo(page, contentY(page, y) - el.clientHeight * SCROLL_ANCHOR); return; }
+        if (y != null) { await glideTo(page, () => contentY(page, y) - el.clientHeight * SCROLL_ANCHOR); return; }
         // No target point: show the whole page. If it fits between the top bar and the caption,
         // center it there (a slide stays fully visible while it is explained); else align its top.
-        const L = layoutRef.current!;
-        const room = el.clientHeight - SAFE_TOP - SAFE_BOTTOM;
-        const h = L.heights[page - 1];
-        await glideTo(page, L.tops[page - 1] - SAFE_TOP - Math.max(0, (room - h) / 2));
+        await glideTo(page, () => {
+          const L = layoutRef.current!;
+          const room = el.clientHeight - SAFE_TOP - SAFE_BOTTOM;
+          return L.tops[page - 1] - SAFE_TOP - Math.max(0, (room - L.heights[page - 1]) / 2);
+        });
       },
       ensureVisible: async (page, y = 0) => {
         page = clampPage(page);
         await ensureSize(page);
-        const at = contentY(page, y);
-        const top = el.scrollTop, h = el.clientHeight;
-        if (at >= top + Math.max(h * VISIBLE_BAND, SAFE_TOP) && at <= top + h - Math.max(h * VISIBLE_BAND, SAFE_BOTTOM)) return false;
-        await glideTo(page, at - h * SCROLL_ANCHOR);
+        if (inBand(contentY(page, y), true)) return false;
+        await glideTo(page, () => contentY(page, y) - el.clientHeight * SCROLL_ANCHOR, REVEAL_MAX_MS);
         return true;
       },
+      isVisible: (page, y = 0) => inBand(contentY(clampPage(page), y), false),
+      whenVisible: (page, y = 0, maxMs = 1200) => {
+        page = clampPage(page);
+        if (inBand(contentY(page, y), false)) return Promise.resolve(true);
+        return new Promise<boolean>((resolve) => {
+          const check = () => { if (inBand(contentY(page, y), false)) finish(true); };
+          const finish = (v: boolean) => { el.removeEventListener('scroll', check); window.clearTimeout(t); resolve(v); };
+          const t = window.setTimeout(() => finish(false), maxMs);
+          el.addEventListener('scroll', check, { passive: true });
+        });
+      },
+      ensureSize: async (page) => { if (page >= 1 && page <= doc.numPages) await ensureSize(page); },
+      cancelScroll: () => glide?.abort(),
       glideColumn: (width, ms) => new Promise<void>((done) => {
+        if (prefersReducedMotion()) ms = 0;
         glideRef.current?.finish();
         const sizer = sizerRef.current, L = layoutRef.current;
         if (!sizer || !L) { done(); return; }
@@ -481,6 +513,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     cbRef.current.onReady(api);
 
     return () => {
+      glide?.abort();
       if (glideRef.current) { window.clearTimeout(glideRef.current.timer); glideRef.current.done(); glideRef.current = null; }
       el.removeEventListener('scroll', onScroll);
       if (raf) cancelAnimationFrame(raf);

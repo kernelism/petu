@@ -12,7 +12,8 @@ describe('animate helpers', () => {
   it('duration scales with on-screen length and clamps', () => {
     expect(strokeDurationMs(10)).toBe(140);
     expect(strokeDurationMs(350)).toBe(500);
-    expect(strokeDurationMs(5000)).toBe(1200);
+    expect(strokeDurationMs(5000)).toBe(700);
+    expect(strokeDurationMs(5000, undefined, 0.5)).toBe(350); // backlog compression
     expect(strokeDurationMs(100, 400)).toBe(400); // closed-shape floor
     expect(strokeDurationMs(10, 400)).toBe(400);
   });
