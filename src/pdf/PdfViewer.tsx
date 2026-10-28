@@ -490,8 +490,9 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       const sizer = sizerRef.current, L = layoutRef.current;
       const L2 = computeLayout(column(el.clientWidth, next), aspectsRef.current!, nextGaps);
       const commit = () => {
-        flushSync(() => { setLanes(next); setGaps(nextGaps); });
-        renderer.renderW = L2.pageW;
+        // Re-measures too: the ResizeObserver skips measuring mid-glide, so a resize during one is caught up here.
+        flushSync(() => { setLanes(next); setGaps(nextGaps); setViewW(el.clientWidth); });
+        renderer.renderW = column(el.clientWidth, next).pageW;
         renderer.pump();
       };
       if (!sizer || !L || ms <= 0 || (Math.abs(L2.pageW - L.pageW) < 0.5 && Math.abs(L2.pageX - L.pageX) < 0.5)) { commit(); done(); return; }
@@ -536,10 +537,18 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     let cardPage: number | null = null;
     /** The card's current transform, so asking for the same card again costs nothing. */
     let cardTo = '';
+    /** The page pinned for the card (still pinned while an exit glides). */
+    let pinned: number | null = null;
+    /** Bumped by every setCard call: a call bails after each await once a newer one started (an exit mid-entry, a re-entry mid-exit). */
+    let cardSeq = 0;
     const wait = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
     const frame = () => new Promise((r) => requestAnimationFrame(r));
     const setCard = async (card: { page: number; rect: StageRect } | null, ms: number) => {
+      const seq = ++cardSeq;
+      const stale = () => seq !== cardSeq;
       if (prefersReducedMotion()) ms = 0;
+      // A card swap superseded mid-fade must not leave the scroller invisible.
+      if (el.style.opacity === '0') { el.style.transition = 'none'; el.style.opacity = '1'; }
       const L = layoutRef.current;
       if (!L) return;
       const ease = 'cubic-bezier(.2,.8,.2,1)';
@@ -565,22 +574,26 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
           return;
         }
         const swap = cardPage != null && cardPage !== card.page;
-        if (swap) { el.style.transition = 'opacity 120ms ease-out'; el.style.opacity = '0'; await wait(120); }
-        if (cardPage != null) renderer.unpin(cardPage);
-        renderer.pin(card.page);
+        if (swap) { el.style.transition = 'opacity 120ms ease-out'; el.style.opacity = '0'; await wait(120); if (stale()) return; }
         const i = card.page - 1;
         const onScreen = L.tops[i] - el.scrollTop; // where the page is now (stage px)
+        // Re-entering the same page mid-exit: start from where the exit glide has got to, not from the box.
+        const midExit = !swap && pinned === card.page && el.classList.contains('is-b') ? getComputedStyle(el).transform : '';
         el.classList.add('is-b');
         el.style.transition = 'none';
         el.style.height = `${Math.max(el.clientHeight, L.heights[i] + 2 * TOP_PAD)}px`;
         owner.write(el, L.tops[i] - TOP_PAD);
         el.style.transformOrigin = '0 0';
-        el.style.transform = swap ? '' : `translate(0px, ${onScreen - at(i)}px)`;
+        el.style.transform = swap ? '' : midExit && midExit !== 'none' ? midExit : `translate(0px, ${onScreen - at(i)}px)`;
+        if (pinned != null && pinned !== card.page) renderer.unpin(pinned);
+        if (pinned !== card.page) renderer.pin(card.page);
+        pinned = card.page;
         const to = toFor(i);
         for (const h of slots.current.values()) h.el.toggleAttribute('data-card', Number(h.el.dataset.page) === card.page);
         cardPage = card.page;
         cardTo = to;
         await frame();
+        if (stale()) return; // an exit (or another card) started meanwhile: its transform wins
         el.style.transition = swap ? `opacity 180ms ease-out` : `transform ${ms}ms ${ease}`;
         el.style.transform = to;
         el.style.opacity = '1';
@@ -589,20 +602,23 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       }
       if (cardPage == null) return;
       // Back: glide the card to where the page will sit framed in the scroller, then drop B in one frame.
+      // Marked leaving at once, so a re-entry during the glide runs the full entry instead of the same-card fast path.
       const p = cardPage, i = p - 1;
+      cardPage = null;
+      cardTo = '';
       const target = Math.max(0, Math.min(fits(p) ? framedTop(p) : L.tops[i] - SAFE_TOP, L.total - el.clientHeight));
       el.style.transition = `transform ${ms}ms ${ease}`;
       el.style.transform = `translate(0px, ${el.scrollTop - target}px)`; // the page, from where it sits in the box to where it will
       await wait(ms);
+      if (stale()) return; // re-entered B meanwhile: the entry owns the scroller now
       el.style.transition = 'none';
       el.style.transform = '';
       el.style.height = '';
       el.classList.remove('is-b');
       for (const h of slots.current.values()) h.el.removeAttribute('data-card');
       owner.write(el, target);
-      renderer.unpin(p);
-      cardPage = null;
-      cardTo = '';
+      if (pinned != null) renderer.unpin(pinned);
+      pinned = null;
     };
     const onCardClick = (e: MouseEvent) => {
       if (cardPage == null || ink.get().canvasOn) return;
@@ -611,7 +627,8 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     el.addEventListener('click', onCardClick);
 
     const host: DeskHost = {
-      viewport: () => ({ W: el.clientWidth, H: cardPage == null ? el.clientHeight : window.innerHeight }),
+      // In B (until an exit glide has dropped it) the scroller's box is grown to hold the card page.
+      viewport: () => ({ W: el.clientWidth, H: el.classList.contains('is-b') ? window.innerHeight : el.clientHeight }),
       layout: () => layoutRef.current,
       scrollTop: () => el.scrollTop,
       maxScroll: () => Math.max(0, (layoutRef.current?.total ?? 0) - el.clientHeight),

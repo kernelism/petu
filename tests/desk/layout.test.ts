@@ -124,4 +124,7 @@ describe('framing', () => {
     const t = frameTop(r, v);
     expect(r.y - t - SAFE_TOP).toBeCloseTo(900 - SAFE_TOP - SAFE_BOTTOM - (r.y + r.h - t - SAFE_TOP));
   });
+  it('frameTop stays put for a rect that is not finite (a page past the end)', () => {
+    expect(frameTop({ x: 0, y: NaN, w: 1, h: 10 }, { ...v, top: 1234 })).toBe(1234);
+  });
 });

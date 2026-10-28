@@ -36,11 +36,14 @@ export class Follow {
 
 const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Spacebar']);
 
-/** Keys that scroll the page (when not typing). */
+/** Focused things that take these keys themselves: typing, or a control the key activates (Space on a button). */
+const OWNS_KEYS = 'input, textarea, select, button, [role="button"], [contenteditable]:not([contenteditable="false"])';
+
+/** Keys that scroll the page (when not typing into or operating a focused control). */
 export const isScrollKey = (e: { key: string; target?: EventTarget | null }) => {
   const t = e.target as HTMLElement | null;
-  const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName ?? ''));
-  return !typing && SCROLL_KEYS.has(e.key);
+  const owned = !!t && (t.isContentEditable || !!t.closest?.(OWNS_KEYS));
+  return !owned && SCROLL_KEYS.has(e.key);
 };
 
 /**

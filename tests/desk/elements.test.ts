@@ -111,4 +111,55 @@ describe('buildElement', () => {
     await run(p);
     expect(desk.addConnector).toHaveBeenCalledOnce();
   });
+  it('math placed near the right edge ends fully inside the region (rule 5)', async () => {
+    const { e, layers } = env();
+    const p = await buildElement({ kind: 'math', region: 'side', at: { x: 950, y: 690 }, tex: 'x - x\' = \\frac{Bf}{z}', size: 'l' }, e);
+    expect(typeof p).not.toBe('string');
+    await run(p);
+    const fo = layers.agent.querySelector('foreignObject')!;
+    const x = Number(fo.getAttribute('x')), y = Number(fo.getAttribute('y'));
+    const w = Number(fo.getAttribute('width')), h = Number(fo.getAttribute('height'));
+    expect(x).toBeGreaterThanOrEqual(0);
+    expect(x + w).toBeLessThanOrEqual(1000 + 2);
+    expect(y + h).toBeLessThanOrEqual(700 + 2);
+    const box = [...e.registry.obstacles({ region: 'side' })][0];
+    expect(box.x + box.w).toBeLessThanOrEqual(1000);
+  });
+  it('written text near the edge stays inside the region (rule 5)', async () => {
+    const { e, layers } = env();
+    await run(await buildElement({ kind: 'write', region: 'side', at: { x: 980, y: 350 }, text: 'disparity', size: 'm', id: 'w' }, e));
+    const b = e.registry.get('w')!.bbox;
+    expect(b.x + b.w).toBeLessThanOrEqual(1000);
+    expect(Number(layers.agent.querySelector('text')!.getAttribute('x'))).toBeCloseTo(b.x);
+  });
+  it('labels are sized for the scale at draw time, not build time', async () => {
+    let k = 0.5;
+    const { e, layers } = env();
+    const ctx0 = e.ctx;
+    e.ctx = async (t) => { const c = await ctx0(t); return typeof c === 'string' ? c : { ...c, scale: () => k }; };
+    const p = await buildElement({ kind: 'label', page: 1, at: { x: 100, y: 100 }, text: 'A' }, e);
+    k = 1;
+    await run(p);
+    expect(Number(layers.agent.querySelector('text')!.getAttribute('font-size'))).toBeCloseTo(15);
+  });
+  it('plot axes=<id> waits briefly for axes still waiting on their word', async () => {
+    const { e } = env();
+    const p = buildElement({ kind: 'plot', region: 'side', fn: '1/x', domain: [0.5, 5], axes: 'ax' }, e);
+    await vi.advanceTimersByTimeAsync(100);
+    await run(await buildElement({ kind: 'axes', region: 'side', at: { x: 100, y: 600 }, w: 600, h: 400, id: 'ax' }, e));
+    expect(typeof (await p)).not.toBe('string');
+  });
+  it('a second move of the same id while the first is in flight lands on its own target', async () => {
+    const { e } = env();
+    await run(await buildElement({ kind: 'point', region: 'side', at: { x: 100, y: 100 }, id: 'p' }, e));
+    const m1 = await buildElement({ kind: 'move', ref: 'p', to: { x: 300, y: 100 } }, e) as ElementPlan;
+    const d1 = m1.draw(new AbortController().signal, { speed: 1 });
+    await vi.advanceTimersByTimeAsync(200);
+    const m2 = await buildElement({ kind: 'move', ref: 'p', to: { x: 400, y: 200 } }, e) as ElementPlan;
+    const d2 = m2.draw(new AbortController().signal, { speed: 1 });
+    await vi.advanceTimersByTimeAsync(2000);
+    await Promise.all([d1, d2]);
+    expect(e.registry.get('p')!.anchor).toEqual({ x: 400, y: 200 });
+    expect(e.registry.get('p')!.group.getAttribute('transform')).toBe('translate(300 100)');
+  });
 });

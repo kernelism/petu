@@ -124,7 +124,7 @@ export class Director {
     this.stagger = { at: NaN, n: 0 };
     this.drawing.clear();
     this.pendingReset = null; // an answer stopped before it acted leaves the desk as it is
-    this.desk()?.cancel();
+    this.desk()?.abort(); // pans stop, and no desk move in flight (a column glide, entering B) lands later
     this.gen++;
     this.busy = 0;
     this.flushIdle();
@@ -229,27 +229,31 @@ export class Director {
     return e;
   }
 
-  /** Rule 1: strokes are never split across a pan. Ink in flight gets LAND_MS, then completes at once. */
-  private async land(): Promise<void> {
+  /**
+   * Rule 1: strokes are never split across a pan. Ink in flight gets LAND_MS, then completes at once.
+   * Passed to the desk as its before-move hook, so it runs only when the view actually moves.
+   */
+  private land = async (): Promise<void> => {
     if (!this.drawing.size) return;
     await Promise.race([Promise.all(this.drawing.values()), wait(LAND_MS)]);
     for (const c of this.drawing.keys()) c.abort();
-  }
+  };
 
   private async execLayout(a: LayoutAction, signal: AbortSignal): Promise<string | void> {
     if (a.kind === 'clear') return this.clear();
     const desk = this.desk();
     if (!desk) return 'no desk';
-    await this.land();
-    if (signal.aborted) return;
+    const v = this.d.viewer();
+    if (!v || a.page < 1 || a.page > v.numPages()) { if (a.kind === 'sketch') console.warn('[director] sketch skipped: page out of range', a.id); return 'page out of range'; }
     if (a.kind === 'sketch') {
-      const r = await desk.addRegion({ id: a.id, page: a.page, size: a.size, place: a.place });
+      // Lands ink in flight only if placing the region moves the view (a column glide, entering B).
+      const r = await desk.addRegion({ id: a.id, page: a.page, size: a.size, place: a.place }, this.land);
       if (typeof r === 'string') { console.warn('[director] sketch skipped:', r, a.id); return r; }
       return;
     }
-    const v = this.d.viewer();
-    if (!v || a.page < 1 || a.page > v.numPages()) return 'page out of range';
     if (!desk.following()) return 'student is driving'; // rule 6
+    await this.land(); // a scroll always moves the view
+    if (signal.aborted) return;
     this.d.onScrolledTo(a.page); // the page indicator names the destination as the glide starts
     await desk.scrollToPage(a.page, a.y);
   }
@@ -302,7 +306,8 @@ export class Director {
   /** Rule 1/2: pans through the layout lane when the box is off screen; resolves once it shows. Not while the student drives (rule 6). */
   private async reveal(desk: DeskApi, t: Target, r: SRect, signal: AbortSignal) {
     if (!desk.following() || desk.isVisible(t, r)) return;
-    const e = this.enqueueLayout('reveal', async () => { await this.land(); await desk.reveal(t, r); }, signal);
+    // Visibility is re-checked by the desk when the step runs, and ink lands only if the view then moves.
+    const e = this.enqueueLayout('reveal', async () => { await desk.reveal(t, r, this.land); }, signal);
     await Promise.race([e.done, e.started.then(() => (signal.aborted ? false : desk.whenVisible(t, r)))]);
   }
 
@@ -340,7 +345,7 @@ export class Director {
       // A connector frames both ends together (rule 3); a late element off screen pans now.
       if (plan.also) {
         const p = plan;
-        const e = this.enqueueLayout('frame', async () => { await this.land(); await desk.frameBoth({ t: p.target, r: p.bbox }, { t: p.also!.target, r: p.also!.bbox }); }, signal);
+        const e = this.enqueueLayout('frame', async () => { await desk.frameBoth({ t: p.target, r: p.bbox }, { t: p.also!.target, r: p.also!.bbox }, this.land); }, signal);
         if (desk.following()) await e.done;
       } else await this.reveal(desk, plan.target, plan.bbox, signal);
       if (signal.aborted) return;

@@ -137,14 +137,28 @@ export async function emphPass(e: ElementEntry, color: string, scale: number, si
 
 /** move: glides a group by (dx, dy) target units over `ms` (ease-in-out). */
 export async function moveGroup(g: SVGGElement, dx: number, dy: number, ms: number, signal?: AbortSignal): Promise<void> {
-  const prev = g.getAttribute('transform') ?? '';
-  const base = /translate\(([-\d.]+)[ ,]([-\d.]+)\)/.exec(prev);
-  const x0 = base ? Number(base[1]) : 0, y0 = base ? Number(base[2]) : 0;
+  const t = translateOf(g);
+  return moveGroupTo(g, t.x + dx, t.y + dy, ms, signal);
+}
+
+/** A group's current translate (0 0 when it has none). */
+export function translateOf(g: SVGGElement): { x: number; y: number } {
+  const base = /translate\(([-\d.e]+)[ ,]([-\d.e]+)\)/.exec(g.getAttribute('transform') ?? '');
+  return { x: base ? Number(base[1]) : 0, y: base ? Number(base[2]) : 0 };
+}
+
+const moveSeq = new WeakMap<SVGGElement, number>();
+/** Glides a group's translate to (x1, y1) from where it is now. A newer move of the same group takes over mid-glide. */
+export async function moveGroupTo(g: SVGGElement, x1: number, y1: number, ms: number, signal?: AbortSignal): Promise<void> {
+  const seq = (moveSeq.get(g) ?? 0) + 1;
+  moveSeq.set(g, seq);
+  const { x: x0, y: y0 } = translateOf(g);
   const t0 = performance.now();
   for (;;) {
+    if (moveSeq.get(g) !== seq) return; // superseded: the newer move goes on from here
     const t = signal?.aborted || prefersReducedMotion() ? 1 : Math.min(1, (performance.now() - t0) / ms);
     const e = 0.5 - 0.5 * Math.cos(Math.PI * t);
-    g.setAttribute('transform', `translate(${x0 + dx * e} ${y0 + dy * e})`);
+    g.setAttribute('transform', `translate(${x0 + (x1 - x0) * e} ${y0 + (y1 - y0) * e})`);
     if (t >= 1) return;
     await frame();
   }

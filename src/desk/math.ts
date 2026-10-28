@@ -17,7 +17,7 @@ export function preloadMath(): Promise<Katex> {
     const fonts = typeof document !== 'undefined' ? document.fonts : undefined;
     if (fonts?.load) await Promise.all(['KaTeX_Main', 'KaTeX_Math', 'KaTeX_Size1', 'KaTeX_Size2'].map((f) => fonts.load(`20px ${f}`).catch(() => []))).catch(() => {});
     return m.default;
-  });
+  }).catch((e) => { katexP = null; throw e; }); // a failed chunk load (offline blip) is retried next time
   return katexP;
 }
 

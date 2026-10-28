@@ -188,8 +188,9 @@ export function fitTogether(rs: DeskRect[], H: number): boolean {
   return y2 - y1 <= band(H);
 }
 
-/** Scroll top that centers rect `r` in the band (top-aligned when taller), clamped to [0, max]. */
-export function frameTop(r: DeskRect, v: { H: number; max: number }): number {
+/** Scroll top that centers rect `r` in the band (top-aligned when taller), clamped to [0, max]. A rect that isn't finite stays at `v.top`. */
+export function frameTop(r: DeskRect, v: { H: number; max: number; top?: number }): number {
+  if (!Number.isFinite(r.y) || !Number.isFinite(r.h)) return v.top ?? 0;
   const b = band(v.H);
   const t = r.h <= b ? r.y - SAFE_TOP - (b - r.h) / 2 : r.y - SAFE_TOP;
   return clamp(t, 0, Math.max(0, v.max));

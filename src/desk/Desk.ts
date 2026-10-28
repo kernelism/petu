@@ -1,7 +1,7 @@
 // src/desk/Desk.ts
 import type { SRect } from '../geometry/space';
 import type { PageLayers } from '../pdf/viewerApi';
-import type { Target } from '../script/types';
+import { REGION_H, REGION_W, type Target } from '../script/types';
 import type { Stroke } from '../ink/agent/strokes';
 import { Follow } from './follow';
 import { routeConnector, edgeFor } from './route';
@@ -9,7 +9,7 @@ import {
   column, lanesFor, gapsFor, placeAll, regionRects, stageLayout, inView, fitTogether, frameTop,
   type Placed, type RegionReq,
 } from './layout';
-import type { ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskMode, DeskRect, DeskState, Lanes, RegionInfo, RegionMode, RegionSpec } from './types';
+import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskMode, DeskRect, DeskState, Lanes, RegionInfo, RegionMode, RegionSpec } from './types';
 
 export type { DeskHost } from './types';
 
@@ -18,6 +18,7 @@ export const MAX_REGIONS = 2;
 export const GLIDE_MS = 420;
 export const CARD_SWAP_MS = 300;
 const WIRE_PAD = 8;
+const WHOLE_REGION = { x: 0, y: 0, w: REGION_W, h: REGION_H };
 
 type Region = { req: RegionReq; mode: RegionMode; el: HTMLDivElement; layers: PageLayers };
 type Wire = { page: ConnectorEnd; region: ConnectorEnd; reversed: boolean; svg: SVGSVGElement; group: SVGGElement };
@@ -41,6 +42,11 @@ export class Desk implements DeskApi {
   private gaps: ReadonlyMap<number, number> = new Map();
   /** The last place the answer was looked at, for "Back to answer". */
   private last: { t: Target; r: SRect } | null = null;
+  /**
+   * Bumped by reset() and abort(). Every async move captures it and bails after each await when it
+   * changed, so a stopped or replaced answer's move in flight never lands (enters B, pans) later.
+   */
+  private epoch = 0;
   private subs = new Set<(s: DeskState) => void>();
   private off: (() => void)[] = [];
   private back: HTMLButtonElement;
@@ -69,6 +75,13 @@ export class Desk implements DeskApi {
 
   following(): boolean { return this.follow.following(); }
   cancel(): void { this.host.cancelGlide(); }
+
+  abort(): void {
+    this.epoch++;
+    this.host.cancelGlide();
+    // Lanes kept by reset(keepLanes) for a sketch that never came: the column goes back to center.
+    if (!this.regions.size) void this.applyColumn([], GLIDE_MS);
+  }
   subscribe(cb: (s: DeskState) => void): () => void { this.subs.add(cb); return () => { this.subs.delete(cb); }; }
 
   state(): DeskState {
@@ -83,10 +96,11 @@ export class Desk implements DeskApi {
   region(id: string): RegionInfo | null {
     const r = this.regions.get(id);
     if (!r) return null;
-    return { id, page: r.req.page, size: r.req.size, mode: r.mode, layers: r.layers, scale: () => this.where({ region: id }, { x: 0, y: 0, w: 1000, h: 0 })!.rect.w / 1000 };
+    return { id, page: r.req.page, size: r.req.size, mode: r.mode, layers: r.layers, scale: () => (this.where({ region: id }, { x: 0, y: 0, w: 1000, h: 0 })?.rect.w ?? 1000) / 1000 };
   }
 
-  async addRegion(spec: RegionSpec): Promise<RegionInfo | string> {
+  async addRegion(spec: RegionSpec, before?: BeforeMove): Promise<RegionInfo | string> {
+    const ep = this.epoch;
     if (this.regions.size >= MAX_REGIONS) return `max ${MAX_REGIONS} regions per answer`;
     if (this.regions.has(spec.id)) return 'duplicate region id';
     const el = document.createElement('div');
@@ -103,31 +117,41 @@ export class Desk implements DeskApi {
     const layers = { highlight: layer('desk-region-hl'), agent: layer('desk-region-ink') };
     const r: Region = { req: { ...spec }, mode: 'b', el, layers };
     this.regions.set(spec.id, r);
-    await this.relayout(GLIDE_MS);
-    if (r.mode === 'b' && this.follow.following()) await this.enterB(spec.id, spec.page);
-    el.classList.add('is-shown');
-    return this.region(spec.id)!;
+    this.last = { t: { region: spec.id }, r: WHOLE_REGION };
+    await this.relayout(GLIDE_MS, before);
+    const live = () => ep === this.epoch && this.regions.get(spec.id) === r;
+    if (live() && r.mode === 'b' && this.follow.following()) await this.enterB(spec.id, spec.page, before);
+    if (this.regions.get(spec.id) === r) el.classList.add('is-shown');
+    return live() ? this.region(spec.id) ?? 'desk reset' : 'desk reset';
   }
 
-  async reveal(t: Target, r: SRect): Promise<boolean> {
+  async reveal(t: Target, r: SRect, before?: BeforeMove): Promise<boolean> {
+    const ep = this.epoch;
     this.last = { t, r };
     if (!this.follow.following()) return false;
     if (this.isVisible(t, r)) return false;
     if (t.region != null) {
       const reg = this.regions.get(t.region);
       if (!reg) return false;
-      if (reg.mode === 'b') { await this.enterB(t.region, this.card ?? reg.req.page); return true; }
+      if (reg.mode === 'b') { await this.enterB(t.region, this.card ?? reg.req.page, before); return true; }
     } else if (this.mode === 'b') {
       // Pointing at another page while the stage is up: that page goes on the card (rule 2).
-      await this.host.setCard({ page: t.page, rect: this.stageNow(t.page).card }, CARD_SWAP_MS);
-      this.card = t.page;
-      this.emit();
+      await before?.();
+      if (ep !== this.epoch || this.mode !== 'b') return false;
+      const page = t.page;
+      this.card = page;
+      this.placeBack(page);
+      this.position(); // the region refits for the new card's aspect; wires re-route or hide
+      await this.host.setCard({ page, rect: this.stageNow(page).card }, CARD_SWAP_MS);
       return true;
     }
-    if (this.mode === 'b') await this.exitB();
+    if (this.mode === 'b') await this.exitB(before);
+    if (ep !== this.epoch) return false;
     const w = this.where(t, r);
     if (!w) return false;
-    await this.host.glideTo(() => frameTop(this.where(t, r)!.rect, this.view()), 450);
+    await before?.();
+    if (ep !== this.epoch) return false;
+    await this.host.glideTo(() => frameTop(this.where(t, r)?.rect ?? { x: 0, y: NaN, w: 0, h: 0 }, this.view()), 450);
     return true;
   }
 
@@ -153,31 +177,45 @@ export class Desk implements DeskApi {
     });
   }
 
-  async frameBoth(a: ConnectorEnd, b: ConnectorEnd): Promise<void> {
+  async frameBoth(a: ConnectorEnd, b: ConnectorEnd, before?: BeforeMove): Promise<void> {
+    const ep = this.epoch;
     const pageEnd = a.t.page != null ? a : b, regEnd = a.t.page != null ? b : a;
     const reg = regEnd.t.region != null ? this.regions.get(regEnd.t.region) : undefined;
     this.last = regEnd;
     if (!this.follow.following() || !reg || pageEnd.t.page == null) return;
-    if (reg.mode === 'b') { await this.enterB(reg.req.id, pageEnd.t.page); return; }
-    if (this.mode === 'b') await this.exitB();
+    if (reg.mode === 'b') { await this.enterB(reg.req.id, pageEnd.t.page, before); return; }
+    if (this.mode === 'b') await this.exitB(before);
+    if (ep !== this.epoch || this.regions.get(reg.req.id) !== reg) return;
     const pa = this.where(pageEnd.t, pageEnd.r), ra = this.where(regEnd.t, regEnd.r);
     if (!pa || !ra) return;
     const { H } = this.host.viewport();
     if (fitTogether([pa.rect, ra.rect], H)) {
-      const u = () => { const p = this.where(pageEnd.t, pageEnd.r)!.rect, q = this.where(regEnd.t, regEnd.r)!.rect; const y = Math.min(p.y, q.y); return { x: 0, y, w: 1, h: Math.max(p.y + p.h, q.y + q.h) - y }; };
-      if (!inView(u(), this.view())) await this.host.glideTo(() => frameTop(u(), this.view()), 450);
+      const u = () => {
+        const p = this.where(pageEnd.t, pageEnd.r)?.rect, q = this.where(regEnd.t, regEnd.r)?.rect;
+        if (!p || !q) return { x: 0, y: NaN, w: 0, h: 0 }; // gone: frameTop stays put
+        const y = Math.min(p.y, q.y);
+        return { x: 0, y, w: 1, h: Math.max(p.y + p.h, q.y + q.h) - y };
+      };
+      if (inView(u(), this.view())) return;
+      await before?.();
+      if (ep !== this.epoch) return;
+      await this.host.glideTo(() => frameTop(u(), this.view()), 450);
       return;
     }
     // They can't be on screen together: the region goes to the stage, the page onto the card (rule 3).
     reg.req.forceB = true;
-    await this.relayout(GLIDE_MS);
-    await this.enterB(reg.req.id, pageEnd.t.page);
+    await this.relayout(GLIDE_MS, before);
+    // A reset (new answer) or stop while the lanes glided: the region may be gone; never stage it then.
+    if (ep !== this.epoch || this.regions.get(reg.req.id) !== reg || !this.follow.following()) return;
+    await this.enterB(reg.req.id, pageEnd.t.page, before);
   }
 
   async scrollToPage(page: number, y?: number): Promise<void> {
     this.last = { t: { page }, r: { x: 0, y: 0, w: 1000, h: 0 } };
     if (!this.follow.following()) return;
+    const ep = this.epoch;
     if (this.mode === 'b') await this.exitB();
+    if (ep !== this.epoch) return;
     await this.host.scrollToPage(page, y);
   }
 
@@ -203,14 +241,19 @@ export class Desk implements DeskApi {
    * instead of back to center and out again; a later reset() without it collapses them.
    */
   async reset(ms: number, opts: { keepLanes?: boolean } = {}): Promise<void> {
+    this.epoch++;
     this.follow.setAnswering(true);
     const els: Element[] = [...[...this.regions.values()].map((r) => r.el), ...this.wires.map((w) => w.svg)];
     this.regions.clear();
     this.wires = [];
     this.last = null;
-    for (const el of els) { (el as HTMLElement).style.transition = `opacity ${ms}ms ease-out`; (el as HTMLElement).style.opacity = '0'; }
+    // The old nodes fade and go on their own: the new answer's first action doesn't wait for the fade.
+    if (els.length) {
+      for (const el of els) { (el as HTMLElement).style.transition = `opacity ${ms}ms ease-out`; (el as HTMLElement).style.opacity = '0'; }
+      void wait(ms).then(() => els.forEach((e) => e.remove()));
+    }
     const leaving = this.mode === 'b' ? this.exitB() : Promise.resolve();
-    await Promise.all([wait(ms).then(() => els.forEach((e) => e.remove())), leaving, opts.keepLanes ? Promise.resolve() : this.applyColumn([], GLIDE_MS)]);
+    await Promise.all([leaving, opts.keepLanes ? Promise.resolve() : this.applyColumn([], GLIDE_MS)]);
     this.emit();
   }
 
@@ -230,13 +273,13 @@ export class Desk implements DeskApi {
   private placed(): Placed[] { return [...this.regions.values()].map((r) => ({ ...r.req, mode: r.mode })); }
 
   /** Rule 7: re-places every region for the current window from its request; moves frames between the desk and the stage. */
-  private async relayout(ms: number): Promise<void> {
+  private async relayout(ms: number, before?: BeforeMove): Promise<void> {
     const { W, H } = this.host.viewport();
     const placed = placeAll([...this.regions.values()].map((r) => r.req), W, H);
-    for (const p of placed) this.regions.get(p.id)!.mode = p.mode;
-    await this.applyColumn(placed, ms);
-    // The stage shows a region that is no longer B (the window grew): back to C.
-    if (this.mode === 'b' && this.active && this.regions.get(this.active)?.mode !== 'b') await this.exitB();
+    for (const p of placed) { const r = this.regions.get(p.id); if (r) r.mode = p.mode; }
+    await this.applyColumn(placed, ms, before);
+    // The stage shows a region that is no longer B (the window grew, or it was reset): back to C.
+    if (this.mode === 'b' && this.active && this.regions.get(this.active)?.mode !== 'b') await this.exitB(before);
     this.position();
     // Still in B (a resize): the card follows the new stage at once. Same card, so the viewer only moves it.
     if (this.mode === 'b' && this.card != null) {
@@ -245,11 +288,15 @@ export class Desk implements DeskApi {
     }
   }
 
-  private async applyColumn(placed: Placed[], ms: number) {
+  private async applyColumn(placed: Placed[], ms: number, before?: BeforeMove) {
     const { W } = this.host.viewport();
     const lanes = lanesFor(placed, W);
     const gaps = gapsFor(placed, W, column(W, lanes));
     if (sameLanes(lanes, this.lanes) && sameGaps(gaps, this.gaps)) return;
+    if (before) {
+      await before();
+      if (sameLanes(lanes, this.lanes) && sameGaps(gaps, this.gaps)) return;
+    }
     this.lanes = lanes;
     this.gaps = gaps;
     await this.host.setColumn(lanes, gaps, ms);
@@ -271,6 +318,8 @@ export class Desk implements DeskApi {
     }
     for (const w of this.wires) {
       const s = this.route(w);
+      // An end that can't be placed now (its page is off the card, its region not on the stage): hide the wire.
+      w.svg.style.display = s ? '' : 'none';
       if (s) w.group.querySelector('path')?.setAttribute('d', toD(s));
     }
     this.emit();
@@ -301,6 +350,7 @@ export class Desk implements DeskApi {
     const reg = this.regions.get(w.region.t.region!);
     const p = this.where(w.page.t, w.page.r), q = this.where(w.region.t, w.region.r);
     if (!reg || !p || !q || p.frame !== q.frame) return null; // in B the page end must be on the card
+    if (reg.mode === 'b' && (this.mode !== 'b' || this.active !== reg.req.id)) return null; // its region isn't the one on the stage
     const L = this.host.layout()!;
     const page = p.frame === 'stage'
       ? this.stageNow(w.page.t.page!).card
@@ -317,8 +367,13 @@ export class Desk implements DeskApi {
   }
 
   /** Shows region `id` on the takeover stage with `page` on the card. */
-  private async enterB(id: string, page: number): Promise<void> {
+  private async enterB(id: string, page: number, before?: BeforeMove): Promise<void> {
     if (this.mode === 'b' && this.active === id && this.card === page) return; // already up: nothing moves
+    if (before) {
+      const ep = this.epoch;
+      await before();
+      if (ep !== this.epoch || !this.regions.has(id) || (this.mode === 'b' && this.active === id && this.card === page)) return;
+    }
     const swap = this.mode === 'b' && this.card !== page;
     this.mode = 'b';
     this.active = id;
@@ -336,8 +391,9 @@ export class Desk implements DeskApi {
     Object.assign(this.back.style, { left: `${c.x}px`, top: `${c.y + c.h + 8}px` });
   }
 
-  private async exitB(): Promise<void> {
+  private async exitB(before?: BeforeMove): Promise<void> {
     if (this.mode !== 'b') return;
+    if (before) { await before(); if (this.mode !== 'b') return; }
     this.mode = 'c';
     this.active = null;
     this.card = null;

@@ -2,6 +2,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Desk, type DeskHost } from '../../src/desk/Desk';
 import { column, computeLayout, type Lanes } from '../../src/desk/layout';
+import { Director } from '../../src/playback/director';
+import { DEFAULTS } from '../../src/settings/settings';
+import type { ViewerApi } from '../../src/pdf/viewerApi';
+import type { BuildElement } from '../../src/desk/types';
 
 /** A viewer stand-in: real layout math, no pdf.js. */
 function fakeHost(W = 1440, H = 900, pages = 5) {
@@ -208,5 +212,143 @@ describe('Desk', () => {
     expect(h2.setColumn).toHaveBeenCalledOnce();
     expect(vi.mocked(h2.setColumn).mock.calls[0][0]).toEqual(expect.objectContaining({ right: 0 }));
     expect(h2.s.lanes.left).toBeGreaterThan(0);
+  });
+});
+
+describe('Desk under interruption', () => {
+  let stage: HTMLDivElement;
+  beforeEach(() => { vi.useFakeTimers(); stage = document.createElement('div'); });
+  afterEach(() => vi.useRealTimers());
+  /** A host whose column glide takes its ms, like the viewer's. */
+  const slowHost = (W = 1440, H = 900) => {
+    const h = fakeHost(W, H);
+    h.setColumn = vi.fn(async (lanes: Lanes, gaps: ReadonlyMap<number, number>, ms: number) => {
+      await new Promise((r) => setTimeout(r, ms));
+      h.s.lanes = lanes; h.s.gaps = gaps;
+    });
+    return h;
+  };
+
+  it('a reset during frameBoth\'s promotion to B does not enter B for the region it cleared (H1)', async () => {
+    const h = slowHost(1440, 600);
+    const d = new Desk(h, stage);
+    const a = d.addRegion(spec('side', 2, { place: 'below' }));
+    await vi.advanceTimersByTimeAsync(500);
+    await a;
+    expect(d.region('side')!.mode).toBe('below');
+    const f = d.frameBoth({ t: { page: 2 }, r: { x: 100, y: 0, w: 10, h: 10 } }, { t: { region: 'side' }, r: { x: 10, y: 650, w: 10, h: 10 } });
+    await vi.advanceTimersByTimeAsync(100);
+    const r = d.reset(300, { keepLanes: true });
+    await vi.advanceTimersByTimeAsync(1000);
+    await Promise.all([f, r]);
+    expect(d.state().mode).toBe('c');
+    expect(h.setCard).not.toHaveBeenCalledWith(expect.objectContaining({ page: 2 }), expect.anything());
+  });
+  it('a region reset while its lanes glide is reported, not returned as null (H1)', async () => {
+    const h = slowHost();
+    const d = new Desk(h, stage);
+    const a = d.addRegion(spec('side', 2, { place: 'right' }));
+    await vi.advanceTimersByTimeAsync(100);
+    const r = d.reset(0, { keepLanes: true });
+    await vi.advanceTimersByTimeAsync(1000);
+    await r;
+    expect(await a).toBe('desk reset');
+  });
+  it('abort() with no regions collapses lanes kept by reset(keepLanes) (low)', async () => {
+    const h = fakeHost();
+    const d = new Desk(h, stage);
+    await d.addRegion(spec('side', 2, { place: 'right' }));
+    const r = d.reset(300, { keepLanes: true });
+    await vi.advanceTimersByTimeAsync(300);
+    await r;
+    expect(h.s.lanes.right).toBeGreaterThan(0);
+    d.abort();
+    await flush();
+    expect(h.s.lanes).toEqual({ left: 0, right: 0 });
+  });
+  it('reset with nothing to leave does not hold for the fade (M4)', async () => {
+    const h = fakeHost();
+    const d = new Desk(h, stage);
+    await d.addRegion(spec('side', 2, { place: 'right' }));
+    let done = false;
+    void d.reset(300, { keepLanes: true }).then(() => { done = true; });
+    await vi.advanceTimersByTimeAsync(5);
+    expect(done).toBe(true);
+    expect(h.layer().querySelector('.desk-region')).not.toBeNull(); // still fading
+    await vi.advanceTimersByTimeAsync(300);
+    expect(h.layer().querySelector('.desk-region')).toBeNull();
+    const d2 = new Desk(fakeHost(), document.createElement('div'));
+    let done2 = false;
+    void d2.reset(300, { keepLanes: true }).then(() => { done2 = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(done2).toBe(true);
+  });
+  it('a wire whose ends are not both on screen is hidden, not left at a stale spot (M3)', async () => {
+    const h = fakeHost();
+    const d = new Desk(h, stage);
+    await d.addRegion(spec('a', 2, { size: 'l' }));
+    const c = d.addConnector({ t: { page: 2 }, r: { x: 300, y: 200, w: 20, h: 20 } }, { t: { region: 'a' }, r: { x: 100, y: 100, w: 10, h: 10 } });
+    expect(typeof c).not.toBe('string');
+    const svg = stage.querySelector('.desk-wire') as SVGSVGElement;
+    expect(svg.style.display).toBe('');
+    await d.addRegion(spec('b', 3, { size: 'l' })); // b on the stage, page 3 on the card: page 2 is off screen
+    expect(svg.style.display).toBe('none');
+    await d.reveal({ page: 2 }, { x: 0, y: 0, w: 10, h: 10 }); // page 2 back on the card, but region a is not on the stage
+    expect(d.state().card).toBe(2);
+    expect(svg.style.display).toBe('none');
+    await d.reveal({ region: 'a' }, { x: 0, y: 0, w: 10, h: 10 });
+    expect(svg.style.display).toBe('');
+  });
+  it('a card swap repositions the B region for the new card (M3)', async () => {
+    const h = fakeHost();
+    const aspects: Record<number, number> = { 3: 9 / 16, 1: 1.4 };
+    h.aspect = (p: number) => aspects[p] ?? 9 / 16;
+    const d = new Desk(h, stage);
+    await d.addRegion(spec('big', 3, { size: 'l' }));
+    const el = stage.querySelector('.desk-region') as HTMLElement;
+    const before = el.style.left;
+    await d.reveal({ page: 1 }, { x: 0, y: 0, w: 10, h: 10 });
+    expect(d.state().card).toBe(1);
+    expect(el.style.left).not.toBe(before);
+  });
+  it('a region added while the student drives is where "Back to answer" returns (low)', async () => {
+    const h = fakeHost();
+    const d = new Desk(h, stage);
+    d.follow.setAnswering(true);
+    h.user();
+    await d.addRegion(spec('big', 3, { size: 'l' }));
+    expect(d.state().mode).toBe('c');
+    await d.resume();
+    expect(d.state().mode).toBe('b');
+    expect(d.state().card).toBe(3);
+  });
+});
+
+describe('Director on a real Desk', () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
+  afterEach(() => vi.useRealTimers());
+
+  it('a new answer\'s first sketch after the old answer\'s regions draws its first ink on its word (M4)', async () => {
+    const h = fakeHost();
+    h.setColumn = vi.fn(async (lanes: Lanes, gaps: ReadonlyMap<number, number>, ms: number) => {
+      await new Promise((r) => setTimeout(r, ms));
+      h.s.lanes = lanes; h.s.gaps = gaps;
+    });
+    const desk = new Desk(h, document.createElement('div'));
+    const old = desk.addRegion(spec('old', 1, { place: 'right' }));
+    await vi.advanceTimersByTimeAsync(500);
+    await old;
+    let inkAt = NaN;
+    const build: BuildElement = async () => ({ target: { region: 'next' }, bbox: { x: 0, y: 0, w: 10, h: 10 }, draw: async () => { inkAt = performance.now(); } });
+    const viewer = { numPages: () => 5, allLayers: () => [] } as unknown as ViewerApi;
+    const d = new Director({ viewer: () => viewer, desk: () => desk, settings: () => DEFAULTS, onScrolledTo: () => {}, build });
+    const t0 = performance.now();
+    void d.begin(300);
+    // The scheduler fires the sketch 450ms ahead of its word; its region's first ink is on that word.
+    d.run({ kind: 'sketch', id: 'next', page: 1, size: 'm', place: 'left' }, t0 + 450);
+    d.run({ kind: 'line', region: 'next', from: { x: 0, y: 0 }, to: { x: 100, y: 100 } }, t0 + 450);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(inkAt - (t0 + 450)).toBeGreaterThanOrEqual(0);
+    expect(inkAt - (t0 + 450)).toBeLessThan(40);
   });
 });

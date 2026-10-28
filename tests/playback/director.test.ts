@@ -36,6 +36,7 @@ function fakeDesk(over: Partial<DeskApi> = {}): DeskApi {
     addConnector: vi.fn(() => 'unused'),
     following: () => true,
     cancel: vi.fn(),
+    abort: vi.fn(),
     state: () => ({ mode: 'c', following: true, sketching: false, column: { x: 0, w: 860 } }),
     subscribe: () => () => {},
     ...over,
@@ -182,7 +183,7 @@ describe('Director timing (carried over from the old suite)', () => {
     d.stop();
     await vi.advanceTimersByTimeAsync(0);
     expect(idle2).toBe(true);
-    expect(desk.cancel).toHaveBeenCalled();
+    expect(desk.abort).toHaveBeenCalled();
   });
   it('begin() holds the first action until the old ink has faded', async () => {
     const { d, started } = make();
@@ -352,9 +353,54 @@ describe('Director on the desk', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(desk.reset).not.toHaveBeenCalled();
   });
-  it('stop cancels a pan in flight', () => {
+  it('stop aborts the desk: pans in flight stop and no desk move lands later (H1)', () => {
     const { d, desk } = make();
     d.stop();
-    expect(desk.cancel).toHaveBeenCalled();
+    expect(desk.abort).toHaveBeenCalled();
+  });
+  it('a sketch near a page past the end is skipped (M1)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { d, ended, desk } = make();
+    const s: Action = { kind: 'sketch', id: 'x', page: 9, size: 'm', place: 'auto' };
+    d.run(s, 0);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(ended.get(s)?.skipped).toBe('page out of range');
+    expect(desk.addRegion).not.toHaveBeenCalled();
+  });
+  it('ink in flight is not cut short by a frame step that does not move the view (M2)', async () => {
+    const fb = fakeBuild(700);
+    const desk = fakeDesk({ frameBoth: vi.fn(async () => {}) }); // already framed: never calls its before-move hook
+    const { d } = make({ desk, build: fb.build });
+    const a = line();
+    d.run(a, 0);
+    await vi.advanceTimersByTimeAsync(100);
+    d.run({ kind: 'connect', from: { page: 1, at: { x: 1, y: 1 } }, to: { region: 'side', ref: 'x' } }, 100);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fb.aborted.has(a)).toBe(false);
+  });
+  it('a frame step that moves the view lands ink in flight first (rule 1)', async () => {
+    const fb = fakeBuild(700);
+    const desk = fakeDesk({ frameBoth: vi.fn(async (_a, _b, before?: () => Promise<void>) => { await before?.(); }) });
+    const { d } = make({ desk, build: fb.build });
+    const a = line();
+    d.run(a, 0);
+    await vi.advanceTimersByTimeAsync(100);
+    d.run({ kind: 'connect', from: { page: 1, at: { x: 1, y: 1 } }, to: { region: 'side', ref: 'x' } }, 100);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fb.aborted.has(a)).toBe(true);
+  });
+  it('a reveal whose target came on screen before it ran does not cut ink short (M2)', async () => {
+    const fb = fakeBuild(700);
+    let visible = true;
+    const desk = fakeDesk({ isVisible: () => visible, reveal: vi.fn(async () => false) });
+    const { d } = make({ desk, build: fb.build });
+    const a = line();
+    d.run(a, 0);
+    await vi.advanceTimersByTimeAsync(100);
+    visible = false;
+    d.run(line(5), 100);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(desk.reveal).toHaveBeenCalled();
+    expect(fb.aborted.has(a)).toBe(false);
   });
 });

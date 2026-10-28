@@ -53,4 +53,17 @@ describe('isScrollKey', () => {
     expect(isScrollKey({ key: 'ArrowDown', target: input })).toBe(false);
     expect(isScrollKey({ key: 'a', target: document.body })).toBe(false);
   });
+  it('keys on a focused control activate it; they are not the student scrolling', () => {
+    const button = document.createElement('button');
+    expect(isScrollKey({ key: ' ', target: button })).toBe(false);
+    expect(isScrollKey({ key: 'ArrowDown', target: button })).toBe(false);
+    const role = document.createElement('div');
+    role.setAttribute('role', 'button');
+    const inner = role.appendChild(document.createElement('span'));
+    expect(isScrollKey({ key: ' ', target: inner })).toBe(false);
+    const ce = document.createElement('div');
+    ce.setAttribute('contenteditable', 'true');
+    expect(isScrollKey({ key: 'End', target: ce })).toBe(false);
+    expect(isScrollKey({ key: 'ArrowDown', target: document.createElement('select') })).toBe(false);
+  });
 });

@@ -9,7 +9,7 @@ import { compile } from './expr';
 import { plotStrokes } from './plot';
 import { nudge, placeLabel } from './nudge';
 import { boxOf, strokeBoxes, union, type ElementEntry } from './registry';
-import { DESK_INK, TEXT_PX, MATH_PX, own, makeText, measureText, reveal, drawDot, drawShade, emphPass, moveGroup, fadeGroup, type TextOpts, type ShadeShape } from './render';
+import { DESK_INK, TEXT_PX, MATH_PX, own, makeText, measureText, reveal, drawDot, drawShade, emphPass, moveGroupTo, translateOf, fadeGroup, type TextOpts, type ShadeShape } from './render';
 import { preloadMath, texToHtml, placeMath, revealMath } from './math';
 import type { BuildElement, BuildEnv, ElementPlan, Pace, TargetCtx } from './types';
 
@@ -49,6 +49,14 @@ function textOpts(ctx: TargetCtx, env: BuildEnv, px: number, color: string): Tex
 
 /** The bounds labels must stay in: the target's whole space. */
 const bounds = (ctx: TargetCtx): SRect => ({ x: 0, y: 0, w: 1000, h: ctx.h });
+/** Shifts `r` left/up (or right/down) just enough to sit inside `b`; a box larger than `b` keeps its top-left in. */
+const inside = (r: SRect, b: SRect): SRect => ({
+  ...r,
+  x: Math.max(b.x, Math.min(r.x, b.x + b.w - r.w)),
+  y: Math.max(b.y, Math.min(r.y, b.y + b.h - r.h)),
+});
+/** Where a move of each group is headed while it glides: its anchor and translate once it lands. */
+const moveTo = new WeakMap<SVGGElement, { anchor: SPt; tx: number; ty: number }>();
 
 type Ink = { strokes: Stroke[]; closed?: boolean; dash?: boolean };
 
@@ -149,10 +157,10 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       const arc = arcStroke(c, P(a.from), P(a.to), rad);
       if (!a.text) return strokePlan(a, ctx, env, { strokes: [arc] });
       const b = bisector(c, P(a.from), P(a.to));
-      const o = textOpts(ctx, env, TEXT_PX.label, color);
       const tip = { x: c.x + b.x * (rad + px(10)), y: c.y + b.y * (rad + px(10)) };
       const dir = compassOf(b);
       return strokePlan(a, ctx, env, { strokes: [arc] }, [], async (g, sig, k) => {
+        const o = textOpts(ctx, env, TEXT_PX.label, color);
         const box = placeText(ctx, env, g, a.text!, o, tip, dir, 0);
         await writeLabel(g, box, a.text!, o, env, sig, k);
       });
@@ -164,8 +172,8 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       if (!a.text) return strokePlan(a, ctx, env, { strokes: [s] });
       const n = { x: (t.y - f.y) / (L || 1), y: -(t.x - f.x) / (L || 1) };
       const tip = { x: (f.x + t.x) / 2 + n.x * (depth + px(4)), y: (f.y + t.y) / 2 + n.y * (depth + px(4)) };
-      const o = textOpts(ctx, env, TEXT_PX.label, color);
       return strokePlan(a, ctx, env, { strokes: [s] }, [], async (g, sig, k) => {
+        const o = textOpts(ctx, env, TEXT_PX.label, color);
         const box = placeText(ctx, env, g, a.text!, o, tip, compassOf(n), 0);
         await writeLabel(g, box, a.text!, o, env, sig, k);
       });
@@ -174,7 +182,6 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       const o = P(a.at);
       const xs = arrowStrokes(o, { x: o.x + a.w, y: o.y }, null), ys = arrowStrokes(o, { x: o.x, y: o.y - a.h }, null);
       const strokes = [...xs, ...ys];
-      const tOpts = textOpts(ctx, env, TEXT_PX.s, colorOf(ctx.target, false, env));
       const axesBox = { x: o.x, y: o.y - a.h, w: a.w, h: a.h };
       const boxes = strokeBoxes(strokes);
       return {
@@ -183,6 +190,7 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
           env.registry.define({ id: a.id, kind: 'axes', target: ctx.target, bbox: axesBox, boxes, anchor: { x: o.x + a.w, y: o.y - a.h }, group: g, strokes });
+          const tOpts = textOpts(ctx, env, TEXT_PX.s, colorOf(ctx.target, false, env));
           await drawStrokes(g, strokes, { color: colorOf(ctx.target, a.em, env), width: 2, scale: ctx.scale(), signal, mode: k.fadeMs != null || env.settings.inkStyle === 'clean' || prefersReducedMotion() ? 'fade' : 'trace', fadeMs: k.fadeMs, speed: k.speed });
           if (a.xLabel) { const m = measureText(g, a.xLabel, tOpts); await writeLabel(g, { x: o.x + a.w - m.w, y: o.y + px(8), ...m }, a.xLabel, tOpts, env, signal, k); }
           if (a.yLabel) { const m = measureText(g, a.yLabel, tOpts); await writeLabel(g, { x: o.x + px(8), y: o.y - a.h - m.h / 2, ...m }, a.yLabel, tOpts, env, signal, k); }
@@ -190,7 +198,7 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       };
     }
     case 'plot': {
-      const ax = a.axes ? env.registry.get(a.axes) : env.registry.latest(ctx.target, 'axes');
+      const ax = a.axes ? await env.registry.wait(a.axes, REF_WAIT_MS) : env.registry.latest(ctx.target, 'axes');
       if (!ax || ax.kind !== 'axes') { console.warn('[desk] plot: no axes', where(ctx.target)); return 'no axes'; }
       let fn;
       try { fn = compile(a.fn); } catch (e) { console.warn('[desk] plot: bad fn', a.fn, e); return 'bad fn'; }
@@ -208,10 +216,11 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
         bbox: union([dot, ...(est ? [est] : [])].map((b) => ({ x: b.x - PAD, y: b.y - PAD, w: b.w + 2 * PAD, h: b.h + 2 * PAD }))),
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
-          const box = a.text ? placeText(ctx, env, g, a.text, o, c, a.dir ?? 'ne', rad) : null;
+          const od = textOpts(ctx, env, TEXT_PX.label, color); // sized for the scale now (a column glide may have run since build)
+          const box = a.text ? placeText(ctx, env, g, a.text, od, c, a.dir ?? 'ne', rad) : null;
           env.registry.define({ id: a.id, kind: 'point', target: ctx.target, bbox: union([dot, ...(box ? [box] : [])]), boxes: [dot, ...(box ? [box] : [])], anchor: c, group: g });
           await drawDot(g, c, rad, color, k, signal);
-          if (box && a.text) await writeLabel(g, box, a.text, o, env, signal, k);
+          if (box && a.text) await writeLabel(g, box, a.text, od, env, signal, k);
         },
       };
     }
@@ -219,14 +228,15 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       const o = textOpts(ctx, env, TEXT_PX.label, color);
       const at = P(a.at);
       const m = measureText(ctx.layers.agent, a.text, o);
-      const est = { x: at.x, y: at.y - m.h / 2, ...m };
+      const est = inside({ x: at.x, y: at.y - m.h / 2, ...m }, bounds(ctx));
       return {
         target: ctx.target, bbox: est,
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
-          const box = nudge(est, env.registry.obstacles(ctx.target), bounds(ctx));
+          const od = textOpts(ctx, env, TEXT_PX.label, color), md = measureText(g, a.text, od); // measured at draw time
+          const box = nudge({ x: at.x, y: at.y - md.h / 2, ...md }, env.registry.obstacles(ctx.target), bounds(ctx));
           env.registry.define({ id: a.id, kind: 'label', target: ctx.target, bbox: box, boxes: [box], anchor: { x: box.x, y: box.y + box.h / 2 }, group: g });
-          await writeLabel(g, box, a.text, o, env, signal, k);
+          await writeLabel(g, box, a.text, od, env, signal, k);
         },
       };
     }
@@ -234,13 +244,15 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       const o = textOpts(ctx, env, TEXT_PX[a.size], color);
       const at = P(a.at);
       const m = measureText(ctx.layers.agent, a.text, o);
-      const box = { x: at.x, y: at.y - m.h / 2, ...m };
+      const est = inside({ x: at.x, y: at.y - m.h / 2, ...m }, bounds(ctx));
       return {
-        target: ctx.target, bbox: box,
+        target: ctx.target, bbox: est,
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
-          env.registry.define({ id: a.id, kind: 'write', target: ctx.target, bbox: box, boxes: [box], anchor: at, group: g });
-          await writeLabel(g, box, a.text, o, env, signal, k);
+          const od = textOpts(ctx, env, TEXT_PX[a.size], color), md = measureText(g, a.text, od); // measured at draw time
+          const box = inside({ x: at.x, y: at.y - md.h / 2, ...md }, bounds(ctx)); // rule 5: never past the edge
+          env.registry.define({ id: a.id, kind: 'write', target: ctx.target, bbox: box, boxes: [box], anchor: { x: box.x, y: box.y + box.h / 2 }, group: g });
+          await writeLabel(g, box, a.text, od, env, signal, k);
         },
       };
     }
@@ -263,13 +275,20 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       if (!html) { console.warn('[desk] math does not parse', a.tex); return 'bad tex'; }
       const size = px(MATH_PX[a.size]);
       const at = P(a.at);
-      const est = { x: at.x, y: at.y - size * 0.7, w: a.tex.length * size * 0.5, h: size * 1.4 };
+      const est = inside({ x: at.x, y: at.y - size * 0.7, w: a.tex.length * size * 0.5, h: size * 1.4 }, bounds(ctx));
       return {
         target: ctx.target, bbox: est,
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
-          const m = placeMath(g, at, html, size, color);
-          env.registry.define({ id: a.id, kind: 'math', target: ctx.target, bbox: m.box, boxes: [m.box], anchor: at, group: g });
+          const m = placeMath(g, at, html, px(MATH_PX[a.size]), color);
+          // Rule 5: the measured formula stays inside its target (a payoff at x=950 shifts left, not off the region).
+          const fit = inside({ ...m.box, w: m.box.w + 2, h: m.box.h + 2 }, bounds(ctx));
+          if (fit.x !== m.box.x || fit.y !== m.box.y) {
+            m.box = { ...m.box, x: fit.x, y: fit.y };
+            m.fo.setAttribute('x', String(fit.x));
+            m.fo.setAttribute('y', String(fit.y));
+          }
+          env.registry.define({ id: a.id, kind: 'math', target: ctx.target, bbox: m.box, boxes: [m.box], anchor: { x: m.box.x, y: m.box.y + m.box.h / 2 }, group: g });
           await revealMath(g, m, { style: env.settings.inkStyle, signal, ...k });
         },
       };
@@ -301,24 +320,30 @@ async function ref(a: RefAction, env: BuildEnv): Promise<ElementPlan | string> {
     case 'move': {
       if (e.kind !== 'point' && e.kind !== 'label') { console.warn('[desk] move: only points and labels move', a.ref); return 'not movable'; }
       const to = ctx.toSpace({ x: a.to.x, y: Math.min(a.to.y, isRegion(e.target) ? ctx.h : 1000) });
-      const dx = to.x - e.anchor.x, dy = to.y - e.anchor.y;
-      const shift = (b: SRect) => ({ ...b, x: b.x + dx, y: b.y + dy });
+      const by = (from: SPt) => (b: SRect) => ({ ...b, x: b.x + to.x - from.x, y: b.y + to.y - from.y });
       return {
-        target: e.target, bbox: union([e.bbox, shift(e.bbox)]),
+        target: e.target, bbox: union([e.bbox, by(moveTo.get(e.group)?.anchor ?? e.anchor)(e.bbox)]),
         draw: async (signal) => {
-          await moveGroup(e.group, dx, dy, MOVE_MS, signal);
+          // A move still gliding toward its own target is the base, not where the group is now (no overshoot).
+          const cur = translateOf(e.group);
+          const base = moveTo.get(e.group) ?? { anchor: e.anchor, tx: cur.x, ty: cur.y };
+          const dest = { anchor: to, tx: base.tx + to.x - base.anchor.x, ty: base.ty + to.y - base.anchor.y };
+          moveTo.set(e.group, dest);
+          await moveGroupTo(e.group, dest.tx, dest.ty, MOVE_MS, signal);
+          const shift = by(e.anchor); // the registry follows in landing order
           env.registry.update(e.id, { anchor: to, bbox: shift(e.bbox), boxes: e.boxes.map(shift) });
+          if (moveTo.get(e.group) === dest) moveTo.delete(e.group);
         },
       };
     }
     case 'label': {
       const color = colorOf(e.target, a.em, env);
-      const o = textOpts(ctx, env, TEXT_PX.label, color);
       const clear = e.kind === 'point' ? (e.boxes[0]?.w ?? 0) / 2 : 0;
       return {
         target: e.target, bbox: { x: e.anchor.x - 60, y: e.anchor.y - 40, w: 120, h: 80 },
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
+          const o = textOpts(ctx, env, TEXT_PX.label, color);
           const box = placeText(ctx, env, g, a.text, o, e.anchor, a.dir ?? 'ne', clear);
           env.registry.define({ kind: 'label', target: e.target, bbox: box, boxes: [box], anchor: { x: box.x, y: box.y + box.h / 2 }, group: g });
           await writeLabel(g, box, a.text, o, env, signal, k);

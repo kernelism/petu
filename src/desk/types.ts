@@ -86,6 +86,8 @@ export type BuildEnv = {
 export type BuildElement = (a: InkAction, env: BuildEnv) => Promise<ElementPlan | string>;
 
 export type ConnectorEnd = { t: Target; r: SRect };
+/** Called right before the Desk actually moves the view (a pan, a column glide, entering or leaving B), so ink in flight can land (rule 1). */
+export type BeforeMove = () => Promise<void>;
 /** A connector the Desk owns: it re-routes `group`'s path on every relayout and C↔B switch. */
 export type ConnectorHandle = { group: SVGGElement; stroke: Stroke; scale: number };
 
@@ -94,15 +96,15 @@ export interface DeskApi {
   /** A new answer (or {{clear}}): fades regions and connectors out with the page marks, resumes following. */
   reset(ms: number, opts?: { keepLanes?: boolean }): Promise<void>;
   /** Places a region (rules 7, 8). Resolves once it is drawable. A string is a skip reason. */
-  addRegion(spec: RegionSpec): Promise<RegionInfo | string>;
+  addRegion(spec: RegionSpec, before?: BeforeMove): Promise<RegionInfo | string>;
   region(id: string): RegionInfo | null;
   /** Rule 1/2: moves the view (scroll, card swap, C↔B) so the target-space rect is on screen. Resolves whether it moved. */
-  reveal(t: Target, r: SRect): Promise<boolean>;
+  reveal(t: Target, r: SRect, before?: BeforeMove): Promise<boolean>;
   isVisible(t: Target, r: SRect): boolean;
   /** Resolves true as soon as the rect is on screen (mid-glide is fine), false after maxMs (default 1200). */
   whenVisible(t: Target, r: SRect, maxMs?: number): Promise<boolean>;
   /** Rule 3: frames both rects together; promotes the region end to B when they can't fit. */
-  frameBoth(a: ConnectorEnd, b: ConnectorEnd): Promise<void>;
+  frameBoth(a: ConnectorEnd, b: ConnectorEnd, before?: BeforeMove): Promise<void>;
   /** {{scroll}}: leaves B, then frames the page (or y on it) like ViewerApi.scrollToPage. */
   scrollToPage(page: number, y?: number): Promise<void>;
   addConnector(from: ConnectorEnd, to: ConnectorEnd): ConnectorHandle | string;
@@ -110,6 +112,8 @@ export interface DeskApi {
   following(): boolean;
   /** Stops a pan in flight (a stopped answer must not keep moving the view). */
   cancel(): void;
+  /** A stopped answer: cancels pans, makes every desk move in flight bail, and recenters lanes no region holds. */
+  abort(): void;
   state(): DeskState;
   subscribe(cb: (s: DeskState) => void): () => void;
 }
