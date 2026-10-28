@@ -15,7 +15,9 @@
     "reports": "node --experimental-strip-types scripts/reports.ts",
     "corpus-profile": "node --expose-gc --max-old-space-size=8192 --experimental-strip-types scripts/corpus/profile.ts",
     "corpus-bench": "node --experimental-strip-types scripts/corpus/browserBench.ts",
-    "replay-stress": "node --import ./scripts/lib/tsResolve.mjs --experimental-transform-types --no-warnings scripts/eval/replayStress.ts"
+    "replay-stress": "node --import ./scripts/lib/tsResolve.mjs --experimental-transform-types --no-warnings scripts/eval/replayStress.ts",
+    "gallery": "node --experimental-strip-types scripts/gallery/run.ts",
+    "gate": "node --experimental-strip-types scripts/gate.ts"
   },
   "dependencies": {
     "katex": "0.18.11",
