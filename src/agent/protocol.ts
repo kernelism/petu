@@ -1,5 +1,6 @@
 // src/agent/protocol.ts — shared by the browser (src/agent/client.ts) and the dev server (server/).
 import type { Usage } from '../../server/prices';
+import type { Storyboard } from './storyboard';
 
 /** What the browser sends to POST /api/ask (and /api/prewarm, without question/history/ink). */
 export type AskRequest = {
@@ -51,6 +52,12 @@ export type AskEvent =
       atMs?: number; openerMs?: number; opener?: string; cached?: number; input?: number }
   /** Client-side: stage 2's first text reached the player (ms from Enter); the opener's words were then due to end at `openerEndMs`. */
   | { t: 'handoff'; ms: number; openerEndMs?: number }
+  /**
+   * The lesson design (server, before stage 2's meta): `ms` from the ask request to the storyboard
+   * (or its fallback), its cost and tokens. `fallback` says why stage 2 runs on the scout's plan alone.
+   */
+  | { t: 'storyboard'; ms: number; usd: number; model: string; effort: string; version: string; board?: Storyboard; fallback?: string;
+      estimated?: boolean; input?: number; cached?: number; output?: number; reasoning?: number }
   | { t: 'text'; d: string }
   | { t: 'note'; message: string }
   | { t: 'done'; usage?: Usage; usd: number; estimated?: boolean; spentUsd: number; capUsd: number; ttftMs: number; plan?: string; lint?: string[] }

@@ -10,6 +10,8 @@ export type AskHandlers = {
   onMeta?(e: Extract<AskEvent, { t: 'meta' }>): void;
   /** Stage 1 finished: the scout's pages, plan and latency. */
   onScout?(e: Extract<AskEvent, { t: 'scout' }>): void;
+  /** The lesson design arrived (or fell back to the scout's plan), before stage 2's first text. */
+  onStoryboard?(e: Extract<AskEvent, { t: 'storyboard' }>): void;
   /** Stage 2's first text is about to play (after the opener, if there was one). */
   onHandoff?(e: Extract<AskEvent, { t: 'handoff' }>): void;
   onNote?(message: string): void;
@@ -52,6 +54,7 @@ export async function* askStream(req: AskRequest, signal: AbortSignal, h: AskHan
     h.onEvent?.(e);
     if (e.t === 'text') { spoke = true; yield e.d; }
     else if (e.t === 'meta') h.onMeta?.(e);
+    else if (e.t === 'storyboard') h.onStoryboard?.(e);
     else if (e.t === 'note') h.onNote?.(e.message);
     else if (e.t === 'done') { done = true; h.onDone?.(e); }
     else if (e.t === 'error') {

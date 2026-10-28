@@ -39,7 +39,13 @@ export const DEFAULT_MAX_OUTPUT = 3200;
 /** Stage 1 (spec A): the fast model at effort none; its JSON is the opener (one or two sentences), ≤ 6 pages and ≤ 80 words. */
 export const DEFAULT_SCOUT_MODEL = 'gpt-6.1-terra';
 export { SCOUT_MAX_OUTPUT } from './limits';
-import { SCOUT_MAX_OUTPUT } from './limits';
+import { SCOUT_MAX_OUTPUT, STORYBOARD_MAX_OUTPUT } from './limits';
+/**
+ * The storyboard (spec "Board v2" 5): a reasoning model designs the lesson while the opener plays.
+ * PETU_STORYBOARD=0 turns it off (stage 2 then runs on the scout's plan, as before).
+ */
+export const DEFAULT_STORYBOARD_MODEL = 'gpt-6.1-terra';
+export const DEFAULT_STORYBOARD_EFFORT: Effort = 'low';
 /** Models whose API rejects reasoning.effort "none" (developers.openai.com/api/docs/guides/reasoning, 2026-10-28). */
 const NO_NONE = new Set(['gpt-6.1-sol', 'gpt-6-astra']);
 
@@ -48,6 +54,8 @@ export type PetuEnv = {
   model: ModelConfig;
   /** Stage 1 (scout): a fast model at no reasoning; JSON out. */
   scout: ModelConfig;
+  /** The lesson designer between the scout and stage 2; null when PETU_STORYBOARD=0. */
+  storyboard: ModelConfig | null;
   phase: Phase;
   caps: Caps;
   priorUsd: number;
@@ -86,6 +94,11 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   const scoutEffort = oneOf('PETU_SCOUT_EFFORT', EFFORTS, 'none');
   if (scoutEffort === 'none' && NO_NONE.has(scoutModel)) throw new Error(`petu: ${scoutModel} does not accept reasoning effort none; set PETU_SCOUT_EFFORT=low`);
   const explicitCache = str('PETU_EXPLICIT_CACHE') !== '0';
+  const storyModel = str('PETU_STORYBOARD_MODEL') ?? DEFAULT_STORYBOARD_MODEL;
+  if (!PRICES[storyModel]) throw new Error(`petu: PETU_STORYBOARD_MODEL "${storyModel}" has no price in server/prices.ts`);
+  const storyEffort = oneOf('PETU_STORYBOARD_EFFORT', EFFORTS, DEFAULT_STORYBOARD_EFFORT);
+  if (storyEffort === 'none' && NO_NONE.has(storyModel)) throw new Error(`petu: ${storyModel} does not accept reasoning effort none; set PETU_STORYBOARD_EFFORT=low`);
+  const storyOn = oneOf('PETU_STORYBOARD', ['0', '1'] as const, '1') === '1';
 
   const phase = oneOf('PETU_PHASE', PHASES, 'founder');
   const phaseUsd = Object.fromEntries(PHASES.map((p) => [p, num(`PETU_CAP_${p.toUpperCase()}`, PHASE_CAPS[p])])) as Record<Phase, number>;
@@ -105,6 +118,7 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
     key: get('OPENAI_API_KEY')?.trim() ?? '',
     model: { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) },
     scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, fast: str('PETU_SCOUT_FAST') === '1', explicitCache },
+    storyboard: storyOn ? { model: storyModel, effort: storyEffort, maxOutput: STORYBOARD_MAX_OUTPUT, fast: false, explicitCache } : null,
     phase, caps,
     priorUsd: num('PETU_PRIOR_USD', 0.0076),
     pdfDirs,
