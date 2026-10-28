@@ -83,6 +83,8 @@ export function computeMetrics(r: EvalResult): Metrics {
   const done = r.events.find((e) => e.t === 'done') as Extract<EvalResult['events'][number], { t: 'done' }> | undefined;
   const text = r.chunks.map((c) => c.d).join('');
   const tags = (text.match(/\{\{/g) ?? []).length;
+  // {{let}} only names points: it never becomes a timed action, so it is not a malformed tag.
+  const lets = (text.match(/\{\{\s*let\b/g) ?? []).length;
   const drawn = r.timings.filter(drew);
   const firstDraw = drawn.reduce<SerialTiming | null>((m, t) => (m == null || (t.firedAt ?? Infinity) < (m.firedAt ?? Infinity) ? t : m), null);
   const firstMark = drawn.filter((t) => !LAYOUT.has(kindOf(t))).reduce<number | null>((m, t) => (m == null || t.startedAt! < m ? t.startedAt! : m), null);
@@ -122,7 +124,7 @@ export function computeMetrics(r: EvalResult): Metrics {
     cachedShare: done?.usage?.input_tokens ? cached / done.usage.input_tokens : 0,
     estimated: !!done?.estimated,
     tags,
-    malformed: Math.max(0, tags - r.timings.length),
+    malformed: Math.max(0, tags - lets - r.timings.length),
     linted: done?.lint?.length ?? 0,
     skipped,
     skippedTotal: Object.values(skipped).reduce((a, b) => a + b, 0),

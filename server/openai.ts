@@ -19,7 +19,9 @@
 //    commentary | final_answer), `response.output_text.delta` (item_id, delta), `response.completed`,
 //    `response.incomplete` (response.incomplete_details.reason), `response.failed`
 //    (response.error.message), `error` (message).
-//  - `text.verbosity` is not documented on the pages read; it stays opt-in (PETU_VERBOSITY), off by default.
+//  - `text.verbosity`: gpt-6.1-terra accepts "low" (P1 bake-off), but it stays opt-in (PETU_VERBOSITY), off
+//    by default: it lost 0.25 judge points on the answers it changed and it re-writes the system cache.
+//  - Fast mode stays off (PETU_FAST=0): no first-word gain in the P1 A/B, at 2× the price.
 //  - Structured output: `text.format: { type: 'json_schema', name, schema, strict: true }`.
 // Cache key (P0 smoke: a per-document key gave the 12h system block 0% cache on every new PDF):
 // `prompt_cache_key` is per prompt version, shared by every document, so all answers route to the

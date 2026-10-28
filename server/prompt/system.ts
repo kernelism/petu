@@ -1,5 +1,5 @@
 // server/prompt/system.ts
-import { EXAMPLES } from './examples';
+import { EXAMPLES } from './examples.ts';
 
 /** Bump on any change: the eval records it with every run, and it is part of the cache prefix. */
 export const PROMPT_VERSION = 'p3.1';

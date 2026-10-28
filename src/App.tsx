@@ -213,8 +213,11 @@ function replaySource(chunks: { t: number; d: string }[], events: AskEvent[], h:
 /** Eval ink questions: the page's largest labelled mark, as a page-coord rect (0–1000 both axes). */
 function largestLabelled(g: PageGround | undefined): { x: number; y: number; w: number; h: number } | null {
   let best: { x: number; y: number; w: number; h: number } | null = null, area = -1;
-  for (const m of g?.marks ?? []) {
-    if (!m.label) continue;
+  // The largest labelled mark; on a page with no labelled marks (a lone figure image), the largest
+  // mark of any kind, so an ink question always has ink (P1: lec09 p25 and lec08 p24 drew none).
+  const marks = g?.marks ?? [];
+  const pool = marks.some((m) => m.label) ? marks.filter((m) => m.label) : marks;
+  for (const m of pool) {
     const r = m.kind === 'dot' ? { x: m.at.x - 15, y: m.at.y - 15, w: 30, h: 30 }
       : 'from' in m ? { x: Math.min(m.from.x, m.to.x), y: Math.min(m.from.y, m.to.y), w: Math.abs(m.to.x - m.from.x), h: Math.abs(m.to.y - m.from.y) }
       : m.rect;

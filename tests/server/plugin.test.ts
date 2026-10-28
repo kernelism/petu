@@ -119,6 +119,14 @@ describe('createApi', () => {
     expect(api.statusLine()).not.toContain(KEY);
   });
 
+  it('uses the eval runner\'s PETU_EVAL_TOKEN and leaves another server\'s token file alone', () => {
+    mkdirSync(join(root, '.petu'), { recursive: true });
+    writeFileSync(join(root, '.petu/eval-token'), 'founder-token');
+    const api = createApi({ env: env({ PETU_EVAL_TOKEN: 'runner-token' }), root, fetch: upstream([]).f });
+    expect(api.token).toBe('runner-token');
+    expect(readFileSync(join(root, '.petu/eval-token'), 'utf8')).toBe('founder-token');
+  });
+
   it('400 on bad bodies', async () => {
     const api = createApi({ env: env(), root, fetch: upstream([]).f });
     const bad: unknown[] = [

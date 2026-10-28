@@ -9,13 +9,15 @@ export type Args = {
   only: string[] | null;
   n: number;
   replay: string | null;
+  /** Finish a run in place from its stored results (no generation, no replay): sheets, missing judgements, summary. */
+  finish: string | null;
   judge: boolean | null; // null = the config's default
   webkit: boolean;
   parallel: number;
 };
 
 export function parseArgs(argv: string[]): Args {
-  const a: Args = { split: 'dev', config: 'terra-none', only: null, n: 1, replay: null, judge: null, webkit: false, parallel: 4 };
+  const a: Args = { split: 'dev', config: 'terra-none', only: null, n: 1, replay: null, finish: null, judge: null, webkit: false, parallel: 4 };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const val = () => { const v = argv[++i]; if (v == null) throw new Error(`${k} needs a value`); return v; };
@@ -25,6 +27,7 @@ export function parseArgs(argv: string[]): Args {
       case '--only': a.only = val().split(',').map((s) => s.trim()).filter(Boolean); break;
       case '--n': a.n = Math.max(1, Math.floor(Number(val()))); if (!Number.isFinite(a.n)) throw new Error('bad --n'); break;
       case '--replay': a.replay = val(); break;
+      case '--finish': a.finish = val(); break;
       case '--judge': a.judge = true; break;
       case '--no-judge': a.judge = false; break;
       case '--webkit': a.webkit = true; break;
@@ -58,6 +61,8 @@ export type BudgetCheck = { ok: boolean; planned: number; remaining: number; mes
 export function remainingUsd(s: SpendSummary): number {
   const left = [s.capUsd - s.totalUsd];
   if (s.dailyCapUsd != null) left.push(s.dailyCapUsd - s.todayUsd);
+  // The server's phase budget (the per-request refusal the run would otherwise hit midway).
+  if (s.phaseCapUsd != null && s.phase) left.push(s.phaseCapUsd - (s.byPhase?.[s.phase] ?? 0));
   return Math.max(0, Math.min(...left));
 }
 

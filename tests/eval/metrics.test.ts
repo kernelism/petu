@@ -62,6 +62,10 @@ describe('computeMetrics', () => {
     const r = base(); r.timings = r.timings.slice(0, 2);
     expect(computeMetrics(r).malformed).toBe(2);
   });
+  it('a {{let}} (no timed action) is not counted as malformed', () => {
+    const r = base(); r.chunks.push({ t: 900, d: ' {{let on=s A=0,0 B=1,1}}' });
+    expect(computeMetrics(r).malformed).toBe(0);
+  });
   it('takeawayFirst fails on a hedge, a long opener, or no mark in sentence 1', () => {
     const a = base(); a.sentences[0].text = 'So this is the point.';
     expect(computeMetrics(a).takeawayFirst).toBe(false);

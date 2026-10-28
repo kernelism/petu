@@ -4,7 +4,7 @@
 // Real app, real speed, headless Chrome over CDP. Outputs live in .petu/eval/ (gitignored).
 // Every model/judge call goes through the dev server (and its ledger); this file holds no key.
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,7 +13,7 @@ import { Chrome } from './cdp.ts';
 import { CONFIGS, configEnv } from './configs.ts';
 import { deckUrlPath, pdfDirs } from './decks.ts';
 import { computeMetrics, type Metrics } from './metrics.ts';
-import { buildJudgeRequest, judgeAnswer, readEvalToken, renderTranscript, type JudgeResult } from './judge.ts';
+import { buildJudgeRequest, judgeAnswer, renderTranscript, RUBRIC, type JudgeResult } from './judge.ts';
 import { assertSplitAllowed, QSET, QUESTIONS, validateSet, freeze, type Question } from './questions.ts';
 import { checkBudget, parseArgs, selectQuestions, wantsJudge, type Args } from './plan.ts';
 import { renderReport, type ReportItem } from './report.ts';
@@ -38,16 +38,39 @@ const writeJson = (p: string, v: unknown) => { mkdirSync(join(p, '..'), { recurs
 const testUses = (): number => (existsSync(TEST_USES) ? readJson<unknown[]>(TEST_USES).length : 0);
 const noteTestUse = (runId: string) => writeJson(TEST_USES, [...(existsSync(TEST_USES) ? readJson<unknown[]>(TEST_USES) : []), { runId, at: new Date().toISOString() }]);
 
-async function freePort(): Promise<number> {
-  return new Promise((res, rej) => { const s = createServer(); s.listen(0, () => { const p = (s.address() as { port: number }).port; s.close(() => res(p)); }); s.on('error', rej); });
+/** Eval dev servers use ports from PETU_EVAL_PORTS (default 5186-5195), never the founder's 5180. */
+export function evalPorts(spec = process.env.PETU_EVAL_PORTS ?? '5186-5195'): number[] {
+  const m = /^(\d+)-(\d+)$/.exec(spec.trim());
+  if (!m) return spec.split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  const out: number[] = [];
+  for (let p = Number(m[1]); p <= Number(m[2]); p++) out.push(p);
+  return out;
 }
 
-async function startServer(env: Record<string, string>): Promise<{ base: string; stop(): void }> {
+const portFree = (port: number): Promise<boolean> => new Promise((res) => {
+  // Vite binds 127.0.0.1 here; probe the same address and the IPv6 loopback a founder server may hold.
+  const s = createServer();
+  s.once('error', () => res(false));
+  s.listen(port, '127.0.0.1', () => s.close(() => {
+    const s6 = createServer();
+    s6.once('error', (e: NodeJS.ErrnoException) => res(e.code === 'EADDRNOTAVAIL'));
+    s6.listen(port, '::1', () => s6.close(() => res(true)));
+  }));
+});
+
+async function freePort(): Promise<number> {
+  for (const p of evalPorts()) if (await portFree(p)) return p;
+  throw new Error(`no free eval port in ${process.env.PETU_EVAL_PORTS ?? '5186-5195'}`);
+}
+
+async function startServer(env: Record<string, string>): Promise<{ base: string; token: string; stop(): void }> {
   const port = await freePort();
+  // Our own judge token: the server uses it and leaves .petu/eval-token (another server's) alone.
+  const token = randomBytes(24).toString('hex');
   const p: ChildProcess = spawn('npx', ['vite', '--port', String(port), '--strictPort', '--host', '127.0.0.1'],
-    { env: { ...process.env, ...env, PETU_PDF_DIRS: pdfDirs(ROOT).join(',') }, stdio: 'ignore' });
+    { env: { ...process.env, ...env, PETU_PDF_DIRS: pdfDirs(ROOT).join(','), PETU_EVAL_TOKEN: token }, stdio: 'ignore' });
   const base = `http://127.0.0.1:${port}`;
-  for (let i = 0; i < 200; i++) { try { if ((await fetch(`${base}/api/spend`)).ok) return { base, stop: () => p.kill() }; } catch { /* not up yet */ } await sleep(150); }
+  for (let i = 0; i < 200; i++) { try { if ((await fetch(`${base}/api/spend`)).ok) return { base, token, stop: () => p.kill() }; } catch { /* not up yet */ } await sleep(150); }
   p.kill();
   throw new Error('dev server did not come up (is Lane S in place? GET /api/spend)');
 }
@@ -124,14 +147,18 @@ async function main(): Promise<void> {
   const errs = validateSet(QUESTIONS);
   if (errs.length) throw new Error(`question set invalid: ${errs.join('; ')}`);
   await freeze(EVAL_DIR);
-  const qs = selectQuestions(args, cfg);
+  if (args.finish && args.replay) throw new Error('--finish and --replay are exclusive');
+  let qs = selectQuestions(args, cfg);
+  // --finish completes a run that already generated (e.g. a crash in the judge step): it makes no new
+  // answers, so it is not a new use of the test split.
+  if (args.finish) qs = qs.filter((q) => existsSync(join(RUNS, args.finish!, q.id, 'result.json')));
   if (!qs.length) throw new Error('no questions selected');
-  assertSplitAllowed(qs.map((q) => q.id), phase, testUses());
+  if (!args.finish) assertSplitAllowed(qs.map((q) => q.id), phase, testUses());
   const judge = wantsJudge(args, cfg);
 
   const date = new Date().toISOString().slice(0, 10);
-  let runId = runIdOf(date, args.config + (args.replay ? '-replay' : ''), PROMPT_VERSION, QSET);
-  for (let i = 2; existsSync(join(RUNS, runId)); i++) runId = `${runIdOf(date, args.config + (args.replay ? '-replay' : ''), PROMPT_VERSION, QSET)}-${i}`;
+  let runId = args.finish ?? runIdOf(date, args.config + (args.replay ? '-replay' : ''), PROMPT_VERSION, QSET);
+  if (!args.finish) for (let i = 2; existsSync(join(RUNS, runId)); i++) runId = `${runIdOf(date, args.config + (args.replay ? '-replay' : ''), PROMPT_VERSION, QSET)}-${i}`;
   const dir = join(RUNS, runId);
   mkdirSync(dir, { recursive: true });
 
@@ -148,16 +175,23 @@ async function main(): Promise<void> {
   const chromes: Chrome[] = [];
   try {
     const spend = (await (await fetch(`${server.base}/api/spend`)).json()) as SpendSummary;
-    const planGenerates = !replay;
+    const planGenerates = !replay && !args.finish;
     const budget = checkBudget(spend, cfg, planGenerates ? todo : [], args.n, judge);
     console.log(`budget: ${budget.message}`);
     if (!budget.ok) throw new Error(`refusing to start: ${budget.message}`);
-    if (todo.some((q) => q.split === 'test')) noteTestUse(runId);
+    if (!args.finish && todo.some((q) => q.split === 'test')) noteTestUse(runId);
 
-    for (let i = 0; i < Math.min(args.parallel, todo.length * args.n); i++) chromes.push(await Chrome.launch({ dir: join(EVAL_DIR, 'tmp') }));
+    for (let i = 0; i < (args.finish ? 1 : Math.min(args.parallel, todo.length * args.n)); i++) chromes.push(await Chrome.launch({ dir: join(EVAL_DIR, 'tmp') }));
     const jobs = todo.flatMap((q) => Array.from({ length: replay ? 1 : args.n }, (_, rep) => ({ q, rep })));
     const done: { q: Question; rep: number; stored: StoredQuestion; qdir: string; pageShot: Buffer }[] = [];
     let next = 0;
+    if (args.finish) {
+      for (const q of todo) {
+        const qdir = join(dir, q.id);
+        done.push({ q, rep: 0, stored: readJson<StoredQuestion>(join(qdir, 'result.json')), qdir, pageShot: readFileSync(join(qdir, 'page.png')) });
+      }
+      next = jobs.length;
+    }
     await Promise.all(chromes.map(async (chrome) => {
       while (next < jobs.length) {
         const { q, rep } = jobs[next++];
@@ -167,7 +201,7 @@ async function main(): Promise<void> {
     }));
 
     // Metrics, sheets, judge.
-    const priorRun = args.replay ? join(RUNS, args.replay) : null;
+    const priorRun = args.replay ? join(RUNS, args.replay) : args.finish ? dir : null;
     const summaries: QuestionSummary[] = [];
     const items: ReportItem[] = [];
     const sheeter = chromes[0];
@@ -178,22 +212,29 @@ async function main(): Promise<void> {
       for (let t = 0; t < d.stored.turns.length; t++) {
         const res = d.stored.turns[t];
         const last = t === d.stored.turns.length - 1;
-        const sheet = await sheetOf(sheeter, d.qdir, t, res.sentences.length);
         const sheetName = `${t ? `t${t + 1}-` : ''}sheet.jpg`;
+        // --finish keeps the sheet the run already composed (its judgement key hashes it).
+        const sheet = args.finish && existsSync(join(d.qdir, sheetName)) ? readFileSync(join(d.qdir, sheetName)) : await sheetOf(sheeter, d.qdir, t, res.sentences.length);
         if (sheet) writeFileSync(join(d.qdir, sheetName), sheet);
         const transcript = renderTranscript(res);
         let judgeRes: JudgeResult | undefined; let judgeUsd = 0;
         if (judge && last && sheet) {
-          const key = sha(`${sha(sheet)}|${transcript}|${res.question}`);
+          const key = sha(`${sha(sheet)}|${transcript}|${res.question}|${sha(RUBRIC)}`); // a rubric change re-judges
           const old = priorRun ? join(priorRun, d.q.id, 'judge.json') : null;
           if (old && existsSync(old) && readJson<{ key: string; judge: JudgeResult }>(old).key === key) {
-            judgeRes = readJson<{ key: string; judge: JudgeResult }>(old).judge; // unchanged answer: no new spend
-          } else {
+            const prev = readJson<{ key: string; judge: JudgeResult; usd?: number }>(old);
+            judgeRes = prev.judge; // unchanged answer: no new spend
+            if (args.finish) judgeUsd = prev.usd ?? 0; // the same run: keep what it cost
+          } else try {
             const out = await judgeAnswer(buildJudgeRequest({ phase, question: res.question, result: res,
-              page: { b64: d.pageShot.toString('base64'), w: 1440, h: 900 }, sheet: { b64: sheet.toString('base64'), w: 1536, h: 864 } }), { base: server.base, token: readEvalToken(join(ROOT, '.petu/eval-token')) });
+              page: { b64: d.pageShot.toString('base64'), w: 1440, h: 900 }, sheet: { b64: sheet.toString('base64'), w: 1536, h: 864 } }), { base: server.base, token: server.token });
             judgeRes = out.judge; judgeUsd = out.usd;
+          } catch (e) {
+            // One failed judgement must not lose the run: the answer stays unjudged (finish it later with --finish).
+            if (/cap/.test(String(e))) throw e;
+            console.error(`${id} judge failed: ${(e as Error).message}`);
           }
-          writeJson(join(d.qdir, 'judge.json'), { key, judge: judgeRes, usd: judgeUsd });
+          if (judgeRes) writeJson(join(d.qdir, 'judge.json'), { key, judge: judgeRes, usd: judgeUsd });
         }
         const qsum: QuestionSummary = { id, split: d.q.split, type: d.q.type, ...(t ? { turn: t } : {}), metrics: metrics[t], judge: judgeRes, judgeUsd };
         summaries.push(qsum);
@@ -208,7 +249,7 @@ async function main(): Promise<void> {
     }
     const summary = buildSummary({ runId, config: args.config, qset: QSET, promptVersion: PROMPT_VERSION, phase, questions: summaries });
     writeJson(join(dir, 'summary.json'), summary);
-    writeJson(join(dir, 'run.json'), { args, config: cfg, phase, replayOf: args.replay });
+    writeJson(join(dir, 'run.json'), { args, config: cfg, phase, replayOf: args.replay, ...(args.finish ? { finishedAt: new Date().toISOString() } : {}) });
     writeFileSync(join(dir, 'report.html'), renderReport(summary, items));
     console.log(`run ${runId}\n  answers ${summary.run.n}  judge mean ${summary.judge.mean?.toFixed(2) ?? '-'}  fatal ${summary.judge.fatal}  gen $${summary.genUsd.toFixed(3)}  judge $${summary.judge.usd.toFixed(3)}\n  open ${join(dir, 'report.html')}`);
   } finally {

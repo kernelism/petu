@@ -38,8 +38,10 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   const dir = join(o.root, '.petu');
   mkdirSync(dir, { recursive: true });
   const ledger = new Ledger(join(dir, 'spend.json'), env.caps, undefined, env.priorUsd);
-  const token = randomBytes(24).toString('hex');
-  writeFileSync(join(dir, 'eval-token'), token, { mode: 0o600 });
+  // The eval runner passes its own token (PETU_EVAL_TOKEN) so several servers can run at once and
+  // the token file of another server (e.g. the founder's) is not overwritten.
+  const token = env.evalToken ?? randomBytes(24).toString('hex');
+  if (!env.evalToken) writeFileSync(join(dir, 'eval-token'), token, { mode: 0o600 });
   const cache = new CacheStats(join(dir, 'cache.json'), o.now);
   const deps: Deps = { key: env.key, ledger, phase: env.phase, fetch: o.fetch ?? fetch, cache };
   let systemWarming: Promise<unknown> | null = null;

@@ -11,7 +11,14 @@ describe('judge', () => {
       chunks: [{ t: 0, d: 'Look {{circle p=3 mark=#d3}} here. ' }, { t: 1, d: 'Then {{line on=s from=P to=Q}} ok {{box p=3 mark=#t9}}' }],
       timings: [tm('circle', 100), tm('line', 200, 'unknown point Q')],
     });
-    expect(t).toBe('Look [circle p=3 mark=#d3 ✓] here. Then [line on=s from=P to=Q ✗ unknown point Q] ok [box p=3 mark=#t9 ✗ never ran]');
+    expect(t).toBe('Look [circle p=3 mark=#d3 ✓] here. Then [line on=s from=P to=Q ✗ unknown point Q] ok [box p=3 mark=#t9 ✗ not parsed]');
+  });
+  it('an untimed {{let}} and braces inside quotes do not shift the marks', () => {
+    const t = renderTranscript({
+      chunks: [{ t: 0, d: '{{sketch id=s near=p1 fit}}{{let on=s A=0,0 B=1,1}} One {{math on=s at=A "\\frac{a}{b}"}} two {{line on=s from=A to=B}}' }],
+      timings: [tm('sketch', 10), tm('math', 20), tm('line', 30, 'unknown point B')],
+    });
+    expect(t).toBe('[sketch id=s near=p1 fit ✓][let on=s A=0,0 B=1,1] One [math on=s at=A "\\frac{a}{b}" ✓] two [line on=s from=A to=B ✗ unknown point B]');
   });
   it('parses a valid result and rejects bad ones', () => {
     expect(parseJudge(good).scores.correct).toBe(5);
@@ -52,6 +59,11 @@ describe('judge', () => {
     expect(g).toHaveBeenCalledTimes(1);
     const h = vi.fn().mockResolvedValue(resp({ error: 'eval token required' }, false));
     await expect(judgeAnswer(req(), { base: '', token: 'bad', fetch: h as never })).rejects.toThrow(/403/);
+  });
+  it('retries once on an upstream network failure (the server booked its worst case)', async () => {
+    const f = vi.fn().mockResolvedValueOnce(resp({ ok: false, code: 'network', message: 'fetch failed', usd: 0.03 })).mockResolvedValueOnce(resp({ ok: true, output: good, usd: 0.02 }));
+    const out = await judgeAnswer(req(), { base: '', token: 't', fetch: f as never });
+    expect(f).toHaveBeenCalledTimes(2); expect(out.usd).toBeCloseTo(0.05);
   });
   it('agreement within ±1', () => {
     const j = parseJudge(good);

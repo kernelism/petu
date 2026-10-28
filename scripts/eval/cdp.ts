@@ -2,9 +2,15 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { createServer } from 'node:net';
 
 const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const freePort = (): Promise<number> => new Promise((res, rej) => {
+  const s = createServer();
+  s.once('error', rej);
+  s.listen(0, '127.0.0.1', () => { const p = (s.address() as { port: number }).port; s.close(() => res(p)); });
+});
 
 export class Chrome {
   private ws!: WebSocket;
@@ -17,7 +23,9 @@ export class Chrome {
 
   static async launch(o: { dir: string; width?: number; height?: number }): Promise<Chrome> {
     const c = new Chrome();
-    const port = 9400 + Math.floor(Math.random() * 500);
+    // A port the OS says is free (a random pick could hand two parallel Chromes the same port, and the
+    // second then drives the first one's tab: "Inspected target navigated or closed").
+    const port = await freePort();
     c.profile = join(o.dir, `prof${port}`);
     mkdirSync(c.profile, { recursive: true });
     c.proc = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--window-size=${o.width ?? 1440},${o.height ?? 900}`,

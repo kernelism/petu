@@ -17,6 +17,16 @@ export const MAX_TOTAL_USD = HARD_STOP_USD;
 export const PHASE_CAPS: Record<Phase, number> = { dev: 1, bakeoff: 6, iterate: 7, validate: 2, founder: 21.99 };
 export const PHASES = Object.keys(PHASE_CAPS) as Phase[];
 const EFFORTS: Effort[] = ['none', 'low', 'medium', 'high'];
+/**
+ * The answer model, chosen by the P1 bake-off (2026-10-28, prompt p3.1, plan P1.5 / spec A1):
+ * gpt-6.1-terra at effort none, Standard tier, no text.verbosity. It is the only config under the
+ * latency gate (Enter → first caption word p50 1.27s / p90 2.21s over 58 answers; gate 1.4s / 2.5s).
+ * luna-none missed p90 (2.62s) and scored lowest; terra-low (p90 4.5s), sol-low (p50 3.9s) and
+ * astra-low (p90 8.7s) are too slow for one streamed pass. Fast mode gave no first-word gain (warm
+ * A/B: 2.09s vs 1.24s/1.42s), and verbosity low lost 0.25 judge points on the answers it changed.
+ */
+export const DEFAULT_MODEL = 'gpt-6.1-terra';
+export const DEFAULT_EFFORT: Effort = 'none';
 /** Models whose API rejects reasoning.effort "none" (developers.openai.com/api/docs/guides/reasoning, 2026-10-28). */
 const NO_NONE = new Set(['gpt-6.1-sol', 'gpt-6-astra']);
 
@@ -27,6 +37,8 @@ export type PetuEnv = {
   caps: Caps;
   priorUsd: number;
   pdfDirs: string[];
+  /** Eval runner only: the /api/judge token it chose (then .petu/eval-token is left alone). */
+  evalToken?: string;
 };
 
 /** Typed, validated config from a key lookup. Throws on a bad knob (the dev server then refuses to start). */
@@ -45,9 +57,9 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
     return v as T;
   };
 
-  const model = str('PETU_MODEL') ?? 'gpt-6.1-terra';
+  const model = str('PETU_MODEL') ?? DEFAULT_MODEL;
   if (!PRICES[model]) throw new Error(`petu: PETU_MODEL "${model}" has no price in server/prices.ts (${Object.keys(PRICES).join(', ')})`);
-  const effort = oneOf('PETU_EFFORT', EFFORTS, 'none');
+  const effort = oneOf('PETU_EFFORT', EFFORTS, DEFAULT_EFFORT);
   if (effort === 'none' && NO_NONE.has(model)) throw new Error(`petu: ${model} does not accept reasoning effort none; set PETU_EFFORT=low`);
   const verbosity = str('PETU_VERBOSITY') == null ? undefined : oneOf('PETU_VERBOSITY', ['low', 'medium'] as const, 'low');
   const maxOutput = Math.round(num('PETU_MAX_OUTPUT', 1400));
@@ -73,6 +85,7 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
     phase, caps,
     priorUsd: num('PETU_PRIOR_USD', 0.0076),
     pdfDirs,
+    ...(str('PETU_EVAL_TOKEN') ? { evalToken: str('PETU_EVAL_TOKEN') } : {}),
   };
 }
 
