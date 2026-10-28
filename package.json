@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "fixture": "node --experimental-strip-types scripts/make-fixture.ts",
+    "decks": "node --experimental-strip-types scripts/make-decks.ts",
     "eval": "node --experimental-strip-types scripts/eval/run.ts",
     "ground": "node --experimental-strip-types scripts/ground.ts"
   },
