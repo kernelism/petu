@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { Q1 as QUESTIONS, QSETS, QUESTIONS as DEFAULT, bySplit as bySplitOf, validateSet, qsetHash, qsetId, assertSplitAllowed, questionSet } from '../../scripts/eval/questions';
-import { DECK_FILES, FIXTURE_DECKS, knownDeck } from '../../scripts/eval/decks';
+import { CORPUS_DECKS, DECK_FILES, FIXTURE_DECKS, knownDeck } from '../../scripts/eval/decks';
 import { EXCLUDED } from '../../scripts/eval/sample';
 import { Q2_ROWS, buildQ2 } from '../../scripts/eval/q2';
+import { Q3_ROWS, buildQ3 } from '../../scripts/eval/q3';
 
 const bySplit = (s: 'dev' | 'test') => bySplitOf(s, QUESTIONS);
 
@@ -97,3 +98,36 @@ describe('question set q2 (Eval v3)', () => {
   });
 });
 const PINNED_Q2 = 'q2-ae05d5d6';
+
+describe('question set q3 (hard corpus)', () => {
+  const q3 = QSETS.q3;
+  it('has 36 questions, 18 dev / 18 test, valid, not the default', () => {
+    expect(questionSet('q3')).toBe(q3);
+    expect(DEFAULT).not.toBe(q3);
+    expect(q3).toHaveLength(36);
+    expect(bySplitOf('dev', q3)).toHaveLength(18);
+    expect(bySplitOf('test', q3)).toHaveLength(18);
+    expect(validateSet(q3)).toEqual([]);
+  });
+  it('covers every corpus document, 6 course questions, never an excluded page', () => {
+    const decks = new Set(q3.map((x) => x.deck));
+    for (const d of Object.keys(CORPUS_DECKS)) expect(decks.has(d), d).toBe(true);
+    expect(q3.filter((x) => DECK_FILES[x.deck])).toHaveLength(6);
+    for (const x of q3) { expect(knownDeck(x.deck), x.id).toBe(true); expect(EXCLUDED.has(`${x.deck}:${x.page}`), x.id).toBe(false); }
+  });
+  it('is stratified by deck (per deck the splits differ by at most one) and keeps rows as written', () => {
+    for (const d of new Set(q3.map((x) => x.deck))) {
+      const dev = q3.filter((x) => x.deck === d && x.split === 'dev').length, test = q3.filter((x) => x.deck === d && x.split === 'test').length;
+      expect(Math.abs(dev - test), d).toBeLessThanOrEqual(1);
+    }
+    expect(q3.map((x) => x.question).sort()).toEqual(Q3_ROWS.map((r) => r.question).sort());
+    for (const x of q3) { const r = Q3_ROWS.find((y) => y.deck === x.deck && y.page === x.page)!; expect(x.type).toBe(r.kind); expect(x.tags).toEqual([r.scope]); }
+    expect(buildQ3()).toEqual(q3);
+  });
+  it('is frozen (pin below); the test split is held out like q2', () => {
+    expect(qsetId(q3, 'q3')).toBe(PINNED_Q3);
+    expect(() => assertSplitAllowed(['T1'], 'lessoniter', 0, q3)).toThrow(/held out/);
+    expect(() => assertSplitAllowed(['D1'], 'lessoniter', 0, q3)).not.toThrow();
+  });
+});
+const PINNED_Q3 = 'q3-b4dcdcc0';

@@ -29,6 +29,10 @@ describe('runner helpers', () => {
       expect(pathOfSrc(deckUrlPath(d))).toBe(p);
     }
     expect(pathOfSrc('/api/dev-pdf/x.pdf', [])).toBeNull();
+    // Corpus documents (q3) are served like the course PDFs, from the corpus directory.
+    expect(deckUrlPath('ax-resnet')).toBe('/api/dev-pdf/arxiv-1512.03385.pdf');
+    expect(deckIdOfFile('arxiv-1512.03385.pdf')).toBe('ax-resnet');
+    expect(pathOfSrc('/api/dev-pdf/arxiv-1512.03385.pdf', ['/c'])).toBeNull();
     expect(pathOfSrc('/elsewhere/x.pdf')).toBeNull();
   });
 });

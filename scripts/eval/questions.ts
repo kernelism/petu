@@ -1,17 +1,19 @@
 // scripts/eval/questions.ts — the question sets. q1 (checkpoint 2): 24 questions over 12 founder PDFs,
 // hand/random picks with a type taxonomy. q2 (Eval v3, the default; rows in q2.ts): 40 questions
-// written by an agent that saw only the PDFs, split 20 dev / 20 test.
+// written by an agent that saw only the PDFs, split 20 dev / 20 test. q3 (hard corpus; rows in q3.ts): 36
+// hard questions over openly licensed books, papers and scanned notes (.petu/corpus) plus 6 course decks.
 // Each set is hashed (qsetId). Editing any row changes the id and fails the pins in
 // tests/eval/questions.test.ts until they are updated on purpose. The test split is never used
 // while tuning: see assertSplitAllowed. PDFs are read in place; these files hold only page numbers
 // and the questions, never PDF content.
 import { createHash } from 'node:crypto';
 import { Q2 } from './q2.ts';
+import { Q3, type Q3Kind } from './q3.ts';
 import { knownDeck } from './decks.ts';
 
 export type Split = 'dev' | 'test';
-/** q1's taxonomy; q2 has only the writer's own scope label (narrow | broad). */
-export type QType = 'derive' | 'why' | 'what-if' | 'compare' | 'point-at' | 'navigation' | 'ink' | 'follow-up' | 'off-topic' | 'narrow' | 'broad';
+/** q1's taxonomy; q2 has only the writer's own scope label (narrow | broad); q3 the writer's own kind (scope in tags). */
+export type QType = 'derive' | 'why' | 'what-if' | 'compare' | 'point-at' | 'navigation' | 'ink' | 'follow-up' | 'off-topic' | 'narrow' | 'broad' | Q3Kind;
 export type Question = {
   id: string;
   split: Split;
@@ -65,8 +67,8 @@ export const Q1: Question[] = [
   q('T10', 'szeliski', 1220, 'random', 'navigation', 'Where does the book introduce matte reflection?', { tags: ['text'] }),
 ];
 
-export type QSetName = 'q1' | 'q2';
-export const QSETS: Record<QSetName, Question[]> = { q1: Q1, q2: Q2 };
+export type QSetName = 'q1' | 'q2' | 'q3';
+export const QSETS: Record<QSetName, Question[]> = { q1: Q1, q2: Q2, q3: Q3 };
 export const DEFAULT_QSET: QSetName = 'q2';
 /** The default set (q2). Pass a set explicitly where the runner's --qset applies. */
 export const QUESTIONS: Question[] = QSETS[DEFAULT_QSET];
