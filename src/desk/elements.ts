@@ -448,6 +448,7 @@ async function ref(a: RefAction, env: BuildEnv): Promise<ElementPlan | string> {
       };
     case 'move': {
       if (e.kind !== 'point' && e.kind !== 'label') { console.warn('[desk] move: only points and labels move', a.ref); return 'not movable'; }
+      if (!a.to) return 'move needs to=';
       const to = ctx.toSpace({ x: a.to.x, y: Math.min(a.to.y, isRegion(e.target) ? ctx.h : 1000) });
       const by = (from: SPt) => (b: SRect) => ({ ...b, x: b.x + to.x - from.x, y: b.y + to.y - from.y });
       return {

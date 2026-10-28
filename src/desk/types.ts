@@ -18,7 +18,26 @@ export type ViewRect = { x: number; y: number; w: number; h: number };
  * A sketch region: one section on the board. `page` is the slide it explains (its body text sets
  * the section's type size); `body` is that slide's body text height as a fraction of the page width.
  */
-export type RegionSpec = { id: string; page: number; size: RegionSize; body?: number | null };
+export type RegionSpec = { id: string; page: number; size: RegionSize; body?: number | null; /** Board v2: one 2-D scene with a camera, continued by later answers. */ scene?: boolean };
+
+/**
+ * Board v2 (spec "Board v2: one connected scene"): a scene section is an unbounded 2-D world (the
+ * section's units, y down) seen through a camera that pans and zooms to frame the current action.
+ * Elements claim room in it, so later ones are placed clear of them (src/desk/scene/place.ts). Claims
+ * persist with the section across answers (a follow-up continues the scene).
+ */
+export type SceneClaim = { r: SRect; move(r: SRect): void; drop(): void };
+export type SceneSpace = {
+  claim(r: SRect): SceneClaim;
+  /** Every claimed rect (earlier answers' included). */
+  rects(): SRect[];
+  /** The camera's world rect now. */
+  view(): SRect;
+  /** The most recent claim (where the explanation is), or null. */
+  last(): SRect | null;
+  /** The union of every claim, or null. */
+  extent(): SRect | null;
+};
 export type RegionInfo = {
   id: string;
   page: number;
@@ -29,6 +48,8 @@ export type RegionInfo = {
   scale(): number;
   /** The slide's body text size in CSS px, right now: `size=m` board text renders at it. */
   body(): number;
+  /** A scene section's world (absent for a plain section). */
+  scene?: SceneSpace;
 };
 
 export type DeskState = {
@@ -61,6 +82,8 @@ export type TargetCtx = {
   runs(): Promise<TextRun[]>;
   /** Regions: the slide's body text in CSS px (board text is sized from it). Pages: absent. */
   body?(): number;
+  /** A scene section: its world (placement by relation, claims). */
+  scene?: SceneSpace;
 };
 
 /** How fast to draw: speed ≤ 1 compresses (backlog); fadeMs fades in instead of tracing. */

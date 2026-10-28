@@ -281,7 +281,7 @@ export class Director {
       const body = await this.bodyOf(v, page);
       if (signal.aborted) return;
       // Lands ink in flight only if opening the board moves the view (the split glide, a board scroll).
-      const r = await desk.addRegion({ id: a.id, page, size: a.size, body }, this.land);
+      const r = await desk.addRegion({ id: a.id, page, size: a.size, body, ...(a.scene ? { scene: true } : {}) }, this.land);
       if (typeof r === 'string') { console.warn('[director] sketch skipped:', r, a.id); return r; }
       return;
     }
@@ -307,7 +307,7 @@ export class Director {
       const r = this.desk()?.region(t.region);
       if (!r) { console.warn('[director] unknown region', t.region); return 'unknown region'; }
       return {
-        target: t, layers: r.layers, h: REGION_H, scale: r.scale, body: r.body,
+        target: t, layers: r.layers, h: REGION_H, scale: r.scale, body: r.body, ...(r.scene ? { scene: r.scene } : {}),
         toSpace: (p) => p, rectToSpace: (x) => x, runs: async () => regionRuns(r.layers.agent),
       };
     }

@@ -27,6 +27,9 @@ import type { VarFn } from '../expr';
 import { Animations, tween, pause, easeOut, type Ctl } from './anim';
 import { place, wrapPieces, type Box, type Pad, type Placed } from './layout';
 import { kitText, svg, setAttrs, textWidth } from './text';
+import { applyOp, normalize } from './ops';
+import { placeRel } from '../scene/place';
+import { anchorBox, sceneStore, setKitResolver } from '../scene/store';
 
 /** A reference waits this long for its block (still waiting on its own word) before it is skipped. */
 export const KIT_WAIT_MS = 600;
@@ -58,7 +61,7 @@ type Plot = { host: Block; dom: { x0: number; x1: number; y0: number; y1: number
 
 export type Block = {
   id: string;
-  kind: 'grid' | 'bars' | 'scatter' | 'table' | 'calc' | 'fit';
+  kind: 'grid' | 'bars' | 'scatter' | 'table' | 'calc' | 'fit' | 'shares';
   region: string;
   placed: Placed;
   m: Metrics;
@@ -150,7 +153,11 @@ export class KitStore {
     return out;
   }
   settle(): void { this.anim.settle(); }
-  clear(): void { this.blocks.clear(); this.n = 0; this.consts = {}; }
+  clear(): void { this.blocks.clear(); this.n = 0; this.consts = {}; this.subs.clear(); }
+  /** Board v2: things showing a block's values (a node's value, a link's weight) follow it. */
+  private subs = new Map<string, Set<() => void>>();
+  listen(id: string, f: () => void): void { const s = this.subs.get(id) ?? new Set(); s.add(f); this.subs.set(id, s); }
+  notify(id: string): void { this.subs.get(id)?.forEach((f) => f()); }
 }
 
 export const kitStore = (r: Registry): KitStore => r.ext('kit', () => new KitStore());
@@ -243,6 +250,13 @@ export function computeSource(src: KitSource, get: (id: string) => Block | undef
     const z = C.zipMat(a, b, fn);
     return z ? { full: z, deps: src.zip.map(dep) } : 'zip: blocks differ in shape';
   }
+  if ('op' in src) {
+    const ms = src.of.map(valsOf);
+    const bad = src.of.find((_, i) => !ms[i]);
+    if (bad) return `unknown block ${bad}`;
+    const r = applyOp(src.op, ms[0]!, ms[1] ?? undefined, src.t);
+    return typeof r === 'string' ? r : { full: r, deps: src.of.map(dep) };
+  }
   const input = valsOf(src.over);
   if (!input) return `unknown block ${src.over}`;
   let spec: C.WinSpec;
@@ -328,6 +342,7 @@ function sourceIds(src: KitSource): string[] {
   if ('map' in src) return [t(src.map)];
   if ('zip' in src) return src.zip.map(t);
   if ('over' in src) return [src.over, ...(src.slide ? [src.slide] : [])];
+  if ('op' in src) return src.of.map(t);
   return [];
 }
 
@@ -389,7 +404,20 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
   if (a.below && a.op === '→') a = { ...a, op: '↓' };
   const others = store.inRegion(region).map((b) => b.placed);
   const spacing = { gap: m.gap, opW: m.opW, margin: m.margin, top: m.top, width: 1000 };
-  const P = (w: number, h: number, pad: Pad) => place(w, h, pad, { right: a.right, below: a.below, op: a.op, at: a.at as Pt | undefined }, anchor?.placed, others, spacing);
+  const scene = ctx.scene;
+  // A scene: placed by relation among everything in the world (earlier answers' too), never stacked.
+  const rel = a.rel ?? (a.right ? { rel: 'right' as const, of: a.right } : a.below ? { rel: 'below' as const, of: a.below } : undefined);
+  const relBox = scene && rel ? await anchorBox(rel.of, env.registry) : null;
+  const P = (w: number, h: number, pad: Pad): Placed => {
+    if (!scene || a.at) return place(w, h, pad, { right: a.right, below: a.below, op: a.op, at: a.at as Pt | undefined }, anchor?.placed, others, spacing);
+    const r = placeRel(pad.l + w + pad.r, pad.t + h + pad.b, rel?.rel ?? null, relBox, [...scene.rects(), ...env.registry.obstacles(ctx.target)], { gap: m.gap * 1.3, seed: id, view: scene.view() });
+    const body = { x: r.x + pad.l, y: r.y + pad.t, w, h };
+    const out: Placed = { body, rect: r };
+    if (a.op && relBox && (rel?.rel === 'right' || rel?.rel === 'below')) {
+      out.op = rel.rel === 'right' ? { x: (relBox.x + relBox.w + r.x) / 2, y: body.y + h / 2, glyph: a.op } : { x: body.x + Math.min(w, relBox.w) / 2, y: (relBox.y + relBox.h + r.y) / 2, glyph: a.op };
+    }
+    return out;
+  };
   const c = col();
   let b: Block;
   if (a.kind === 'grid' || a.kind === 'bars') {
@@ -508,6 +536,21 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     if (hp) b.el.overlay = hp.host.id;
     if (a.cols) b.deps = [a.cols.id];
     b.el.xLabel = a.xLabel; b.el.yLabel = a.yLabel; b.el.caption = a.caption;
+  } else if (a.kind === 'shares') {
+    const got = computeSource(a.src, (x) => store.get(x), id, store.consts);
+    if (typeof got === 'string') return got;
+    const raw = got.full.flat();
+    if (raw.some((v) => v < 0)) return 'shares need values of 0 or more';
+    const vals = [normalize(raw)];
+    if (vals[0].some((v) => !Number.isFinite(v))) return 'shares: the values sum to 0';
+    const labels = a.labels?.slice(0, raw.length) ?? sourceLabels(a.src, store);
+    const W = Math.max(m.cell * 7.5, Math.min(m.cell * 13, raw.length * m.cell * 1.9)), H = m.cell * 0.82;
+    const mix = a.mix ? store.get(a.mix) : undefined;
+    if (a.mix && !mix?.vals) return `unknown block ${a.mix}`;
+    const pad: Pad = { l: 0, t: m.label * 1.6, r: mix ? m.u(textWidth('= 00.00', m.numPx)) + m.gap * 0.6 : 0, b: m.label * 1.9 + (a.caption ? m.label * 1.8 : 0) };
+    b = newBlock(id, 'shares', region, P(W, H, pad), m, [...got.deps, ...(mix ? [mix.id] : [])]);
+    Object.assign(b, { src: a.src, full: vals, vals, dp: a.dp, em: a.em });
+    b.el.labels = labels; b.el.caption = a.caption; b.el.mix = a.mix;
   } else {
     // calc
     const srcs = a.of.map((x) => store.get(x));
@@ -540,6 +583,8 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
 /** Adds a built block to the answer and returns its plan: the section grows and recentres; draw renders it. */
 function planFor(b: Block, aid: string | undefined, ctx: TargetCtx, env: BuildEnv, store: KitStore, region: string, m: Metrics, c: ReturnType<typeof col>): ElementPlan {
   store.add(b);
+  b.el.accent = env.settings.inkColor;
+  if (ctx.scene) { ctx.scene.claim(b.placed.rect); sceneStore(env.registry).put(b.id, { rect: b.placed.rect }); }
   grow(env, region, b.placed.rect);
   const reach = (x: Block) => union([x.placed.rect, ...(x.placed.op ? [{ x: x.placed.op.x - x.m.opW / 2, y: x.placed.op.y - x.m.num, w: x.m.opW, h: 2 * x.m.num }] : [])]);
   const bbox = pad(union([b.placed.rect, ...(b.placed.op ? [{ x: b.placed.op.x - m.opW, y: b.placed.op.y - m.num, w: 2 * m.opW, h: 2 * m.num }] : [])]), m.u(8));
@@ -564,6 +609,7 @@ function planFor(b: Block, aid: string | undefined, ctx: TargetCtx, env: BuildEn
         await drawScatter(b, c, pace);
       }
       else if (b.kind === 'table') await drawTable(b, c, pace);
+      else if (b.kind === 'shares') await drawShares(b, store, c, pace);
       else await drawCalc(b, store, c, env, pace, true);
     },
   };
@@ -1553,7 +1599,7 @@ async function setVerb(v: Extract<KitVerb, { kind: 'set' }>, env: BuildEnv, stor
   const part = blockPart(v.ref);
   const id = part ? part.id : v.ref;
   const b = await store.wait(id);
-  if (!b || (b.kind !== 'grid' && b.kind !== 'bars')) return `${id} has no values to set`;
+  if (!b || (b.kind !== 'grid' && b.kind !== 'bars' && b.kind !== 'shares')) return `${id} has no values to set`;
   if (!b.src || !('vals' in b.src)) return `${id} is computed: set its inputs instead`;
   const cur = b.src.vals;
   let next: C.Mat;
@@ -1581,7 +1627,8 @@ async function setVerb(v: Extract<KitVerb, { kind: 'set' }>, env: BuildEnv, stor
         if (signal.aborted) ctl.ff = true;
         b.src = { vals: next };
         const jobs: Promise<void>[] = [];
-        if (b.kind === 'bars') { b.ghost = cur[0].slice(); b.full = next; jobs.push(setBarVals(b, next, SET_MS, ctl, c)); }
+        if (b.kind === 'shares') jobs.push(setShares(b, [normalize(next.flat())], store, SET_MS, ctl, c));
+        else if (b.kind === 'bars') { b.ghost = cur[0].slice(); b.full = next; jobs.push(setBarVals(b, next, SET_MS, ctl, c)); }
         else jobs.push(setGridVals(b, next, SET_MS, ctl, c));
         jobs.push(refreshDeps([b.id], store, SET_MS, ctl, env, c));
         await Promise.all(jobs);
@@ -1619,6 +1666,10 @@ export function partBox(b: Block, p: BlockPart | null): Box | null {
     const n = b.vals![0].length;
     if (p.c1 >= n) return null;
     return b.view === 'line' ? lineBox(b, p.c0, p.c1) : barBox(b, p.c0, p.c1);
+  }
+  if (b.kind === 'shares') {
+    if (p.c1 >= b.vals![0].length) return null;
+    return union([shareSeg(b, p.c0), shareSeg(b, p.c1)]);
   }
   if (b.kind === 'scatter') {
     const n = b.data!.length;
@@ -1676,7 +1727,7 @@ export function isKitRef(a: RefAction, registry: Registry): boolean {
   if (a.kind !== 'emph' && a.kind !== 'fade') return false;
   if (isBlockRef(a.ref)) return true;
   const b = kitStore(registry).get(a.ref);
-  return !!b && (b.kind === 'grid' || b.kind === 'bars' || b.kind === 'scatter' || b.kind === 'table');
+  return !!b && (b.kind === 'grid' || b.kind === 'bars' || b.kind === 'scatter' || b.kind === 'table' || b.kind === 'shares');
 }
 
 /** Builds a kit verb, or emph / fade on a block part. */
@@ -1730,6 +1781,11 @@ async function emphFade(a: Extract<RefAction, { kind: 'emph' | 'fade' }>, env: B
           svg(e.rings, 'circle', { cx: q.x, cy: q.y, r: px(b, 7), fill: 'none', stroke: accent, ...hair(1.6) });
           e.dots[i]?.setAttribute('fill', accent);
         }
+        return;
+      }
+      if (b.kind === 'shares' && part) {
+        const e = b.el.shares as ShareEls;
+        for (let i = part.c0; i <= part.c1; i++) { e.em.add(i); paintShares(b, c, accent); }
         return;
       }
       if (b.kind === 'bars' && part) {
@@ -1848,6 +1904,7 @@ async function refreshDeps(ids: string[], store: KitStore, ms: number, ctl: Ctl 
     if (d.kind === 'calc' || d.kind === 'fit' || !d.src) continue;
     const got = computeSource(d.src, (x) => store.get(x), d.id, store.consts);
     if (typeof got === 'string') continue;
+    if (d.kind === 'shares') { const nv = [normalize(got.full.flat())]; if (nv[0].every(Number.isFinite)) jobs.push(setShares(d, nv, store, ms, ctl, c)); continue; }
     if (d.kind === 'bars' && !d.win) got.full = asRow(got.full);
     if (!d.win && 'col' in d.src) { /* a table column: shows what has filled */ }
     else d.full = got.full;
@@ -2045,3 +2102,88 @@ async function emphWhere(a: Extract<RefAction, { kind: 'emph' }>, env: BuildEnv,
     },
   };
 }
+
+// ------------------------------------------------------------------------------------------------
+// shares: one bar split into parts that sum to 1 (Board v2); a blend shows the values mixed in them.
+
+type ShareEls = { segs: SVGRectElement[]; labs: SVGTextElement[]; pcts: SVGTextElement[]; mix: SVGTextElement | null; em: Set<number> };
+
+/** Labels for a share's parts from its source: a bars block's labels, or a table's rows (none otherwise). */
+function sourceLabels(src: KitSource, store: KitStore): string[] | undefined {
+  const id = 'op' in src ? src.of[0] : 'map' in src ? src.map : undefined;
+  const b = id ? store.get(id) : undefined;
+  return (b?.el.labels as string[] | undefined) ?? undefined;
+}
+
+/** Segment i's box: widths in proportion to the shares. */
+function shareSeg(b: Block, i: number): Box {
+  const { body } = b.placed, vs = b.vals![0];
+  let x = body.x;
+  for (let j = 0; j < i; j++) x += vs[j] * body.w;
+  return { x, y: body.y, w: vs[i] * body.w, h: body.h };
+}
+
+const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+function paintShares(b: Block, c: ReturnType<typeof col>, accent: string) {
+  const e = b.el.shares as ShareEls, m = b.m, vs = b.vals![0];
+  const big = vs.indexOf(Math.max(...vs));
+  let up = false;
+  vs.forEach((v, i) => {
+    const r = shareSeg(b, i);
+    const em = e.em.has(i);
+    // Shades alternate so neighbouring parts read apart; an emphasised part takes the accent.
+    setAttrs(e.segs[i], { x: r.x, y: r.y, width: Math.max(0, r.w), height: r.h, fill: em ? accent : i % 2 ? c.cell : c.bar, 'fill-opacity': em ? 0.85 : i % 2 ? 1 : 0.55 + 0.35 * (i === big ? 1 : 0) });
+    const lab = (b.el.labels as string[] | undefined)?.[i];
+    const inside = r.w > m.u(textWidth(`${lab ?? ''} ${pct(v)}`, m.labelPx)) + m.label * 0.6;
+    // A part too thin for its words labels itself above or below the bar, alternating, so neighbours never collide.
+    const y = inside ? r.y + r.h / 2 : (up = !up) ? r.y - m.label * 0.75 : r.y + r.h + m.label * 0.8;
+    setAttrs(e.labs[i], { x: r.x + r.w / 2, y, fill: em ? (inside ? '#fff' : accent) : inside && i % 2 === 0 && v > 0.15 ? c.ink : c.ink2, 'font-size': m.label * (v < 0.03 ? 0.85 : 1) });
+    e.labs[i].textContent = v < 0.005 ? '' : lab ? `${lab} ${pct(v)}` : pct(v);
+  });
+}
+
+async function drawShares(b: Block, store: KitStore, c: ReturnType<typeof col>, k: Pace) {
+  const g = b.g!, { body } = b.placed, m = b.m, n = b.vals![0].length;
+  const frame = svg(g, 'rect', { x: body.x, y: body.y, width: body.w, height: body.h, fill: 'none', stroke: c.edge, rx: m.u(3), ...hair(1) });
+  const segG = svg(g, 'g'), labG = svg(g, 'g');
+  const segs: SVGRectElement[] = [], labs: SVGTextElement[] = [];
+  for (let i = 0; i < n; i++) { segs.push(svg(segG, 'rect', { x: body.x, y: body.y, width: 0, height: body.h, stroke: '#fff', ...hair(1) })); labs.push(kitText(labG, body.x, body.y, '', { size: m.label, fill: c.ink })); }
+  segG.insertBefore(frame, null);
+  const cap = b.el.caption as string | undefined;
+  if (cap) caption(labG, body.x + body.w / 2, body.y + body.h + m.label * 2.2, cap, m, c);
+  const mix = b.el.mix ? kitText(labG, body.x + body.w + m.gap * 0.5, body.y + body.h / 2, '', { size: m.num, fill: (b.el.accent as string | undefined) ?? c.ink, anchor: 'start' }) : null;
+  b.el.shares = { segs, labs, pcts: [], mix, em: new Set() } satisfies ShareEls;
+  const target = b.vals!.map((r) => r.slice());
+  b.vals = [target[0].map(() => 1 / n)];
+  await setShares(b, target, store, k.fadeMs != null ? 0 : 520 * k.speed, undefined, c);
+}
+
+/** The blend's result: Σ share × value of the mixed block. */
+function mixValue(b: Block, store: KitStore): number {
+  const v = store.get(b.el.mix as string)?.vals?.flat() ?? [];
+  const w = b.vals![0];
+  return v.length === w.length ? w.reduce((s, x, i) => s + x * v[i], 0) : NaN;
+}
+
+async function setShares(b: Block, next: C.Mat, store: KitStore, ms: number, ctl: Ctl | undefined, c: ReturnType<typeof col>) {
+  const from = b.vals![0].slice(), to = next[0];
+  const e = b.el.shares as ShareEls | undefined;
+  b.full = next.map((r) => r.slice());
+  if (!e) { b.vals = next.map((r) => r.slice()); return; }
+  const accent = (b.el.accent as string | undefined) ?? c.ink;
+  await tween(ms, (t) => {
+    b.vals = [to.map((v, i) => from[i] + (v - from[i]) * t)];
+    paintShares(b, c, accent);
+    if (e.mix) e.mix.textContent = `= ${C.fmt(mixValue(b, store), b.dp ?? 2)}`;
+  }, ctl);
+  b.vals = next.map((r) => r.slice());
+  paintShares(b, c, accent);
+  if (e.mix) e.mix.textContent = `= ${C.fmt(mixValue(b, store), b.dp ?? 2)}`;
+  store.notify(b.id);
+}
+
+setKitResolver(async (ref, r) => {
+  const res = await resolvePart(ref, r);
+  return typeof res === 'string' ? null : res.box;
+});

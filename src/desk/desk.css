@@ -67,6 +67,9 @@
 .desk-region.is-shown { opacity: 1; }
 .desk-region-layer { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; transition: transform 320ms var(--ease-out, ease-out); }
 .desk-region-hl { mix-blend-mode: multiply; }
+/* Board v2: a scene is a window onto its own world; its paper (dot grid) pans with the camera. */
+.desk-region.is-scene { overflow: hidden; background: var(--board-paper, #fff); border-radius: 6px; }
+.desk-region.is-scene .desk-region-layer { transition: none; overflow: hidden; }
 
 /* Connectors run from a page anchor to a board element, above both. A wire whose end is out of view fades out. */
 .desk-wires { position: absolute; inset: 0; pointer-events: none; }

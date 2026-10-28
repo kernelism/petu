@@ -7,7 +7,9 @@ import { animateScrollTo } from '../pdf/scroll';
 import { Follow, ScrollOwner } from './follow';
 import { routeGutter, maskBlocker } from './route';
 import { boardLayout, bodyPx, cropSpan, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
-import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, ViewRect } from './types';
+import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
+import { BOARD_HEAD, boardPad } from './layout';
+import { camFor, type Cam } from './scene/camera';
 
 export type { DeskHost } from './types';
 
@@ -25,7 +27,11 @@ const WHOLE_REGION = { x: 0, y: 0, w: REGION_W, h: REGION_H };
  * `full`: the section's height in units (700, or more once kit blocks grow it). `y0`–`y1`: the part
  * of it it shows (all of it until a later section crops it to its ink).
  */
-type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; full: number; y0: number; y1: number; dx: number | null };
+type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; full: number; y0: number; y1: number; dx: number | null; scene?: Scene };
+/** A scene section's world: its camera (world units, zoom), its claims, the last thing framed. */
+type Scene = { cam: Cam; claims: SceneClaim[]; space: SceneSpace; focus: SRect | null; glide: AbortController | null; paper: SVGRectElement | null };
+/** A camera glide over the scene: at most this long. */
+const CAM_MS = 560;
 /** `stroke` is the handle's own array, rewritten in place on every re-route (emph re-traces the current path). */
 type Wire = { page: ConnectorEnd; region: ConnectorEnd; section: Section; reversed: boolean; svg: SVGSVGElement; group: SVGGElement; stroke: Stroke; avoid: SRect[] };
 
@@ -152,12 +158,23 @@ export class Desk implements DeskApi {
       id, page: sec.page, size: sec.size, layers: sec.layers,
       scale: () => this.boxOf(sec)?.s ?? 0.5,
       body: () => bodyPx(sec.body, this.frame().page.pageW),
+      ...(sec.scene ? { scene: sec.scene.space } : {}),
     };
   }
 
   async addRegion(spec: RegionSpec, before?: BeforeMove): Promise<RegionInfo | string> {
     const ep = this.epoch;
     if (this.ids.has(spec.id)) return 'duplicate region id';
+    // Board v2: a scene continues. A later answer (a follow-up) or a second scene tag in this one
+    // draws on into the newest scene on the board rather than starting a new box.
+    const prev = spec.scene ? this.sections[this.sections.length - 1] : undefined;
+    if (prev?.scene) {
+      this.ids.set(spec.id, prev);
+      this.last = { t: { region: spec.id }, r: WHOLE_REGION };
+      if (!this.open) await this.openBoard('normal', before);
+      if (this.follow.following()) await this.showScene(prev, before);
+      return ep === this.epoch ? this.region(spec.id) ?? 'desk reset' : 'desk reset';
+    }
     // The sections above are finished: each keeps just its ink, so the board has no dead space between them.
     this.sections.forEach((s) => this.crop(s));
     const sec = this.makeSection(spec);
@@ -179,7 +196,8 @@ export class Desk implements DeskApi {
       if (!live()) { sec.el.classList.add('is-shown'); return 'desk reset'; }
     }
     // Rule 1: the new section is framed as it lands, so its first ink needs no pan.
-    if (this.follow.following() && !this.isVisible({ region: spec.id }, WHOLE_REGION)) {
+    if (sec.scene) { if (this.follow.following()) await this.showScene(sec, before); }
+    else if (this.follow.following() && !this.isVisible({ region: spec.id }, WHOLE_REGION)) {
       await before?.();
       if (live()) await this.glideBoard(() => this.boardTop(sec, WHOLE_REGION));
     }
@@ -190,7 +208,7 @@ export class Desk implements DeskApi {
   /** A section's content needs `h` units (kit blocks stacked past 700): it grows, never shrinks. */
   growRegion(id: string, h: number): void {
     const sec = this.ids.get(id);
-    if (!sec || !(h > sec.full) || sec.y0 !== 0 || sec.y1 !== sec.full) return;
+    if (!sec || sec.scene || !(h > sec.full) || sec.y0 !== 0 || sec.y1 !== sec.full) return;
     sec.full = sec.y1 = Math.ceil(Math.min(h, 4 * REGION_H));
     sec.el.querySelectorAll('svg').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${sec.full}`));
     this.position();
@@ -202,7 +220,7 @@ export class Desk implements DeskApi {
    */
   centreRegion(id: string, x0: number, x1: number): void {
     const sec = this.ids.get(id);
-    if (!sec || !(x1 > x0)) return;
+    if (!sec || sec.scene || !(x1 > x0)) return;
     const dx = Math.max(-x0, Math.min(REGION_W - x1, REGION_W / 2 - (x0 + x1) / 2));
     if (sec.dx != null && Math.abs(dx - sec.dx) < 1) return;
     const first = sec.dx == null;
@@ -228,6 +246,7 @@ export class Desk implements DeskApi {
     if (t.region != null) {
       const sec = this.ids.get(t.region);
       if (!sec || !this.open) return false;
+      if (sec.scene) return this.frameScene(sec, r, before);
       await before?.();
       if (ep !== this.epoch) return false;
       await this.glideBoard(() => this.boardTop(sec, r));
@@ -246,6 +265,11 @@ export class Desk implements DeskApi {
       const box = sec && this.open ? this.boxOf(sec) : null;
       const b = this.frame().board;
       if (!box || !b) return false;
+      if (sec!.scene) {
+        // The scene's window is on the board, and (unless the whole section is asked for) the rect is inside the camera.
+        if (!inWindow({ y: box.y, h: box.h }, this.scroller.scrollTop, b.h + BOARD_HEAD)) return false;
+        return isWhole(r) || inside(r, this.camRect(sec!), 0.5);
+      }
       return inWindow({ y: box.y + (r.y - sec!.y0) * box.s, h: r.h * box.s }, this.scroller.scrollTop, b.h);
     }
     const w = this.deskRect(t.page, r);
@@ -278,7 +302,7 @@ export class Desk implements DeskApi {
     // The slides and the board scroll independently: both ends come into view together.
     await Promise.all([
       needPage ? this.host.glideTo(() => this.inkFrame(pageEnd.t, pageEnd.r), 450) : null,
-      needBoard ? this.glideBoard(() => this.boardTop(sec, regEnd.r)) : null,
+      needBoard ? (sec.scene ? this.frameScene(sec, regEnd.r) : this.glideBoard(() => this.boardTop(sec, regEnd.r))) : null,
     ]);
   }
 
@@ -370,13 +394,16 @@ export class Desk implements DeskApi {
       el.appendChild(svg);
       return svg.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
     };
+    const paper = spec.scene ? layer('desk-region-paper') : null;
     const layers = { highlight: layer('desk-region-hl'), agent: layer('desk-region-ink') };
-    return { id: spec.id, page: spec.page, size: spec.size, body: spec.body ?? null, el, layers, full: REGION_H, y0: 0, y1: REGION_H, dx: null };
+    const sec: Section = { id: spec.id, page: spec.page, size: spec.size, body: spec.body ?? null, el, layers, full: REGION_H, y0: 0, y1: REGION_H, dx: null };
+    if (spec.scene) this.makeScene(sec, paper!);
+    return sec;
   }
 
   /** Crops a finished section to its ink (once): its svg shows only that band, the section's box shrinks to it. */
   private crop(sec: Section) {
-    if (sec.y0 !== 0 || sec.y1 !== sec.full) return;
+    if (sec.scene || sec.y0 !== 0 || sec.y1 !== sec.full) return;
     let ink: { y: number; h: number } | null = null;
     for (const g of [sec.layers.agent, sec.layers.highlight]) {
       let b: { y: number; height: number } | null = null;
@@ -445,7 +472,7 @@ export class Desk implements DeskApi {
   private boxes(): SectionBox[] {
     const f = this.frame();
     if (!f.board) return [];
-    return boardLayout(f.board.w, this.sections.map((s) => ({ body: bodyPx(s.body, f.page.pageW), span: s.y1 - s.y0 }))).boxes;
+    return boardLayout(f.board.w, this.specs(f)).boxes;
   }
   private boxOf(sec: Section): SectionBox | null {
     const i = this.sections.indexOf(sec);
@@ -456,6 +483,7 @@ export class Desk implements DeskApi {
   private boardTop(sec: Section, r: SRect): number {
     const box = this.boxOf(sec), b = this.frame().board;
     if (!box || !b) return this.scroller.scrollTop;
+    if (sec.scene) return box.y - BOARD_HEAD;
     const y = box.y + (r.y - sec.y0) * box.s, h = r.h * box.s, top = this.scroller.scrollTop;
     if (h + 2 * BOARD_AIR >= b.h) return y - BOARD_AIR;
     if (y - BOARD_AIR < top) return y - BOARD_AIR;
@@ -474,6 +502,10 @@ export class Desk implements DeskApi {
   private viewRect(sec: Section, r: SRect): ViewRect | null {
     const box = this.boxOf(sec), b = this.frame().board;
     if (!box || !b) return null;
+    if (sec.scene) {
+      const { cam } = sec.scene, k = box.s * cam.z;
+      return { x: b.x + box.x + (r.x - cam.x) * k, y: b.y + box.y + (r.y - cam.y) * k - this.scroller.scrollTop, w: r.w * k, h: r.h * k };
+    }
     return { x: b.x + box.x + (r.x + (sec.dx ?? 0)) * box.s, y: b.y + box.y + (r.y - sec.y0) * box.s - this.scroller.scrollTop, w: r.w * box.s, h: r.h * box.s };
   }
 
@@ -484,8 +516,9 @@ export class Desk implements DeskApi {
       const b = f.board;
       Object.assign(this.board.style, { left: `${b.x}px`, top: `${b.y}px`, width: `${b.w}px`, height: `${b.h}px` });
       this.board.classList.toggle('is-stacked', f.stacked);
-      const lay = boardLayout(b.w, this.sections.map((s) => ({ body: bodyPx(s.body, f.page.pageW), span: s.y1 - s.y0 })));
+      const lay = boardLayout(b.w, this.specs(f));
       lay.boxes.forEach((x, i) => Object.assign(this.sections[i].el.style, { left: `${x.x}px`, top: `${x.y}px`, width: `${x.w}px`, height: `${x.h}px` }));
+      this.sections.forEach((s) => { if (s.scene) this.applyCam(s); });
       this.content.style.height = `${lay.height}px`;
     }
     this.rerouteAll();
@@ -513,8 +546,8 @@ export class Desk implements DeskApi {
     if (vis) {
       const L = this.host.layout()!, { H } = this.host.viewport();
       const p = this.deskRect(w.page.t.page!, w.page.r)!, q = this.viewRect(w.section, w.region.r)!, b = this.frame().board!;
-      const py = p.y - this.host.scrollTop() + p.h / 2, qy = q.y + q.h / 2;
-      vis = !!L && py >= SAFE_TOP && py <= H - safeBottom() && qy >= b.y && qy <= b.y + b.h;
+      const py = p.y - this.host.scrollTop() + p.h / 2, qy = q.y + q.h / 2, qx = q.x + q.w / 2;
+      vis = !!L && py >= SAFE_TOP && py <= H - safeBottom() && qy >= b.y && qy <= b.y + b.h && qx >= b.x && qx <= b.x + b.w;
     }
     w.svg.classList.toggle('is-hidden', !vis);
   }
@@ -559,6 +592,147 @@ export class Desk implements DeskApi {
   }
 
   private emit() { const s = this.state(); this.subs.forEach((f) => f(s)); }
+
+  // ---------------------------------------------------------------------------------------------
+  // Board v2 scenes: one world per scene section, seen through a camera.
+
+  /** Layout specs for every section: a scene fills the board's visible height under its head row. */
+  private specs(f: Frame) {
+    const fill = f.board ? f.board.h - BOARD_HEAD - boardPad(f.board.w) : 0;
+    return this.sections.map((s) => ({ body: bodyPx(s.body, f.page.pageW), span: s.y1 - s.y0, ...(s.scene ? { fill } : {}) }));
+  }
+
+  private makeScene(sec: Section, paper: SVGGElement) {
+    sec.el.classList.add('is-scene');
+    const claims: SceneClaim[] = [];
+    const sc: Scene = { cam: { x: 0, y: 0, z: 1 }, claims, focus: null, glide: null, paper: null, space: null as unknown as SceneSpace };
+    sc.space = {
+      claim: (r) => {
+        const c: SceneClaim = { r: { ...r }, move: (n) => { c.r = { ...n }; }, drop: () => { const i = claims.indexOf(c); if (i >= 0) claims.splice(i, 1); } };
+        claims.push(c);
+        return c;
+      },
+      rects: () => claims.map((c) => c.r),
+      view: () => this.camRect(sec),
+      last: () => claims[claims.length - 1]?.r ?? null,
+      extent: () => (claims.length ? unionR(claims.map((c) => c.r)) : null),
+    };
+    sec.scene = sc;
+    // The paper's dot grid lives in the world, so it pans with the camera (the scene moves, not the ink).
+    const svgEl = paper.ownerSVGElement!;
+    const defs = svgEl.insertBefore(document.createElementNS(SVG, 'defs'), svgEl.firstChild);
+    const pat = defs.appendChild(document.createElementNS(SVG, 'pattern'));
+    const pid = `scene-dots-${++sceneIds}`;
+    Object.entries({ id: pid, patternUnits: 'userSpaceOnUse', width: 24, height: 24 }).forEach(([k, v]) => pat.setAttribute(k, String(v)));
+    const dot = pat.appendChild(document.createElementNS(SVG, 'circle'));
+    Object.entries({ cx: 12, cy: 12, r: 1.05, fill: 'var(--board-dot, rgba(0,0,0,.085))' }).forEach(([k, v]) => dot.setAttribute(k, String(v)));
+    const rect = paper.appendChild(document.createElementNS(SVG, 'rect')) as SVGRectElement;
+    Object.entries({ x: -50000, y: -50000, width: 100000, height: 100000, fill: `url(#${pid})` }).forEach(([k, v]) => rect.setAttribute(k, String(v)));
+    sc.paper = rect;
+    // The student can look around: the wheel pans the scene (ctrl / pinch zooms), and following stops.
+    sec.el.addEventListener('wheel', (e) => this.onSceneWheel(sec, e), { passive: false });
+  }
+
+  private onSceneWheel(sec: Section, e: WheelEvent) {
+    const sc = sec.scene!, box = this.boxOf(sec);
+    if (!box) return;
+    const k = box.s * sc.cam.z;
+    const ext = sc.space.extent();
+    const view = this.camRect(sec);
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const rect = sec.el.getBoundingClientRect();
+      const px = (e.clientX - rect.left) / k + sc.cam.x, py = (e.clientY - rect.top) / k + sc.cam.y;
+      const z = Math.max(0.35, Math.min(1.6, sc.cam.z * Math.exp(-e.deltaY * 0.01)));
+      const k2 = box.s * z;
+      sc.cam = { x: px - (e.clientX - rect.left) / k2, y: py - (e.clientY - rect.top) / k2, z };
+    } else {
+      // At the scene's edge the board scrolls on (earlier sections sit above a scene).
+      const room = 0.25 * view.h;
+      if (ext && ((e.deltaY < 0 && view.y <= ext.y - room) || (e.deltaY > 0 && view.y + view.h >= ext.y + ext.h + room)) && Math.abs(e.deltaY) > Math.abs(e.deltaX)) return;
+      e.preventDefault();
+      sc.cam = { ...sc.cam, x: sc.cam.x + e.deltaX / k, y: sc.cam.y + e.deltaY / k };
+    }
+    sc.glide?.abort();
+    this.follow.userTookOver();
+    this.applyCam(sec);
+    this.onMove();
+  }
+
+  /** The camera's world rect for a scene section now. */
+  private camRect(sec: Section): SRect {
+    const box = this.boxOf(sec), cam = sec.scene!.cam;
+    if (!box) return { x: cam.x, y: cam.y, w: REGION_W, h: REGION_H };
+    const k = box.s * cam.z;
+    return { x: cam.x, y: cam.y, w: box.w / k, h: box.h / k };
+  }
+
+  private applyCam(sec: Section) {
+    const v = this.camRect(sec);
+    const vb = `${v.x.toFixed(2)} ${v.y.toFixed(2)} ${v.w.toFixed(2)} ${v.h.toFixed(2)}`;
+    sec.el.querySelectorAll('svg').forEach((svg) => { if (!svg.classList.contains('desk-wire')) svg.setAttribute('viewBox', vb); });
+  }
+
+  /** Brings a scene's window onto the board (it fills the board's visible height). */
+  private async showScene(sec: Section, before?: BeforeMove) {
+    const box = this.boxOf(sec), b = this.frame().board;
+    if (!box || !b || Math.abs(this.scroller.scrollTop - (box.y - BOARD_HEAD)) < 2) return;
+    await before?.();
+    await this.glideBoard(() => this.boardTop(sec, WHOLE_REGION));
+  }
+
+  /** Frames world rect `r` in a scene: the window on the board, then the camera glides (and zooms out if it must) to show it with its context. */
+  private async frameScene(sec: Section, r: SRect, before?: BeforeMove): Promise<boolean> {
+    const ep = this.epoch, sc = sec.scene!;
+    const box = this.boxOf(sec);
+    if (!box) return false;
+    let moved = false;
+    if (!inWindow({ y: box.y, h: box.h }, this.scroller.scrollTop, (this.frame().board?.h ?? 0) + BOARD_HEAD)) { await this.showScene(sec, before); moved = true; }
+    if (isWhole(r) || ep !== this.epoch) return moved;
+    const to = camFor(sc.cam, r, sc.focus, { w: box.w, h: box.h, s: box.s });
+    sc.focus = r;
+    if (!to) return moved;
+    if (!moved) await before?.();
+    if (ep !== this.epoch) return true;
+    await this.glideCam(sec, to);
+    return true;
+  }
+
+  private async glideCam(sec: Section, to: Cam): Promise<void> {
+    const sc = sec.scene!;
+    sc.glide?.abort();
+    const ctrl = (sc.glide = new AbortController());
+    const from = { ...sc.cam };
+    const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const ms = reduced ? 0 : Math.min(CAM_MS, 260 + Math.hypot(to.x - from.x, to.y - from.y) * box0(this.boxOf(sec)) * 0.5);
+    const t0 = performance.now();
+    await new Promise<void>((done) => {
+      const step = () => {
+        if (ctrl.signal.aborted) return done();
+        const t = ms ? Math.min(1, (performance.now() - t0) / ms) : 1;
+        const e = 0.5 - 0.5 * Math.cos(Math.PI * t);
+        // Zoom eases in log space so a zoom-out and a pan read as one movement.
+        sc.cam = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e, z: from.z * Math.pow(to.z / from.z, e) };
+        this.applyCam(sec);
+        this.onMove();
+        if (t >= 1) return done();
+        raf(step);
+      };
+      step();
+    });
+    if (sc.glide === ctrl) sc.glide = null;
+  }
 }
+
+let sceneIds = 0;
+const isWhole = (r: SRect) => r.x === 0 && r.y === 0 && r.w === REGION_W && r.h === REGION_H;
+/** Whether `r` lies inside `v`, allowing a slack of `slack` units. */
+const inside = (r: SRect, v: SRect, slack: number) => r.x >= v.x - slack && r.y >= v.y - slack && r.x + r.w <= v.x + v.w + slack && r.y + r.h <= v.y + v.h + slack;
+const unionR = (rs: SRect[]): SRect => {
+  const x = Math.min(...rs.map((r) => r.x)), y = Math.min(...rs.map((r) => r.y));
+  return { x, y, w: Math.max(...rs.map((r) => r.x + r.w)) - x, h: Math.max(...rs.map((r) => r.y + r.h)) - y };
+};
+const box0 = (b: SectionBox | null) => b?.s ?? 1;
+
 
 const toD = (s: Stroke) => s.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');

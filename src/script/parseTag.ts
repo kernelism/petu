@@ -108,6 +108,7 @@ export function parseTag(body: string): RawAction | null {
   // Tags without a target.
   switch (name) {
     case 'clear': return { kind: 'clear' };
+    case 'scene':
     case 'sketch': {
       // A section on the board. `near=pN` names the slide it explains (optional: the visible one);
       // `place=` is accepted and ignored (the board has one place); `size=l` widens the board.
@@ -117,6 +118,7 @@ export function parseTag(body: string): RawAction | null {
       const size = (args.size ?? 'm').toLowerCase();
       if (!sid) return null;
       if (size !== 's' && size !== 'm' && size !== 'l') return null;
+      if (name === 'scene') return { kind: 'sketch', id: sid, ...(page != null ? { page } : {}), size: 'm', scene: true };
       return { kind: 'sketch', id: sid, ...(page != null ? { page } : {}), size, ...(flags.has('fit') ? { fit: true } : {}) };
     }
     case 'emph':
