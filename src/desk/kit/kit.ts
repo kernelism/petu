@@ -358,7 +358,7 @@ export async function buildBlock(a: KitBlock & { region?: string; page?: number;
     const xs = fin.map((p) => p.x), ys = fin.map((p) => p.y);
     const padd = (lo: number, hi: number) => { const d = hi - lo || Math.abs(hi) || 1; return [lo - d * 0.08, hi + d * 0.08]; };
     const [x0, x1] = padd(Math.min(...xs), Math.max(...xs)), [y0, y1] = padd(Math.min(...ys), Math.max(...ys));
-    const w = m.cell * 9.5, h = m.cell * 6;
+    const w = m.cell * 7, h = m.cell * 4.6;
     const tickW = Math.max(...C.ticks(y0, y1).map((t) => textWidth(C.fmt(t), m.labelPx)));
     const pad: Pad = { l: m.u(tickW + m.labelPx * 0.9), t: a.yLabel ? m.label * 1.8 : m.label * 0.6, r: m.label * 0.6, b: m.label * 1.8 + (a.xLabel ? m.label * 1.5 : 0) + (a.caption ? m.label * 1.9 : 0) };
     b = newBlock(id, 'scatter', region, P(w, h, pad), m, []);
