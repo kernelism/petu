@@ -182,7 +182,7 @@ export function parseKitBlock(name: string, args: Args, quotes: string[], flags:
       const d = cx && cy ? null : data(args.pts);
       if (!d && !(cx && cy && cx[0] === cy[0])) return null;
       const named = cx && cy ? { ...(cx[2] ? { xName: cx[2] } : {}), ...(cy[2] ? { yName: cy[2] } : {}) } : {};
-      return { kind: 'scatter', ...(d ? { data: d } : { cols: { id: cx![0], x: cx![1], y: cy![1], ...named } }), ...(args.x ? { xLabel: args.x.slice(0, MAX_LABEL) } : {}), ...(args.y ? { yLabel: args.y.slice(0, MAX_LABEL) } : {}), ...caption, ...pl } as KitBlock<PtArg>;
+      return { kind: 'scatter', ...(d ? { data: d } : { cols: { id: cx![0], x: cx![1], y: cy![1], ...named } }), ...(args.x ? { xLabel: args.x.slice(0, MAX_LABEL) } : {}), ...(args.y ? { yLabel: args.y.slice(0, MAX_LABEL) } : {}), ...(eid(args.axes) ? { axes: eid(args.axes) } : {}), ...caption, ...pl } as KitBlock<PtArg>;
     }
     case 'calc': {
       const of = (args.of ?? '').split(',').map((x) => eid(x.trim()));

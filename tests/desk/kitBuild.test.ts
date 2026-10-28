@@ -299,6 +299,10 @@ describe('kit blocks on the board', () => {
     expect(typeof (await tag(e, 'plot on=s id=r fn="v^2*sin(rad(2*x))/g" domain=0,90 "range"'))).not.toBe('string');
     expect(Math.max(...st.get('r')!.vals![0])).toBeCloseTo(400 / 9.8, 3);
     expect(await tag(e, 'plot on=s fn="q*x" domain=0,1')).toMatch(/bad fn/);
+    // points onto a plot's axes: one scale with the curve
+    await tag(e, 'scatter on=s id=pts pts=10,5 20,8 axes=r');
+    expect(st.get('pts')!.placed.body).toEqual(st.get('r')!.placed.body);
+    expect(st.get('pts')!.dom).toEqual(st.get('r')!.plot!.dom);
   });
 
   it('a letter past the width falls back to a header of that name (cols=x,y: t.y is y)', async () => {

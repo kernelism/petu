@@ -2,7 +2,7 @@
 import { EXAMPLES } from './examples.ts';
 
 /** Bump on any change: the eval records it with every run, and it is part of the cache prefix. */
-export const PROMPT_VERSION = 'p4.8';
+export const PROMPT_VERSION = 'p4.9';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -87,7 +87,7 @@ const GRAMMAR = `TAGS (key=value, "quoted text", bare flags; A, B, C are x,y, a 
 {{write on=s at=A "label" size=m}}  {{math on=s at=A "a^2 + b^2 = c^2" size=m}} (at = left edge; TeX only inside math)
 {{axes on=s at=A size=600,400 x="time" y="speed" id=ax}} bare axes for a sketch
 {{const a=2 T=3*a}} named numbers, for every formula after it (a value may use the ones before it)
-{{plot on=s id=p fn="a*x^2" domain=0,T xlabel="x" ylabel="y" "a·x²"}}  {{plot on=s id=c x="a*cos(t)" y="a*sin(t)" t=0,2*pi axes=p "circle" label=top}} (axes= draws onto p's axes, one scale; label=top puts the label at the curve's highest point)
+{{plot on=s id=p fn="a*x^2" domain=0,T xlabel="x" ylabel="y" "a·x²"}}  {{plot on=s id=c x="a*cos(t)" y="a*sin(t)" t=0,2*pi axes=p "circle" label=top}} (axes= draws onto p's axes, one scale, and works for a scatter too; label=top puts the label at the curve's highest point)
 {{let on=s A=0,0 B=along(A,C,2)}}  {{sketch id=s near=p4 fit}}  {{sketch id=t near=p4 size=l fit}}
 {{connect from=p4:#d3 to=s:X}}  {{connect from=p4:"quote" to=s:ray}}  {{emph id=ray}}  {{fade id=ray}}
 {{box on=s center=A size=200,120}}  {{write on=s center=A "label" size=m}} (centred on A)

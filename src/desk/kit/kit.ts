@@ -495,12 +495,17 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     const padd = (lo: number, hi: number) => { const d = hi - lo || Math.abs(hi) || 1; return [lo - d * 0.08, hi + d * 0.08]; };
     const [x0, x1] = padd(Math.min(...xs), Math.max(...xs)), [y0, y1] = padd(Math.min(...ys), Math.max(...ys));
     // A chart uses the board (about three quarters of its width), smaller beside another block.
+    // axes=: the points go onto a line's or plot's axes (one scale with its curves), no axes of their own.
+    const host = a.axes ? await store.wait(a.axes) : undefined;
+    if (a.axes && !host?.plot) return `no line or plot ${a.axes} to put the points on`;
     const w = a.right ? m.cell * 7 : CHART_W, h = a.right ? m.cell * 4.6 : CHART_W * 0.58;
     const tickW = Math.max(...C.ticks(y0, y1).map((t) => textWidth(C.fmt(t), m.labelPx)));
     // Above the plot: the y label (left) and live readouts (right), never over the data.
     const pad: Pad = { l: m.u(tickW + m.labelPx * 0.9), t: m.label * 2, r: m.label * 0.6, b: m.label * 1.8 + (a.xLabel ? m.label * 1.5 : 0) + (a.caption ? m.label * 1.9 : 0) };
-    b = newBlock(id, 'scatter', region, P(w, h, pad), m, []);
-    Object.assign(b, { data, dom: { x0, x1, y0, y1 }, fits: [], em: a.em, cols: a.cols });
+    const hp = host?.plot;
+    b = newBlock(id, 'scatter', region, hp ? { body: { ...hp.host.placed.body }, rect: { ...hp.host.placed.rect } } : P(w, h, pad), m, []);
+    Object.assign(b, { data, dom: hp ? { ...hp.dom } : { x0, x1, y0, y1 }, fits: [], em: a.em, cols: a.cols });
+    if (hp) b.el.overlay = hp.host.id;
     if (a.cols) b.deps = [a.cols.id];
     b.el.xLabel = a.xLabel; b.el.yLabel = a.yLabel; b.el.caption = a.caption;
   } else {
@@ -1093,6 +1098,7 @@ function toPlot(b: Block, p: C.Pt): { x: number; y: number } {
 async function drawScatter(b: Block, c: ReturnType<typeof col>, k: Pace) {
   const g = b.g!, { body } = b.placed, m = b.m, d = b.dom!;
   const axes = svg(g, 'g');
+  if (b.el.overlay) axes.setAttribute('display', 'none'); // on a plot's axes: they are already drawn
   svg(axes, 'path', { d: `M${body.x} ${body.y - px(b, 4)}V${body.y + body.h}H${body.x + body.w + px(b, 4)}`, fill: 'none', stroke: c.edge, ...hair(1) });
   for (const t of C.ticks(d.x0, d.x1)) {
     const x = toPlot(b, { x: t, y: d.y0 }).x;
