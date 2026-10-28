@@ -13,7 +13,8 @@
     "eval": "node --experimental-strip-types scripts/eval/run.ts",
     "ground": "node --experimental-strip-types scripts/ground.ts",
     "corpus-profile": "node --expose-gc --max-old-space-size=8192 --experimental-strip-types scripts/corpus/profile.ts",
-    "corpus-bench": "node --experimental-strip-types scripts/corpus/browserBench.ts"
+    "corpus-bench": "node --experimental-strip-types scripts/corpus/browserBench.ts",
+    "replay-stress": "node --import ./scripts/lib/tsResolve.mjs --experimental-transform-types --no-warnings scripts/eval/replayStress.ts"
   },
   "dependencies": {
     "katex": "0.18.11",
