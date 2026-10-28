@@ -368,6 +368,8 @@ export function formatSummary(s: StressSummary): string {
     `replay-stress: ${s.recordings} distinct scripts (${s.withPdf} with their PDF), ${s.actions} actions`,
     `skipped ${s.skipped} (${pct(s.skipped, s.actions - s.unverified)} of checked), unverified ${s.unverified}, malformed tags ${s.malformed}${s.malformed ? ` (${Object.entries(s.malformedByTag).map(([k, v]) => `${k} ${v}`).join(', ')})` : ''}, unclosed ${s.unclosed}`,
     '',
+    `skip rate: ${pct(s.skipped, s.actions - s.unverified)}`,
+    '',
     'tag          n  skip   rate  unverified  reasons',
     ...s.byTag.map((t) => `${t.tag.padEnd(10)} ${String(t.n).padStart(4)} ${String(t.skipped).padStart(5)} ${pct(t.skipped, t.n - t.unverified).padStart(6)} ${String(t.unverified).padStart(10)}  ${Object.entries(t.reasons).sort((a, b) => b[1] - a[1]).map(([r, n]) => `${r} ×${n}`).join('; ')}`),
     '',
