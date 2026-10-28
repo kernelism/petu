@@ -38,6 +38,12 @@ describe('ScrollOwner', () => {
     expect(o.isForeign(621)).toBe(false); // within tolerance of the last seen value
     expect(o.isForeign(900)).toBe(true);  // the scrollbar, find-in-page, …
   });
+  it('the browser clamping scrollTop when the content shrinks is not the student', () => {
+    const o = new ScrollOwner();
+    o.write({ scrollTop: 0 }, 1600);
+    expect(o.isForeign(1166, 1166)).toBe(false); // a region moved from below to beside the page
+    expect(o.isForeign(900, 1166)).toBe(true);   // a real scroll up from there still counts
+  });
 });
 
 describe('isScrollKey', () => {

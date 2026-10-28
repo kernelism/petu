@@ -11,11 +11,9 @@ type Props = {
   onOpenSettings(): void;
   /** Opens another PDF in place of this one (nothing is closed until a file is picked). */
   onOpenFile(f: File): void;
-  /** Present while the board is closed but has content: reopens it. */
-  onShowBoard?(): void;
 };
 
-export function TopBar({ fileName, page, numPages, pageTick, onOpenSettings, onOpenFile, onShowBoard }: Props) {
+export function TopBar({ fileName, page, numPages, pageTick, onOpenSettings, onOpenFile }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <div className="topbar">
@@ -26,11 +24,6 @@ export function TopBar({ fileName, page, numPages, pageTick, onOpenSettings, onO
         <span key={pageTick} className={pageTick ? 'topbar-num is-tick' : 'topbar-num'}>{page}</span>
         <span className="topbar-of">/</span>{numPages}
       </span>
-      {onShowBoard && (
-        <button type="button" className="topbar-toggle" onClick={onShowBoard} title="Show the board">
-          Board
-        </button>
-      )}
       <button type="button" className="icon-btn" onClick={onOpenSettings} aria-label="Settings" title="Settings" data-settings-anchor="">
         <Settings size={18} strokeWidth={1.75} />
       </button>

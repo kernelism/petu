@@ -55,10 +55,15 @@ export class ScrollOwner {
   write(el: { scrollTop: number }, top: number): void { this.expected = top; el.scrollTop = top; this.expected = el.scrollTop; }
   glideStart(): void { this.gliding++; }
   glideEnd(): void { this.gliding = Math.max(0, this.gliding - 1); }
-  /** Call from the scroll listener. True when this scroll was not the engine's. */
-  isForeign(top: number): boolean {
+  /**
+   * Call from the scroll listener. True when this scroll was not the engine's. `max` is the current
+   * maximum scrollTop: landing on it when the engine's last position is now past it is the browser
+   * clamping to shorter content (a region moved from below the page to beside it), not the student.
+   */
+  isForeign(top: number, max = Infinity): boolean {
     if (this.gliding) { this.expected = top; return false; }
-    const foreign = this.expected == null || Math.abs(top - this.expected) > this.tol;
+    const clamped = this.expected != null && this.expected > max + this.tol && Math.abs(top - max) <= this.tol;
+    const foreign = !clamped && (this.expected == null || Math.abs(top - this.expected) > this.tol);
     this.expected = top;
     return foreign;
   }

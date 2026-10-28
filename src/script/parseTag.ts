@@ -1,5 +1,5 @@
 // src/script/parseTag.ts
-import { BOARD_PAGE, REGION_H, type Action, type Compass, type End, type Pt, type Target } from './types';
+import { REGION_H, type Action, type Compass, type End, type Pt, type Target } from './types';
 import { tokenize, unquote } from './tokenize';
 
 /** Region and element ids: a letter, then letters, digits, - or _. Case-insensitive (stored lowercased). */
@@ -65,7 +65,6 @@ export function parseTag(body: string): Action | null {
   // Tags without a target.
   switch (name) {
     case 'clear': return { kind: 'clear' };
-    case 'board': return { kind: 'board' }; // @deprecated, removed in Task E1
     case 'sketch': {
       const sid = id(args.id);
       const page = num(args.near?.replace(/^p/i, ''));
@@ -104,15 +103,14 @@ export function parseTag(body: string): Action | null {
   // Everything else draws into one target: `p=N` (a page) or `on=<region>`.
   const onRaw = args.on?.toLowerCase();
   let target: Target;
-  if (onRaw === 'board') target = { page: BOARD_PAGE }; // @deprecated, removed in Task E1
-  else if (onRaw !== undefined) { const r = id(onRaw); if (!r) return null; target = { region: r }; }
+  if (onRaw !== undefined) { const r = id(onRaw); if (!r) return null; target = { region: r }; }
   else {
     const p = num(args.p);
     if (p === undefined || p < 1 || !Number.isInteger(p)) return null;
     target = { page: p };
   }
-  const inRegion = target.region != null || target.page === BOARD_PAGE;
-  const Y = target.region != null ? REGION_H : 1000; // region-local y is 0–700 (rule 5); legacy board stays 0–1000
+  const inRegion = target.region != null;
+  const Y = inRegion ? REGION_H : 1000; // region-local y is 0–700 (rule 5)
   const mark = { ...(id(args.id) ? { id: id(args.id) } : {}), ...(flags.has('em') ? { em: true } : {}) };
   const dash = flags.has('dash') ? { dash: true } : {};
   const near = pt(args.near, Y);

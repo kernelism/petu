@@ -1,29 +1,16 @@
-/* App shell. The stage is the PDF column: the full window, or the left column while the board is open. */
-:root {
-  /* Board column width; App sets the real value (and --sheet-w) from src/ui/layout.ts. */
-  --board-w: max(calc(50vw - 48px), 380px);
-  --glide: 420ms cubic-bezier(.2,.8,.2,1);
-}
+/* src/app.css */
+/* App shell. The stage holds the viewer; the desk (src/desk/desk.css) sketches beside the pages or takes over. */
 .stage {
   position: fixed;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  transition: left var(--glide), right var(--glide);
-}
-.stage.has-board {
-  left: 48px; /* STAGE_LEFT in src/ui/layout.ts: pages stay clear of the canvas toolbar */
-  right: calc(var(--board-w) + 48px);
+  inset: 0;
 }
 .stage > .pv-scroll { position: absolute; }
-/* With the board open the PDF column is narrow and short slides show their neighbours; set those
-   back so the page being explained reads as the one in frame. */
+/* While a sketch sits beside a page, set the neighbouring pages back so the page being explained reads as the one in frame. */
 .stage .pv-page { transition: opacity 240ms var(--ease-out, ease-out); }
-.stage.has-board .pv-page:not(.is-current) { opacity: .4; }
+.stage.is-sketching .pv-page:not(.is-current) { opacity: .4; }
 
 @media (prefers-reduced-motion: reduce) {
-  .stage, .board, .board.is-open, .stage .pv-page { transition: none; }
+  .stage .pv-page { transition: none; }
 }
 
 /* ───────── ?debug ───────── */

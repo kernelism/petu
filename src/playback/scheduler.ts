@@ -5,7 +5,7 @@ export type SchedulerCallbacks = {
   onWord(text: string, index: number): void;
   /**
    * Fires an action. `at` is when its word starts (clock timebase); an action can fire up to its
-   * lead ahead of that, so layout (scrolls, the board) can be under way when the word is spoken.
+   * lead ahead of that, so layout (scrolls, sketches) can be under way when the word is spoken.
    */
   onAction(action: Action, at: number): void;
   onDone(): void;
@@ -160,7 +160,6 @@ export function actionLeadMs(a: Action): number {
     case 'scroll': return 450;
     // A sketch may glide the page column (420ms) or open the stage before its first stroke.
     case 'sketch': return 450;
-    case 'board': return 380; // @deprecated, removed in Task E1
     case 'clear': return 0;
     // Ink fires early too, so the director can resolve its anchor and reveal it; the ink itself
     // still starts on the word.

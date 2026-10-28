@@ -1,3 +1,4 @@
+// src/App.tsx
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import './styles/tokens.css';
 import './app.css';
@@ -8,9 +9,11 @@ import { Director, type ActionTiming } from './playback/director';
 import { AnswerSession, type SessionState } from './playback/session';
 import { PacedClock } from './playback/clock';
 import { getSettings, setSettings } from './settings/settings';
-import { DEMOS, DEMO_BOARD_QUESTION, DEMO_QUESTION, pickDemo, streamDemo } from './demo/demoScript';
+import { DEMOS, DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
-import { Board, withBoard, type BoardHandle } from './board/Board';
+import { Desk } from './desk/Desk';
+import type { DeskState } from './desk/types';
+import './desk/desk.css';
 import { StudentInkLayer } from './ink/student/StudentInkLayer';
 import { ink } from './ink/student/store';
 import { EmptyState } from './ui/EmptyState';
@@ -19,15 +22,16 @@ import { SettingsPopover } from './ui/SettingsPopover';
 import { CanvasToolbar } from './ui/CanvasToolbar';
 import { Caption, joinWords } from './ui/Caption';
 import { AskBar, type Transcript } from './ui/AskBar';
-import { boardGeometry, dockPlacement, type Column } from './ui/layout';
+import { FollowPill } from './ui/FollowPill';
+import { dockPlacement } from './ui/layout';
 import { takeSentences } from './ui/text';
-import { BOARD_PAGE, type Action } from './script/types';
+import type { Action } from './script/types';
 
 const params = new URLSearchParams(location.search);
 const DEBUG = params.has('debug');
-// Dev-only review autoplay: ?demo=1 plays the PDF demo, ?demo=board the board demo.
+// Dev-only review autoplay: ?demo=1 the PDF demo, ?demo=side (or the old name, board) the desk sketch, ?demo=plane the stage.
 const demoParam = import.meta.env.DEV ? params.get('demo') : null;
-const DEMO = demoParam === '1' ? DEMO_QUESTION : demoParam === 'board' ? DEMO_BOARD_QUESTION : null;
+const DEMO = demoParam === '1' ? DEMO_QUESTION : demoParam === 'side' || demoParam === 'board' ? DEMO_SIDE_QUESTION : demoParam === 'plane' ? DEMO_PLANE_QUESTION : null;
 // Dev-only: ?src=<pdf url>&script=<name> opens that PDF and plays a named script (src/demo/scripts.ts).
 // ?script=<name> alone uses that script's own PDF.
 const scriptParam = import.meta.env.DEV ? params.get('script') : null;
@@ -35,11 +39,6 @@ const DEV_SCRIPT = scriptParam ? SCRIPTS[scriptParam] ?? null : null;
 const DEV_SRC = import.meta.env.DEV ? params.get('src') ?? DEV_SCRIPT?.src ?? null : null;
 if (scriptParam && !DEV_SCRIPT) console.warn('[dev] unknown ?script=; known:', Object.keys(SCRIPTS).join(', '));
 const SUGGESTIONS = DEV_SCRIPT ? [DEV_SCRIPT.question] : DEMOS.map((d) => d.question);
-/** Column glide when the board opens or closes. Matches .stage / .board transitions in CSS. */
-const BOARD_GLIDE_MS = 420;
-/** A new answer keeps the board open only if a board action shows up within this much of the stream. */
-const BOARD_LOOKAHEAD_CHARS = 160;
-const usesBoard = (a: Action) => a.kind === 'board' || ('page' in a && a.page === BOARD_PAGE);
 const SAMPLE_URL = '/fixtures/epipolar.pdf';
 const SAMPLE_NAME = 'Stereo Vision — sample.pdf';
 const CAPTION_LINGER_MS = 2200;
@@ -62,7 +61,7 @@ const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name
 const hasFiles = (e: DragEvent) => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
 
 declare global {
-  interface Window { __viewer?: ViewerApi; __timings?: DebugState }
+  interface Window { __viewer?: ViewerApi; __desk?: Desk; __timings?: DebugState }
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -71,10 +70,13 @@ declare global {
 type DebugState = { chunk?: number; word?: number; action?: number; log: ActionTiming[] };
 
 function describe(a: Action): string {
-  if (a.kind === 'clear' || a.kind === 'board') return a.kind;
+  if (a.kind === 'clear') return a.kind;
+  if (a.kind === 'sketch') return `sketch ${a.id} p${a.page}${a.size === 'l' ? ' l' : ''}`;
+  if (a.kind === 'connect') return 'connect';
+  if ('ref' in a) return `${a.kind} #${a.ref}`;
   const cut = (t: string) => ` "${t.length > 18 ? `${t.slice(0, 17)}…` : t}"`;
-  const q = 'quote' in a ? cut(a.quote) : a.kind === 'label' || a.kind === 'write' ? cut(a.text) : '';
-  const where = 'page' in a && a.page != null ? (a.page === BOARD_PAGE ? 'board' : `p${a.page}`) : 'region' in a && a.region ? a.region : '';
+  const q = 'quote' in a ? cut(a.quote) : 'text' in a && a.text ? cut(a.text) : a.kind === 'math' ? cut(a.tex) : '';
+  const where = a.kind === 'scroll' || a.page != null ? `p${a.page}` : a.region;
   return `${a.kind} ${where}${q}`;
 }
 
@@ -124,11 +126,10 @@ export default function App() {
   const [captionWords, setCaptionWords] = useState<string[]>([]);
   const [captionVisible, setCaptionVisible] = useState(false);
   const [pageTick, setPageTick] = useState(0);
-  const [boardOpen, setBoardOpen] = useState(false);
-  const [boardHasContent, setBoardHasContent] = useState(false);
-  /** The column the agent is working in; the dock sits under it while the board is open. */
-  const [column, setColumn] = useState<Column>('pdf');
-  const [viewport, setViewport] = useState({ w: window.innerWidth, h: window.innerHeight });
+  /** The desk's mode and page column (the dock centers under it), and whether the student has taken over. */
+  const [desk, setDesk] = useState<DeskState | null>(null);
+  const [paused, setPaused] = useState(false);
+  const [viewportW, setViewportW] = useState(window.innerWidth);
   /** The asked question, echoed above the caption while answering. */
   const [question, setQuestion] = useState<string | undefined>();
   const [waiting, setWaiting] = useState(false);
@@ -145,35 +146,16 @@ export default function App() {
   const [askT0, setAskT0] = useState(0);
 
   const viewerRef = useRef<ViewerApi | null>(null);
-  const boardRef = useRef<BoardHandle>(null);
-  const boardOpenRef = useRef(false);
-  /** Resolves when the current column glide has finished and the viewer has re-laid out. */
-  const glideDone = useRef<Promise<void>>(Promise.resolve());
-  /** While an answer decides whether to keep the open board, its actions wait here. */
-  const gateRef = useRef<Promise<void> | null>(null);
+  const deskRef = useRef<Desk | null>(null);
+  /** The B stage's host: the Desk owns its children. */
+  const stageRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
   busyRef.current = busy;
-
-  /** Opens or closes the board: the column glides and the pages follow by transform. */
-  const setBoard = useCallback((open: boolean, animate = true) => {
-    if (boardOpenRef.current === open) return;
-    boardOpenRef.current = open;
-    const W = window.innerWidth;
-    const target = open ? boardGeometry(W, window.innerHeight).stageW : W; // the .stage width (app.css)
-    const v = viewerRef.current;
-    // Once the column has its new width, the page in frame is re-framed whole in it (when it fits).
-    glideDone.current = v
-      ? v.glideColumn(target, animate ? BOARD_GLIDE_MS : 0).then(() => viewerRef.current?.frameCurrent?.())
-      : Promise.resolve();
-    setBoardOpen(open);
-  }, []);
   const sessionRef = useRef<AnswerSession | null>(null);
   const isSampleRef = useRef(false);
   isSampleRef.current = isSample;
   const hideTimer = useRef<number>();
   const autoplayTimer = useRef<number>();
-  /** Timers that move the dock to an action's column on its word. */
-  const columnTimers = useRef(new Set<number>());
   const lastQuestion = useRef('');
   const demoStarted = useRef(false);
   const loadSeq = useRef(0);
@@ -181,13 +163,10 @@ export default function App() {
   const directorRef = useRef<Director>();
   if (!directorRef.current) {
     directorRef.current = new Director({
-      viewer: () => viewerRef.current && withBoard(viewerRef.current, boardRef.current),
+      viewer: () => viewerRef.current,
+      desk: () => deskRef.current,
       settings: getSettings,
       onScrolledTo: () => setPageTick((n) => n + 1),
-      // Opening is idempotent: a second board action during the glide waits only for what's left of it.
-      openBoard: () => { setBoard(true); return glideDone.current; },
-      board: () => boardRef.current,
-      gate: () => gateRef.current,
       onTiming: DEBUG
         ? (t) => setDebug((d) => {
             const log = d.log.filter((x) => x.firedAt !== t.firedAt || x.action !== t.action);
@@ -204,22 +183,14 @@ export default function App() {
   useEffect(() => () => { void doc?.destroy(); }, [doc]);
 
   const clearHide = () => window.clearTimeout(hideTimer.current);
-  const clearColumnTimers = () => { columnTimers.current.forEach((t) => window.clearTimeout(t)); columnTimers.current.clear(); };
 
-  // Board and dock geometry follow the window (src/ui/layout.ts is the one source of truth).
+  // The dock follows the window (and the desk's column, through its state).
   useEffect(() => {
-    const apply = () => {
-      const w = window.innerWidth, h = window.innerHeight;
-      const g = boardGeometry(w, h);
-      document.documentElement.style.setProperty('--board-w', `${g.boardW}px`);
-      document.documentElement.style.setProperty('--sheet-w', `${g.sheetW}px`);
-      setViewport({ w, h });
-    };
-    apply();
+    const apply = () => setViewportW(window.innerWidth);
     window.addEventListener('resize', apply);
     return () => window.removeEventListener('resize', apply);
   }, []);
-  useEffect(() => () => { window.clearTimeout(autoplayTimer.current); clearColumnTimers(); }, []);
+  useEffect(() => () => { window.clearTimeout(autoplayTimer.current); deskRef.current?.destroy(); }, []);
 
   /** Shows a one-off line in the caption, then fades it. */
   const flash = useCallback((text: string, ms = 4000) => {
@@ -237,13 +208,12 @@ export default function App() {
     sessionRef.current = null;
     s?.stop();
     director.stop();
-    gateRef.current = null;
-    clearColumnTimers();
+    deskRef.current?.follow.setAnswering(false);
     setWaiting(false);
     setBusy(false);
   }, [director]);
 
-  /** Wipes the agent's marks from the board (both layers) and the answer UI, for a new or closed document. */
+  /** Wipes the answer UI, for a new document (its marks and regions go with the old viewer and desk). */
   const resetAnswerUi = useCallback(() => {
     window.clearTimeout(autoplayTimer.current);
     clearHide();
@@ -253,9 +223,6 @@ export default function App() {
     setAnswerError(false);
     setTranscript(null);
     setLiveText('');
-    const L = boardRef.current?.layers();
-    L?.agent.replaceChildren();
-    L?.highlight.replaceChildren();
   }, []);
 
   // ---------------------------------------------------------------------------------------------
@@ -269,7 +236,6 @@ export default function App() {
       stopAll();
       resetAnswerUi();
       ink.reset();
-      setBoard(false, false);
       viewerRef.current = null;
       setLoadError(undefined);
       setDoc(d);
@@ -282,7 +248,7 @@ export default function App() {
       console.warn('[open]', e);
       setLoadError("Couldn't open that PDF.");
     }
-  }, [stopAll, setBoard, resetAnswerUi]);
+  }, [stopAll, resetAnswerUi]);
 
   const openSample = useCallback(() => open(SAMPLE_URL, SAMPLE_NAME, true), [open]);
   const openFile = useCallback(async (f: File) => open(await f.arrayBuffer(), f.name, false), [open]);
@@ -333,9 +299,7 @@ export default function App() {
     const old = sessionRef.current;
     sessionRef.current = null;
     old?.stop();
-    gateRef.current = null;
     clearHide();
-    clearColumnTimers();
     lastQuestion.current = q;
     setTranscript(null);
     setAnswerError(false);
@@ -358,24 +322,7 @@ export default function App() {
       if (last) setLiveText(last);
     };
     if (DEBUG) { setAskT0(t0); setDebug({ log: [] }); }
-
-    // An open board stays only if this answer uses it. The decision waits for the first word (so a
-    // board answer never flickers closed) and for a little lookahead in the stream (or its end).
-    // Until then actions wait (a scroll aimed at the narrow column would land wrong once it widens);
-    // when the board closes they also wait out the glide.
-    let boardSeen = false, spoke = false, streamed = 0, streamDone = false, decided = !boardOpenRef.current;
-    let openGate = () => {};
-    gateRef.current = decided ? null : new Promise<void>((r) => { openGate = r; });
-    const decide = () => {
-      if (decided || sessionRef.current !== session) return;
-      if (boardSeen) { decided = true; gateRef.current = null; openGate(); return; }
-      if (spoke && (streamed >= BOARD_LOOKAHEAD_CHARS || streamDone)) {
-        decided = true;
-        setBoard(false);
-        void glideDone.current.then(() => { if (gateRef.current === gate) gateRef.current = null; openGate(); });
-      }
-    };
-    const gate = gateRef.current;
+    let spoke = false;
 
     let firstChunk = true;
     let chunks = 0;
@@ -383,35 +330,19 @@ export default function App() {
       for await (const c of streamDemo(signal, demo.script)) {
         if (FAIL_AFTER != null && chunks++ >= FAIL_AFTER) throw new Error('dev: ?fail');
         if (firstChunk && DEBUG) { firstChunk = false; const t = performance.now(); setDebug((d) => ({ ...d, chunk: t })); }
-        streamed += c.length;
         yield c;
-        decide();
       }
-      streamDone = true;
-      decide();
     };
 
     const session: AnswerSession = new AnswerSession({
       clock: new PacedClock(() => getSettings().wpm),
-      onParsed: (a) => { if (usesBoard(a)) boardSeen = true; director.prefetch(a); },
-      onAction: (a, at) => {
-        if (sessionRef.current !== session) return;
-        director.run(a, at);
-        // The dock moves to the action's column on its word, not when it is queued.
-        const col: Column | null = usesBoard(a) ? 'board' : a.kind === 'clear' ? null : 'pdf';
-        if (col) {
-          const t = window.setTimeout(() => {
-            columnTimers.current.delete(t);
-            if (sessionRef.current === session) setColumn(col);
-          }, Math.max(0, at - performance.now()));
-          columnTimers.current.add(t);
-        }
-      },
+      onParsed: (a) => director.prefetch(a),
+      onAction: (a, at) => { if (sessionRef.current === session) director.run(a, at); },
       idle: () => director.idle(),
       onWord: (words) => {
         if (sessionRef.current !== session) return;
         if (DEBUG && words.length === 1) { const t = performance.now(); setDebug((d) => ({ ...d, word: t })); }
-        if (!spoke) { spoke = true; setWaiting(false); decide(); }
+        if (!spoke) { spoke = true; setWaiting(false); }
         spoken = words;
         speak(words);
         setCaptionWords(words);
@@ -421,6 +352,7 @@ export default function App() {
         if (st === 'loading' || st === 'playing') { setBusy(true); return; }
         setBusy(false);
         setWaiting(false);
+        deskRef.current?.follow.setAnswering(false);
         if (spoken.length) setTranscript({ question: q, answer: joinWords(spoken) });
         if (st === 'done') {
           sessionRef.current = null;
@@ -441,7 +373,7 @@ export default function App() {
     });
     sessionRef.current = session;
     void session.start(source);
-  }, [director, flash, setBoard]);
+  }, [director, flash]);
 
   const onStop = useCallback(() => {
     stopAll(); // the ink stays until the next answer starts
@@ -456,7 +388,12 @@ export default function App() {
 
   const onReady = useCallback((api: ViewerApi) => {
     viewerRef.current = api;
-    if (import.meta.env.DEV) window.__viewer = api;
+    // One desk per viewer (a new document remounts the viewer): regions, connectors, the stage.
+    deskRef.current?.destroy();
+    const desk = new Desk(api.deskHost(), stageRef.current!);
+    deskRef.current = desk;
+    desk.subscribe((s) => { setDesk(s); setPaused(desk.follow.paused()); });
+    if (import.meta.env.DEV) { window.__viewer = api; window.__desk = desk; }
     setNumPages(api.numPages());
     const autoplay = DEV_SCRIPT ? DEV_SCRIPT.question : DEMO && isSampleRef.current ? DEMO : null;
     if (autoplay && !demoStarted.current && !params.has('noplay')) {
@@ -472,36 +409,30 @@ export default function App() {
     else if (DEMO) void openSample();
   }, [open, openSample]);
 
-  /** The agent is drawing on the board: it can't be closed from under it. */
-  const boardLocked = busy && boardOpen && column === 'board';
-  const boardLockedRef = useRef(false);
-  boardLockedRef.current = boardLocked;
-  const closeBoard = useCallback(() => { if (!boardLockedRef.current) setBoard(false); }, [setBoard]);
-  const showBoard = useCallback(() => setBoard(true), [setBoard]);
-
-  // Esc closes the board when nothing is playing (while playing, Esc stops the answer first).
+  // Esc between answers leaves the stage (while playing, Esc stops the answer first).
   useEffect(() => {
-    if (!boardOpen) return;
+    if (desk?.mode !== 'b') return;
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-      if (e.key === 'Escape' && !busyRef.current && !e.defaultPrevented && !typing) setBoard(false);
+      if (e.key === 'Escape' && !busyRef.current && !e.defaultPrevented && !typing) void deskRef.current?.exitStage();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [boardOpen, setBoard]);
+  }, [desk?.mode]);
+
+  const resumeFollow = useCallback(() => { void deskRef.current?.resume(); }, []);
 
   const toggleSettings = useCallback(() => setSettingsOpen((o) => !o), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
-  const dock = dockPlacement(viewport.w, viewport.h, boardOpen, column);
+  const dock = dockPlacement(viewportW, desk);
 
   if (!doc) return <EmptyState onFile={openFile} onSample={openSample} error={loadError} />;
 
   return (
     <>
-      {/* The stage is the viewer's column; a side panel can later narrow it without touching the viewer. */}
-      <main className={`stage${boardOpen ? ' has-board' : ''}`}>
+      <main className={`stage${desk?.sketching && desk.mode === 'c' ? ' is-sketching' : ''}`}>
         <PdfViewer
           doc={doc}
           onReady={onReady}
@@ -509,7 +440,8 @@ export default function App() {
           renderOverlay={(p, H) => <StudentInkLayer page={p} spaceH={H} />}
         />
       </main>
-      <Board ref={boardRef} open={boardOpen} onClose={closeBoard} closeDisabled={boardLocked} onContent={setBoardHasContent} />
+      {/* B: the takeover stage (src/desk/Desk.ts fills it). Above the pages, below the chrome. */}
+      <div ref={stageRef} className="desk-stage" />
       <TopBar
         fileName={fileName}
         page={page}
@@ -517,8 +449,8 @@ export default function App() {
         pageTick={pageTick}
         onOpenSettings={toggleSettings}
         onOpenFile={(f) => void openFile(f)}
-        onShowBoard={boardHasContent && !boardOpen ? showBoard : undefined}
       />
+      <FollowPill visible={paused} onResume={resumeFollow} x={dock.x} />
       <SettingsPopover open={settingsOpen} onClose={closeSettings} />
       <CanvasToolbar />
       <div className="dock" style={{ '--dock-x': `${dock.x}px`, '--dock-w': `${dock.w}px` } as CSSProperties}>

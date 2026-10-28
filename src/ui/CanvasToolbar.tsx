@@ -19,11 +19,11 @@ const HINT_MS = 4000;
 const hintSeen = () => { try { return localStorage.getItem(HINT_KEY) === '1'; } catch { return true; } };
 const markHintSeen = () => { try { localStorage.setItem(HINT_KEY, '1'); } catch { /* private mode */ } };
 
-/** Single-key shortcuts act only while drawing, or while the page (stage/board) or this toolbar has focus. */
+/** Single-key shortcuts act only while drawing, or while the page (stage) or this toolbar has focus. */
 const keysActive = (canvasOn: boolean) => {
   if (canvasOn) return true;
   const a = document.activeElement;
-  return !!a && a !== document.body && !!a.closest('.stage, .board, .toolbar');
+  return !!a && a !== document.body && !!a.closest('.stage, .desk-stage, .toolbar');
 };
 
 export function CanvasToolbar() {

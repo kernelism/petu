@@ -334,7 +334,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     };
     let raf = 0;
     const onScroll = () => {
-      if (owner.isForeign(el.scrollTop) && cardPage == null) intent(); // scrollbar drag, find-in-page, focus…
+      if (owner.isForeign(el.scrollTop, el.scrollHeight - el.clientHeight) && cardPage == null) intent(); // scrollbar drag, find-in-page, focus…
       subs.scroll.forEach((f) => f());
       saveAnchor();
       // A scroll during a column glide: keep scaling around the current reading line.
@@ -448,7 +448,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
         await ensureSize(page);
         // A page that fits between the top bar and the caption is framed whole and centered there,
         // whatever point on it is targeted (a slide stays fully visible while it is explained, and a
-        // narrow column next to the board doesn't leave it pinned high with its neighbour in view).
+        // narrow column beside a sketch region doesn't leave it pinned high with its neighbour in view).
         if (y != null && !fits(page)) { await glideTo(page, () => contentY(page, y) - el.clientHeight * SCROLL_ANCHOR); return; }
         await glideTo(page, () => framedTop(page));
       },
@@ -475,10 +475,6 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       },
       ensureSize: async (page) => { if (page >= 1 && page <= doc.numPages) await ensureSize(page); },
       cancelScroll: () => glide?.abort(),
-      /** @deprecated The side-panel board's column glide. A no-op; removed in Task E1. */
-      frameCurrent: async () => {},
-      /** @deprecated A no-op; removed in Task E1. */
-      glideColumn: async () => {},
       deskHost: () => host,
     };
 
@@ -549,13 +545,18 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       const ease = 'cubic-bezier(.2,.8,.2,1)';
       if (card) {
         const k = card.rect.w / L.pageW;
-        const to = `translate(${card.rect.x - L.pageX * k}px, ${card.rect.y - TOP_PAD * k}px) scale(${k})`;
+        // Where the card page sits in the scroller's box after its scrollTop write: TOP_PAD, unless
+        // the write was clamped (a last page in a tall window can't scroll that far), so the
+        // transform lands the page itself on the card rect either way.
+        const at = (i: number) => L.tops[i] - el.scrollTop;
+        const toFor = (i: number) => `translate(${card.rect.x - L.pageX * k}px, ${card.rect.y - at(i) * k}px) scale(${k})`;
         if (cardPage === card.page) {
           // Already the card (B re-entry, another B region, a resize): only move to the new rect, if
           // it moved. Never re-run the entry from the page's scroller position (a jump, and ~430ms).
           const i = card.page - 1;
           el.style.height = `${Math.max(el.clientHeight, L.heights[i] + 2 * TOP_PAD)}px`;
           if (Math.abs(el.scrollTop - (L.tops[i] - TOP_PAD)) > 0.5) owner.write(el, L.tops[i] - TOP_PAD);
+          const to = toFor(i);
           if (cardTo === to) return;
           cardTo = to;
           el.style.transition = ms > 0 ? `transform ${ms}ms ${ease}` : 'none';
@@ -574,7 +575,8 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
         el.style.height = `${Math.max(el.clientHeight, L.heights[i] + 2 * TOP_PAD)}px`;
         owner.write(el, L.tops[i] - TOP_PAD);
         el.style.transformOrigin = '0 0';
-        el.style.transform = swap ? '' : `translate(0px, ${onScreen - TOP_PAD}px)`;
+        el.style.transform = swap ? '' : `translate(0px, ${onScreen - at(i)}px)`;
+        const to = toFor(i);
         for (const h of slots.current.values()) h.el.toggleAttribute('data-card', Number(h.el.dataset.page) === card.page);
         cardPage = card.page;
         cardTo = to;
@@ -590,7 +592,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       const p = cardPage, i = p - 1;
       const target = Math.max(0, Math.min(fits(p) ? framedTop(p) : L.tops[i] - SAFE_TOP, L.total - el.clientHeight));
       el.style.transition = `transform ${ms}ms ${ease}`;
-      el.style.transform = `translate(0px, ${L.tops[i] - target - TOP_PAD}px)`;
+      el.style.transform = `translate(0px, ${el.scrollTop - target}px)`; // the page, from where it sits in the box to where it will
       await wait(ms);
       el.style.transition = 'none';
       el.style.transform = '';

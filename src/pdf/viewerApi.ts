@@ -8,7 +8,7 @@ export interface ViewerApi {
   currentPage(): number;
   /** Page-space height for the page (1000 * h / w). */
   spaceHeight(page: number): number;
-  /** CSS px per page-space unit (pageW / 1000). Pages share one scale; the board (page 0) has its own. */
+  /** CSS px per page-space unit (pageW / 1000). Pages share one scale. */
   scale(page?: number): number;
   layers(page: number): PageLayers | null;
   allLayers(): PageLayers[];
@@ -31,17 +31,6 @@ export interface ViewerApi {
   ensureSize(page: number): Promise<void>;
   /** Stops a programmatic glide in flight (a stopped answer must not keep scrolling). */
   cancelScroll(): void;
-  /**
-   * The viewer's column is about to animate to `width` CSS px over `ms` (a CSS transition on the
-   * column). Pages scale by transform meanwhile and re-layout and re-render once at the end,
-   * keeping the reading position. Resolves once the new layout is in place (safe for scroll math).
-   */
-  glideColumn(width: number, ms: number): Promise<void>;
-  /**
-   * After the column changed width: if the current page fits whole between the chrome, glides it
-   * to centered (so a narrowed column doesn't leave it pinned high with a neighbour in view).
-   */
-  frameCurrent?(): Promise<void>;
-  /** The viewer's side of the desk (lanes, the desk layer, B's card transform, user-intent events). Required from Task E1. */
-  deskHost?(): DeskHost;
+  /** The viewer's side of the desk (lanes, the desk layer, B's card transform, user-intent events). */
+  deskHost(): DeskHost;
 }

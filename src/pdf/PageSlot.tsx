@@ -19,7 +19,7 @@ type Props = {
   spaceH: number;
   register(page: number, handle: SlotHandle | null): void;
   renderOverlay?(page: number, spaceH: number): ReactNode;
-  /** The page at the reading line (the stage can set its neighbours back while the board is open). */
+  /** The page at the reading line (the stage can set its neighbours back while a sketch sits beside it). */
   current?: boolean;
 };
 

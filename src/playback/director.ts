@@ -35,24 +35,17 @@ export function backlog(lagMs: number): { speed: number; fadeMs?: number } {
 }
 
 /** Layout actions run one after another; everything else is ink, which runs concurrently. */
-export const isLayout = (a: Action): a is LayoutAction => a.kind === 'scroll' || a.kind === 'sketch' || a.kind === 'clear' || a.kind === 'board';
+export const isLayout = (a: Action): a is LayoutAction => a.kind === 'scroll' || a.kind === 'sketch' || a.kind === 'clear';
 
 type Deps = {
   viewer: () => ViewerApi | null;
-  /** Optional until Task E1 wires the Desk into App. */
-  desk?: () => DeskApi | null;
+  desk: () => DeskApi | null;
   settings: () => Settings;
   onScrolledTo(page: number): void;
   /** Resolves ink actions into plans. Default: the drawing toolkit. Tests inject fakes. */
   build?: BuildElement;
   /** Debug hook: called when an action starts executing and again when it ends. */
   onTiming?(t: ActionTiming): void;
-  /** @deprecated Ignored. Removed in Task E1 with the board. */
-  openBoard?(): Promise<void>;
-  /** @deprecated Ignored. Removed in Task E1. */
-  board?(): unknown;
-  /** @deprecated Ignored. Removed in Task E1. */
-  gate?(): Promise<void> | null;
 };
 
 type LaneKind = 'scroll' | 'sketch' | 'clear' | 'reveal' | 'frame';
@@ -61,10 +54,6 @@ type LaneEntry = { kind: LaneKind; started: Promise<void>; done: Promise<void> }
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.max(0, ms)));
 const now = () => performance.now();
 const WHOLE_REGION: SRect = { x: 0, y: 0, w: REGION_W, h: REGION_H };
-type ResetOpts = { keepLanes?: boolean };
-/** desk.reset, passing `keepLanes` through (typed loosely so it compiles before DeskApi.reset declares the option). */
-const resetDesk = (desk: DeskApi, ms: number, opts?: ResetOpts): Promise<void> =>
-  opts ? (desk.reset as (ms: number, opts?: ResetOpts) => Promise<void>).call(desk, ms, opts) : desk.reset(ms);
 /** Built ahead of the word: page ink whose anchor can resolve early. Everything else is built on its word. */
 const buildsEarly = (a: InkAction) => a.kind !== 'connect' && !('ref' in a) && a.region == null;
 
@@ -89,13 +78,12 @@ export class Director {
   private pendingReset: number | null = null;
   readonly registry = new Registry();
   constructor(private d: Deps) {}
-  private desk(): DeskApi | null { return this.d.desk?.() ?? null; }
+  private desk(): DeskApi | null { return this.d.desk(); }
 
   /** Runs `a`, whose word starts at `at` (performance.now() ms; default now). */
   run(a: Action, at: number = now()): void {
     const signal = this.ctrl.signal;
     const t: ActionTiming = { action: a, firedAt: at, queuedAt: now(), startedAt: NaN };
-    if (a.kind === 'board') { this.report(t, { startedAt: now(), endedAt: now(), skipped: 'unsupported' }); return; }
     if (this.pendingReset != null) this.resetFor(a, signal);
     if (isLayout(a)) {
       const e = this.enqueueLayout(a.kind, async (sig) => {
@@ -181,7 +169,7 @@ export class Director {
     this.pendingReset = null;
     if (a.kind === 'clear') return;
     const opts = a.kind === 'sketch' ? { keepLanes: true } : undefined;
-    const e = this.enqueueLayout('clear', async () => { const desk = this.desk(); if (desk) await resetDesk(desk, ms, opts); }, signal);
+    const e = this.enqueueLayout('clear', async () => { const desk = this.desk(); if (desk) await (opts ? desk.reset(ms, opts) : desk.reset(ms)); }, signal);
     this.track(e.done);
   }
 
@@ -248,7 +236,7 @@ export class Director {
     for (const c of this.drawing.keys()) c.abort();
   }
 
-  private async execLayout(a: Exclude<LayoutAction, { kind: 'board' }>, signal: AbortSignal): Promise<string | void> {
+  private async execLayout(a: LayoutAction, signal: AbortSignal): Promise<string | void> {
     if (a.kind === 'clear') return this.clear();
     const desk = this.desk();
     if (!desk) return 'no desk';

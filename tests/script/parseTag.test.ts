@@ -32,19 +32,8 @@ describe('parseTag', () => {
     expect(parseTag('line from=1,1 to=2,2')).toBeNull();
     expect(parseTag('')).toBeNull();
   });
-  it('parses board actions: board, write, on=board, em', () => {
-    expect(parseTag('board')).toEqual({ kind: 'board' });
-    expect(parseTag('write on=board at=100,200 "x′ᵀFx = 0" size=l')).toEqual({ kind: 'write', page: 0, at: { x: 100, y: 200 }, text: 'x′ᵀFx = 0', size: 'l' });
-    expect(parseTag('write on=board at=10,20 "C"')).toEqual({ kind: 'write', page: 0, at: { x: 10, y: 20 }, text: 'C', size: 'm' });
-    expect(parseTag('circle on=board "Fx" em')).toEqual({ kind: 'circle', page: 0, quote: 'Fx', em: true });
-    expect(parseTag('line on=board from=0,0 to=10,20 em')).toEqual({ kind: 'line', page: 0, from: { x: 0, y: 0 }, to: { x: 10, y: 20 }, em: true });
-    expect(parseTag('box on=board at=10,10 size=50,40')).toEqual({ kind: 'box', page: 0, at: { x: 10, y: 10 }, w: 50, h: 40 });
-  });
-  it('rejects malformed board tags', () => {
-    expect(parseTag('scroll on=board')).toBeNull();
-    expect(parseTag('write p=3 at=1,1 "x"')).toBeNull();
-    expect(parseTag('write on=board "x"')).toBeNull();
-    expect(parseTag('write on=board at=1,1 "x" size=xl')).toBeNull();
-    expect(parseTag('circle p=0 at=1,1 r=5')).toBeNull();
+  it('the old board tag is gone ("board" is now just a region name, unknown unless sketched)', () => {
+    expect(parseTag('board')).toBeNull();
+    expect(parseTag('write on=board at=1,1 "x"')).toMatchObject({ region: 'board' });
   });
 });

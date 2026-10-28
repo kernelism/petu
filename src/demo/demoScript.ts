@@ -127,8 +127,3 @@ export async function* streamDemo(signal: AbortSignal, script = DEMO_SCRIPT): As
     await new Promise((r) => setTimeout(r, 20 + Math.random() * 30));
   }
 }
-
-/** @deprecated The old board demo's names, kept until Task E1 rewires App. */
-export const DEMO_BOARD_QUESTION = DEMO_SIDE_QUESTION;
-/** @deprecated */
-export const DEMO_BOARD_SCRIPT = DEMO_SIDE_SCRIPT;

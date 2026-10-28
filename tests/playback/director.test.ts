@@ -16,7 +16,8 @@ function fakeViewer(over: Partial<ViewerApi> = {}): ViewerApi {
     numPages: () => 3, currentPage: () => 1, spaceHeight: () => 1294, scale: () => 0.8,
     layers: () => layers, allLayers: () => [layers], textRuns: async () => [],
     scrollToPage: vi.fn(async () => {}), ensureVisible: vi.fn(async () => false), isVisible: () => true,
-    whenVisible: async () => true, ensureSize: async () => {}, cancelScroll: vi.fn(), glideColumn: async () => {},
+    whenVisible: async () => true, ensureSize: async () => {}, cancelScroll: vi.fn(),
+    deskHost: () => { throw new Error('the director never touches the desk host'); },
     ...over,
   };
 }

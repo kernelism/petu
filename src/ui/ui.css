@@ -434,22 +434,6 @@
 /* The agent moved to a page: the number lifts once, briefly. */
 .topbar-num.is-tick { animation: topbar-tick 180ms var(--ease-out); }
 @keyframes topbar-tick { from { transform: translateY(-3px); opacity: .35; } to { transform: none; opacity: 1; } }
-.topbar-toggle {
-  height: 26px;
-  margin-right: 4px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--ink-2);
-  font-size: 12.5px !important;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out);
-}
-.topbar-toggle:hover { background: var(--hover); color: var(--ink); }
-.topbar-toggle:active { background: var(--press); }
-
 /* ───────── Settings popover ───────── */
 .popover {
   position: fixed;
@@ -683,3 +667,28 @@
   .caption-q.is-waiting { animation: none; color: rgba(255,255,255,.52); background: none; }
   .dock, .caption, .caption-text, .dropveil, .tb-fold, .tb-tip, .switch, .switch::after { transition-duration: 0s; }
 }
+
+/* ───────── Follow pill (rule 6): the student took over the view during an answer ───────── */
+.follow-pill {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translate(-50%, -4px);
+  z-index: 30;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255,255,255,.86);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-float), 0 0 0 0.5px var(--hairline);
+  font: 500 13px/1.3 var(--font);
+  color: var(--ink-2);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out), background-color 120ms var(--ease-out);
+}
+.follow-pill.is-visible { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+.follow-pill:hover { background: #fff; color: var(--ink); }
+.follow-pill:active { transform: translate(-50%, 0) scale(.97); }
+@media (prefers-reduced-motion: reduce) { .follow-pill { transition: none; } }

@@ -17,5 +17,5 @@
   --hover: rgba(0,0,0,.05);
   --press: rgba(0,0,0,.09);
 }
-html, body, #root { height: 100%; margin: 0; background: var(--canvas-bg); color: var(--ink); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+html, body, #root { height: 100%; margin: 0; background: var(--canvas-bg) radial-gradient(circle, rgba(0,0,0,.075) 1px, transparent 1.3px) 0 0 / 22px 22px; color: var(--ink); font-family: var(--font); -webkit-font-smoothing: antialiased; }
 *:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }

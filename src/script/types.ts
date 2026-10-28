@@ -7,9 +7,6 @@
  */
 export type Pt = { x: number; y: number };
 
-/** @deprecated The side-panel board (page 0). Removed in Task E1 together with src/board/*. */
-export const BOARD_PAGE = 0;
-
 /** A sketch region is 1000 × 700 local units. */
 export const REGION_W = 1000;
 export const REGION_H = 700;
@@ -83,9 +80,7 @@ export type LayoutAction =
   | { kind: 'scroll'; page: number; y?: number }
   /** Reserves region `id` next to page `page`. */
   | { kind: 'sketch'; id: string; page: number; size: RegionSize; place: Place }
-  | { kind: 'clear' }
-  /** @deprecated Opens the side-panel board. Removed in Task E1. */
-  | { kind: 'board' };
+  | { kind: 'clear' };
 
 export type Action = LayoutAction | DrawAction | RefAction | ConnectAction;
 export type InkAction = Exclude<Action, LayoutAction>;
@@ -97,6 +92,6 @@ export type ScriptEvent =
 
 /** The target an action draws into, when it has exactly one (refs and connectors don't). */
 export function targetOf(a: Action): Target | null {
-  if ('ref' in a || a.kind === 'connect' || a.kind === 'sketch' || a.kind === 'scroll' || a.kind === 'clear' || a.kind === 'board') return null;
+  if ('ref' in a || a.kind === 'connect' || a.kind === 'sketch' || a.kind === 'scroll' || a.kind === 'clear') return null;
   return a.region != null ? { region: a.region } : { page: a.page! };
 }
