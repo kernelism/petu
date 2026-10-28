@@ -1012,8 +1012,20 @@ function paintLine(b: Block, ys: number[], c: ReturnType<typeof col>, upto = ys.
 /** A plot's lines, newest in ink, earlier ones (unless em) set back in the muted tone. */
 function lineColor(b: Block, c: ReturnType<typeof col>, accent: string): string {
   if (b.em) return accent;
-  const ms = b.plot!.members;
+  const ms = b.plot!.members.filter((x) => !x.em);
   return b === ms[ms.length - 1] ? c.ink : c.muted;
+}
+
+/** End labels of a plot's lines never overlap: sorted by height, pushed apart by a line's height. */
+function spreadLabels(pl: Plot) {
+  const ls = pl.members.map((x) => (x.el.line as LineEls | undefined)?.label).filter((l): l is SVGTextElement => !!l && l.getAttribute('text-anchor') !== 'middle');
+  if (ls.length < 2) return;
+  const h = pl.host.m.label * 1.25;
+  const ys = ls.map((l) => ({ l, y: Number(l.getAttribute('y')) })).sort((a, b) => a.y - b.y);
+  for (let i = 1; i < ys.length; i++) if (ys[i].y - ys[i - 1].y < h) ys[i].y = ys[i - 1].y + h;
+  // keep the group centred on where it was
+  const shift = (ys.reduce((s, x) => s + x.y, 0) - ys.reduce((s, x) => s + Number(x.l.getAttribute('y')), 0)) / ys.length;
+  ys.forEach((x) => x.l.setAttribute('y', String(x.y - shift)));
 }
 
 async function drawLine(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: Pace) {
@@ -1034,7 +1046,8 @@ async function drawLine(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: P
   // The line draws in from the left.
   const fast = k.fadeMs != null || prefersReducedMotion();
   await tween(fast ? 0 : Math.min(1400, 300 + ys.length * 25) * k.speed, (t) => paintLine(b, ys, c, 1 + t * (ys.length - 1)));
-  paintLine(b, ys, c);
+  for (const o of pl.members) if (o.el.line) paintLine(o, o.vals![0], c);
+  spreadLabels(pl);
 }
 
 /** Tweens a line to new values; the plot widens if they need it (its axes and other lines follow). */
@@ -1054,6 +1067,7 @@ async function setLineVals(b: Block, next: C.Mat, ms: number, ctl: Ctl | undefin
   pl.dom = dom;
   if (moved && pl.axes) drawPlotAxes(pl, c);
   for (const o of pl.members) paintLine(o, o.vals![0], c);
+  spreadLabels(pl);
 }
 
 /** Section box around a line's points c0…c1. */
@@ -1373,6 +1387,9 @@ function ensureWinCalc(out: Block, store: KitStore, env: BuildEnv): Block | stri
   cb.dp = out.dp;
   store.add(cb);
   grow(env, out.region, cb.placed.rect);
+  // The line runs to the margin: re-centre the section with it, so a composition centred earlier never pushes it off the board.
+  const span = union(store.inRegion(out.region).map((b) => b.placed.rect));
+  env.desk.centreRegion?.(out.region, span.x, span.x + span.w);
   w.calc = cb.id;
   return cb;
 }
