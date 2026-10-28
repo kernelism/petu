@@ -39,6 +39,8 @@ const SAFE_BOTTOM = 156;
 const RESIZE_RERENDER_MS = 160;
 
 const dpr = () => Math.min(2, window.devicePixelRatio || 1);
+/** Page width for a scroller of `w` CSS px. */
+const fitWidth = (w: number) => Math.max(MIN_W, Math.min(w - SIDE, MAX_W));
 
 // ---------------------------------------------------------------------------------------------
 // Layout: absolute tops computed in JS, so scroll math never has to read the DOM.
@@ -213,7 +215,10 @@ export default PdfViewer;
 
 function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const sizerRef = useRef<HTMLDivElement>(null);
   const [pageW, setPageW] = useState(0);
+  /** While the column glides, pages scale by transform and the width isn't re-measured per frame. */
+  const glideRef = useRef<{ timer: number; finish(): void; origin(): string; done(): void } | null>(null);
   /** h/w per page. Seeded from page 1, corrected per page as pages load. */
   const aspectsRef = useRef<Float64Array | null>(null);
   const [aspectsVersion, setAspectsVersion] = useState(0);
@@ -247,9 +252,9 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
   // Fit-to-width, tracked with a ResizeObserver.
   useLayoutEffect(() => {
     const el = scrollRef.current!;
-    const measure = () => setPageW(Math.max(MIN_W, Math.min(el.clientWidth - SIDE, MAX_W)));
+    const measure = () => setPageW(fitWidth(el.clientWidth));
     measure();
-    const ro = new ResizeObserver(measure);
+    const ro = new ResizeObserver(() => { if (!glideRef.current) measure(); });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -330,6 +335,8 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     let raf = 0;
     const onScroll = () => {
       saveAnchor();
+      // A scroll during a column glide: keep scaling around the current reading line.
+      if (glideRef.current && sizerRef.current) sizerRef.current.style.transformOrigin = glideRef.current.origin();
       if (!raf) raf = requestAnimationFrame(() => { raf = 0; publishCurrent(); });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
@@ -429,10 +436,52 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
         await glideTo(page, at - h * SCROLL_ANCHOR);
         return true;
       },
+      glideColumn: (width, ms) => new Promise<void>((done) => {
+        glideRef.current?.finish();
+        const sizer = sizerRef.current, L = layoutRef.current;
+        if (!sizer || !L) { done(); return; }
+        const target = fitWidth(width);
+        const finish = () => {
+          if (glideRef.current !== g) return;
+          done();
+          window.clearTimeout(g.timer);
+          glideRef.current = null;
+          // One synchronous swap: the new layout commits (the anchor keeps the reading line) and the
+          // transform drops in the same frame, so nothing jumps. Canvases re-render once, at the new width.
+          flushSync(() => setPageW(fitWidth(el.clientWidth)));
+          sizer.style.transition = 'none';
+          sizer.style.transform = '';
+          renderer.renderW = layoutRef.current?.pageW ?? target;
+          renderer.pump();
+        };
+        // Scale around the point that makes the transformed pages land exactly where the new layout
+        // will put them. Usually that's the reading line; near the end of the document the new layout
+        // can't scroll that far (shorter content), and the origin absorbs that clamp so nothing snaps.
+        const origin = () => {
+          const a = anchorRef.current, k = target / L.pageW;
+          let o = el.scrollTop + el.clientHeight * CURRENT_LINE;
+          if (a && Math.abs(1 - k) > 1e-3) {
+            const L2 = computeLayout(target, aspectsRef.current!);
+            const pOld = L.tops[a.page - 1] + a.frac * L.heights[a.page - 1];
+            const pNew = L2.tops[a.page - 1] + a.frac * L2.heights[a.page - 1];
+            const top = Math.max(0, Math.min(pNew - el.clientHeight * CURRENT_LINE, L2.total - el.clientHeight));
+            o = (pNew - top + el.scrollTop - pOld * k) / (1 - k);
+          }
+          return `50% ${o}px`;
+        };
+        const g = { timer: 0, finish, origin, done };
+        glideRef.current = g;
+        sizer.style.transformOrigin = origin();
+        sizer.style.transition = `transform ${ms}ms cubic-bezier(.2,.8,.2,1)`;
+        sizer.style.transform = `scale(${target / L.pageW})`;
+        // A little past the CSS transition, so the column has reached its final width when we measure.
+        g.timer = window.setTimeout(finish, ms + 40);
+      }),
     };
     cbRef.current.onReady(api);
 
     return () => {
+      if (glideRef.current) { window.clearTimeout(glideRef.current.timer); glideRef.current.done(); glideRef.current = null; }
       el.removeEventListener('scroll', onScroll);
       if (raf) cancelAnimationFrame(raf);
       mq?.removeEventListener('change', onDpr);
@@ -454,7 +503,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
   return (
     <div ref={scrollRef} className="pv-scroll" tabIndex={-1}>
       {layout && (
-        <div className="pv-sizer" style={{ height: layout.total }}>
+        <div ref={sizerRef} className="pv-sizer" style={{ height: layout.total }}>
           {Array.from({ length: layout.tops.length }, (_, i) => (
             <PageSlot
               key={i + 1}

@@ -51,4 +51,11 @@ describe('locateQuote', () => {
     const split = [run('epi', 50, 100, 30), run('polar', 80, 100, 50)];
     expect(locateQuote(split, 'epipolar')).toHaveLength(1);
   });
+  it('keeps a lone label whole when the next run in stream order sits to its left', () => {
+    // lec09 p40: figure label "x" is followed in the content stream by a "z" far to its left.
+    const runs = [run('x', 415, 436, 11, 44), run('z', 319, 414, 11, 58), run('x’', 589, 444, 16, 44)];
+    const r = locateQuote(runs, 'x', { x: 420, y: 458 });
+    expect(r).toHaveLength(1);
+    expect(r[0].x).toBe(415);
+  });
 });

@@ -23,9 +23,9 @@ export function partial(s: Stroke, cum: number[], dist: number): { points: SPt[]
 }
 
 /** lenPx = on-screen length in CSS px. Short flicks (arrow heads) are quick. */
-export function strokeDurationMs(lenPx: number): number {
+export function strokeDurationMs(lenPx: number, minMs?: number): number {
   const ms = Math.round((lenPx / PX_PER_SEC) * 1000);
-  return Math.min(1200, Math.max(lenPx < 60 ? 140 : 250, ms));
+  return Math.min(1200, Math.max(minMs ?? (lenPx < 60 ? 140 : 250), ms));
 }
 
 const toD = (pts: SPt[]) => pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');
@@ -38,6 +38,8 @@ export type InkOpts = {
   /** CSS px per page-space unit (rendered page width / 1000). */
   scale: number;
   signal?: AbortSignal;
+  /** Floor for each stroke's duration (closed shapes look rushed when traced too fast). */
+  minMs?: number;
 };
 
 const frame = () => new Promise<number>((r) => requestAnimationFrame(r));
@@ -72,7 +74,7 @@ export async function drawStrokes(g: SVGGElement, strokes: Stroke[], o: InkOpts)
   for (let k = 0; k < strokes.length; k++) {
     const s = strokes[k];
     const cum = cumulative(s), L = cum[cum.length - 1];
-    const dur = strokeDurationMs(L * o.scale);
+    const dur = strokeDurationMs(L * o.scale, o.minMs);
     const p = makePath(g, o);
     g.appendChild(tip);
     tip.style.opacity = '1';

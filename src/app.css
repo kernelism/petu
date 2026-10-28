@@ -1,26 +1,54 @@
-/* App shell. The stage is the PDF column: full window today; a side panel can narrow it later. */
+/* App shell. The stage is the PDF column: the full window, or the left column while the board is open. */
+:root {
+  /* Board column: ≈45% of the window, never under 380px. The stage takes the rest, with 24px gutters. */
+  --board-w: max(calc(45vw - 36px), 380px);
+  --glide: 420ms cubic-bezier(.2,.8,.2,1);
+}
 .stage {
   position: fixed;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  transition: left var(--glide), right var(--glide);
+}
+.stage.has-board {
+  left: 24px;
+  right: calc(var(--board-w) + 48px);
 }
 .stage > .pv-scroll { position: absolute; }
+
+@media (prefers-reduced-motion: reduce) {
+  .stage { transition: none; }
+}
 
 /* ───────── ?debug ───────── */
 .debug {
   position: fixed;
-  right: 14px;
+  left: 14px;
   bottom: 18px;
-  width: 268px;
-  padding: 10px 12px;
+  width: 232px;
+  padding: 8px 10px;
+  border: 0;
   border-radius: 10px;
   background: rgba(28,28,30,.86);
   color: rgba(255,255,255,.88);
-  font: 11px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
+  font: 11px/1.55 ui-monospace, "SF Mono", Menlo, monospace;
   font-variant-numeric: tabular-nums;
-  pointer-events: none;
+  text-align: left;
+  cursor: pointer;
   z-index: 40;
 }
+.debug-pill {
+  width: auto;
+  padding: 5px 10px;
+  border-radius: 999px;
+  color: rgba(255,255,255,.8);
+  transition: background-color 120ms ease-out;
+}
+.debug-pill:hover { background: rgba(28,28,30,.95); }
+.debug-pill:active { background: #000; }
 .debug-row, .debug-head { display: flex; justify-content: space-between; gap: 10px; white-space: nowrap; }
-.debug-head { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,.14); color: rgba(255,255,255,.5); }
+.debug-head { margin-top: 5px; padding-top: 5px; border-top: 1px solid rgba(255,255,255,.14); color: rgba(255,255,255,.5); }
 .debug-act { overflow: hidden; text-overflow: ellipsis; }
 .debug-row.is-skipped { color: #FF9F8A; }

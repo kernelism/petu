@@ -48,7 +48,9 @@ function buildIndex(runs: TextRun[]) {
     });
     if (!next || hyphenBreak) return;
     const gap = next.rect.x - (r.rect.x + r.rect.w);
-    const touching = sameLine(r.rect, next.rect) && gap < r.rect.h * 0.15;
+    // Touching = the next run continues this word to the right. A big negative gap means the next
+    // run sits to the left (content-stream order jumped, e.g. labels in a figure): not the same word.
+    const touching = sameLine(r.rect, next.rect) && gap < r.rect.h * 0.15 && gap > -r.rect.h * 0.3;
     if (!touching) add(' ', { run: ri, ch: -1 });
   });
   return { text, map };

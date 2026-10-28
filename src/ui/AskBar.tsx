@@ -5,8 +5,13 @@ import './ui.css';
 const isTypingTarget = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 
-export function AskBar({ onAsk, onStop, busy }: { onAsk(q: string): void; onStop(): void; busy: boolean }) {
+export function AskBar({ onAsk, onStop, busy, suggestions = [] }: {
+  onAsk(q: string): void; onStop(): void; busy: boolean;
+  /** Shown as chips above the bar while it is focused and empty. */
+  suggestions?: string[];
+}) {
   const [text, setText] = useState('');
+  const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -44,13 +49,32 @@ export function AskBar({ onAsk, onStop, busy }: { onAsk(q: string): void; onStop
   };
 
   const hasText = text.trim().length > 0;
+  const showChips = focused && !hasText && !busy && suggestions.length > 0;
 
   return (
     <form
       className="askbar"
       onSubmit={(e) => { e.preventDefault(); submit(); }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); inputRef.current?.focus(); } }}
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); }}
     >
+      {showChips && (
+        <div className="askbar-chips" role="group" aria-label="Suggested questions">
+          {suggestions.map((q) => (
+            <button
+              key={q}
+              type="button"
+              className="askbar-chip"
+              // Keep focus in the bar on pointer press, so the chips don't vanish before the click lands.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onAsk(q); inputRef.current?.blur(); }}
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
       <input
         ref={inputRef}
         className="askbar-input"

@@ -1,4 +1,4 @@
-import type { Action } from '../script/types';
+import { BOARD_PAGE, type Action } from '../script/types';
 import type { ViewerApi } from '../pdf/viewerApi';
 import { toSpace, rectToSpace } from '../geometry/space';
 import { circleStroke, lineStroke, arrowStrokes, boxStroke, rng, type Stroke } from '../ink/agent/strokes';
@@ -6,8 +6,11 @@ import { drawStrokes } from '../ink/agent/animate';
 import { drawLabel, drawHighlight, fadeOut } from '../ink/agent/marks';
 import { locateQuote } from '../locate/locateQuote';
 import type { Settings } from '../settings/settings';
+import { BOARD_INK, type BoardHandle } from '../board/boardText';
 
 const SVG = 'http://www.w3.org/2000/svg';
+/** Closed shapes (circle, box) read as rushed below this, however small they are. */
+const CLOSED_MIN_MS = 400;
 
 /** Timing of one action, for the ?debug panel. All times are performance.now() ms. */
 export type ActionTiming = { action: Action; firedAt: number; startedAt: number; endedAt?: number; skipped?: string };
@@ -16,6 +19,11 @@ type Deps = {
   viewer: () => ViewerApi | null;
   settings: () => Settings;
   onScrolledTo(page: number): void;
+  /** Opens the board if needed; resolves when its glide is over (immediately when already open). */
+  openBoard?(): Promise<void>;
+  board?(): BoardHandle | null;
+  /** Awaited before each action: lets the app hold the queue while the layout is about to change. */
+  gate?(): Promise<void> | null;
   /** Debug hook: called when an action starts executing and again when it ends. */
   onTiming?(t: ActionTiming): void;
 };
@@ -43,7 +51,7 @@ export class Director {
 
   /** Warms the text-run cache for an action's page as soon as it is parsed, so anchors resolve instantly when it fires. */
   prefetch(a: Action): void {
-    if (a.kind === 'clear' || !('quote' in a)) return;
+    if (a.kind === 'clear' || !('quote' in a) || a.page === BOARD_PAGE) return; // board runs are measured live
     const v = this.d.viewer();
     if (v && a.page >= 1 && a.page <= v.numPages()) void v.textRuns(a.page).catch(() => {});
   }
@@ -77,17 +85,28 @@ export class Director {
     const v = this.d.viewer();
     if (!v) return 'no viewer';
     if (a.kind === 'clear') return this.clear();
-    if (a.page < 1 || a.page > v.numPages()) { console.warn('[director] page out of range', a); return 'page out of range'; }
+    const gate = this.d.gate?.();
+    if (gate) { await gate; if (signal.aborted) return; }
+    // The board glides in once; later board actions find it open and don't wait again.
+    if (a.kind === 'board') { await this.d.openBoard?.(); return; }
+    const onBoard = a.page === BOARD_PAGE;
+    if (onBoard) {
+      if (!this.d.openBoard) return 'no board';
+      await this.d.openBoard();
+      if (signal.aborted) return;
+    } else if (a.page < 1 || a.page > v.numPages()) { console.warn('[director] page out of range', a); return 'page out of range'; }
     const L = v.layers(a.page);
     if (!L) return 'no layers';
     const H = v.spaceHeight(a.page);
     const s = this.d.settings();
     const r = s.inkStyle === 'hand' ? rng(this.seed++) : null;
+    // Board ink is dark unless emphasized; on PDF pages the accent ink stands out from the print.
+    const color = onBoard && !('em' in a && a.em) ? BOARD_INK : s.inkColor;
     // Each action draws into its own group. clear() detaches these, so a mark still animating
     // from a stopped answer keeps writing into a detached node instead of reappearing.
     const own = (parent: SVGGElement) => parent.appendChild(document.createElementNS(SVG, 'g'));
-    const ink = (strokes: Stroke[]) =>
-      drawStrokes(own(L.agent), strokes, { color: s.inkColor, width: s.inkStyle === 'hand' ? 3.4 : 3, mode: s.inkStyle === 'clean' ? 'fade' : 'trace', scale: v.scale(), signal });
+    const ink = (strokes: Stroke[], minMs?: number) =>
+      drawStrokes(own(L.agent), strokes, { color, width: s.inkStyle === 'hand' ? 3.4 : 3, mode: s.inkStyle === 'clean' ? 'fade' : 'trace', scale: v.scale(a.page), signal, minMs });
     const runs = async () => locateQuote(await v.textRuns(a.page), (a as { quote: string }).quote, (a as { near?: { x: number; y: number } }).near);
 
     switch (a.kind) {
@@ -133,12 +152,12 @@ export class Director {
         const anchored = 'quote' in a;
         if (a.kind === 'circle') {
           // Pad anchored text so the loop sits around it, not on it; keep tiny targets readable.
-          const rx = anchored ? Math.max(12, box.w / 2 + 8) : box.w / 2;
-          const ry = anchored ? Math.max(12, box.h / 2 + 7) : box.h / 2;
-          return ink([circleStroke({ x: box.x + box.w / 2, y: box.y + box.h / 2 }, rx, ry, r)]);
+          const rx = anchored ? Math.max(12, box.w / 2 + 10) : box.w / 2;
+          const ry = anchored ? Math.max(12, box.h / 2 + 8) : box.h / 2;
+          return ink([circleStroke({ x: box.x + box.w / 2, y: box.y + box.h / 2 }, rx, ry, r)], CLOSED_MIN_MS);
         }
-        const pad = anchored ? 6 : 0;
-        return ink([boxStroke(box.x - pad, box.y - pad, box.w + pad * 2, box.h + pad * 2, r)]);
+        const pad = anchored ? 10 : 0;
+        return ink([boxStroke(box.x - pad, box.y - pad, box.w + pad * 2, box.h + pad * 2, r)], CLOSED_MIN_MS);
       }
       case 'line':
         await this.reveal(v, a.page, (a.from.y + a.to.y) / 2);
@@ -151,7 +170,12 @@ export class Director {
       case 'label':
         await this.reveal(v, a.page, a.at.y);
         if (signal.aborted) return;
-        return drawLabel(own(L.agent), toSpace(a.at, H), a.text, s.inkStyle, s.inkColor);
+        return drawLabel(own(L.agent), toSpace(a.at, H), a.text, s.inkStyle, color);
+      case 'write': {
+        const b = this.d.board?.();
+        if (!b) return 'no board';
+        return b.write(toSpace(a.at, H), a.text, a.size, { style: s.inkStyle, signal });
+      }
     }
   }
 }
