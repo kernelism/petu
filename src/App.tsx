@@ -24,7 +24,7 @@ import { Caption, joinWords } from './ui/Caption';
 import { AskBar, type Transcript } from './ui/AskBar';
 import { FollowPill } from './ui/FollowPill';
 import { dockPlacement, dockReserve } from './ui/layout';
-import { setSafeBottom } from './desk/layout';
+import { DOCK_GAP, margin, SAFE_TOP, setSafeBottom } from './desk/layout';
 import { takeSentences } from './ui/text';
 import type { Action, RawAction } from './script/types';
 import type { Grounding } from './geometry/resolve';
@@ -38,7 +38,7 @@ import { groundingOf, type PageGround } from './agent/context/types';
 
 const params = new URLSearchParams(location.search);
 const DEBUG = params.has('debug');
-// Dev-only review autoplay: ?demo=1 the PDF demo, ?demo=side (or the old name, board) the desk sketch, ?demo=plane the stage.
+// Dev-only review autoplay: ?demo=1 the PDF demo, ?demo=side (or the old name, board) a sketch on the board, ?demo=plane a wide board.
 const demoParam = import.meta.env.DEV ? params.get('demo') : null;
 const DEMO = demoParam === '1' ? DEMO_QUESTION : demoParam === 'side' || demoParam === 'board' ? DEMO_SIDE_QUESTION : demoParam === 'plane' ? DEMO_PLANE_QUESTION : null;
 // Dev-only: ?src=<pdf url>&script=<name> opens that PDF and plays a named script (src/demo/scripts.ts).
@@ -245,7 +245,7 @@ export default function App() {
   const [captionWords, setCaptionWords] = useState<string[]>([]);
   const [captionVisible, setCaptionVisible] = useState(false);
   const [pageTick, setPageTick] = useState(0);
-  /** The desk's mode and page column (the dock centers under it), and whether the student has taken over. */
+  /** The desk's split state and slide column (the dock centres under it), and whether the student has taken over. */
   const [desk, setDesk] = useState<DeskState | null>(null);
   const [paused, setPaused] = useState(false);
   const [viewportW, setViewportW] = useState(window.innerWidth);
@@ -269,7 +269,7 @@ export default function App() {
 
   const viewerRef = useRef<ViewerApi | null>(null);
   const deskRef = useRef<Desk | null>(null);
-  /** The B stage's host: the Desk owns its children. */
+  /** The board's host (and the connectors' overlay): the Desk owns its children. */
   const stageRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
   busyRef.current = busy;
@@ -356,6 +356,29 @@ export default function App() {
     window.addEventListener('resize', measure);
     return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
   }, [hasDoc]);
+
+  // The viewer's visible area ends above the dock (the caption when it shows, else the ask bar), or,
+  // stacked, above the board: no slide content under the dock, no sliver of a page between its parts.
+  const [viewBottom, setViewBottom] = useState(0);
+  const stacked = !!desk?.stacked;
+  const boardY = desk?.board?.y;
+  useLayoutEffect(() => {
+    const dock = dockRef.current;
+    if (!dock) return;
+    const update = () => {
+      const H = window.innerHeight;
+      if (stacked && boardY != null) { setViewBottom(Math.max(0, H - (boardY - margin(window.innerWidth)))); return; }
+      const bar = dock.querySelector<HTMLElement>('.askbar'), cap = dock.querySelector<HTMLElement>('.caption');
+      if (!bar) return;
+      const top = bar.getBoundingClientRect().top - (captionVisible && cap ? cap.offsetHeight : 0);
+      setViewBottom(Math.max(0, H - top + DOCK_GAP));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    dock.querySelectorAll('.askbar, .caption').forEach((e) => ro.observe(e));
+    window.addEventListener('resize', update);
+    return () => { ro.disconnect(); window.removeEventListener('resize', update); };
+  }, [hasDoc, captionVisible, stacked, boardY]);
 
   /** Shows a one-off line in the caption, then fades it. */
   const flash = useCallback((text: string, ms = 4000) => {
@@ -630,6 +653,8 @@ export default function App() {
     clearHide();
     setCaptionVisible(false);
   }, [stopAll]);
+  const closeRef = useRef(onStop);
+  closeRef.current = onStop;
 
   // Dev-only: the eval runner's backend (window.__petu), over the real agent path.
   const evalReady = useRef<{ promise: Promise<void>; resolve(): void } | null>(null);
@@ -674,9 +699,10 @@ export default function App() {
 
   const onReady = useCallback((api: ViewerApi) => {
     viewerRef.current = api;
-    // One desk per viewer (a new document remounts the viewer): regions, connectors, the stage.
+    // One desk per viewer (a new document remounts the viewer): the board, its sections, connectors.
     deskRef.current?.destroy();
-    const desk = new Desk(api.deskHost(), stageRef.current!);
+    // The board's ×: an answer still playing stops first (its ink would have nowhere to go).
+    const desk = new Desk(api.deskHost(), stageRef.current!, { onClose: () => { if (busyRef.current) closeRef.current(); void deskRef.current?.dismiss(); } });
     deskRef.current = desk;
     desk.subscribe((s) => { setDesk(s); setPaused(desk.follow.paused()); });
     if (import.meta.env.DEV) { window.__viewer = api; window.__desk = desk; }
@@ -701,17 +727,18 @@ export default function App() {
     else if (DEMO) void openSample();
   }, [open, openSample]);
 
-  // Esc between answers leaves the stage (while playing, Esc stops the answer first).
+  // Esc between answers closes the board (while playing, Esc stops the answer first).
+  const boardOpen = !!desk && desk.split !== 'none';
   useEffect(() => {
-    if (desk?.mode !== 'b') return;
+    if (!boardOpen) return;
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-      if (e.key === 'Escape' && !busyRef.current && !e.defaultPrevented && !typing) void deskRef.current?.exitStage();
+      if (e.key === 'Escape' && !busyRef.current && !e.defaultPrevented && !typing && !document.querySelector('.popover')) void deskRef.current?.dismiss();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [desk?.mode]);
+  }, [boardOpen]);
 
   const onPageChange = useCallback((p: number) => {
     setPage(p);
@@ -731,10 +758,11 @@ export default function App() {
 
   return (
     <>
-      {/* Neighbouring pages step back only while an answer is drawing beside a page and the student follows it. */}
+      {/* Neighbouring pages step back only while an answer is drawing on the board and the student follows it.
+          --view-top/--view-bottom: the viewer's visible band (under the chrome row, above the dock). */}
       <main
-        className={`stage${desk?.sketching && desk.mode === 'c' && desk.following && busy ? ' is-sketching' : ''}`}
-        style={{ '--glide': `${GLIDE_MS}ms` } as CSSProperties}
+        className={`stage${desk?.sketching && desk.following && busy ? ' is-sketching' : ''}`}
+        style={{ '--glide': `${GLIDE_MS}ms`, '--view-top': `${SAFE_TOP}px`, '--view-bottom': `${viewBottom}px` } as CSSProperties}
       >
         <PdfViewer
           doc={doc}
@@ -743,7 +771,7 @@ export default function App() {
           renderOverlay={(p, H) => <StudentInkLayer page={p} spaceH={H} />}
         />
       </main>
-      {/* B: the takeover stage (src/desk/Desk.ts fills it). Above the pages, below the chrome. */}
+      {/* The board and the connectors' overlay (src/desk/Desk.ts fills it). Above the pages, below the chrome. */}
       <div ref={stageRef} className="desk-stage" />
       <TopBar
         fileName={fileName}

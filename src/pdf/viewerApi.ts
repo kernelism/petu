@@ -31,6 +31,6 @@ export interface ViewerApi {
   ensureSize(page: number): Promise<void>;
   /** Stops a programmatic glide in flight (a stopped answer must not keep scrolling). */
   cancelScroll(): void;
-  /** The viewer's side of the desk (lanes, the desk layer, B's card transform, user-intent events). */
+  /** The viewer's side of the desk (the split glide, scroll and user-intent events). */
   deskHost(): DeskHost;
 }

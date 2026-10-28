@@ -45,9 +45,9 @@ describe('DEMO_SCRIPT (PDF only)', () => {
 });
 
 describe('DEMO_SIDE_SCRIPT (C)', () => {
-  it('sketches beside page 3 in a medium region, early in the stream', () => {
+  it('opens the board for page 3 with a normal section, early in the stream', () => {
     const as = parseAll(DEMO_SIDE_SCRIPT);
-    expect(as.find((a) => a.kind === 'sketch')).toEqual({ kind: 'sketch', id: 'side', page: 3, size: 'm', place: 'auto' });
+    expect(as.find((a) => a.kind === 'sketch')).toEqual({ kind: 'sketch', id: 'side', page: 3, size: 'm' });
     expect(DEMO_SIDE_SCRIPT.indexOf('{{sketch')).toBeLessThan(160);
   });
   it('connects the slide\'s x to the sketch\'s x', () => {

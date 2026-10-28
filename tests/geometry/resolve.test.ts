@@ -17,7 +17,7 @@ const ground: Grounding = {
 
 /** The spike's failing case, written relationally: twice as far, image points on the rays. */
 const script: RawAction[] = [
-  { kind: 'sketch', id: 's', page: 40, size: 'm', place: 'auto', fit: true },
+  { kind: 'sketch', id: 's', page: 40, size: 'm', fit: true },
   { kind: 'let', region: 's', defs: [['O', P('300,600')], ['O′', P('700,600')], ['L', P('150,500')], ['R', P('850,500')], ['X', P('500,300')], ['M', P('mid(O,O′)')], ['X2', P('along(M,X,2)')]] },
   { kind: 'line', region: 's', from: P('O'), to: P('X2'), weight: 'secondary' },
   { kind: 'point', region: 's', at: P('meet(O,X2,L,R)'), text: 'x', id: 'x2' },
@@ -63,7 +63,7 @@ describe('Figures', () => {
   });
   it('unknown names skip (never guess); unfitted regions keep literal coords', () => {
     const f = new Figures(ground);
-    f.note({ kind: 'sketch', id: 'k', page: 3, size: 'm', place: 'auto' });
+    f.note({ kind: 'sketch', id: 'k', page: 3, size: 'm' });
     expect(f.resolve({ kind: 'point', region: 'k', at: P('Q') })).toBe('unknown point Q');
     expect(f.resolve({ kind: 'line', region: 'k', from: P('10,20'), to: P('30,40') })).toEqual({ kind: 'line', region: 'k', from: { x: 10, y: 20 }, to: { x: 30, y: 40 } });
   });
@@ -85,7 +85,7 @@ describe('Figures', () => {
   });
   it('a connector end naming a let-only point resolves to that point; an element id stays a ref', () => {
     const f = new Figures(ground);
-    f.note({ kind: 'sketch', id: 'k', page: 3, size: 'm', place: 'auto' });
+    f.note({ kind: 'sketch', id: 'k', page: 3, size: 'm' });
     f.note({ kind: 'let', region: 'k', defs: [['X', P('300,400')]] });
     f.note({ kind: 'point', region: 'k', at: P('500,500'), id: 'Y' });
     expect(f.resolve({ kind: 'connect', from: { page: 3, at: { x: 1, y: 2 } }, to: { region: 'k', ref: 'X' } })).toMatchObject({ to: { region: 'k', at: { x: 300, y: 400 } } });
@@ -97,7 +97,7 @@ describe('Figures', () => {
   it('a fitted region frames sized elements whole (box corners, circle radii), not just their anchors', () => {
     const f = new Figures(ground);
     const acts: RawAction[] = [
-      { kind: 'sketch', id: 'n', page: 15, size: 'm', place: 'auto', fit: true },
+      { kind: 'sketch', id: 'n', page: 15, size: 'm', fit: true },
       { kind: 'let', region: 'n', defs: [['X', P('-50,-50')], ['A', P('-50,-150')], ['C', P('-50,50')]] },
       { kind: 'box', region: 'n', at: P('A'), w: 100, h: 100 },
       { kind: 'box', region: 'n', at: P('C'), w: 100, h: 100 },

@@ -2,8 +2,8 @@
 /**
  * Coordinates in scripts.
  * - On a page (`p=`): model coords, x 0–1000 across the page width, y 0–1000 down its height.
- * - In a sketch region (`on=<id>`): region-local coords, x 0–1000, y 0–700. These are already
- *   region space (no y scaling).
+ * - In a sketch region (`on=<id>`, a section on the board): region-local coords, x 0–1000,
+ *   y 0–700. These are already region space (no y scaling).
  */
 export type Pt = { x: number; y: number };
 
@@ -15,8 +15,8 @@ export const REGION_H = 700;
 export type Target = { page: number; region?: never } | { region: string; page?: never };
 
 export type TextSize = 's' | 'm' | 'l';
+/** A sketch's size: `l` widens the board (split 0.4 : 0.6); `s` and `m` are the normal split. */
 export type RegionSize = 's' | 'm' | 'l';
-export type Place = 'auto' | 'right' | 'left' | 'below';
 /** Where a label sits relative to its anchor. */
 export type Compass = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw';
 
@@ -93,8 +93,11 @@ export type ConnectAction = { kind: 'connect'; from: End; to: End; id?: string }
 
 export type LayoutAction =
   | { kind: 'scroll'; page: number; y?: number }
-  /** Reserves region `id` next to page `page`. */
-  | { kind: 'sketch'; id: string; page: number; size: RegionSize; place: Place; fit?: boolean }
+  /**
+   * Appends section `id` to the board. `page` (from `near=pN`) is the slide it explains (default: the
+   * one in view); its body text sets the section's type size. `place=` is accepted and ignored.
+   */
+  | { kind: 'sketch'; id: string; page?: number; size: RegionSize; fit?: boolean }
   | { kind: 'clear' };
 
 export type Action = LayoutAction | DrawAction | RefAction | ConnectAction;

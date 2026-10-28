@@ -1,20 +1,20 @@
 // src/ui/layout.ts
 import type { DeskState } from '../desk/types';
 
-/** The dock is this wide at most, and keeps 16px from its column's edges. */
+/** The dock is this wide at most, and never wider than its column. */
 export const DOCK_MAX = 560;
 
 /**
- * Where the dock (caption + ask bar) sits: centered under the page column in C (the window's
- * center when no lane is reserved), under the canvas on the B stage.
+ * Where the dock (caption + ask bar, one unit) sits: centred under the slide column (the page
+ * column while reading, the slide column pinned left in a split), as wide as it up to DOCK_MAX.
  */
 export function dockPlacement(W: number, s: DeskState | null): { x: number; w: number } {
-  const col = !s ? { x: 0, w: W } : s.mode === 'b' && s.canvas ? s.canvas : s.column;
-  return { x: col.x + col.w / 2, w: Math.max(0, Math.min(DOCK_MAX, col.w - 32)) };
+  const col = s ? s.column : { x: 16, w: W - 32 };
+  return { x: col.x + col.w / 2, w: Math.max(0, Math.min(DOCK_MAX, col.w)) };
 }
 
-/** The caption sits this far above the ask bar (ui.css: bottom: calc(100% + 6px)). */
-const CAPTION_GAP = 6;
+/** The caption sits right on the ask bar: one unit, no gap (ui.css .caption bottom: 100%). */
+const CAPTION_GAP = 0;
 /** The question line above the narration: 18px line + 4px margin (ui.css .caption-q). */
 const QUESTION_LINE = 22;
 /** Framed content keeps this much air above the caption. */

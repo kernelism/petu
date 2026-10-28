@@ -95,14 +95,15 @@ export function parseTag(body: string): RawAction | null {
   switch (name) {
     case 'clear': return { kind: 'clear' };
     case 'sketch': {
+      // A section on the board. `near=pN` names the slide it explains (optional: the visible one);
+      // `place=` is accepted and ignored (the board has one place); `size=l` widens the board.
       const sid = id(args.id);
-      const page = num(args.near?.replace(/^p/i, ''));
+      const n = args.near != null ? num(args.near.replace(/^p/i, '')) : undefined;
+      const page = n != null && n >= 1 && Number.isInteger(n) ? n : undefined;
       const size = (args.size ?? 'm').toLowerCase();
-      const place = (args.place ?? 'auto').toLowerCase();
-      if (!sid || page === undefined || page < 1 || !Number.isInteger(page)) return null;
+      if (!sid) return null;
       if (size !== 's' && size !== 'm' && size !== 'l') return null;
-      if (place !== 'auto' && place !== 'right' && place !== 'left' && place !== 'below') return null;
-      return { kind: 'sketch', id: sid, page, size, place, ...(flags.has('fit') ? { fit: true } : {}) };
+      return { kind: 'sketch', id: sid, ...(page != null ? { page } : {}), size, ...(flags.has('fit') ? { fit: true } : {}) };
     }
     case 'emph':
     case 'fade': {

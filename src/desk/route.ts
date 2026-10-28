@@ -8,7 +8,7 @@ export type Edge = { side: 'right' | 'left' | 'bottom'; at: number };
 
 /**
  * Where a page has content: a coarse grid over the page (row-major, 1 = something is printed in
- * that cell). Resolution-independent, so one mask serves the page in C and on the B card.
+ * that cell). Resolution-independent, so one mask serves the page at any width.
  */
 export type ContentMask = { cols: number; rows: number; cells: Uint8Array };
 
@@ -34,8 +34,8 @@ const TURN_COST = 12;
 /** How much the element's height pulls the sideways run toward it. */
 const PULL = 0.35;
 
-/** Which page edge faces a region placed `mode` of the page (B: the card's right edge). */
-export function edgeFor(mode: 'right' | 'left' | 'below' | 'b', page: Rect): Edge {
+/** Which page edge faces something placed `mode` of the page (the board: right, or below when stacked). */
+export function edgeFor(mode: 'right' | 'left' | 'below', page: Rect): Edge {
   if (mode === 'left') return { side: 'left', at: page.x };
   if (mode === 'below') return { side: 'bottom', at: page.y + page.h };
   return { side: 'right', at: page.x + page.w };
@@ -88,7 +88,7 @@ const ease = (a: SPt, b: SPt): Seg => {
 
 /**
  * A connector from an anchor on a page (`from`) to an element in a region (`to`), both in one
- * frame (desk px in C, stage px in B). It leaves the anchor, runs sideways along a clear band of
+ * frame (view px). It leaves the anchor, runs sideways along a clear band of
  * the page to its edge, crosses it once, and eases into the element:
  * - straight out at the anchor's height when that line to the edge is clear;
  * - else up or down to the nearest clear horizontal band (the element's height breaks ties), round

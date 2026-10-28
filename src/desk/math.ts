@@ -5,6 +5,8 @@ import { reveal } from './render';
 import type { Pace } from './types';
 
 type Katex = typeof import('katex').default;
+/** The longest preloadMath waits for KaTeX's fonts. */
+export const FONT_WAIT_MS = 800;
 let katexP: Promise<Katex> | null = null;
 
 /**
@@ -15,16 +17,22 @@ export function preloadMath(): Promise<Katex> {
   katexP ??= Promise.all([import('katex'), import('katex/dist/katex.min.css')]).then(async ([m]) => {
     // Measure with the real glyphs: a formula laid out in fallback fonts measures too narrow.
     const fonts = typeof document !== 'undefined' ? document.fonts : undefined;
-    if (fonts?.load) await Promise.all(['KaTeX_Main', 'KaTeX_Math', 'KaTeX_Size1', 'KaTeX_Size2'].map((f) => fonts.load(`20px ${f}`).catch(() => []))).catch(() => {});
+    // Bounded: WebKit can leave fonts.load pending (seen headless), which held every label with a
+    // math symbol until its action timed out. Past FONT_WAIT_MS it measures with what has loaded.
+    if (fonts?.load) {
+      const all = Promise.all(['KaTeX_Main', 'KaTeX_Math', 'KaTeX_Size1', 'KaTeX_Size2'].map((f) => fonts.load(`20px ${f}`).catch(() => []))).catch(() => {});
+      await Promise.race([all, new Promise((r) => setTimeout(r, FONT_WAIT_MS))]);
+    }
     return m.default;
   }).catch((e) => { katexP = null; throw e; }); // a failed chunk load (offline blip) is retried next time
   return katexP;
 }
 
-/** TeX → KaTeX HTML, or null if it doesn't parse (a garbled formula is worse than none). */
-export function texToHtml(katex: Katex, tex: string): string | null {
+/** TeX → KaTeX HTML, or null if it doesn't parse (a garbled formula is worse than none). `display`: board equations, set in display style. */
+export function texToHtml(katex: Katex, tex: string, display = false): string | null {
   try {
-    return katex.renderToString(tex, { throwOnError: true, output: 'html', displayMode: false, trust: false, strict: 'ignore', maxSize: 10, maxExpand: 200 });
+    // Display style (full-size fractions and limits) without display mode's block wrapper and margins.
+    return katex.renderToString(display ? `\\displaystyle ${tex}` : tex, { throwOnError: true, output: 'html', displayMode: false, trust: false, strict: 'ignore', maxSize: 10, maxExpand: 200 });
   } catch {
     return null;
   }
