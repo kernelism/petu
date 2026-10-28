@@ -1,6 +1,6 @@
 // tests/ink/strokesV2.test.ts
 import { describe, it, expect } from 'vitest';
-import { curveStroke, arcStroke, bisector, braceStroke, dotStroke, rng } from '../../src/ink/agent/strokes';
+import { curveStroke, crossesItself, arcStroke, bisector, braceStroke, dotStroke, rng } from '../../src/ink/agent/strokes';
 
 const d = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -46,5 +46,16 @@ describe('toolkit v2 strokes', () => {
     const s = dotStroke({ x: 10, y: 10 }, 5);
     expect(d(s[0], s[s.length - 1])).toBeLessThan(1e-9);
     for (const p of s) expect(d(p, { x: 10, y: 10 })).toBeCloseTo(5);
+  });
+  it('a curve through points out of order crosses itself; an ordered wave or a closed loop does not', () => {
+    const P = (xs: number[][]) => xs.map(([x, y]) => ({ x, y }));
+    // A wave listed out of order (the spline doubles back): the P1 failure.
+    expect(crossesItself(curveStroke(P([[0, 0], [25, -70], [100, 0], [75, 70], [200, 0], [125, -70], [300, 0], [175, 70], [400, 0], [225, -70], [275, 70]]), null))).toBe(true);
+    // The same wave in order, left to right.
+    expect(crossesItself(curveStroke(P([[0, 0], [25, -70], [50, 0], [75, 70], [100, 0], [125, -70], [150, 0]]), null))).toBe(false);
+    // A closed loop meets itself only at its ends.
+    expect(crossesItself(curveStroke(P([[0, 0], [100, 0], [100, 100], [0, 100], [0, 0]]), null))).toBe(false);
+    // A figure eight.
+    expect(crossesItself(P([[0, 0], [100, 100], [100, 0], [0, 100]]))).toBe(true);
   });
 });

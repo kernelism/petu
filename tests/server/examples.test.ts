@@ -55,10 +55,10 @@ function sentences(text: string) {
 }
 
 describe('prompt examples', () => {
-  it('cover three different question types, from the fixture and off-domain synthetic pages only', () => {
-    expect(EXAMPLES).toHaveLength(3);
-    expect(EXAMPLES.map((e) => e.title.split(':')[0])).toEqual(['point-at', 'what-if', 'derive']);
-    expect(EXAMPLES.map((e) => e.source)).toEqual(['fixture', 'synthetic', 'synthetic']);
+  it('cover four different question types, from the fixture and off-domain synthetic pages only', () => {
+    expect(EXAMPLES).toHaveLength(4);
+    expect(EXAMPLES.map((e) => e.title.split(':')[0])).toEqual(['point-at', 'what-if', 'derive', 'why']);
+    expect(EXAMPLES.map((e) => e.source)).toEqual(['fixture', 'synthetic', 'synthetic', 'synthetic']);
   });
 
   for (const ex of EXAMPLES) {
@@ -83,7 +83,8 @@ describe('prompt examples', () => {
       it('follows the answer shape', () => {
         const { text, acts } = run(ex);
         const ss = sentences(text);
-        expect(acts[0].kind).toBe('scroll');
+        // On the visible page the answer opens with its mark (no scroll: the page is already in view).
+        expect(DRAW.has(acts[0].kind) && 'page' in acts[0] && acts[0].page === ex.page, JSON.stringify(acts[0])).toBe(true);
         // Sentence 1: the answer in ≤ 16 words, already pointing.
         expect(ss[0].words.length).toBeLessThanOrEqual(16);
         expect(ss[0].tags.some((k) => DRAW.has(k))).toBe(true);

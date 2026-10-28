@@ -37,11 +37,11 @@ describe('Scheduler', () => {
     expect(log).toEqual(['0:Hello', '100:there', '200:friend,', '300:how', '400:are', '500:you?', '600:done']);
   });
 
-  it('starts once ~1.5s of narration is buffered, even without punctuation', () => {
+  it('starts once ~0.6s of narration is buffered, even without punctuation', () => {
     const { s, log } = make();
-    s.push(words('a b c d e f g h i j k l m n')); // 1400ms
+    s.push(words('a b c d e')); // 500ms
     expect(log).toEqual([]);
-    s.push([w('o')]); // 1500ms
+    s.push([w('f')]); // 600ms
     expect(log).toEqual(['0:a']);
   });
 

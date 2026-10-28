@@ -2,8 +2,8 @@
 /**
  * Few-shot examples for the system prompt. RULE: never from a deck or page the eval uses, never from
  * the founder's course material. Sources: the committed fixture (public/fixtures/epipolar.pdf p3,
- * with its real grounding listing) and two synthetic pages on everyday topics far from any course
- * deck (shadows, a sum), so the model learns the moves, not the content.
+ * with its real grounding listing) and three synthetic pages on everyday topics far from any course
+ * deck (shadows, a sum, pizza sizes), so the model learns the moves, not the content.
  *
  * Every script is executable: tests/server/examples.test.ts strips the plan, parses, resolves against
  * the example's own listing, lints, and checks the answer shape and the geometry. Writing these by
@@ -44,7 +44,7 @@ t11 926 925–934: 3
 #g1 figure 138,348 225×268 "image 1 x"
 #g2 figure 588,348 225×268 "image 2"
 #s1 line #d1→#d2`,
-    script: String.raw`{{scroll p=3}}{{circle p=3 mark=#d2 em}} C′ is the second camera, the one that takes image 2. It looks out through {{box p=3 mark=#g2}} this panel. Its partner, {{circle p=3 mark=#d1}} C, takes image 1. One dot in C's picture becomes a whole line in image 2: {{underline p=3 "l'" near=310,220}} l′.`,
+    script: String.raw`{{circle p=3 mark=#d2 em}} C′ is the second camera, the one that takes image 2. It looks out through {{box p=3 mark=#g2}} this panel. Its partner, {{circle p=3 mark=#d1}} C, takes image 1. One dot in C's picture becomes a whole line in image 2: {{underline p=3 "l'" near=310,220}} l′.`,
   },
   {
     title: 'what-if: a fitted sketch built from named points',
@@ -63,7 +63,7 @@ t6 890 500–590: shadow
 #s1 line #d1→150,850 "post"
 #s2 line 450,850→450,640 "you"
 #s3 line 60,850→940,850`,
-    script: String.raw`{{scroll p=12}} Twice as far from the lamp, {{circle p=12 mark=#a1}} your shadow is twice as long. <plan>Side view, ground y=0, up is negative. Given: lamp foot O=0,0, lamp L=0,-400; you at P=200,0 with head H=200,-150. Ground is line O,P. Tip S=meet(L,H,O,P) = 320,0: shadow 120. Twice as far: P2=400,0, H2=400,-150, tip S2=meet(L,H2,O,P) = 640,0: shadow 240. Draw: lamp, you, ray L to S, shadow brace; you again, ray L to S2, brace (em). Braces run right to left so they hang below the ground.</plan>{{sketch id=s near=p12 fit}}{{let on=s O=0,0 L=0,-400 P=200,0 H=200,-150 P2=400,0 H2=400,-150 S=meet(L,H,O,P) S2=meet(L,H2,O,P)}} {{point on=s at=L "lamp" dir=w}} Here's the lamp, seen from the side. {{line on=s from=P to=H}} You stand a few steps away. {{line on=s from=L to=S weight=secondary}} The ray that just clears your head lands here. {{brace on=s from=S to=P "shadow"}} Everything between your feet and that spot is shadow. {{line on=s from=P2 to=H2}} Now step back to twice the distance. {{line on=s from=L to=S2 weight=secondary}} The ray over your head comes in flatter. {{brace on=s from=S2 to=P2 "twice as long" em}} It lands twice as far out, and the shadow doubles. Your shadow is always the same fraction of your distance from the lamp.`,
+    script: String.raw`{{circle p=12 mark=#a1}} Twice as far from the lamp, your shadow is twice as long. <plan>Side view, ground y=0, up is negative. Given: lamp foot O=0,0, lamp L=0,-400; you at P=200,0 with head H=200,-150. Ground is line O,P. Tip S=meet(L,H,O,P) = 320,0: shadow 120. Twice as far: P2=400,0, H2=400,-150, tip S2=meet(L,H2,O,P) = 640,0: shadow 240. Draw: lamp, you, ray L to S, shadow brace; you again, ray L to S2, brace (em). Braces run right to left so they hang below the ground.</plan>{{sketch id=s near=p12 fit}}{{let on=s O=0,0 L=0,-400 P=200,0 H=200,-150 P2=400,0 H2=400,-150 S=meet(L,H,O,P) S2=meet(L,H2,O,P)}} {{point on=s at=L "lamp" dir=w}} Here's the lamp, seen from the side. {{line on=s from=P to=H}} You stand a few steps away. {{line on=s from=L to=S weight=secondary}} The ray that just clears your head lands here. {{brace on=s from=S to=P "shadow"}} Everything between your feet and that spot is shadow. {{line on=s from=P2 to=H2}} Now step back to twice the distance. {{line on=s from=L to=S2 weight=secondary}} The ray over your head comes in flatter. {{brace on=s from=S2 to=P2 "twice as long" em}} It lands twice as far out, and the shadow doubles. Your shadow is always the same fraction of your distance from the lamp.`,
   },
   {
     title: 'derive: point at the result, then build the proof as a picture',
@@ -74,6 +74,18 @@ t6 890 500–590: shadow
 t1 60 40–450: Adding up 1 to n
 t2 210 60–560 math: 1 + 2 + ⋯ + n = n(n+1)/2
 t3 400 40–720: Check with n = 4: 1 + 2 + 3 + 4 = 10, and 4 · 5 / 2 = 10.`,
-    script: String.raw`{{scroll p=5}}{{highlight p=5 "n(n+1)/2"}} Two copies of this sum fill a rectangle, so the sum is half of it. <plan>n=4 as unit squares 100 wide, ground y=0, up negative. Frame A=0,0 B=400,0 C=400,-500 D=0,-500: n wide, n+1 tall. M=0,140 holds the result under it. Staircase: columns 1,2,3,4 tall. Its copy, flipped, fills the rest of the frame. Braces: C to B on the right (n+1), B to A below (n). Then "2 × sum = n(n+1)" at M; box the page's formula last (em).</plan>{{sketch id=d near=p5 fit}}{{let on=d A=0,0 B=400,0 C=400,-500 D=0,-500 M=0,140}} {{shade on=d pts=A B 400,-400 300,-400 300,-300 200,-300 200,-200 100,-200 100,-100 0,-100 outline}} Stack the sum as columns: one, two, three, up to n. {{shade on=d pts=0,-100 100,-100 100,-200 200,-200 200,-300 300,-300 300,-400 400,-400 C D outline}} A flipped copy fits exactly on top. {{brace on=d from=C to=B "n + 1"}} Now every column is n plus one tall. {{brace on=d from=B to=A "n"}} And there are n columns. {{math on=d at=M "2 \times \text{sum} = n(n+1)" size=m}} So two copies of the sum make n times n plus one. {{box p=5 mark=#t2 em}} Halve it, and you get the formula on the slide.`,
+    script: String.raw`{{highlight p=5 "n(n+1)/2"}} Two copies of this sum fill a rectangle, so the sum is half of it. <plan>n=4 as unit squares 100 wide, ground y=0, up negative. Frame A=0,0 B=400,0 C=400,-500 D=0,-500: n wide, n+1 tall. M=0,140 holds the result under it. Staircase: columns 1,2,3,4 tall. Its copy, flipped, fills the rest of the frame. Braces: C to B on the right (n+1), B to A below (n). Then "2 × sum = n(n+1)" at M; box the page's formula last (em).</plan>{{sketch id=d near=p5 fit}}{{let on=d A=0,0 B=400,0 C=400,-500 D=0,-500 M=0,140}} {{shade on=d pts=A B 400,-400 300,-400 300,-300 200,-300 200,-200 100,-200 100,-100 0,-100 outline}} Stack the sum as columns: one, two, three, up to n. {{shade on=d pts=0,-100 100,-100 100,-200 200,-200 200,-300 300,-300 300,-400 400,-400 C D outline}} A flipped copy fits exactly on top. {{brace on=d from=C to=B "n + 1"}} Now every column is n plus one tall. {{brace on=d from=B to=A "n"}} And there are n columns. {{math on=d at=M "2 \times \text{sum} = n(n+1)" size=m}} So two copies of the sum make n times n plus one. {{box p=5 mark=#t2 em}} Halve it, and you get the formula on the slide.`,
+  },
+  {
+    title: 'why: show the cause at work, not the definition',
+    source: 'synthetic',
+    question: 'Why is the big pizza the better deal?',
+    page: 7,
+    listing: String.raw`PAGE 7 (visible; 16:9 slide; image attached)
+t1 60 40–420: Pizza prices
+t2 180 40–820: A 16-inch pizza costs twice as much as an 8-inch one.
+t3 240 40–560: Which one is the better deal?
+#i1 image 600,330 300×300`,
+    script: String.raw`{{highlight p=7 "twice as much"}} Twice as wide holds four times the pizza, for only twice the price. <plan>Squares stand in for pizzas, up is negative. Small: A=0,0 B=200,0 C=200,-200 D=0,-200. Big, twice as wide: E=300,0 F=700,0 G=700,-400 H=300,-400. Its two midlines cut it into four smalls. Note at T=300,80 under it. Draw: small, big, the down cut, the across cut (em), the note.</plan>{{sketch id=z near=p7 fit}}{{let on=z A=0,0 B=200,0 C=200,-200 D=0,-200 E=300,0 F=700,0 G=700,-400 H=300,-400 T=300,80}} {{shade on=z pts=A B C D outline}} Here's the small pizza, drawn square to keep it simple. {{shade on=z pts=E F G H outline}} The big one is twice as wide, and twice as tall. {{line on=z from=mid(E,F) to=mid(H,G) dash}} Cut it down the middle. {{line on=z from=mid(E,H) to=mid(F,G) dash em}} Cut it across, and four small pizzas fit inside. {{write on=z at=T "2× the price, 4× the food" size=m}} So twice the price buys four times the food: double the width, four times the area.`,
   },
 ];

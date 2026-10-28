@@ -1,7 +1,7 @@
 // src/desk/elements.ts
 import type { SPt, SRect } from '../geometry/space';
 import type { DrawAction, End, InkAction, RefAction, Target, Weight } from '../script/types';
-import { circleStroke, lineStroke, arrowStrokes, boxStroke, curveStroke, arcStroke, bisector, braceStroke, type Stroke } from '../ink/agent/strokes';
+import { circleStroke, lineStroke, arrowStrokes, boxStroke, curveStroke, crossesItself, arcStroke, bisector, braceStroke, type Stroke } from '../ink/agent/strokes';
 import { drawStrokes, prefersReducedMotion } from '../ink/agent/animate';
 import { weightOf, weightStyle } from '../ink/agent/weights';
 import { token, tokenNum } from '../ink/agent/tokens';
@@ -184,8 +184,11 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       return strokePlan(a, ctx, env, { strokes: [lineStroke(P(a.from), P(a.to), r)], dash: a.dash });
     case 'arrow':
       return strokePlan(a, ctx, env, { strokes: arrowStrokes(P(a.from), P(a.to), r), dash: a.dash });
-    case 'curve':
+    case 'curve': {
+      // Points out of order make the spline loop back on itself: skip it, never draw it wrong.
+      if (crossesItself(curveStroke(a.pts.map(P), null))) { console.warn('[desk] curve crosses itself', where(ctx.target)); return 'curve crosses itself'; }
       return strokePlan(a, ctx, env, { strokes: [curveStroke(a.pts.map(P), r)], dash: a.dash });
+    }
     case 'angle': {
       const c = P(a.at), rad = a.r ?? px(28); // default: 28 CSS px at draw time
       const arc = arcStroke(c, P(a.from), P(a.to), rad);

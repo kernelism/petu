@@ -104,6 +104,27 @@ export function curveStroke(pts: SPt[], r: Rng | null, per = 16): Stroke {
   });
 }
 
+/**
+ * Whether a polyline crosses itself (two non-adjacent segments properly intersect). A closed path
+ * (first point = last) may meet itself at its ends. A spline through points given out of order
+ * loops back on itself; such a curve is skipped rather than drawn wrong.
+ */
+export function crossesItself(s: Stroke): boolean {
+  const n = s.length - 1;
+  if (n < 3) return false;
+  const closed = Math.hypot(s[0].x - s[n].x, s[0].y - s[n].y) < 1e-6;
+  const cross = (o: SPt, a: SPt, b: SPt) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 2; j < n; j++) {
+      if (closed && i === 0 && j === n - 1) continue;
+      const [p, q, r, t] = [s[i], s[i + 1], s[j], s[j + 1]];
+      const d1 = cross(r, t, p), d2 = cross(r, t, q), d3 = cross(p, q, r), d4 = cross(p, q, t);
+      if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+    }
+  }
+  return false;
+}
+
 /** Arc of radius `rad` around `c` from the ray toward `a` to the ray toward `b`, the smaller way round. */
 export function arcStroke(c: SPt, a: SPt, b: SPt, rad: number): Stroke {
   const a0 = Math.atan2(a.y - c.y, a.x - c.x);

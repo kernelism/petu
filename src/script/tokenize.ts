@@ -20,7 +20,7 @@ const POINT = /^-?\d*\.?\d+,-?\d*\.?\d+$/;
 /**
  * Splits a tag body into name, args, quotes and flags. Quoted spans ("…" or “…”) may contain
  * spaces anywhere, including inside a value (`from=p3:"image 1"`). Bare points right after
- * `pts=` continue the list (`pts=1,2 3,4 5,6` → args.pts = "1,2 3,4 5,6").
+ * `pts=` continue the list (`pts=1,2 3,4 5,6` → args.pts = "1,2 3,4 5,6"). A repeated key returns null.
  */
 export function tokenize(body: string): Tokens | null {
   const raw: string[] = [];
@@ -47,6 +47,8 @@ export function tokenize(body: string): Tokens | null {
     const eq = t.indexOf('=');
     const q = t.search(/["“]/);
     if (eq > 0 && (q < 0 || eq < q)) {
+      // A key given twice (`from=D to=C to=E`) is ambiguous: the tag is malformed, never guessed.
+      if (Object.prototype.hasOwnProperty.call(out.rawArgs, t.slice(0, eq))) return null;
       lastKey = t.slice(0, eq).toLowerCase();
       out.args[lastKey] = unquote(t.slice(eq + 1));
       out.rawArgs[t.slice(0, eq)] = out.args[lastKey];

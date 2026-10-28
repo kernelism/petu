@@ -138,6 +138,13 @@ describe('buildElement', () => {
     expect(e.registry.get('p')!.group.style.opacity).toBe('0.25');
     expect(e.registry.obstacles({ region: 'side' })).toHaveLength(0);
   });
+  it('a curve whose points loop back on themselves is skipped, an ordered one draws', async () => {
+    const { e } = env();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const P = (xs: number[][]) => xs.map(([x, y]) => ({ x, y }));
+    expect(await buildElement({ kind: 'curve', region: 'side', pts: P([[0, 300], [25, 230], [100, 300], [75, 370], [200, 300], [125, 230], [300, 300], [175, 370], [400, 300], [225, 230], [275, 370]]) }, e)).toBe('curve crosses itself');
+    expect(typeof await buildElement({ kind: 'curve', region: 'side', pts: P([[0, 300], [25, 230], [50, 300], [75, 370], [100, 300]]) }, e)).not.toBe('string');
+  });
   it('plot needs axes and a valid fn', async () => {
     const { e } = env();
     vi.spyOn(console, 'warn').mockImplementation(() => {});

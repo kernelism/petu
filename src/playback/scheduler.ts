@@ -16,8 +16,12 @@ export type SchedulerOptions = {
   leadMs?(action: Action): number;
 };
 
-/** Start once a whole clause is buffered, or this much narration. */
-export const START_MS = 1500;
+/**
+ * Start once a whole clause is buffered, or this much narration (~2 words). A model streams words
+ * 20–30× faster than they are spoken, so a short head start never runs dry; a longer one only
+ * delays the first caption word (P2 measured 1500ms costing up to ~60ms on the first word).
+ */
+export const START_MS = 600;
 /** After running dry, resume once a whole clause is buffered, or this much narration (or the stream ended). */
 export const RESUME_MS = 1000;
 /** Out of words for this long with actions waiting on the next word: fire them anyway so ink keeps moving. */

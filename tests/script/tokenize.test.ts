@@ -35,4 +35,8 @@ describe('tokenize', () => {
     expect(tokenize('label p=1 at=1,1 "oops')).toBeNull();
     expect(tokenize('   ')).toBeNull();
   });
+  it('a key given twice is malformed (never guessed), but let names differing in case are two names', () => {
+    expect(tokenize('line on=s from=D to=C to=E')).toBeNull();
+    expect(tokenize('let on=s O=0,0 o=1,1')!.rawArgs).toEqual({ on: 's', O: '0,0', o: '1,1' });
+  });
 });
