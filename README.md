@@ -7,8 +7,7 @@ right page, highlights the lines it's talking about, and draws to explain — on
 desk beside it, or on a full-screen canvas for bigger diagrams. Every mark lands on the word that
 refers to it, and the diagram builds up as the explanation goes.
 
-> Status: pre-alpha. Checkpoint 2 (the AI agent) works end to end on your own PDFs through a
-> local dev server. Voice comes later.
+> Status: pre-alpha. Answers run through a local dev server on your own PDFs. Voice comes later.
 
 ## Run it on your own PDFs
 
@@ -24,8 +23,7 @@ Then either:
 
 - **drop a PDF** onto the window, or
 - open it by URL: `http://localhost:5180/?src=<url>`. Files in `public/dev/` (gitignored) are served
-  at `/dev/<name>.pdf`; files in `~/Documents/670/contents` (or the folders in `PETU_PDF_DIRS`) at
-  `/api/dev-pdf/<name>.pdf`.
+  at `/dev/<name>.pdf`; files in the folders listed in `PETU_PDF_DIRS` at `/api/dev-pdf/<name>.pdf`.
 
 Scroll to the page you're asking about, press `/`, type a question, press Enter. The tutor answers
 about the page in view (it also reads the text of the pages around it and can jump elsewhere).
@@ -49,23 +47,17 @@ Add `&debug` to the URL for a small panel (bottom left; click to expand):
 
 ### Spending caps
 
-Every call goes through a persistent ledger (`.petu/spend.json`) that reserves a request's worst
-case before sending and refuses anything that would cross a cap:
-
-- **$40 hard stop** for checkpoint 2 in total (development and evaluation included; can only be
-  lowered);
-- your budget, the `founder` phase: **$21.99**, at most **$3 a day**.
-
-A typical answer costs about half a cent. When a cap is reached the ask bar says which one and
-shows the command that raises it **for one run**, e.g.
+Every call goes through a persistent local ledger (`.petu/spend.json`) that reserves a request's
+worst case before sending and refuses anything that would cross a cap. A typical answer costs about
+half a cent. When a cap is reached the ask bar says which one and shows the command that raises it
+for one run, e.g.
 
 ```bash
-PETU_DAILY_CAP_USD=6 npm run dev      # today's cap
-PETU_CAP_FOUNDER=25 npm run dev       # your phase budget (the $40 total still applies)
+PETU_DAILY_CAP_USD=6 npm run dev
 ```
 
-Command-line values win over `.env`; nobody needs to edit `.env` for caps. Other knobs (model,
-effort, output limit) are listed in `.env.example`.
+Command-line values win over `.env`, so nobody needs to edit `.env` for caps. All knobs (model,
+effort, caps, output limit) are listed in `.env.example`.
 
 ### Known limits
 
@@ -82,20 +74,10 @@ effort, output limit) are listed in `.env.example`.
 
 ### Reporting a bug
 
-Instead of a screen recording, send:
-
-1. the question, the PDF name and the page number;
-2. what the tutor saw on that page:
-   ```bash
-   npm run ground -- path/to/file.pdf 12
-   ```
-   (prints the text lines and figure marks exactly as sent to the model; it reads the PDF locally
-   and makes no API call);
-3. a screenshot with `&debug` open (expand the panel; the skipped actions and their reasons are
-   the most useful part);
-4. optionally the raw answer (costs one more answer): open the PDF by URL with `&eval&page=12`
-   added, then in the browser console run
-   `await __petu.ask("your question"); copy(JSON.stringify(__petu.result()))` and paste the result.
+Include the question, the PDF and page number, and a screenshot with `&debug` open (the skipped
+actions and their reasons are the most useful part). `npm run ground -- file.pdf 12` prints the
+text lines and figure marks exactly as sent to the model; it reads the PDF locally and makes no
+API call.
 
 ## Demos (no API key needed)
 
@@ -117,7 +99,6 @@ npm run typecheck    # tsc --noEmit
 npm run build        # typecheck + production build
 npm run fixture      # regenerate the sample PDF in public/fixtures/
 npm run ground -- <pdf> <page…>                      # the model's view of pages
-npm run eval -- --split dev --config terra-none      # judged eval of the real app (spends)
 ```
 
 Never commit `.env`. Personal test PDFs go in `public/dev/` (gitignored).
@@ -136,7 +117,7 @@ so it points by name, and the engine computes all coordinates: marks, midpoints 
 land exactly. The app parses the stream incrementally, times each action to the word after it,
 and executes it against the viewer and the drawing desk.
 
-See [AGENTS.md](AGENTS.md) for architecture, contracts, plan and scope.
+See [AGENTS.md](AGENTS.md) for architecture and contracts.
 
 ## Roadmap
 
