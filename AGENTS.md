@@ -29,12 +29,30 @@ npm run fixture      # regenerate public/fixtures/epipolar.pdf
 
 Every change ends green on `npx tsc --noEmit && npx vitest run && npm run build`.
 
+Agent and eval tools:
+
+```bash
+npm run ground -- <pdf> <page…>   # prints exactly what the model sees for those pages (lines + marks)
+npm run eval -- --split dev --config terra-none [--n 2] [--only D4,D11] [--replay <runId>] [--no-judge] [--webkit] [--prewarm]
+npm run eval -- --split dev --finish <runId>    # re-do a run's missing judgements/summary, no generation
+node --experimental-strip-types scripts/eval/compare.ts <runIdA> <runIdB>   # judge deltas + verdict
+```
+
+Eval runs start their own dev server on ports 5186–5195 (never 5180, the default `npm run dev`
+port) and write everything to `.petu/eval/runs/<date>-<config>-<prompt>-<qset>/` (gitignored):
+`result.json` recordings (replayable for free), metrics, judge notes and `report.html`, the review
+artefact (stills per sentence, transcript, metrics, judge notes). The test split is held out: only
+`PETU_PHASE=validate` may run it.
+
 Dev URLs (append to the dev server URL):
 - `?demo=1` — PDF-only demo on the fixture
 - `?demo=side` — tutor sketches beside the page ("C")
 - `?demo=plane` — full-screen takeover ("B")
-- `?script=lec09`, `?script=toolkit` — dev scripts (lec09 needs a local, gitignored PDF)
-- `&debug` timing panel · `&noplay` no autoplay · `&style=hand|clean` · `?src=<pdf url>`
+- `?script=lec09`, `?script=toolkit`, `?script=relational` — dev scripts, no API call (lec09 needs a
+  local, gitignored PDF; relational shows the `let`/construction grammar on the fixture)
+- `?src=<pdf url>` — open a PDF by URL (e.g. `/api/dev-pdf/<name>.pdf` from `PETU_PDF_DIRS`)
+- `&page=N` (with `&eval`) · `&debug` latency/cost/plan panel · `&noplay` no autoplay · `&style=hand|clean`
+- `&eval` installs `window.__petu` (eval hooks) · `&nogen` replay only · `&fail=N` cut the stream after N chunks
 
 ## How it works
 
@@ -61,6 +79,55 @@ Pipeline:
 5. `src/pdf/` — viewer, virtualized page slots, text runs, scroll ownership, content mask.
    `src/locate/` — quote → rects on the text layer.
 6. `src/ui/` — ask bar, caption (sentence-windowed), toolbar, follow pill, top bar.
+7. `src/geometry/` — `resolve.ts` turns names, marks and constructions into plain actions just
+   before the toolkit builds them; `figure.ts` fits a `fit` sketch's world coords to its region.
+
+### The agent (checkpoint 2)
+
+**The model names meaning; the engine computes geometry.** One streamed pass, no tool calls.
+
+```
+browser (src/agent/)                         dev server (server/, Vite plugin, localhost only)
+context/build ─ page lines + marks + JPEG ─► POST /api/ask ─► OpenAI Responses API (SSE)
+useAgent / client ◄──── NDJSON AskEvents ─── first message only → <plan> strip → narration clean → lint
+   └► parser → resolver → director → ink      ledger: reserve worst case, book usage (.petu/spend.json)
+```
+
+- `src/agent/context/` — **grounding**. pdf.js text runs become text lines (`t7 436 415–470: …`,
+  equations tagged `math`); the operator list becomes figure marks (`#d` dots, `#s` segments with
+  dot topology `#s3 line #d1→#d3`, `#a` arrows, `#b` boxes, `#i` images, `#g` figures, `#e`
+  equations; ≤ 60 per page). The model gets the outline, the visible page (listing + one JPEG),
+  neighbour text (p±2), search hits, student ink and earlier narration. **What the model sees is
+  what the locator searches**: quotes resolve against the same line index. `npm run ground` prints
+  it.
+- `src/agent/{client,useAgent,prewarm,history}.ts` — NDJSON client, cut-off handling (plays what
+  arrived), prewarm on ask-bar intent, follow-up history (narration only). `evalHooks.ts` is
+  dev-only (`?eval`).
+- `server/` — `plugin.ts` (routes: `/api/ask`, `/api/prewarm`, `/api/spend`, `/api/judge` (eval
+  token), `/api/dev-pdf/`), `env.ts` (the only reader of the key and `PETU_*` knobs), `openai.ts`
+  (request builder: explicit cache breakpoints after the system prompt (12h) and the page block
+  (30m), `prompt_cache_key` per document; one retry before the first text), `sse.ts`,
+  `scriptFilter.ts` (strips the private `<plan>` and markdown/TeX from narration), `lint.ts`,
+  `ledger.ts`, `prices.ts`, `prompt/{system,examples}.ts`.
+- **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p3.2**: hard answer shape (opener ≤ 16
+  words that starts with its mark, one new element per sentence, 3–7 elements, one `em`, a payoff),
+  mechanism over definition, precise marks, per-question-type playbook, few-shot examples from the
+  fixture and synthetic pages only. Bump `PROMPT_VERSION` on any change. `tests/server/prompt.test.ts`
+  keeps every tag parseable, the size bounded and eval-deck vocabulary out.
+- **Model**: `gpt-6.1-terra`, `reasoning.effort: none`, Standard tier (P1 bake-off, the only config
+  under the latency gate). Override per run with `PETU_MODEL` / `PETU_EFFORT`.
+
+**Relational geometry grammar** (parser `src/script/`, resolver `src/geometry/resolve.ts`):
+- Page marks as targets and points: `{{circle p=4 mark=#d3}}`, `{{line p=4 mark=#s3}}`,
+  `{{arrow p=4 from=#d1 to=#d3}}`, `at=#s3.a` / `#s3.b` (segment ends), `{{shade p=4 pts=#d1 #d3 #s2.b outline}}`.
+- Fitted sketches: `{{sketch id=s near=p4 fit}}` takes any world coords (y down); one uniform
+  scale freezes at the region's first build.
+- Names: `{{let on=s O=0,0 X=200,-300 M=mid(O,X)}}`, then `from=O to=M`. Constructions `mid(A,B)`,
+  `along(A,B,t)`, `meet(A,B,C,D)`, `foot(P,A,B)` nest; rays `through=` run to the frame (on a page:
+  1.5×|AB|, or `len=`). Names are case-sensitive, `'` → `′`; region ids stay lowercase.
+- **Skip, never guess**: an unknown name or mark, parallel `meet`, a cycle or an out-of-range page
+  skips that action with a reason (visible in `?debug` and the eval). A bad or doubled `let` name
+  drops only that name.
 
 Action kinds: `scroll highlight underline circle box line arrow curve point label write math
 shade angle brace axes plot sketch connect emph move fade clear`.
@@ -72,8 +139,10 @@ shade angle brace axes plot sketch connect emph move fade clear`.
   is visible, then starts on its word. Target: word visible → ink visible p90 ≤ 150ms, no drift.
 - **Coordinates.** Page targets use 0–1000 on x and y (`p=N`). Region targets use x 0–1000,
   y 0–700 (`on=<id>`). Text is sized in screen px at draw time.
-- **Drawing accuracy.** Prefer text anchors (`"quote" near=x,y`), then figure marks, then raw
-  coordinates. A misplaced drawing is worse than none: unresolved anchors are skipped.
+- **Drawing accuracy.** Prefer figure marks and text anchors (`"quote" near=x,y`), then raw
+  coordinates. A misplaced drawing is worse than none: unresolved anchors are skipped. The model
+  names topology (marks, names, constructions); the engine computes coordinates. Demo scripts use
+  literals and stay byte-identical through the resolver.
 - **Continuity.** Reveal a whole box before drawing in it; pan back before drawing off-screen;
   frame both ends of a connector (else take over the screen); ids unique; clamp to bounds;
   nothing drawn under the caption dock; if the student scrolls, show "Back to answer";
@@ -93,8 +162,8 @@ scrollbars; every control has hover, focus-visible and active states; text ≥ 1
 | Checkpoint | Scope | Status |
 |---|---|---|
 | 1 | Viewer, student canvas, parser, paced clock, director, agent strokes, captions, demos (no AI) | done |
-| Canvas v2 + Toolkit v2 | Desk canvas (C beside page, B takeover), free movement, connectors, follow mode, full drawing toolkit, visual language | in review |
-| 2 | Agent: local server `POST /api/ask` streaming the script from OpenAI; explanation-quality prompt; context assembly; latency overlay; eval on ~10 fixed questions | next |
+| Canvas v2 + Toolkit v2 | Desk canvas (C beside page, B takeover), free movement, connectors, follow mode, full drawing toolkit, visual language | done |
+| 2 | Agent: grounding (lines + marks), relational geometry, `/api/ask` streaming from OpenAI with a spend ledger, prompt p3.2, `?debug` latency/cost, judged eval (24 questions, 12 PDFs, held-out test split) | done; held-out test judge 4.61 (P1 4.45), first word p50 1.28s, ~$0.004/answer; awaiting founder review |
 | 3 | Polish: settings panel, history, text selection, anchored-bubble captions setting, error states | later |
 | Voice | Own design pass (TTS clock drives the same timeline) | after 3 |
 
@@ -107,11 +176,26 @@ mobile layouts.
   key must never reach the browser (the checkpoint-2 server reads it).
 - **Private material.** `public/dev/` holds the user's course PDFs: gitignored, never commit or
   copy them. The committed fixture is `public/fixtures/epipolar.pdf` (generated).
-- **OpenAI spend.** Send the visible page ±2 pages of text plus one low/medium-detail image; keep
-  a stable cacheable prompt prefix; default to a small model; server-enforced daily cap (default
-  $2/day, set in `.env`); `?debug` shows per-request cost; dev tests use a fixed ~10-question set.
+- **OpenAI spend.** Every call (answers, prewarm, the eval judge) goes through the persistent
+  ledger `.petu/spend.json` (`server/ledger.ts`): it reserves a request's worst case (all input at
+  the 12h cache-write rate + full `max_output_tokens`) and refuses before sending if any cap would
+  be crossed; recorded cost comes from `usage` at the prices pinned in `server/prices.ts`; an abort
+  or crash books an estimate. Caps: **$40 hard stop** for checkpoint 2 (`PETU_TOTAL_CAP_USD` may
+  only lower it), per-phase budgets selected by `PETU_PHASE` (dev 1, bakeoff 6, iterate 7,
+  validate 2, founder 21.99; override one run with `PETU_CAP_<PHASE>=…`), and **$3/day** in the
+  founder phase (`PETU_DAILY_CAP_USD`). Knobs go on the command line (`PETU_PHASE=iterate npm run
+  eval …`); nobody edits `.env` for them. No ad-hoc scripts call the API; `?debug` shows per-answer
+  cost and spent/cap; `GET /api/spend` shows totals by phase.
 - **Workflow.** Until v0 alpha, commit and push directly to `main` after each verified round;
   after that, branches and PRs. Design/plan working docs live locally under `docs/superpowers/`
   and are not pushed.
-- **Verification.** Review UX through real-time recordings, not stills. Headless Chrome's
-  `--virtual-time-budget` does not work for this app (the pdf.js worker stalls).
+- **Verification.** Review UX through real-time recordings, not stills — except agent answer
+  quality, which is reviewed through the eval's `report.html` (per-sentence stills, judged) with no
+  recordings unless the founder asks. Every UI or engine check covers Chrome and WebKit (the
+  founder likely uses Safari; `--webkit` in the eval). Headless Chrome's `--virtual-time-budget`
+  does not work for this app (the pdf.js worker stalls).
+- **Eval discipline.** Iterate on the dev split only; the test split is held out (one P1 baseline,
+  then P3 validation). Accept a change only on `compare.ts` ACCEPT (mean judge Δ ≥ +0.15, no
+  fatal/skip/malformed/first-word regressions) plus a hand review of `report.html`. The judge is
+  ~0.5 lenient in absolute terms: trust deltas and fatal flags, not levels. No eval-deck wording in
+  the prompt (the prompt test greps for it).
