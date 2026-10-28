@@ -1,4 +1,5 @@
 import type { TextRun } from '../locate/locateQuote';
+import type { DeskHost } from '../desk/types';
 
 export type PageLayers = { highlight: SVGGElement; agent: SVGGElement };
 
@@ -41,4 +42,6 @@ export interface ViewerApi {
    * to centered (so a narrowed column doesn't leave it pinned high with a neighbour in view).
    */
   frameCurrent?(): Promise<void>;
+  /** The viewer's side of the desk (lanes, the desk layer, B's card transform, user-intent events). Required from Task E1. */
+  deskHost?(): DeskHost;
 }

@@ -11,6 +11,7 @@
     "fixture": "node --experimental-strip-types scripts/make-fixture.ts"
   },
   "dependencies": {
+    "katex": "0.18.11",
     "lucide-react": "^1.62.0",
     "pdfjs-dist": "^4.10.38",
     "perfect-freehand": "^1.2.2",

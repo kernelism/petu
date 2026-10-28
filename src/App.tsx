@@ -74,7 +74,8 @@ function describe(a: Action): string {
   if (a.kind === 'clear' || a.kind === 'board') return a.kind;
   const cut = (t: string) => ` "${t.length > 18 ? `${t.slice(0, 17)}…` : t}"`;
   const q = 'quote' in a ? cut(a.quote) : a.kind === 'label' || a.kind === 'write' ? cut(a.text) : '';
-  return `${a.kind} ${a.page === BOARD_PAGE ? 'board' : `p${a.page}`}${q}`;
+  const where = 'page' in a && a.page != null ? (a.page === BOARD_PAGE ? 'board' : `p${a.page}`) : 'region' in a && a.region ? a.region : '';
+  return `${a.kind} ${where}${q}`;
 }
 
 /** Compact, bottom-left, collapsed by default so it never covers the page. Click to expand. */

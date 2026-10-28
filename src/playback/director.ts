@@ -1,4 +1,4 @@
-import { BOARD_PAGE, type Action } from '../script/types';
+import { BOARD_PAGE, type Action, type DrawAction } from '../script/types';
 import type { ViewerApi } from '../pdf/viewerApi';
 import { toSpace, rectToSpace } from '../geometry/space';
 import { circleStroke, lineStroke, arrowStrokes, boxStroke, rng, type Stroke } from '../ink/agent/strokes';
@@ -35,6 +35,11 @@ export function backlog(lagMs: number): { speed: number; fadeMs?: number } {
   const speed = Math.min(1, Math.max(0.35, 1 - Math.max(0, lagMs) / 800));
   return lagMs > 1200 ? { speed, fadeMs: 120 } : { speed };
 }
+
+/** Task 0 shim: the kinds this director can draw until Lane D replaces it. */
+type Legacy = Extract<DrawAction, { kind: 'highlight' | 'underline' | 'circle' | 'line' | 'arrow' | 'box' | 'label' | 'write' }> & { page: number };
+const LEGACY = new Set(['highlight', 'underline', 'circle', 'line', 'arrow', 'box', 'label', 'write']);
+const isLegacy = (a: Action): a is Legacy => LEGACY.has(a.kind) && 'page' in a && typeof a.page === 'number' && !('ref' in a);
 
 /** Layout actions run one after another; everything else is ink, which runs concurrently. */
 export const isLayout = (a: Action): a is Extract<Action, { kind: 'scroll' | 'board' | 'clear' }> =>
@@ -96,6 +101,7 @@ export class Director {
       this.track(e.done);
       return;
     }
+    if (!isLegacy(a)) { this.report(t, { startedAt: now(), endedAt: now(), skipped: 'unsupported' }); return; }
     if (Math.abs(at - this.stagger.at) < 1) this.stagger.n++;
     else this.stagger = { at, n: 0 };
     const startAt = at + this.stagger.n * STAGGER_MS;
@@ -109,7 +115,7 @@ export class Director {
 
   /** Warms the text-run cache for an action's page as soon as it is parsed, so anchors resolve instantly when it fires. */
   prefetch(a: Action): void {
-    if (a.kind === 'clear' || !('quote' in a) || a.page === BOARD_PAGE) return; // board runs are measured live
+    if (!isLegacy(a) || !('quote' in a) || a.page === BOARD_PAGE) return; // board runs are measured live
     const v = this.d.viewer();
     if (v && a.page >= 1 && a.page <= v.numPages()) void v.textRuns(a.page).catch(() => {});
   }
@@ -224,7 +230,7 @@ export class Director {
     } else await dep.done;
   }
 
-  private async ink(a: Exclude<Action, { kind: 'scroll' | 'board' | 'clear' }>, t: ActionTiming, startAt: number, dep: LaneEntry | null, signal: AbortSignal) {
+  private async ink(a: Legacy, t: ActionTiming, startAt: number, dep: LaneEntry | null, signal: AbortSignal) {
     const finish = (skipped?: string | void) => {
       if (Number.isNaN(t.startedAt)) t.startedAt = now();
       this.report(t, { endedAt: now(), skipped: skipped || undefined });
@@ -279,7 +285,7 @@ export class Director {
   }
 
   /** Resolves an ink action to a draw function plus the model-y that must be on screen. Strings are skip reasons. */
-  private async geometry(a: Exclude<Action, { kind: 'scroll' | 'board' | 'clear' }>, v: ViewerApi, signal: AbortSignal): Promise<Geometry | string> {
+  private async geometry(a: Legacy, v: ViewerApi, signal: AbortSignal): Promise<Geometry | string> {
     const onBoard = a.page === BOARD_PAGE;
     if (!onBoard) await v.ensureSize(a.page); // the page's true size, before any page-space math
     if (signal.aborted) return 'aborted';
