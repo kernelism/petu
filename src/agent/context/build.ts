@@ -6,16 +6,24 @@ import type { PdfDoc } from '../../pdf/loadPdf';
 import type { AskContext } from '../protocol';
 import type { StudentStroke } from '../../ink/student/store';
 import type { PageGround } from './types';
+import type { TextLine } from './textLines';
 import { itemsToRuns } from '../../pdf/textRuns.ts';
 import { fontLookup } from '../../pdf/mathGlyphs.ts';
 import { textLines } from './textLines.ts';
-import { figureMarks } from './marks.ts';
+import { figureMarks, glyphCount, GLYPH_FLOOD } from './marks.ts';
 import { paintedFromOperatorList } from './operatorList.ts';
 import { formatPage, formatVisible } from './format.ts';
 import { resolveOutline, type Bookmark } from './outline.ts';
 import { deckDigest } from './digest.ts';
 import { answerPages, imagePages } from '../scout.ts';
 import { PageIndex } from './search.ts';
+import { bucketMap, capMap, formatMap, headingLines, headingMap, outlineTree, withRanges, type DocCard, type MapEntry } from './docmap.ts';
+import { LabelIndex } from './labels.ts';
+import { candidates as findCandidates, formatCandidates, resolveFind, type Candidate } from './candidates.ts';
+import { offsetFromHeaders, offsetFromLabels, samplePages } from './printed.ts';
+import { SessionMemory, boardObjects } from './memory.ts';
+import { sectionCard, sectionWindow, tierOf, tokens, windowBoilerplate, type Tier } from './tiers.ts';
+import { boilerplate } from './digest.ts';
 import { inkSummary } from './ink.ts';
 import { inkCrop, renderPage, type Jpeg } from './image.ts';
 
@@ -57,25 +65,63 @@ export async function groundPage(page: PDFPageProxy, OPS: Record<string, number>
   // Few characters on a page that paints a scan or outlined glyphs, or a broken text layer.
   const noText = (text.few && (largeImage || paths.length >= 20)) || (!text.few && !text.usable);
   const lines = noText ? [] : textLines(runs, aspect);
-  return { page: page.pageNumber, aspect, lines, marks: figureMarks(paths, images, lines, aspect), noText };
+  const mathOutlines = !noText && glyphCount(paths, aspect) >= GLYPH_FLOOD;
+  return { page: page.pageNumber, aspect, lines, marks: figureMarks(paths, images, lines, aspect), noText, ...(mathOutlines ? { mathOutlines } : {}) };
 }
 
-/** A page's text lines only (the search index and outline first lines). */
-async function pageLines(page: PDFPageProxy): Promise<string[]> {
+/** A page's text lines only (the search index, headings and outline first lines). */
+async function pageLines(page: PDFPageProxy): Promise<TextLine[]> {
   const vp = page.getViewport({ scale: 1 });
   const tc = await page.getTextContent();
   const items = (tc.items as unknown[]).filter((i): i is TextItem => typeof (i as TextItem).str === 'string');
   if (!textUsable(items.map((i) => i.str).join('')).usable) return [];
-  return textLines(itemsToRuns(items, vp.transform, vp.width, vp.height), vp.height / vp.width).map((l) => l.text);
+  return textLines(itemsToRuns(items, vp.transform, vp.width, vp.height), vp.height / vp.width);
 }
 
+/** `old`: one digest for every document (as before the tiers). `new`: the tiered context (tiers.ts). */
+export type CtxMode = 'old' | 'new';
+
+/** What ?debug shows about the context of one question. */
+export type CtxInfo = { mode: CtxMode; tier: Tier | 'old'; tokens: Record<string, number>; candidates: string[]; printedOffset?: number; ms: number };
+
+/** Everything the scout reads for one question (src/agent/scout.ts ScoutRequest fields). */
+export type ScoutContext = {
+  /** The cached document block: the digest (old, small), or the card + map (+ digest on medium). */
+  digest: string;
+  /** Huge tier: the visible section at full detail (its own cache breakpoint). */
+  section?: string;
+  pageText: string;
+  ground: PageGround;
+  /** Session memory (append-only, cached at its end). */
+  memory?: string;
+  /** Per question (uncached tail): CANDIDATES and the printed-page note. */
+  candidates?: string;
+  /** A scanned page or one whose math is drawn as outlines: its image, sent at low detail. */
+  image?: Jpeg;
+  info: CtxInfo;
+};
+
 const NEIGHBOURS = 2;
+/** Small documents: the CANDIDATES block stays under ≈ 0.8k tokens (the digest already shows every page). */
+const SMALL_CANDIDATE_CHARS = 2600;
+const range = (a: number, b: number) => Array.from({ length: Math.max(0, b - a + 1) }, (_, i) => a + i);
+const waitFor = async (p: Promise<unknown>, ms: number) => {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([p, new Promise<void>((ok) => { t = setTimeout(ok, ms); })]);
+  clearTimeout(t);
+};
+const candLabel = (c: Candidate) => `p${c.page} ${c.why === 'label' || c.why === 'page' ? c.label : c.why}`;
 const CHARS_PER_TOKEN = 3.3;
 /** The scout's other pages share this many tokens of listings; one page gets at most PAGE_TOKENS. */
 const PAGES_TOKENS = 12000;
 const PAGE_TOKENS = 3500;
 /** How long a question waits for the text index to finish before the digest is built from what is read. */
 export const DIGEST_WAIT_MS = 2500;
+/**
+ * New mode, small and medium tiers: how long a question waits for the index so the digest is complete
+ * (a digest built from a partial index differs from the next question's: a second cache write).
+ */
+export const FULL_WAIT_MS = 8000;
 /** Pages grounded ahead while the scout thinks (its likely picks: the best keyword matches). */
 const SPECULATE = 3;
 const LRU = 10;
@@ -97,19 +143,32 @@ export class ContextBuilder {
   private ops: Promise<Record<string, number>> | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private dead = false;
+  readonly mode: CtxMode;
+  /** Heading candidates per indexed page (a document without bookmarks gets its map from them). */
+  private heads = new Map<number, string[]>();
+  private labels = new LabelIndex();
+  private memory = new SessionMemory();
+  private mapP: Promise<{ text: string; map: MapEntry[]; card: DocCard }> | null = null;
+  private fullDigest: string | null = null;
+  private searchPages: { n: number; pages: Map<number, string[]> } | null = null;
 
-  constructor(doc: PdfDoc, name: string, opts: { OPS?: Record<string, number> } = {}) {
+  constructor(doc: PdfDoc, name: string, opts: { OPS?: Record<string, number>; ctx?: CtxMode } = {}) {
     this.doc = doc;
     this.name = name;
+    this.mode = opts.ctx ?? 'old';
     if (opts.OPS) this.ops = Promise.resolve(opts.OPS);
     // The index reads text only (no operator list) and never touches the page LRU.
     this.index = new PageIndex(doc.numPages, async (p) => {
       if (this.dead) return [];
       const cached = this.cache.get(p);
-      if (cached) return (await cached.ground).lines.map((l) => l.text);
-      return pageLines(await this.doc.getPage(p));
+      const ls = cached ? (await cached.ground).lines : await pageLines(await this.doc.getPage(p));
+      const h = headingLines(ls);
+      if (h.length) this.heads.set(p, h);
+      return ls.map((l) => l.text);
     });
   }
+
+  get tier(): Tier { return tierOf(this.doc.numPages); }
 
   /** On scroll idle (600ms after the last call): grounds and renders `page`, text for p±2. */
   warm(page: number): void {
@@ -138,7 +197,10 @@ export class ContextBuilder {
    * image); then the scout's pages, in its order, with full listings, the first of them as images
    * (4 images in all). `grounds` covers every page sent with a listing, so marks on any of them resolve.
    */
-  async build(page: number, _question: string, ink: StudentStroke[], scout?: { pages: number[]; plan: string }): Promise<{ context: AskContext; grounds: PageGround[] }> {
+  async build(page: number, _question: string, ink: StudentStroke[], scout0?: { pages: number[]; plan: string; find?: string[] }): Promise<{ context: AskContext; grounds: PageGround[]; found?: { q: string; page: number; via: 'label' | 'search' }[] }> {
+    // The scout's `find` strings resolve locally, after its own pages (within its 6-page limit).
+    const found = scout0?.find?.length ? this.find(scout0.find, [page, ...scout0.pages]) : [];
+    const scout = scout0 && { pages: [...scout0.pages, ...found.map((f) => f.page)].slice(0, Math.max(scout0.pages.length, 6)), plan: scout0.plan };
     const { context, grounds: [visible] } = await this.assemble(page);
     const pages = answerPages(page, scout?.pages ?? []).slice(1);
     const withImage = new Set(imagePages(page, scout?.pages ?? []));
@@ -178,7 +240,58 @@ export class ContextBuilder {
         ...(inkPart ? { ink: inkPart } : {}),
       },
       grounds: [visible, ...got],
+      ...(found.length ? { found } : {}),
     };
+  }
+
+  /**
+   * Stage 1 (scout), whatever the mode: the cached document block, the section card (huge), the visible
+   * page, session memory, and the per-question CANDIDATES. Old mode: the digest and the page only.
+   */
+  async scout(page: number, question: string, prior?: { q: string }): Promise<ScoutContext> {
+    const t0 = performance.now();
+    const n = this.doc.numPages;
+    if (this.mode === 'old') {
+      const [digest, vis] = await Promise.all([this.digest(page, question), this.visible(page)]);
+      return { digest, pageText: vis.pageText, ground: vis.ground, info: { mode: 'old', tier: 'old', tokens: { digest: tokens(digest), page: tokens(vis.pageText) }, candidates: [], ms: Math.round(performance.now() - t0) } };
+    }
+    const tier = this.tier;
+    const [m, vis] = await Promise.all([this.docMap(), this.visible(page)]);
+    const [digest, section] = await Promise.all([this.docBlock(), tier === 'huge' ? this.section(page) : Promise.resolve(undefined)]);
+    const w = tier === 'huge' ? sectionWindow(m.map, page, n) : null;
+    const pages = this.searchIndex();
+    // Pages the cached blocks already show in full are not repeated as neighbours: the section card
+    // (huge), every page (small: the digest gives each its full 360 characters).
+    const shown = w ? new Set(range(w.from, w.to)) : tier === 'small' ? new Set(range(1, n)) : undefined;
+    const cs = findCandidates({ page, numPages: n, question, ...(prior ? { prior: prior.q } : {}), map: m.map, labels: this.labels, printedOffset: m.card.printedOffset, pages, ...(shown ? { shown } : {}) });
+    // Ground ahead what stage 2 will likely be built from: named pages, the next/previous page, the best match.
+    for (const c of cs.filter((x) => x.why !== 'neighbour' || Math.abs(x.page - page) === 1).slice(0, 4)) void this.entry(c.page, false).ground.catch(() => undefined);
+    const note = m.card.printedOffset ? `The student is on PDF page ${page}, printed page ${page - m.card.printedOffset}.` : '';
+    const block = formatCandidates(cs, { question, map: m.map, pages }, !this.index.ready(), tier === 'small' ? SMALL_CANDIDATE_CHARS : undefined);
+    const cand = [note, block].filter(Boolean).join('\n');
+    let image: Jpeg | undefined;
+    if (vis.ground.noText || vis.ground.mathOutlines) { try { image = (await this.entry(page, true).image!).jpeg; } catch { /* listing only */ } }
+    const memory = this.memory.text();
+    return {
+      digest, ...(section ? { section } : {}), pageText: vis.pageText, ground: vis.ground,
+      ...(memory ? { memory } : {}), ...(cand ? { candidates: cand } : {}), ...(image ? { image } : {}),
+      info: {
+        mode: 'new', tier, ms: Math.round(performance.now() - t0),
+        tokens: { [tier === 'huge' ? 'map' : tier === 'medium' ? 'map+digest' : 'digest']: tokens(digest), ...(section ? { section: tokens(section) } : {}), page: tokens(vis.pageText), ...(image ? { image: 85 } : {}), memory: tokens(memory), candidates: tokens(cand) },
+        candidates: cs.map(candLabel), ...(m.card.printedOffset ? { printedOffset: m.card.printedOffset } : {}),
+      },
+    };
+  }
+
+  /** A finished answer, for the session memory (new mode). */
+  remember(t: { question: string; page: number; pages: number[]; script: string }): void {
+    this.memory.add({ question: t.question, page: t.page, pages: t.pages, board: boardObjects(t.script) });
+  }
+
+  /** The scout's `find` strings → pages (label index, then keyword search), excluding `exclude`. */
+  find(find: string[], exclude: number[]): { q: string; page: number; via: 'label' | 'search' }[] {
+    if (this.mode !== 'new' || !find.length) return [];
+    return resolveFind(find, this.labels, this.searchIndex(), new Set(exclude));
   }
 
   /**
@@ -208,6 +321,11 @@ export class ContextBuilder {
     await Promise.all(ps.map((p) => this.entry(p, false).ground));
     void this.outline();
     void this.index.fill();
+    if (this.mode === 'new') {
+      void this.docMap().catch(() => undefined);
+      // The visible section is read first, so its card and candidates never wait on the whole book.
+      if (this.tier === 'huge') void this.docMap().then(({ map }) => { const w = sectionWindow(map, page, this.doc.numPages); return this.index.ensure(range(w.from, w.to)); }).catch(() => undefined);
+    }
   }
 
   /** The visible page first, then neighbours nearest first (the earlier page wins a tie). */
@@ -220,7 +338,7 @@ export class ContextBuilder {
   /** The digest and the visible page (listing + image): the answer's cacheable prefix. */
   private async assemble(page: number): Promise<{ context: AskContext; grounds: PageGround[] }> {
     const img = this.entry(page, true).image!;
-    const [ground, image, docText] = await Promise.all([this.entry(page, false).ground, img, this.digest(page)]);
+    const [ground, image, docText] = await Promise.all([this.entry(page, false).ground, img, this.mode === 'new' ? this.docBlock() : this.digest(page)]);
     if (!this.index.has(page)) this.index.set(page, ground.lines.map((l) => l.text));
     const context: AskContext = {
       docName: this.name,
@@ -230,8 +348,80 @@ export class ContextBuilder {
       docText,
       pageText: formatVisible(ground),
       image: image.jpeg,
+      ...(this.mode === 'new' && this.tier === 'huge' ? { scoutSection: await this.section(page) } : {}),
     };
     return { context, grounds: [ground] };
+  }
+
+  /**
+   * The document card + map, built once per document from the outline (every bookmark) and a fixed
+   * sample of pages (printed page numbers, scans). Without bookmarks, from detected headings once the
+   * index is full (bounded by FULL_WAIT_MS), else first lines every 20 pages. Memoised: every question
+   * gets the same bytes.
+   */
+  docMap(): Promise<{ text: string; map: MapEntry[]; card: DocCard }> {
+    return (this.mapP ??= (async () => {
+      const n = this.doc.numPages;
+      const d = this.doc as unknown as { getPageLabels?: () => Promise<(string | null)[] | null> };
+      const [tree, labels] = await Promise.all([
+        outlineTree(this.doc as never).catch(() => []),
+        d.getPageLabels ? d.getPageLabels().catch(() => null) : Promise.resolve(null),
+      ]);
+      const sample = samplePages(n);
+      await this.index.ensure(sample);
+      const ss = sample.map((p) => ({ page: p, lines: this.index.lines(p) ?? [] }));
+      const printedOffset = offsetFromLabels(labels) ?? offsetFromHeaders(ss);
+      const scanned = ss.every((x) => !x.lines.length);
+      let map = withRanges(tree, n);
+      let source: DocCard['source'] = map.length ? 'bookmarks' : 'none';
+      if (!map.length && n > 60 && !scanned) {
+        await waitFor(this.index.fill(), FULL_WAIT_MS);
+        const hm = headingMap(this.heads, n);
+        if (hm.length >= 5) { map = hm; source = 'headings'; } else { map = bucketMap((p) => this.index.firstLine(p), n); source = 'pages'; }
+      }
+      map = capMap(map);
+      this.labels.addMap(map);
+      const card: DocCard = { name: this.name, numPages: n, printedOffset, scanned, source };
+      return { text: formatMap(card, map), map, card };
+    })());
+  }
+
+  /** The cached document block of new mode: small → the digest; medium → card + map + digest; huge → card + map. */
+  private async docBlock(): Promise<string> {
+    const tier = this.tier;
+    if (tier === 'small') return this.completeDigest();
+    const m = await this.docMap();
+    return tier === 'medium' ? `${m.text}\n${await this.completeDigest()}` : m.text;
+  }
+
+  /** The digest from the whole index (waits up to FULL_WAIT_MS for it), memoised once complete. */
+  private async completeDigest(): Promise<string> {
+    if (this.fullDigest) return this.fullDigest;
+    await waitFor(this.index.fill(), FULL_WAIT_MS);
+    const d = deckDigest(this.name, this.doc.numPages, (p) => this.index.lines(p));
+    if (this.index.ready()) this.fullDigest = d;
+    return d;
+  }
+
+  /** Huge tier: the visible page's section card (its pages read first if not indexed yet). */
+  private async section(page: number): Promise<string> {
+    const m = await this.docMap();
+    const w = sectionWindow(m.map, page, this.doc.numPages);
+    await this.index.ensure(range(w.from, w.to));
+    const at = (p: number) => this.index.lines(p);
+    return sectionCard(w, at, windowBoilerplate(w, at));
+  }
+
+  /** The indexed pages without running headers/footers (for BM25 and snippets); labels updated. */
+  private searchIndex(): Map<number, string[]> {
+    const all = this.index.all();
+    if (this.searchPages?.n === all.size) return this.searchPages.pages;
+    const skip = boilerplate(this.doc.numPages, (p) => all.get(p));
+    const sq = (l: string) => l.replace(/\s+/g, ' ').trim();
+    const pages = new Map<number, string[]>();
+    for (const [p, ls] of all) { pages.set(p, skip.size ? ls.filter((l) => !skip.has(sq(l))) : ls); this.labels.addPage(p, ls); }
+    this.searchPages = { n: all.size, pages };
+    return pages;
   }
 
   private outline(): Promise<Bookmark[]> {

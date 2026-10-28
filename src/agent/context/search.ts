@@ -102,6 +102,16 @@ export class PageIndex {
   /** A page's text lines, if indexed. */
   lines(page: number): string[] | undefined { return this.pages.get(page); }
   ready() { return this.pages.size >= this.numPages; }
+  /** How many pages are indexed. */
+  get size() { return this.pages.size; }
+  /** The indexed pages (live map: do not mutate). */
+  all(): Map<number, string[]> { return this.pages; }
+  /** Reads these pages now (out of the idle order) if they are not indexed yet. */
+  async ensure(pages: number[]): Promise<void> {
+    await Promise.all(pages.filter((p) => p >= 1 && p <= this.numPages && !this.pages.has(p)).map(async (p) => {
+      try { const ls = await this.getLines(p); if (!this.pages.has(p)) this.pages.set(p, ls); } catch { this.pages.set(p, []); }
+    }));
+  }
 
   /** Fills every missing page, a few per idle slice. Safe to call repeatedly. */
   fill(): Promise<void> {

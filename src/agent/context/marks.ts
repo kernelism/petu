@@ -38,9 +38,36 @@ function bbox(pts: Pt[]): Box {
 }
 const boxOf = (r: PageRect): Box => ({ x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h });
 
+/** This many glyph-sized filled outlines on a page: its math (or text) is drawn as outlines, not text. */
+export const GLYPH_FLOOD = 50;
+const GLYPH_W = 25, GLYPH_H = 30; // x units
+/** A small filled outline with straight and curved edges, not a round dot: a glyph drawn as a path. */
+function glyphPath(p: PaintedPath, aspect: number): boolean {
+  if (p.paint === 'stroke' || p.pts.length < 3) return false;
+  const b = bbox(p.pts);
+  const w = b.x1 - b.x0, h = (b.y1 - b.y0) * aspect;
+  if (!(w <= GLYPH_W && h <= GLYPH_H)) return false;
+  if (/^MC+Z?M?$/.test(p.ops) && Math.max(w, h) < 2 * Math.min(w, h) + 1) return false; // a dot
+  return !/^R$/.test(p.ops);
+}
+/** How many of a page's paths are glyph outlines (≥ GLYPH_FLOOD: equations drawn as outlines). */
+export const glyphCount = (paths: PaintedPath[], aspect: number) => paths.reduce((n, p) => n + (glyphPath(p, aspect) ? 1 : 0), 0);
+
 /** Builds marks from painted paths, images and the page's text lines. `aspect` = page h / w. */
 export function figureMarks(paths: PaintedPath[], images: PaintedImage[], lines: TextLine[], aspect: number): FigureMark[] {
   const d = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, (a.y - b.y) * aspect); // in x units
+  // Equations drawn as outlines (glyph floods): each formula becomes one `#e` box instead of dozens of
+  // fraction bars and arrowheads; inline symbols (< 3 glyphs) are left out. Only on a page with a text
+  // layer: a page whose text itself is drawn as outlines keeps the figure clustering below.
+  const outlined: { box: Box; n: number }[] = [];
+  if (lines.length > 0 && glyphCount(paths, aspect) >= GLYPH_FLOOD) {
+    const glyphs = paths.filter((p) => glyphPath(p, aspect));
+    const gs = new Set(glyphs);
+    const bars = paths.filter((p) => !gs.has(p) && p.pts.length && (() => { const b = bbox(p.pts); return (b.y1 - b.y0) * aspect < 3 && b.x1 - b.x0 < 150; })());
+    for (const c of clusters([...glyphs, ...bars].map((p) => bbox(p.pts)), 5)) if (c.n >= 3 && c.box.x1 - c.box.x0 >= 15) outlined.push(c);
+    const used = new Set([...glyphs, ...bars]);
+    paths = paths.filter((p) => !used.has(p));
+  }
   let dots: { c: Pt; b: Box }[] = [], heads: { c: Pt; b: Box }[] = [];
   const segs: { from: Pt; to: Pt }[] = [], bars: Box[] = [];
   const boxes: Box[] = [], others: Box[] = [];
@@ -103,6 +130,7 @@ export function figureMarks(paths: PaintedPath[], images: PaintedImage[], lines:
     marks.push({ id: arrow ? `#a${++na}` : `#s${++ns}`, kind: arrow ? 'arrow' : 'line', from: round(from), to: round(to), ...(ends[0] || ends[1] ? { ends } : {}) });
   });
   equations(lines, bars).forEach((e, i) => marks.push({ id: `#e${i + 1}`, kind: 'equation', rect: rect(e.box), label: e.label }));
+  outlined.forEach((e) => marks.push({ id: '#e', kind: 'equation', rect: rect(e.box), n: e.n }));
   boxes.forEach((b, i) => marks.push({ id: `#b${i + 1}`, kind: 'box', rect: rect(b) }));
   const imgs = clusters(images.map((im) => boxOf(im.rect)).filter((b) => b.x1 - b.x0 > 0 && b.y1 - b.y0 > 0), 2)
     .map((c) => c.box)

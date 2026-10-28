@@ -11,6 +11,8 @@ export type PageGround = {
   marks: FigureMark[];
   /** No usable text layer (scan, broken ToUnicode): quotes are disabled for this page. */
   noText: boolean;
+  /** Its equations are drawn as glyph outlines (≥ GLYPH_FLOOD small filled paths): absent from the text, only in the image. */
+  mathOutlines?: boolean;
 };
 
 /** The marks of the pages sent with the current question, by page: the director's Grounding. */

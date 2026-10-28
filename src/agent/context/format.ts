@@ -20,7 +20,8 @@ export function formatVisible(g: PageGround): string {
  * whether its image is attached. `maxChars` cuts a dense page's lines with "…" (the marks stay).
  */
 export function formatPage(g: PageGround, o: { visible?: boolean; image: boolean; maxChars?: number }): string {
-  const what = g.noText ? 'no extractable text: point with marks, or by coordinates inside images' : o.image ? 'image attached' : 'listing only, no image';
+  const what = (g.noText ? 'no extractable text: point with marks, or by coordinates inside images' : o.image ? 'image attached' : 'listing only, no image')
+    + (g.mathOutlines ? '; its equations are drawn as outlines: they are missing from the lines and appear only in the image (#e boxes)' : '');
   const head = `PAGE ${g.page} (${o.visible ? 'visible; ' : ''}${shape(g.aspect)}; ${what})`;
   const marks = formatMarks(g.marks);
   const lines: string[] = [];

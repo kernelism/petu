@@ -19,7 +19,7 @@ const keep = (l: string) => { const t = squash(l); return t.length > 0 && !/^\d{
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, Math.max(0, n - 1))}…` : s);
 
 /** A page's characters: an equal share of the budget, between PAGE_MIN and PAGE_CHARS. */
-export const pageShare = (numPages: number) => Math.max(PAGE_MIN, Math.min(PAGE_CHARS, Math.floor(DIGEST_CHARS / Math.max(1, numPages)) - 8));
+export const pageShare = (numPages: number, budget = DIGEST_CHARS) => Math.max(PAGE_MIN, Math.min(PAGE_CHARS, Math.floor(budget / Math.max(1, numPages)) - 8));
 
 /**
  * Lines that repeat on many pages (running headers and footers: author, course, date) say nothing
@@ -44,14 +44,19 @@ export function boilerplate(numPages: number, pages: (page: number) => string[] 
  * `p12: …`; a page without text is `p12: (no text)`. A long document's bookmarks come first.
  * Running headers and footers are left out (they would crowd out every page's title).
  */
-export function deckDigest(name: string, numPages: number, pages: (page: number) => string[] | undefined, bookmarks: Bookmark[] = []): string {
+export function deckDigest(name: string, numPages: number, pages: (page: number) => string[] | undefined, bookmarks: Bookmark[] = [], budget = DIGEST_CHARS): string {
   const skip = boilerplate(numPages, pages);
-  const out = [`DECK ${name} (${numPages} page${numPages === 1 ? '' : 's'}): every page, its title first, then its text, trimmed`];
-  if (bookmarks.length) {
-    out.push('OUTLINE');
-    for (const b of bookmarks.slice(0, BOOKMARKS)) out.push(`${'  '.repeat(Math.min(b.depth ?? 0, 3))}${clip(squash(b.title), BOOKMARK_LINE)} … p${b.page}`);
-  }
-  const share = pageShare(numPages);
+  const head = `DECK ${name} (${numPages} page${numPages === 1 ? '' : 's'}): every page, its title first, then its text, trimmed`;
+  // The outline counts inside the budget (it used to overrun it by 1–3k chars): pages share what is
+  // left; when even the minimum page share does not fit, the outline is cut from the back.
+  let outline = bookmarks.slice(0, BOOKMARKS).map((b) => `${'  '.repeat(Math.min(b.depth ?? 0, 3))}${clip(squash(b.title), BOOKMARK_LINE)} … p${b.page}`);
+  const size = (ls: string[]) => (ls.length ? 'OUTLINE'.length + 1 + ls.reduce((n, l) => n + l.length + 1, 0) : 0);
+  const room = budget - head.length - 1;
+  const share = pageShare(numPages, room - size(outline));
+  const pagesMax = numPages * (share + 8);
+  while (outline.length && size(outline) + pagesMax > room) outline = outline.slice(0, -1);
+  const out = [head];
+  if (outline.length) out.push('OUTLINE', ...outline);
   for (let p = 1; p <= numPages; p++) {
     const ls = pages(p);
     if (!ls) { out.push(`p${p}: …`); continue; }
