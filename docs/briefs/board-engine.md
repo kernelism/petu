@@ -45,6 +45,46 @@ computes every coordinate and every number.
 | `src/locate/locateQuote.ts` | Quote (+ `near=`) → rects on the page's text runs. |
 | `src/demo/demoScript.ts`, `src/demo/scripts.ts` | Hand-written scripts (`?demo=…`, `?script=kit|toolkit|relational|lec09|scene|scene-econ|scene-bio|moves`). |
 
+## The svg board (p6: the default answer format)
+
+The model draws the board itself, in SVG, one group per beat; the engine streams, checks, restyles
+and draws it. The tag kit above stays for the `tags` prompt variant (`PETU_PROMPT_VARIANT=tags`).
+
+- **Format** (the model's raw output; `server/prompt/system.ts`, examples `server/prompt/svgExamples.ts`):
+  a hidden `<plan>` ending with `BOARD viewBox="0 0 1000 H"` (`BOARD extend …` to draw on into the
+  last board), regions and groups in teaching order; then beats: 1–3 sentences (page pointing tags
+  as before), then that beat's `<g id="…">…</g>`.
+- **Wire** (`server/svgBeats.ts` → `src/svgboard/wire.ts`): the plan is lifted (`done.plan`) and its
+  BOARD line becomes `{{svgboard h=H}}` at once; each top-level element becomes ONE tag
+  `{{svg <g id="…">…</g>}}` (braces as `&#123;`/`&#125;`, newlines folded), sent the moment it closes.
+  Narration is never held for SVG. The parser, segmenter, ScriptFilter and Lint scan svg tags without
+  the quote rule, up to `SVG_TAG_MAX` (24k).
+- **Timing** (`src/playback/scheduler.ts` `anchorOf`): a group fires on the first word of its beat
+  that names it (its id's words, plurals ok: `namesWord`), else with the next word (right after its
+  sentences). The gate's splitter (`segment.ts`) never makes a sentence wait for its group: a group
+  that arrives after its sentences went out is a unit of its own; in beat mode it closes the beat.
+- **Rendering** (`src/svgboard/{render,sanitize,style,element}.ts`): the director opens a section
+  `svgb<N>` (`Desk.addRegion` with `svg`, `extend` continues it) holding `<svg data-svgboard
+  viewBox="0 0 w h">` scaled to 1000 units (Desk never rewrites its viewBox). Each group is parsed as
+  XML, sanitized (no script/foreignObject/style/images/animation/event handlers/external refs; ids
+  namespaced per board; ≤ 800 elements, 20k chars), restyled (greys → ink tiers, near-white → paper,
+  the answer's first hue → the settings accent, other hues → grey; fonts → the board's sans or math
+  face; text never under the board body size; strokes in the board's widths, non-scaling; a paper
+  halo behind text; a full-canvas white backing dropped), measured hidden (a group below the canvas
+  grows it), then drawn: strokes traced at pen speed with the pen cursor on the tip, arrowheads and
+  fills land after their stroke, text fades in; ≤ 3.2 s a group; aborted → final state at once. A
+  reused id (a follow-up's redraw) ghosts the old group at 30%.
+- **Gate** (`src/svgboard/check.ts`, called from `GatePreflight`; check `svg`, always fails): parses,
+  ids unique, no text on text (> 25% of the smaller box), no stroke through a text's core box, inside
+  the canvas (the bottom may grow to 1.6×H). Text boxes are estimated (font ≥ the renderer's minimum,
+  `svgMinFont`), transforms applied, paths flattened. Repairs get `svgRepairNote` (the beat as raw
+  SVG) and `SVG_REPAIR_MAX_OUTPUT`.
+- **Follow-ups**: MEMORY lists `svg group <id> "<its words>"` and the `board layout` from the answer's
+  plan; asides open their own `svgb<N>` section in the aside inset (`is-aside`).
+- Demos `?script=svg-ferry|svg-dough` (the prompt's examples) and `svg-skater|svg-tunnel|svg-rent|svg-sinx`
+  (the experiment's recorded answers, `src/svgboard/convert.ts`); tests `tests/svgboard/beats.test.ts`;
+  `scripts/eval/svgReplay.ts convert|measure` replays the experiment's runs as beats at $0.
+
 ## Board v2: one connected scene
 
 `{{scene id=s near=pN}}` opens a scene section: an unbounded world (section units, y down) seen

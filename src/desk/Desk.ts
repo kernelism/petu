@@ -591,10 +591,11 @@ export class Desk implements DeskApi {
     return createSection(spec, (sec, paper) => this.makeScene(sec, paper));
   }
 
-  metrics(): { boardPx: number; bodyPx: (body: number | null) => number } {
-    // Before the board opens: the board the normal split would give (what the first section lands in).
+  metrics(split?: Split): { boardPx: number; bodyPx: (body: number | null) => number } {
+    // Before the board opens: the board the normal split would give (what the first section lands in);
+    // `split`: the board that split would give (the svg board opens wide).
     const { W, H } = this.host.viewport();
-    const f = this.open ? this.frame() : frameFor(W, H, 'normal', this.host.aspect(1));
+    const f = this.open && !split ? this.frame() : frameFor(W, H, split ?? 'normal', this.host.aspect(1));
     return { boardPx: f.board?.w ?? 0, bodyPx: (b) => bodyPx(b, f.page.pageW) };
   }
 

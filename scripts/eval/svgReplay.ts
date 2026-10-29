@@ -65,10 +65,12 @@ function measure(id: string): void {
   if (!existsSync(f)) { console.log(`${id}: no result`); return; }
   const turn = JSON.parse(readFileSync(f, 'utf8')).turns[0];
   const words: { text: string; t: number }[] = turn.words ?? [];
-  const ho = (turn.events as Ev[]).find((e) => e.t === 'handoff') as { openerEndMs?: number; ms?: number } | undefined;
-  const openerEnd = ho?.openerEndMs ?? NaN;
-  // The opener's last word: the last word starting before the opener ended.
-  const k = words.findIndex((w) => w.t > openerEnd - 1);
+  // The opener: the words of the chunks before stage 2's board opened.
+  const chunks: Chunk[] = turn.chunks ?? [];
+  const s2 = chunks.findIndex((c) => c.d.includes('{{svgboard'));
+  const nOpener = chunks.slice(0, Math.max(0, s2)).map((c) => c.d).join('').replace(/\{\{[^}]*\}\}/g, ' ').split(/\s+/).filter(Boolean).length;
+  const k = nOpener > 0 && nOpener < words.length ? nOpener : -1;
+  const openerEnd = k > 0 ? words[k - 1].t + 300 : NaN; // its last word, spoken (~300 ms)
   const after = k < 0 ? [] : words.slice(Math.max(0, k - 1));
   let maxGap = 0, at = NaN;
   for (let j = 1; j < after.length; j++) { const g = after[j].t - after[j - 1].t; if (g > maxGap) { maxGap = g; at = after[j - 1].t; } }
@@ -78,8 +80,10 @@ function measure(id: string): void {
   const t0 = turn.t0 ?? 0;
   const nextWord = k >= 0 ? words[k].t : NaN;
   const gates = (turn.events as Ev[]).filter((e) => e.t === 'gate');
-  const drops = gates.filter((e) => e.action === 'drop').length;
-  console.log(`${id}: opener ends ${Math.round(openerEnd)} ms; next word +${Math.round(nextWord - openerEnd)} ms; first svg ink ${Math.round(firstInk - t0)} ms (+${Math.round(firstInk - t0 - openerEnd)} after the opener); longest word gap after the opener ${Math.round(maxGap)} ms at ${Math.round(at)}; groups ${svgs.length} (skipped ${svgs.filter((x) => x.skipped).length}); gate units ${gates.length}, drops ${drops}`);
+  const dropped = gates.filter((e) => e.action === 'drop');
+  const drops = dropped.length;
+  for (const d of dropped) console.log(`  drop ${d.k}: ${JSON.stringify((d.flags as { detail: string }[]).map((f) => f.detail)).slice(0, 300)}`);
+  console.log(`${id}: opener ends ${Math.round(openerEnd)} ms; next word +${Math.round(nextWord - openerEnd)} ms; first svg ink +${Math.round(firstInk - openerEnd)} ms after the opener; longest word gap after the opener ${Math.round(maxGap)} ms at ${Math.round(at)}; groups ${svgs.length} (skipped ${svgs.filter((x) => x.skipped).length}); gate units ${gates.length}, drops ${drops}`);
 }
 
 const [cmd, ...ids] = process.argv.slice(2);

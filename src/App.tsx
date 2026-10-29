@@ -791,7 +791,7 @@ export default function App() {
       // labelled references to nothing; &gatecheck=all is the design's table.
       const preflight = new GatePreflight({ board: shadow, pages: () => pageTexts, question: q, grounding: () => groundingRef.current, severity: GATE_CHECK_ALL ? 'design' : 'default',
         // The svg board's smallest text in its units: the board's body size at the board's scale (the renderer's rule).
-        svgMinFont: () => { const m = deskRef.current?.metrics?.(); return m && m.boardPx > 0 ? Math.max(12, m.bodyPx(null)) / (m.boardPx / 1000) : 16; } });
+        svgMinFont: () => { const m = deskRef.current?.metrics?.('wide'); return m && m.boardPx > 0 ? Math.max(12, m.bodyPx(null)) / (m.boardPx / 1000) : 16; } });
       gate = new LiveGate({
         clock: { now: () => performance.now(), endsAt: () => clock.endsAt() }, preflight,
         repair: repairFor(),

@@ -165,7 +165,7 @@ export interface DeskApi {
   state(): DeskState;
   subscribe(cb: (s: DeskState) => void): () => void;
   /** The board's width in px and a section's body text size (the gate's shadow board copies them). */
-  metrics?(): { boardPx: number; bodyPx: (body: number | null) => number };
+  metrics?(split?: Split): { boardPx: number; bodyPx: (body: number | null) => number };
 }
 
 // ------------------------------------------------------------------------------------------------

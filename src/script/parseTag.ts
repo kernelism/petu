@@ -85,12 +85,12 @@ function end(s: string | undefined, near: Pt | undefined): RawEnd | undefined {
  * `ctx`: what the stream's parser knows so far (constants' names), for slips that depend on it.
  */
 export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
-  // The svg board (src/svgboard/wire.ts): {{svgboard h=900}} opens its section, {{svg <g …>…</g>}} draws a group.
+  // The svg board (src/svgboard/wire.ts): {{svgboard h=900}} opens its section (size l: the wide split, the board is the lesson's main picture), {{svg <g …>…</g>}} draws a group.
   if (/^\s*svg\s*</.test(body)) return svgGroup(body.replace(/^\s*svg\s*/, ''));
   const sb = /^\s*svgboard\b([^}]*)$/.exec(body);
   if (sb) {
     const num = (k: string, d: number) => { const m = new RegExp(`\\b${k}=(\\d+(?:\\.\\d+)?)`).exec(sb[1]); const v = m ? Number(m[1]) : d; return v > 0 ? v : d; };
-    return { kind: 'sketch', id: 'svgb', size: 'm', svgboard: { w: num('w', 1000), h: num('h', 700), ...(/\bextend\b/.test(sb[1]) ? { extend: true } : {}) } };
+    return { kind: 'sketch', id: 'svgb', size: 'l', svgboard: { w: num('w', 1000), h: num('h', 700), ...(/\bextend\b/.test(sb[1]) ? { extend: true } : {}) } };
   }
   const t = tokenize(body);
   if (!t) return null;
