@@ -3,6 +3,7 @@ import { DEFAULT_QSET, QSETS, assertSplitAllowed, type QSetName, type Question }
 import { CONFIGS, plannedWorstUsd, type Config } from './configs.ts';
 import { DEFAULT_RUBRIC, RUBRICS, type RubricVersion } from './judge.ts';
 import type { SpendSummary } from '../../src/agent/protocol.ts';
+import type { GateSetting } from '../../src/gate/events.ts';
 
 export type Args = {
   split: 'dev' | 'test' | 'both';
@@ -25,10 +26,19 @@ export type Args = {
   fakeJudge: boolean;
   /** --ask <deck>:<page>:<question>: one ad-hoc question (id X1, dev), e.g. to reproduce a founder report. */
   ask: { deck: string; page: number; question: string } | null;
+  /** Live gate (design 2026-10-29 §8): `&gate=` for the app; null = the app's default (live for agent answers). */
+  gate: GateSetting | null;
+  /** `&gatefail=K[:mode],…` injected faults (oN = opener sentence N). */
+  gatefail: string | null;
+  /** `&repair=`: live (POST /api/repair, spends), fake, recorded (replays only, $0), off. Null = recorded on a replay, live otherwise. */
+  repair: RepairSetting | null;
 };
+export type RepairSetting = 'live' | 'fake' | 'recorded' | 'off';
+const GATES: GateSetting[] = ['off', 'shadow', 'live', 'audit'];
+const REPAIRS: RepairSetting[] = ['live', 'fake', 'recorded', 'off'];
 
 export function parseArgs(argv: string[]): Args {
-  const a: Args = { split: 'dev', config: 'terra-none', only: null, n: 1, replay: null, finish: null, judge: null, webkit: false, parallel: 4, prewarmMs: 0, qset: DEFAULT_QSET, rubric: DEFAULT_RUBRIC, fakeJudge: false, ask: null };
+  const a: Args = { split: 'dev', config: 'terra-none', only: null, n: 1, replay: null, finish: null, judge: null, webkit: false, parallel: 4, prewarmMs: 0, qset: DEFAULT_QSET, rubric: DEFAULT_RUBRIC, fakeJudge: false, ask: null, gate: null, gatefail: null, repair: null };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const val = () => { const v = argv[++i]; if (v == null) throw new Error(`${k} needs a value`); return v; };
@@ -47,10 +57,14 @@ export function parseArgs(argv: string[]): Args {
       case '--qset': { const v = val(); if (!(v in QSETS)) throw new Error(`bad --qset ${v} (have: ${Object.keys(QSETS).join(', ')})`); a.qset = v as QSetName; break; }
       case '--rubric': { const v = val(); if (!(v in RUBRICS)) throw new Error(`bad --rubric ${v} (have: ${Object.keys(RUBRICS).join(', ')})`); a.rubric = v as RubricVersion; break; }
       case '--ask': { const m = /^([\w-]+):(\d+):(.+)$/s.exec(val()); if (!m) throw new Error('--ask needs <deck>:<page>:<question>'); a.ask = { deck: m[1], page: Number(m[2]), question: m[3] }; a.only = ['X1']; break; }
+      case '--gate': { const v = val(); if (!GATES.includes(v as GateSetting)) throw new Error(`bad --gate ${v} (have: ${GATES.join(', ')})`); a.gate = v as GateSetting; break; }
+      case '--gatefail': { const v = val(); if (!/^(o?\d+(:(skip|late|bad|ok))?)(,o?\d+(:(skip|late|bad|ok))?)*$/.test(v)) throw new Error(`bad --gatefail ${v} (K[:skip|late|bad|ok],…)`); a.gatefail = v; break; }
+      case '--repair': { const v = val(); if (!REPAIRS.includes(v as RepairSetting)) throw new Error(`bad --repair ${v} (have: ${REPAIRS.join(', ')})`); a.repair = v as RepairSetting; break; }
       case '--parallel': a.parallel = Math.min(4, Math.max(1, Math.floor(Number(val())))); break;
       default: throw new Error(`unknown flag ${k}`);
     }
   }
+  if (a.repair === 'recorded' && !a.replay) throw new Error('--repair recorded needs --replay');
   if (!CONFIGS[a.config]) throw new Error(`unknown config ${a.config} (have: ${Object.keys(CONFIGS).join(', ')})`);
   return a;
 }
@@ -64,6 +78,20 @@ export function selectQuestions(a: Args, cfg: Config = CONFIGS[a.config], qs: Qu
     out = qs.filter((q) => a.only!.includes(q.id));
   } else if (cfg.only) out = out.filter((q) => cfg.only!.includes(q.id)); // cost control: a config may name ids
   return out;
+}
+
+/** The repair mode the app gets: recorded on a replay, live on a generating run, unless --repair says otherwise. */
+export const repairOf = (a: Args): RepairSetting => a.repair ?? (a.replay ? 'recorded' : 'live');
+/** Does this run spend on repairs? (a generating run, gated, with live repairs) */
+export const spendsOnRepairs = (a: Args): boolean => !a.replay && !a.finish && a.gate !== 'off' && a.gate !== 'shadow' && repairOf(a) === 'live';
+/** The app's query for the gate flags (appended to the eval URL). */
+export function gateQuery(a: Args): string {
+  const q: string[] = [];
+  if (a.gate) q.push(`gate=${a.gate}`);
+  if (a.gatefail) q.push(`gatefail=${encodeURIComponent(a.gatefail)}`);
+  const r = repairOf(a);
+  if (a.repair || a.replay) q.push(`repair=${r === 'live' ? 'live' : r}`);
+  return q.length ? `&${q.join('&')}` : '';
 }
 
 export const wantsJudge = (a: Args, cfg: Config): boolean => (a.judge ?? cfg.judge ?? true);
@@ -83,10 +111,10 @@ export function remainingUsd(s: SpendSummary): number {
   return Math.max(0, Math.min(...left));
 }
 
-export function checkBudget(spend: SpendSummary, cfg: Config, qs: Question[], n: number, judge: boolean, rubric: RubricVersion = 'r2'): BudgetCheck {
+export function checkBudget(spend: SpendSummary, cfg: Config, qs: Question[], n: number, judge: boolean, rubric: RubricVersion = 'r2', repairs = false): BudgetCheck {
   // (a fake judge costs nothing: the runner passes judge=false for it)
   const answers = answersOf(qs, n);
-  const planned = plannedWorstUsd(cfg, answers, judge ? qs.length * n : 0, rubric);
+  const planned = plannedWorstUsd(cfg, answers, judge ? qs.length * n : 0, rubric, repairs);
   const remaining = remainingUsd(spend);
   if (spend.blocked) return { ok: false, planned, remaining, message: `server is blocked: ${spend.blocked}` };
   const ok = planned <= remaining;

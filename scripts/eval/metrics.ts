@@ -2,6 +2,7 @@
 // Geometry comes from the engine's registry and timing log, never from pixels.
 import type { EvalResult, RegistryRow, SerialTiming } from '../../src/agent/evalHooks.ts';
 import type { ScriptParse } from './scriptTags.ts';
+import type { GateEvent, RepairEvent } from '../../src/gate/events.ts';
 
 type Pt = { x: number; y: number };
 type Rect = { x: number; y: number; w: number; h: number };
@@ -25,7 +26,7 @@ export type Metrics = {
   usd: number;
   /** The scout's cost (the `scout` event) and the storyboard's, when there was one. */
   scoutUsd: number;
-  /** Everything the answer cost: scout + storyboard + stage 2. */
+  /** Everything the answer cost: scout + storyboard + stage 2 + live-gate repairs. */
   answerUsd: number;
   cachedShare: number; estimated: boolean;
   tags: number; malformed: number; linted: number; skipped: Record<string, number>; skippedTotal: number;
@@ -38,7 +39,63 @@ export type Metrics = {
   labelHits: number; labelsClipped: number; outOfFrame: number;
   words: number; longestSentence: number; wordsBeforeFirstMark: number; leaks: number;
   takeawayFirst: boolean; planChars: number; droppedMessages: number;
+  /** The live gate (design 2026-10-29 §8), when the answer was gated (any gate event recorded). */
+  gate?: GateMetrics;
 };
+
+/**
+ * One gated answer. `holds`: silences > 1 s between spoken words after the first (a hold the gate or a
+ * repair caused counts; so does any other stall). `seamMs`: the silence at the opener→stage-2 seam (the
+ * first word at or after the handoff minus the word before it). `liveSkipAfterPass`: actions the live
+ * board skipped although their unit passed (every played unit passed the gate, so every live skip in a
+ * gated answer). `shadowDrift`: units whose notes say the shadow board disagreed with the live one.
+ */
+export type GateMetrics = {
+  units: number; fails: number; strips: number; drops: number; droppedWords: number;
+  repairs: number; repairOk: number; repairLate: number; repairFail: number; repairRefused: number; repairUsd: number; repairMs: number[];
+  holds: number; seamMs: number | null; shadowMs: number[]; liveSkipAfterPass: number; shadowDrift: number; cascades: number;
+};
+export const HOLD_MS = 1000;
+
+export function gateMetrics(r: Pick<EvalResult, 'events' | 'words' | 'timings'>): GateMetrics | undefined {
+  const gs = r.events.filter((e): e is GateEvent => e.t === 'gate');
+  const rs = r.events.filter((e): e is RepairEvent => e.t === 'repair');
+  if (!gs.length && !rs.length) return undefined;
+  const handoff = r.events.find((e) => e.t === 'handoff') as { ms: number } | undefined;
+  let seamMs: number | null = null;
+  if (handoff) {
+    const i = r.words.findIndex((w) => w.t >= handoff.ms);
+    if (i > 0) seamMs = Math.max(0, r.words[i].t - r.words[i - 1].t);
+  }
+  let holds = 0;
+  for (let i = 1; i < r.words.length; i++) if (r.words[i].t - r.words[i - 1].t > HOLD_MS) holds++;
+  const sentAt = new Map<string, number>();
+  const repairMs: number[] = [];
+  for (const e of rs) {
+    if (e.phase === 'sent') { sentAt.set(e.k, e.ms); continue; }
+    if (e.phase === 'ok') { const s = sentAt.get(e.k); repairMs.push(s != null && s <= e.ms ? e.ms - s : e.ms); }
+  }
+  const noted = (g: GateEvent, word: string) => g.notes.some((n) => n.toLowerCase().includes(word)) || g.flags.some((f) => f.check.toLowerCase().includes(word));
+  return {
+    units: gs.filter((g) => !g.repaired).length,
+    fails: gs.filter((g) => g.result === 'fail').length,
+    strips: gs.filter((g) => g.result === 'strip').length,
+    drops: gs.filter((g) => g.action === 'drop').length,
+    droppedWords: gs.filter((g) => g.action === 'drop').reduce((s, g) => s + (g.words ?? (g.text ? wordCount(g.text.replace(/\{\{[^}]*\}\}/g, ' ')) : 0)), 0),
+    repairs: rs.filter((e) => e.phase === 'sent').length,
+    repairOk: rs.filter((e) => e.phase === 'ok').length,
+    repairLate: rs.filter((e) => e.phase === 'late').length,
+    repairFail: rs.filter((e) => e.phase === 'fail').length,
+    repairRefused: rs.filter((e) => e.phase === 'refused' || e.phase === 'error').length,
+    repairUsd: rs.reduce((s, e) => s + (e.usd ?? 0), 0),
+    repairMs,
+    holds, seamMs,
+    shadowMs: gs.map((g) => g.ms),
+    liveSkipAfterPass: r.timings.filter((t) => t.skipped).length,
+    shadowDrift: gs.filter((g) => noted(g, 'drift')).length,
+    cascades: gs.filter((g) => noted(g, 'cascade')).length,
+  };
+}
 
 export const NON_DRAWING = new Set(['scroll', 'sketch', 'clear', 'let', 'emph', 'move', 'fade']);
 const LAYOUT = new Set(['scroll', 'sketch', 'clear', 'let']);
@@ -157,6 +214,7 @@ export function computeMetrics(r: EvalResult, parsed?: ScriptParse): Metrics {
   const labels = labelStats(r.registry);
   const scoutUsd = r.events.reduce((s, e) => s + ((e.t === 'scout' || e.t === 'storyboard') ? (e.usd ?? 0) : 0), 0);
   const handoff = r.events.find((e) => e.t === 'handoff') as Extract<EvalResult['events'][number], { t: 'handoff' }> | undefined;
+  const gm = gateMetrics(r);
   const lastSpoken = r.sentences.length ? r.sentences[r.sentences.length - 1].endMs : r.words.length ? r.words[r.words.length - 1].t : null;
 
   return {
@@ -169,7 +227,7 @@ export function computeMetrics(r: EvalResult, parsed?: ScriptParse): Metrics {
     handoffGapMs: handoff?.openerEndMs != null ? Math.max(0, handoff.ms - handoff.openerEndMs) : null,
     usd: done?.usd ?? 0,
     scoutUsd,
-    answerUsd: (done?.usd ?? 0) + scoutUsd,
+    answerUsd: (done?.usd ?? 0) + scoutUsd + (gm?.repairUsd ?? 0),
     cachedShare: done?.usage?.input_tokens ? cached / done.usage.input_tokens : 0,
     estimated: !!done?.estimated,
     tags,
@@ -193,6 +251,7 @@ export function computeMetrics(r: EvalResult, parsed?: ScriptParse): Metrics {
     takeawayFirst: takeaway,
     planChars: done?.plan?.length ?? 0,
     droppedMessages: r.events.filter((e) => e.t === 'note' && e.message.includes('dropped extra message')).length,
+    ...(gm ? { gate: gm } : {}),
   };
 }
 
@@ -227,7 +286,35 @@ export type RunMetrics = {
   sum: Record<'tags' | 'malformed' | 'linted' | 'skippedTotal' | 'elements' | 'floatingPoints' | 'onLineErrors' | 'labelHits' | 'labelsClipped' | 'outOfFrame' | 'leaks' | 'droppedMessages', number>;
   mean: Record<'words' | 'longestSentence' | 'wordsBeforeFirstMark' | 'maxNewPerSentence' | 'planChars', number>;
   skipped: Record<string, number>;
+  /** Over the gated answers (absent when none was gated). */
+  gate?: RunGate;
 };
+
+export type RunGate = {
+  answers: number;
+  sum: Record<'units' | 'fails' | 'strips' | 'drops' | 'droppedWords' | 'repairs' | 'repairOk' | 'repairLate' | 'repairFail' | 'repairRefused' | 'holds' | 'liveSkipAfterPass' | 'shadowDrift' | 'cascades', number>;
+  repairUsd: number;
+  repairMs: { p50: number | null; p95: number | null };
+  shadowMs: { p95: number | null };
+  seamMs: { p50: number | null };
+  /** Drops per gated unit. */
+  dropRate: number;
+};
+
+export function aggregateGate(ms: Metrics[]): RunGate | undefined {
+  const g = ms.map((m) => m.gate).filter((x): x is GateMetrics => !!x);
+  if (!g.length) return undefined;
+  const keys = ['units', 'fails', 'strips', 'drops', 'droppedWords', 'repairs', 'repairOk', 'repairLate', 'repairFail', 'repairRefused', 'holds', 'liveSkipAfterPass', 'shadowDrift', 'cascades'] as const;
+  const sum = Object.fromEntries(keys.map((k) => [k, g.reduce((s, x) => s + x[k], 0)])) as RunGate['sum'];
+  return {
+    answers: g.length, sum,
+    repairUsd: g.reduce((s, x) => s + x.repairUsd, 0),
+    repairMs: { p50: percentile(g.flatMap((x) => x.repairMs), 0.5), p95: percentile(g.flatMap((x) => x.repairMs), 0.95) },
+    shadowMs: { p95: percentile(g.flatMap((x) => x.shadowMs), 0.95) },
+    seamMs: { p50: percentile(g.map((x) => x.seamMs), 0.5) },
+    dropRate: sum.units ? sum.drops / sum.units : 0,
+  };
+}
 
 export function aggregate(ms: Metrics[]): RunMetrics {
   const n = ms.length;
@@ -252,5 +339,6 @@ export function aggregate(ms: Metrics[]): RunMetrics {
     },
     mean: { words: mean('words'), longestSentence: mean('longestSentence'), wordsBeforeFirstMark: mean('wordsBeforeFirstMark'), maxNewPerSentence: mean('maxNewPerSentence'), planChars: mean('planChars') },
     skipped,
+    ...(aggregateGate(ms) ? { gate: aggregateGate(ms) } : {}),
   };
 }
