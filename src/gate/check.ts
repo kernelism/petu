@@ -14,7 +14,7 @@ import type { Beat, Tag, Word } from './segment';
 import { NEW_INK } from './segment';
 import type { GateState, Value } from './engine';
 
-export type CheckKind = 'number' | 'threshold' | 'direction' | 'deixis' | 'layout' | 'geometry' | 'erasure' | 'tag' | 'unbound' | 'order';
+export type CheckKind = 'number' | 'threshold' | 'direction' | 'deixis' | 'layout' | 'geometry' | 'erasure' | 'tag' | 'unbound' | 'order' | 'named';
 export type Flag = { check: CheckKind; detail: string };
 export type Verdict = { ok: boolean; flags: Flag[]; notes: string[] };
 
@@ -279,3 +279,72 @@ export function checkTags(beat: Beat, skipped: Map<Tag, string>): Flag[] {
 }
 
 export type Words = Word[];
+
+// ------------------------------------------------------------------------------------------------
+// Named objects: the narration names a drawn thing the board doesn't have.
+
+/** What the board (and the slides the answer points at) carry, for checkNamed. */
+export type NamedScene = {
+  /** Labels and ids of drawn elements (points' and labels' text, ids), case-sensitive. */
+  labels: Set<string>;
+  /** Drawn elements per kind ('point', 'line', 'curve', 'circle', 'arrow', 'triangle', 'table', 'grid'…). */
+  counts: Map<string, number>;
+  /** Words printed on the pages in play: a label that is on the slide is not the board's to draw. */
+  pageWords?: Set<string>;
+};
+
+const NAMED_NOUN: Record<string, string> = {
+  point: 'point', vertex: 'point', curve: 'curve', line: 'line', segment: 'line', triangle: 'triangle', circle: 'circle', arrow: 'arrow', vector: 'arrow',
+};
+const PLURAL_NOUN: Record<string, string> = {
+  points: 'point', dots: 'point', curves: 'curve', plots: 'curve', lines: 'line', segments: 'line', triangles: 'triangle', circles: 'circle', arrows: 'arrow', tables: 'table', grids: 'grid',
+};
+const COUNT_WORD: Record<string, number> = { two: 2, both: 2, three: 3, four: 4, five: 5, six: 6 };
+const clean = (w: string) => w.replace(/^[("“‘']+|[)"”’'.,;:!?]+$/g, '');
+
+/**
+ * (g) named objects. A labelled reference ("point C", "curve D", "triangle ABC") with no drawn
+ * element or page word carrying that label, and a determined count ("the two triangles", "these
+ * three points", "both curves") above what is drawn. Generic statements ("a point", "two points
+ * determine a line") are never flagged: only a label of capitals, or a count after the/these/those/both.
+ */
+export function checkNamed(words: readonly string[], scene: NamedScene): Flag[] {
+  const flags: Flag[] = [];
+  const has = (l: string) => scene.labels.has(l) || scene.labels.has(l.toLowerCase()) || !!scene.pageWords?.has(l);
+  for (let i = 0; i < words.length; i++) {
+    const w = clean(words[i]).toLowerCase();
+    const noun = NAMED_NOUN[w];
+    if (noun) {
+      const raw = words[i + 1] ?? '';
+      const label = clean(raw);
+      // A label: 1–3 capitals (primes, subscript digits) — "C", "C′", "ABC", "P1".
+      if (/^[A-Z](?:[A-Z]{0,2}|[′']|\d)?$/.test(label) && !/^(A|I)$/.test(label)) {
+        const parts = noun === 'triangle' && label.length === 3 ? [label, ...label.split('')] : [label];
+        const ok = noun === 'triangle' && label.length === 3 ? parts.slice(1).every(has) || has(label) : has(label);
+        if (!ok) flags.push({ check: 'named', detail: `"${words[i]} ${raw}": nothing drawn is labelled ${label}` });
+      }
+    }
+  }
+  return flags;
+}
+
+/**
+ * A determined count ("the two triangles", "these three points", "both curves") above what is drawn.
+ * Precision on the recorded corpus is low (the count often means the slide's own figure, or is
+ * generic: "both points in one sample"), so the gate notes it and does not fail on it.
+ */
+export function checkCounts(words: readonly string[], scene: NamedScene): Flag[] {
+  const flags: Flag[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = clean(words[i]).toLowerCase();
+    if (/^(the|these|those)$/.test(w) || w === 'both') {
+      const nWord = w === 'both' ? 'both' : clean(words[i + 1] ?? '').toLowerCase();
+      const n = COUNT_WORD[nWord];
+      const kind = PLURAL_NOUN[clean(words[i + (w === 'both' ? 1 : 2)] ?? '').toLowerCase()];
+      if (!n || !kind) continue;
+      const have = scene.counts.get(kind) ?? 0;
+      if (have < n) flags.push({ check: 'named', detail: `"${words.slice(i, i + (w === 'both' ? 2 : 3)).join(' ')}": ${have} ${kind}${have === 1 ? '' : 's'} drawn` });
+    }
+  }
+  return flags;
+}

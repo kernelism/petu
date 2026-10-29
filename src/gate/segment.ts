@@ -116,11 +116,11 @@ export type Beat = {
 };
 
 export type BeatRule = 'para' | 'sentence' | 'ink' | 'hybrid';
-export type BeatOpts = { rule?: BeatRule; minWords?: number; maxWords?: number };
+export type BeatOpts = { rule?: BeatRule; minWords?: number; maxWords?: number; /** Hybrid: a short tail joins the beat before it (default on; off = what the incremental splitter produces). */ tail?: boolean };
 /** The proposed rule's defaults (see the report): a beat opens at a paragraph or at a sentence that starts new board ink, once the beat has ≥ 12 words; a beat longer than 45 words closes at the next sentence end. */
-export const BEAT_DEFAULTS: Required<BeatOpts> = { rule: 'hybrid', minWords: 12, maxWords: 45 };
+export const BEAT_DEFAULTS: Required<BeatOpts> = { rule: 'hybrid', minWords: 12, maxWords: 45, tail: true };
 
-const leadsWithInk = (u: Unit) => u.tags.some((t) => (t.at === (u.words[0]?.i ?? -2) || t.start < (u.words[0]?.start ?? Infinity)) && (isBoardInk(t.action) || t.action?.kind === 'sketch'));
+export const leadsWithInk = (u: Unit) => u.tags.some((t) => (t.at === (u.words[0]?.i ?? -2) || t.start < (u.words[0]?.start ?? Infinity)) && (isBoardInk(t.action) || t.action?.kind === 'sketch'));
 
 /** Groups sentences into beats. */
 export function beats(script: string, opts: BeatOpts = {}): Beat[] {
@@ -142,9 +142,131 @@ export function beats(script: string, opts: BeatOpts = {}): Beat[] {
   }
   if (cur.length) groups.push(cur);
   // Hybrid: a short tail joins the beat before it.
-  if (o.rule === 'hybrid' && groups.length > 1 && nWords(groups[groups.length - 1]) < o.minWords / 2) { const t = groups.pop()!; groups[groups.length - 1].push(...t); }
+  if (o.rule === 'hybrid' && o.tail && groups.length > 1 && nWords(groups[groups.length - 1]) < o.minWords / 2) { const t = groups.pop()!; groups[groups.length - 1].push(...t); }
   return groups.map((g, k) => ({
     k, units: g, words: g.flatMap((u) => u.words), tags: g.flatMap((u) => u.tags),
     start: g[0].start, end: g[g.length - 1].end, text: g.map((u) => u.text).join(' '),
   }));
+}
+
+// ------------------------------------------------------------------------------------------------
+// Incremental: the live gate's splitter.
+
+/** A closed unit of the stream: its raw text (exactly as streamed, leading whitespace included). */
+export type SplitUnit = { text: string; words: number; sentences: number; kind: 'sentence' | 'beat' };
+type Sent = { raw: string; u: Unit; para: boolean };
+
+/**
+ * Splits a streamed script into units as it arrives: sentences in `sentence` mode, hybrid beats in
+ * `beat` mode (BEAT_DEFAULTS; a beat closes at a sentence that opens a new one, at maxWords, or at
+ * the end). Concatenating every unit's text gives the stream back exactly. With the mode fixed, the
+ * beats equal `beats(text, { tail: false })` (sentences: `units(text)`) at any chunk boundaries.
+ * A sentence closes once its last word is followed by whitespace (or a line break ends it); a
+ * partial word or an unclosed tag waits for more text.
+ */
+export class BeatSplitter {
+  private buf = '';
+  private cur: Sent[] = [];
+  private first = true;
+  private o: Required<BeatOpts>;
+  constructor(private m: 'sentence' | 'beat' = 'beat', opts: BeatOpts = {}) { this.o = { ...BEAT_DEFAULTS, ...opts }; }
+
+  get mode(): 'sentence' | 'beat' { return this.m; }
+  /** Switches mode; a beat in progress closes as it stands. */
+  setMode(m: 'sentence' | 'beat'): SplitUnit[] {
+    if (m === this.m) return [];
+    this.m = m;
+    return this.flush();
+  }
+
+  /** Text not yet closed into a unit (the gate's look-ahead: later ids it names). */
+  pending(): string { return this.cur.map((s) => s.raw).join('') + this.buf; }
+
+  push(chunk: string): SplitUnit[] { this.buf += chunk; return this.take(false); }
+  /** The stream ended: the rest is one or more units. */
+  end(): SplitUnit[] { const out = this.take(true); out.push(...this.flush()); return out; }
+  /** Everything buffered as units now, whole sentences or not (the opener's text is complete as sent). */
+  close(): SplitUnit[] { return this.end(); }
+
+  private flush(): SplitUnit[] {
+    if (!this.cur.length) return [];
+    const g = this.cur;
+    this.cur = [];
+    return [this.unitOf(g, 'beat')];
+  }
+
+  private unitOf(g: Sent[], kind: 'sentence' | 'beat'): SplitUnit {
+    return { text: g.map((s) => s.raw).join(''), words: g.reduce((n, s) => n + s.u.words.length, 0), sentences: g.length, kind };
+  }
+
+  private cut(final: boolean): number {
+    const buf = this.buf;
+    if (final) return buf.length;
+    let cut = buf.search(/\S*$/);
+    let pos = 0;
+    for (;;) {
+      const open = buf.indexOf('{{', pos);
+      if (open === -1 || open >= buf.length) break;
+      const s = scan(buf, open);
+      if ('close' in s) {
+        if (open < cut && s.close > cut) cut = s.close; // whitespace inside a closed tag is not a word boundary
+        pos = s.close;
+        continue;
+      }
+      if (s.fail >= buf.length && buf.length < open + MAX_TAG_CHARS) { if (open < cut) cut = open; break; }
+      pos = s.fail;
+    }
+    return cut;
+  }
+
+  private take(final: boolean): SplitUnit[] {
+    const cut = this.cut(final);
+    if (cut <= 0 && !final) return [];
+    const prefix = this.buf.slice(0, cut);
+    const us = units(prefix);
+    let consumed = 0;
+    const sents: Sent[] = [];
+    for (let i = 0; i < us.length; i++) {
+      const u = us[i];
+      let end = u.end;
+      if (i === us.length - 1 && !final) {
+        const lw = u.words[u.words.length - 1];
+        if (!lw) break;
+        const done = endsSentence(lw.text) || /\n/.test(prefix.slice(lw.end));
+        if (!done) break;
+        // Tags after the last word fire with the next sentence's first word: they stay buffered.
+        end = lw.end;
+        if (u.tags.some((t) => t.start > lw.end)) u.tags = u.tags.filter((t) => t.start < lw.end);
+        u.end = end;
+      }
+      const para = this.first || (i === 0 ? /\n/.test(prefix.slice(0, u.words[0]?.start ?? u.end)) : u.paraBefore);
+      this.first = false;
+      sents.push({ raw: this.buf.slice(consumed, end), u, para });
+      consumed = end;
+    }
+    this.buf = this.buf.slice(consumed);
+    if (final && this.buf.length) {
+      // Only whitespace (or nothing) after the last unit: it rides with the last sentence.
+      if (sents.length) { sents[sents.length - 1].raw += this.buf; this.buf = ''; }
+      else if (this.cur.length) { this.cur[this.cur.length - 1].raw += this.buf; this.buf = ''; }
+      else { const ws = this.buf; this.buf = ''; return [{ text: ws, words: 0, sentences: 0, kind: this.m }]; }
+    }
+    const out: SplitUnit[] = [];
+    for (const s of sents) {
+      if (this.m === 'sentence') { out.push(this.unitOf([s], 'sentence')); continue; }
+      const n = this.cur.reduce((k, x) => k + x.u.words.length, 0);
+      if (this.cur.length && this.split(s, n)) out.push(...this.flush());
+      this.cur.push(s);
+      if (this.cur.reduce((k, x) => k + x.u.words.length, 0) >= this.o.maxWords) out.push(...this.flush());
+    }
+    return out;
+  }
+
+  private split(s: Sent, n: number): boolean {
+    const o = this.o;
+    if (o.rule === 'sentence') return true;
+    if (o.rule === 'para') return s.para;
+    if (o.rule === 'ink') return leadsWithInk(s.u) || s.para;
+    return ((s.para || leadsWithInk(s.u)) && n >= o.minWords) || n >= o.maxWords;
+  }
 }

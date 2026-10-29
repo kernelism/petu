@@ -1,0 +1,222 @@
+import { describe, expect, it } from 'vitest';
+import { GatePreflight, LiveGate, type Preflight, type PreflightResult, type PreflightUnit, type ShadowBoard } from '../../src/gate/live';
+import { parseFaults } from '../../src/gate/faults';
+import type { GateEvent, GateLogEvent, RepairFn, RepairEvent } from '../../src/gate/events';
+import type { RawAction } from '../../src/script/types';
+
+/** A fake timeline: `now` moves only when advanced; sleeps resolve in time order. */
+class FakeTime {
+  t = 0;
+  private timers: { at: number; r: () => void }[] = [];
+  now = () => this.t;
+  sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((r) => {
+    const e = { at: this.t + Math.max(0, ms), r };
+    this.timers.push(e);
+    signal?.addEventListener('abort', () => { this.timers = this.timers.filter((x) => x !== e); r(); }, { once: true });
+  });
+  advance(ms: number) {
+    const end = this.t + ms;
+    for (;;) {
+      this.timers.sort((a, b) => a.at - b.at);
+      const n = this.timers[0];
+      if (!n || n.at > end) break;
+      this.timers.shift();
+      this.t = n.at;
+      n.r();
+    }
+    this.t = end;
+  }
+}
+const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+
+/** Narration plays 300 ms a word, starting when released (the clock's endsAt). */
+function harness(o: { preflight: Preflight; repair?: RepairFn; gatefail?: string; headroomMs?: number; setting?: 'live' | 'shadow' }) {
+  const time = new FakeTime();
+  let ends = 0;
+  const events: GateLogEvent[] = [];
+  const clock = { now: time.now, endsAt: () => ends };
+  const gate = new LiveGate({ clock, preflight: o.preflight, repair: o.repair, faults: parseFaults(o.gatefail), headroomMs: o.headroomMs ?? 6000, onEvent: (e) => events.push(e), sleep: time.sleep, setting: o.setting });
+  const out: string[] = [];
+  async function play(chunks: (string | { handoff: true } | { wait: number })[]) {
+    const src = async function* () {
+      for (const c of chunks) {
+        if (typeof c === 'string') yield c;
+        else if ('handoff' in c) gate.handoff();
+        else await time.sleep(c.wait);
+      }
+    };
+    const it = gate.wrap(src)(new AbortController().signal)[Symbol.asyncIterator]();
+    let done = false;
+    const consume = (async () => {
+      for (;;) {
+        const r = await it.next();
+        if (r.done) break;
+        out.push(r.value);
+        const w = r.value.split(/\s+/).filter((x) => x && !x.startsWith('{{')).length;
+        ends = Math.max(ends, time.t) + 300 * w;
+      }
+      done = true;
+    })();
+    for (let i = 0; i < 2000 && !done; i++) { await flush(); time.advance(50); }
+    await consume;
+  }
+  return { gate, time, events, out, play, gates: () => events.filter((e): e is GateEvent => e.t === 'gate'), repairs: () => events.filter((e): e is RepairEvent => e.t === 'repair') };
+}
+
+/** A preflight that fails any unit containing BAD (skipping that tag), STRIPME (a page highlight), or FIXME. */
+function fakePreflight(): Preflight & { accepted: string[] } {
+  const accepted: string[] = [];
+  return {
+    accepted,
+    check(u: PreflightUnit): PreflightResult {
+      const tags = [...u.text.matchAll(/\{\{([^}]*)\}\}/g)].map((m) => {
+        const body = m[1];
+        const action = (body.startsWith('highlight') ? { kind: 'highlight', page: 1, quote: 'x' } : body.startsWith('emph') ? { kind: 'emph', ref: 'a' } : { kind: 'point', region: 's', at: { x: 0, y: 0 } }) as unknown as RawAction;
+        const skipped = /BAD|STRIPME/.test(body) || (u.fault && m.index === u.text.indexOf('{{')) ? 'skip' : undefined;
+        return { start: m.index!, end: m.index! + m[0].length, body, action, ...(skipped ? { skipped } : {}) };
+      });
+      const flags = [
+        ...tags.filter((t) => t.skipped).map((t) => ({ check: 'tag', detail: `${t.action!.kind} skipped: ${t.skipped}` })),
+        ...(/FIXME/.test(u.text) ? [{ check: 'number', detail: 'FIXME' }] : []),
+      ];
+      return { flags, notes: [], tags };
+    },
+    accept(u) { accepted.push(u.text); },
+    reject() {},
+  };
+}
+
+const LONG = 'one two three four five six seven eight nine ten eleven twelve thirteen.';
+
+describe('LiveGate', () => {
+  it('releases passing units in order, opener chunks as units, stage 2 as sentences then beats', async () => {
+    const h = harness({ preflight: fakePreflight() });
+    await h.play(['Opener clause one, ', 'clause two. ', { handoff: true }, 'First stage two sentence. ', `Second ${LONG} `, 'Third. ']);
+    expect(h.out.join('')).toBe('Opener clause one, clause two. First stage two sentence. Second ' + LONG + ' Third. ');
+    const g = h.gates();
+    expect(g.slice(0, 2).map((e) => [e.k, e.unit])).toEqual([['o0', 'opener'], ['o1', 'opener']]);
+    expect(g.every((e) => e.result === 'pass' && e.action === 'release')).toBe(true);
+  });
+
+  it('drops a failing unit whole: none of its words or tags reach the session (I2/I3)', async () => {
+    const h = harness({ preflight: fakePreflight() });
+    await h.play([{ handoff: true }, 'Good one. ', 'Look {{point BAD}} at this point. ', 'Good two. ']);
+    expect(h.out.join('')).toBe('Good one. Good two. ');
+    expect(h.gates().find((e) => e.action === 'drop')).toMatchObject({ k: '1', result: 'fail', words: 4 });
+    expect(h.gate.stats).toMatchObject({ drops: 1, droppedWords: 4 });
+  });
+
+  it('strips a failed page highlight when nothing later names it, and releases the rest', async () => {
+    const h = harness({ preflight: fakePreflight() });
+    await h.play([{ handoff: true }, 'The rate {{highlight STRIPME}} doubles. ', 'Then it settles. ']);
+    expect(h.out.join('')).toBe('The rate doubles. Then it settles. ');
+    expect(h.gates()[0]).toMatchObject({ result: 'strip', action: 'release', stripped: ['{{highlight STRIPME}}'] });
+  });
+
+  it('never strips board construction', async () => {
+    const h = harness({ preflight: fakePreflight() });
+    await h.play([{ handoff: true }, 'Draw {{point BAD}} it. ', 'Next. ']);
+    expect(h.out.join('')).toBe(' Next. ');
+  });
+
+  it('repairs a failed beat in beat mode: the report goes out, the replacement plays in its place', async () => {
+    const asked: Parameters<RepairFn>[0][] = [];
+    const h = harness({
+      preflight: fakePreflight(), headroomMs: 1000,
+      repair: async (req) => { asked.push(req); return { ok: true, text: 'A plain replacement sentence.' }; },
+    });
+    await h.play([{ handoff: true }, `Intro ${LONG} `, { wait: 300 }, `So ${LONG} `, { wait: 300 }, 'Mid FIXME words. ', `More ${LONG} `, 'Last. ']);
+    expect(asked).toHaveLength(1);
+    expect(asked[0].beat).toContain('FIXME');
+    expect(asked[0].report.problems[0]).toMatchObject({ check: 'number' });
+    expect(asked[0].committed).toContain('Intro');
+    const text = h.out.join('');
+    expect(text).not.toContain('FIXME');
+    expect(text).toContain('A plain replacement sentence.');
+    expect(h.repairs().map((e) => e.phase)).toEqual(['sent', 'ok']);
+  });
+
+  it('a late repair is aborted at the deadline and the beat dropped', async () => {
+    let aborted = false;
+    const h = harness({
+      preflight: fakePreflight(), headroomMs: 1000,
+      repair: (_req, signal) => new Promise((r) => { signal.addEventListener('abort', () => { aborted = true; r({ ok: false, reason: 'error' }); }); }),
+    });
+    await h.play([{ handoff: true }, `Intro ${LONG} `, { wait: 300 }, `So ${LONG} `, { wait: 300 }, 'Mid FIXME words. ', 'Last. ']);
+    expect(aborted).toBe(true);
+    expect(h.repairs().map((e) => e.phase)).toEqual(['sent', 'late']);
+    expect(h.out.join('')).not.toContain('FIXME');
+    expect(h.gates().some((e) => e.action === 'drop')).toBe(true);
+  });
+
+  it('a repair that fails its re-check is dropped, never repaired twice', async () => {
+    let n = 0;
+    const h = harness({ preflight: fakePreflight(), headroomMs: 1000, repair: async () => { n++; return { ok: true, text: 'Still FIXME here.' }; } });
+    await h.play([{ handoff: true }, `Intro ${LONG} `, { wait: 300 }, `So ${LONG} `, { wait: 300 }, 'Mid FIXME words. ', 'Last. ']);
+    expect(n).toBe(1);
+    expect(h.repairs().map((e) => e.phase)).toEqual(['sent', 'ok', 'fail']);
+    expect(h.out.join('')).not.toContain('FIXME');
+  });
+
+  it('no repair in sentence mode, at most MAX_REPAIRS per answer', async () => {
+    let n = 0;
+    const repair: RepairFn = async () => { n++; return { ok: true, text: 'Fixed.' }; };
+    const s = harness({ preflight: fakePreflight(), headroomMs: 1e9, repair });
+    await s.play([{ handoff: true }, 'A. ', 'FIXME. ', 'B. ']);
+    expect(n).toBe(0);
+    expect(s.out.join('')).toBe('A. B. ');
+    const m = harness({ preflight: fakePreflight(), headroomMs: 1000, repair });
+    await m.play([{ handoff: true }, `Intro ${LONG} `, { wait: 300 }, `\n\nSo ${LONG} FIXME a. `, { wait: 300 }, `\n\nx ${LONG} FIXME b. `, { wait: 300 }, `\n\ny ${LONG} FIXME c. `, { wait: 300 }, '\n\nEnd. ']);
+    expect(n).toBe(2);
+  });
+
+  it('&gatefail injects a skip; :ok repairs with a fake fix, :bad returns the original (dropped)', async () => {
+    const ok = harness({ preflight: fakePreflight(), headroomMs: 1000, gatefail: '1:ok' });
+    await ok.play([{ handoff: true }, `Intro ${LONG} `, { wait: 300 }, `So ${LONG} `, { wait: 300 }, 'Notice {{point A}} the point here. ', `End ${LONG} `]);
+    expect(ok.repairs().map((e) => e.phase)).toEqual(['sent', 'ok']);
+    expect(ok.out.join('')).toContain('the point here.');
+    expect(ok.out.join('')).not.toContain('{{point A}}');
+    const bad = harness({ preflight: fakePreflight(), headroomMs: 1000, gatefail: '1:bad' });
+    await bad.play([{ handoff: true }, `Intro ${LONG} `, { wait: 300 }, `So ${LONG} `, { wait: 300 }, 'Notice {{point A}} the point here. ', `End ${LONG} `]);
+    expect(bad.out.join('')).not.toContain('point here');
+  });
+
+  it('shadow setting releases everything and logs the verdicts', async () => {
+    const h = harness({ preflight: fakePreflight(), setting: 'shadow' });
+    await h.play([{ handoff: true }, 'Bad {{point BAD}} one. ', 'Two. ']);
+    expect(h.out.join('')).toBe('Bad {{point BAD}} one. Two. ');
+    expect(h.gates()[0]).toMatchObject({ result: 'fail', action: 'release' });
+  });
+
+  it('the trailing partial text at the end is one unit', async () => {
+    const h = harness({ preflight: fakePreflight() });
+    await h.play([{ handoff: true }, 'Done. And then the stream was cut']);
+    expect(h.out.join('')).toBe('Done. And then the stream was cut');
+  });
+});
+
+describe('GatePreflight', () => {
+  it('a malformed tag fails its unit; the session parser reads what will play', async () => {
+    const p = new GatePreflight();
+    const bad = await p.check({ key: '0', kind: 'sentence', text: 'Look {{nonsense x=}} here. ' });
+    expect(bad.flags.some((f) => f.check === 'tag')).toBe(true);
+    const good = await p.check({ key: '0', kind: 'sentence', text: 'We set {{const v=20}} the speed to twenty. ' });
+    expect(good.flags).toEqual([]);
+    p.accept({ key: '0', kind: 'sentence', text: 'We set {{const v=20}} the speed to twenty. ' });
+    expect(p.text()).toContain('const v=20');
+  });
+
+  it('the shadow board’s skip fails the unit; a rejected unit rebuilds the board from the accepted actions', async () => {
+    const rebuilt: number[] = [];
+    const board: ShadowBoard = {
+      apply: (as) => ({ skipped: new Map(as.filter((a) => a.kind === 'circle').map((a) => [a, 'unknown region'])) }),
+      rebuild: (acc) => { rebuilt.push(acc.length); },
+    };
+    const p = new GatePreflight({ board });
+    const u = { key: '0', kind: 'sentence' as const, text: 'See {{circle on=zz at=1,1 r=3}} this circle. ' };
+    const r = await p.check(u);
+    expect(r.flags.map((f) => f.detail)).toContain('circle skipped: unknown region');
+    p.reject(u);
+    expect(rebuilt).toEqual([0]);
+  });
+});
