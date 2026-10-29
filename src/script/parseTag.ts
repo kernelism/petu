@@ -85,6 +85,10 @@ function end(s: string | undefined, near: Pt | undefined): RawEnd | undefined {
  * `ctx`: what the stream's parser knows so far (constants' names), for slips that depend on it.
  */
 export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
+  // EXPERIMENT (svgboard): the SVG board's section, and {{show a,b}} revealing its groups.
+  if (/^\s*svgboard\s*$/.test(body)) return { kind: 'sketch', id: 'svgb', size: 'm', svgboard: true };
+  const show = /^\s*show\s+([\s\S]+)$/.exec(body);
+  if (show) { const ids = show[1].split(/[\s,]+/).map((x) => x.replace(/^id=/, '').replace(/^["“]|["”]$/g, '')).filter(Boolean); return ids.length ? { kind: 'svgshow', ids } : null; }
   const t = tokenize(body);
   if (!t) return null;
   const { name, args, quotes, flags, rawArgs, dupKeys } = t;

@@ -62,6 +62,8 @@ export type AskContext = {
 
 /** NDJSON lines from the server, one JSON object per line. */
 export type AskEvent =
+  /** EXPERIMENT (svgboard): the board as one SVG, sent before the {{svgboard}} tag that mounts it. */
+  | { t: 'svg'; d: string }
   | { t: 'meta'; reqId: string; model: string; effort: string }
   /** Client-side: the scout's verdict (stage 1), recorded before the answer's own events. */
   | { t: 'scout'; pages: number[]; plan: string; ms: number; usd: number; fallback?: string;

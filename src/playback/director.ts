@@ -1,4 +1,5 @@
 // src/playback/director.ts
+import { mountSvgBoard, showAllSvgGroups, showSvgGroups } from '../desk/svgBoard';
 import { REGION_H, REGION_W, targetOf, type Action, type InkAction, type LayoutAction, type RawAction, type Target } from '../script/types';
 import { Figures, type Grounding } from '../geometry/resolve';
 import type { ViewerApi } from '../pdf/viewerApi';
@@ -133,6 +134,7 @@ export class Director {
    * rather than for `at`, so a pause or a speed change after the action fired keeps ink on its word.
    */
   run(raw: RawAction, at: number = now(), live?: () => number | null): void {
+    if (raw.kind === 'svgshow') { this.svgShow(raw.ids, at); return; }
     if (raw.kind === 'let') return; // definitions were taken when it was parsed (prefetch)
     if (raw.kind === 'const') { if (!this.seen.has(raw)) kitStore(this.registry).defineConsts(raw.defs); return; }
     if (raw.kind === 'find') { if (!this.seen.has(raw)) { this.figures.note(raw); kitStore(this.registry).finds.set(raw.id, raw); } return; }
@@ -146,6 +148,20 @@ export class Director {
     const isInk = !isLayout(raw as Action);
     const a = (isInk ? raw : this.figures.resolve(raw)) as Action;
     this.runResolved(a, raw, at, live);
+  }
+
+  /** EXPERIMENT (svgboard): the board SVG is on the desk (shows before that wait for it). */
+  private svgMounted = false;
+  private svgShow(ids: string[], at: number): void {
+    const t: ActionTiming = { action: { kind: 'svgshow', ids } as unknown as Action, firedAt: at, queuedAt: now(), startedAt: NaN };
+    const go = async () => {
+      const t0 = now();
+      while (!this.svgMounted && now() - t0 < 8000) await wait(50);
+      this.report(t, { startedAt: now() });
+      const k = showSvgGroups(ids);
+      this.report(t, { endedAt: now(), skipped: k || undefined });
+    };
+    this.track(go());
   }
 
   private seen = new WeakSet<object>();
@@ -197,10 +213,12 @@ export class Director {
     await this.idle();
     const signal = this.ctrl.signal;
     if (!signal.aborted) await this.desk()?.overview?.();
+    if (this.svgMounted) showAllSvgGroups(); // EXPERIMENT (svgboard): groups the narration never showed
   }
 
   /** As soon as an action is parsed: takes its point definitions (lookahead), warms caches (text runs, KaTeX). */
   prefetch(raw: RawAction): void {
+    if (raw.kind === 'svgshow') return;
     this.seen.add(raw);
     if (raw.kind === 'sketch') this.declared.add(raw.id);
     if (raw.kind === 'const') { kitStore(this.registry).defineConsts(raw.defs); return; }
@@ -358,6 +376,7 @@ export class Director {
       // Lands ink in flight only if opening the board moves the view (the split glide, a board scroll).
       const r = await desk.addRegion({ id: a.id, page, size: a.size, body, ...(a.scene ? { scene: true } : {}) }, this.land);
       if (typeof r === 'string') { console.warn('[director] sketch skipped:', r, a.id); return r; }
+      if (a.svgboard) { const k = mountSvgBoard(r.layers.agent); this.svgMounted = true; if (k) console.warn('[director] svgboard:', k); return k; }
       return;
     }
     if (a.page < 1 || a.page > v.numPages()) return 'page out of range';

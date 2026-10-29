@@ -43,6 +43,7 @@ import { ScriptFilter } from './scriptFilter';
 import { Lint } from './lint';
 import { systemPrompt, PROMPT_VERSION, promptVersionOf } from './prompt/system';
 import { BoardFirst } from './boardFirst';
+import { SvgScriptFilter } from './svgBoard';
 import { SCOUT_SYSTEM, SCOUT_VERSION } from './prompt/scout';
 import { SCOUT_SCHEMA, fallbackScout, parseScout, type ScoutEvent, type ScoutRequest, type ScoutResult } from '../src/agent/scout';
 import { OpenerGate, ScoutJson } from './scoutStream';
@@ -87,7 +88,9 @@ export type AnswerRecord = { at: string; phase: string; model: string; effort: s
   /** The storyboard stage 2 performed (or why it ran on the scout's plan alone), its latency and cost. */
   storyboard?: { model: string; effort: string; version: string; ms: number; usd: number; board?: Storyboard; fallback?: string };
   /** EXPERIMENT (boardfirst): the model's script before the board-first reveal, and what it declared and revealed. */
-  raw?: string; boardFirst?: { declared: number; revealed: number; hidden: string[]; immediate: number; noId: number } };
+  raw?: string; boardFirst?: { declared: number; revealed: number; hidden: string[]; immediate: number; noId: number };
+  /** EXPERIMENT (svgboard): the board SVG and its timings (ms from the request). */
+  svg?: { text: string; firstMs: number; svgMs: number; ttftMs: number; totalMs: number; tokens: unknown } };
 /**
  * `headersMs`: no response headers → the attempt is abandoned (retried once, before any text).
  * `idleMs`: a streamed answer that sends nothing for this long is ended (cut_off after text).
@@ -586,7 +589,10 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const onAbort = () => up.abort();
   signal.addEventListener('abort', onAbort);
   if (signal.aborted) up.abort();
-  const filter = new ScriptFilter(), lint = new Lint();
+  const now0 = d.now ?? (() => performance.now());
+  // EXPERIMENT (svgboard): the board's SVG is lifted out of the stream and sent as its own event.
+  const svgf = cfg.promptVariant === 'svgboard' ? new SvgScriptFilter((svg) => { if (!signal.aborted) emit({ t: 'svg', d: svg }); }, now0) : null;
+  const filter = svgf ?? new ScriptFilter(), lint = new Lint();
   const read = newRead();
   let outChars = 0, ttft = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
   let sent = false, terminal = false, complete = false, idle = false, script = '', raw = '';
@@ -656,7 +662,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const u: Usage = usage ?? estimatedUsage(est, cachedGuess, Math.ceil(Math.max(read.rawChars, outChars) / 3.2));
   const usd = costUsd(cfg.model, u, '12h', cfg.fast);
   d.ledger.settle({ id: reqId, phase: d.phase, kind: 'answer', model: cfg.model, usd, estimated, tokens: tokens(u) });
-  try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
+  try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { text: svgf.svg, firstMs: Math.round(svgf.firstMs - t0), svgMs: Math.round(svgf.svgMs - t0), ttftMs: Math.round(ttft), totalMs: Math.round(now() - t0), tokens: tokens(u) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
   if (signal.aborted) return;
   if (failed && failed.code !== 'cut_off' && !outChars) { emit(failed); return; }
   const s = d.ledger.summary();

@@ -266,7 +266,8 @@ export type LayoutAction =
    * Appends section `id` to the board. `page` (from `near=pN`) is the slide it explains (default: the
    * one in view); its body text sets the section's type size. `place=` is accepted and ignored.
    */
-  | { kind: 'sketch'; id: string; page?: number; size: RegionSize; fit?: boolean; /** Board v2: one 2-D scene with a camera ({{scene}}). */ scene?: boolean }
+  | { kind: 'sketch'; id: string; page?: number; size: RegionSize; fit?: boolean; /** Board v2: one 2-D scene with a camera ({{scene}}). */ scene?: boolean;
+      /** EXPERIMENT (svgboard): the section holds the model's SVG board. */ svgboard?: boolean }
   | { kind: 'clear' };
 
 export type Action = LayoutAction | DrawAction | RefAction | ConnectAction;
@@ -349,4 +350,6 @@ export type MoveAction =
   | { kind: 'beforeafter'; ref: string; set: [string, string]; text?: string };
 export const MOVE_KINDS = new Set(['contrast', 'limit', 'beforeafter']);
 
-export type RawAction = LayoutAction | (DrawAction<PtArg>) | RefAction | RawConnect | LetAction | MarkShape | RayShape | ConstAction | ValAction | FindAction;
+/** EXPERIMENT (svgboard): {{show a,b}} reveals groups of the SVG board. */
+export type SvgShowAction = { kind: 'svgshow'; ids: string[] };
+export type RawAction = SvgShowAction | LayoutAction | (DrawAction<PtArg>) | RefAction | RawConnect | LetAction | MarkShape | RayShape | ConstAction | ValAction | FindAction;

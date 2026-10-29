@@ -162,5 +162,5 @@ export const promptVersionOf = (variant?: string): string => (variant ? `${PROMP
 
 export function buildSystemPrompt(p: PromptParts): string {
   const ex = p.examples.map((e, i) => `EXAMPLE ${i + 1}\n${e.listing}${e.plan ? `\nPLAN (a first read of the whole document; pages in teaching order: ${e.pages.join(', ')}): ${e.plan}` : ''}\nQUESTION (the student is looking at page ${e.page}): ${e.question}\nSCRIPT:\n${e.script}`).join('\n\n');
-  return [...p.sections, p.head, ex].join('\n\n');
+  return [...p.sections, ...(p.examples.length ? [p.head, ex] : [])].join('\n\n');
 }

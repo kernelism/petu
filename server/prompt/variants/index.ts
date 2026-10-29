@@ -8,9 +8,10 @@
 import type { Example } from '../examples.ts';
 import { exdemos } from './exdemos.ts';
 import { boardfirst } from './boardfirst.ts';
+import { svgboard } from './svgboard.ts';
 
 export type Parts = { sections: string[]; examples: Example[]; head: string };
-export const VARIANTS: Record<string, (base: Parts) => Parts> = { exdemos, boardfirst };
+export const VARIANTS: Record<string, (base: Parts) => Parts> = { exdemos, boardfirst, svgboard };
 export const VARIANT_NAMES = Object.keys(VARIANTS);
 
 export function variantParts(name: string, base: Parts): Parts {

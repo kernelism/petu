@@ -15,7 +15,9 @@ export const TAG_NAMES = new Set(['scroll', 'highlight', 'underline', 'circle', 
   // the slide as canvas: a page region onto the board
   'lift',
   // slips the parser reads as another tag ({{arc center= from= to=}} is an angle's arc when exact)
-  'arc']);
+  'arc',
+  // EXPERIMENT (svgboard)
+  'svgboard', 'show']);
 /** A curve through this many hand-placed points or more is probably something that follows from a formula. */
 const HAND_CURVE_PTS = 4;
 /** Kit tags whose values come from the engine: a literal result in them (`result=`, `=…` after an op) is the model computing by hand. */

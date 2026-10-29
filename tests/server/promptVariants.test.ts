@@ -16,7 +16,7 @@ describe('prompt variants', () => {
     expect(promptVersionOf()).toBe(PROMPT_VERSION);
     expect(promptVersionOf('exdemos')).toBe(`${PROMPT_VERSION}-exdemos`);
     expect(() => systemPrompt('nope')).toThrow(/unknown prompt variant/);
-    expect(VARIANT_NAMES).toEqual(['exdemos', 'boardfirst']);
+    expect(VARIANT_NAMES).toEqual(['exdemos', 'boardfirst', 'svgboard']);
   });
 
   it('exdemos: the three sentences gone, the demo examples in, nothing else changed', () => {
