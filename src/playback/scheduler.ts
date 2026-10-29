@@ -65,9 +65,28 @@ export class Scheduler {
     for (const e of events) {
       if (e.type === 'end') this.ended = true;
       else if (e.type === 'word') this.words.push(e.text);
-      else this.acts.push({ action: e.action, word: this.words.length });
+      else this.acts.push({ action: e.action, word: this.anchorOf(e.action) });
     }
     this.tick();
+  }
+
+  /** Where the last svg board group was drawn (its beat's words start after it). */
+  private beatFrom = 0;
+  /**
+   * The word an action fires with: the next one, except an svg board group (it follows its beat's
+   * sentences in the stream), which fires on the first word of its beat that names it (its id's
+   * words), else with the next word — right after its sentences.
+   */
+  private anchorOf(a: Action): number {
+    const n = this.words.length;
+    if (a.kind === 'sketch' && a.svgboard) this.beatFrom = n; // the opener's words never name a group
+    if (a.kind !== 'svg') return n;
+    const from = this.beatFrom;
+    this.beatFrom = n;
+    const want = (a.anchor ?? []).filter((w) => w.length >= 2);
+    if (!want.length) return n;
+    for (let i = from; i < n; i++) if (namesWord(this.words[i], want)) return i;
+    return n;
   }
 
   /** Whether pause, resume, hold and seek work (the clock can re-time its words). */
@@ -283,4 +302,11 @@ export function actionLeadMs(a: Action): number {
     // still starts on the word.
     default: return 450;
   }
+}
+
+/** Does narration word `w` name one of `anchor` (lowercase id words)? Plurals and possessives count. */
+export function namesWord(w: string, anchor: readonly string[]): boolean {
+  const x = w.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[’']s$/, '').replace(/[^a-z0-9]+/g, '');
+  if (!x) return false;
+  return anchor.some((a) => x === a || x === `${a}s` || x === `${a}es` || (a.length >= 4 && x.startsWith(a) && x.length - a.length <= 3) || (x.length >= 4 && a.startsWith(x) && a.length - x.length <= 2));
 }

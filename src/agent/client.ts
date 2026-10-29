@@ -1,5 +1,4 @@
 // src/agent/client.ts — the browser side of POST /api/ask (NDJSON AskEvents) and GET /api/spend.
-import { setPendingSvg } from '../desk/svgBoard';
 import { formatUsd, HARD_STOP_USD, type AskErrorCode, type AskEvent, type AskRequest, type SpendSummary } from './protocol';
 import { fallbackScout, parseScout, type ScoutEvent, type ScoutRequest, type ScoutResult } from './scout';
 
@@ -55,7 +54,6 @@ export async function* askStream(req: AskRequest, signal: AbortSignal, h: AskHan
     h.onEvent?.(e);
     if (e.t === 'text') { spoke = true; yield e.d; }
     else if (e.t === 'meta') h.onMeta?.(e);
-    else if (e.t === 'svg') setPendingSvg(e.d);
     else if (e.t === 'storyboard') h.onStoryboard?.(e);
     else if (e.t === 'note') h.onNote?.(e.message);
     else if (e.t === 'done') { done = true; h.onDone?.(e); }

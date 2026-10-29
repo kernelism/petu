@@ -1,6 +1,7 @@
 import type { RawAction, ScriptEvent, ValAction } from './types';
 import { parseTag } from './parseTag';
 import { GateState, UNBOUND_TEXT } from '../gate/engine';
+import { isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
 
 const words = (s: string): ScriptEvent[] =>
   s.split(/\s+/).filter(Boolean).map((text) => ({ type: 'word', text }));
@@ -19,7 +20,9 @@ type Scan = { kind: 'close'; end: number } | { kind: 'fail'; cut: number } | { k
  * on where chunks were split.
  */
 function scanTag(buf: string, open: number, final: boolean): Scan {
-  const limit = open + MAX_TAG_CHARS;
+  // An svg group tag (src/svgboard/wire.ts) is long and its quotes are SVG's: only `}}` closes it.
+  const svg = isSvgTagBody(buf.slice(open + 2, open + 8));
+  const limit = open + (svg ? SVG_TAG_MAX : MAX_TAG_CHARS);
   const overflow = (): Scan => {
     const ws = Math.max(buf.lastIndexOf(' ', limit), buf.lastIndexOf('\t', limit));
     return { kind: 'fail', cut: ws > open + 2 ? ws : limit };
@@ -30,7 +33,7 @@ function scanTag(buf: string, open: number, final: boolean): Scan {
     const c = buf[i];
     if (c === '\n' || c === '\r') return { kind: 'fail', cut: i };
     if (quote) { if (c === quote) quote = null; continue; }
-    if (c in QUOTE_CLOSE) { quote = QUOTE_CLOSE[c]; continue; }
+    if (c in QUOTE_CLOSE && !svg) { quote = QUOTE_CLOSE[c]; continue; }
     if (c === '}' && buf[i + 1] === '}') return { kind: 'close', end: i + 2 };
     if (c === '{' && buf[i + 1] === '{') return { kind: 'fail', cut: i };
   }

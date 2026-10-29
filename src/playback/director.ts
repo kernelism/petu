@@ -1,5 +1,5 @@
 // src/playback/director.ts
-import { mountSvgBoard, showAllSvgGroups, showSvgGroups } from '../desk/svgBoard';
+import { mountBoard } from '../svgboard/render';
 import { REGION_H, REGION_W, targetOf, type Action, type InkAction, type LayoutAction, type RawAction, type Target } from '../script/types';
 import { Figures, type Grounding } from '../geometry/resolve';
 import type { ViewerApi } from '../pdf/viewerApi';
@@ -134,7 +134,13 @@ export class Director {
    * rather than for `at`, so a pause or a speed change after the action fired keeps ink on its word.
    */
   run(raw: RawAction, at: number = now(), live?: () => number | null): void {
-    if (raw.kind === 'svgshow') { this.svgShow(raw.ids, at); return; }
+    // The svg board: a board section gets its id here (in order, before layout runs), and each group
+    // draws into the latest board.
+    if (raw.kind === 'sketch' && raw.svgboard) raw = { ...raw, id: raw.svgboard.extend && this.svgBoard ? this.svgBoard : (this.svgBoard = `svgb${++this.svgBoards}`) };
+    if (raw.kind === 'svg') {
+      if (!this.svgBoard) { this.report({ action: raw as Action, firedAt: at, queuedAt: now(), startedAt: now(), endedAt: now() }, { skipped: 'no svg board' }); return; }
+      raw = { ...raw, region: this.svgBoard };
+    }
     if (raw.kind === 'let') return; // definitions were taken when it was parsed (prefetch)
     if (raw.kind === 'const') { if (!this.seen.has(raw)) kitStore(this.registry).defineConsts(raw.defs); return; }
     if (raw.kind === 'find') { if (!this.seen.has(raw)) { this.figures.note(raw); kitStore(this.registry).finds.set(raw.id, raw); } return; }
@@ -150,19 +156,9 @@ export class Director {
     this.runResolved(a, raw, at, live);
   }
 
-  /** EXPERIMENT (svgboard): the board SVG is on the desk (shows before that wait for it). */
-  private svgMounted = false;
-  private svgShow(ids: string[], at: number): void {
-    const t: ActionTiming = { action: { kind: 'svgshow', ids } as unknown as Action, firedAt: at, queuedAt: now(), startedAt: NaN };
-    const go = async () => {
-      const t0 = now();
-      while (!this.svgMounted && now() - t0 < 8000) await wait(50);
-      this.report(t, { startedAt: now() });
-      const k = showSvgGroups(ids);
-      this.report(t, { endedAt: now(), skipped: k || undefined });
-    };
-    this.track(go());
-  }
+  /** The svg board this answer draws into (a section id), and how many were opened (ids stay unique on the board). */
+  private svgBoard: string | null = null;
+  private svgBoards = 0;
 
   private seen = new WeakSet<object>();
   /** Section ids some parsed tag of this answer declares (a connector may name one a moment before its tag). */
@@ -213,12 +209,11 @@ export class Director {
     await this.idle();
     const signal = this.ctrl.signal;
     if (!signal.aborted) await this.desk()?.overview?.();
-    if (this.svgMounted) showAllSvgGroups(); // EXPERIMENT (svgboard): groups the narration never showed
   }
 
   /** As soon as an action is parsed: takes its point definitions (lookahead), warms caches (text runs, KaTeX). */
   prefetch(raw: RawAction): void {
-    if (raw.kind === 'svgshow') return;
+    if (raw.kind === 'svg') return;
     this.seen.add(raw);
     if (raw.kind === 'sketch') this.declared.add(raw.id);
     if (raw.kind === 'const') { kitStore(this.registry).defineConsts(raw.defs); return; }
@@ -374,9 +369,12 @@ export class Director {
       const body = await this.bodyOf(v, page);
       if (signal.aborted) return;
       // Lands ink in flight only if opening the board moves the view (the split glide, a board scroll).
-      const r = await desk.addRegion({ id: a.id, page, size: a.size, body, ...(a.scene ? { scene: true } : {}) }, this.land);
+      const r = await desk.addRegion({ id: a.id, page, size: a.size, body, ...(a.scene ? { scene: true } : {}), ...(a.svgboard ? { svg: true, ...(a.svgboard.extend ? { extend: true } : {}) } : {}) }, this.land);
       if (typeof r === 'string') { console.warn('[director] sketch skipped:', r, a.id); return r; }
-      if (a.svgboard) { const k = mountSvgBoard(r.layers.agent); this.svgMounted = true; if (k) console.warn('[director] svgboard:', k); return k; }
+      if (a.svgboard) {
+        const { height } = mountBoard(r.layers.agent, a.svgboard, a.id, this.d.settings().inkColor);
+        if (height > REGION_H) desk.growRegion?.(a.id, height);
+      }
       return;
     }
     if (a.page < 1 || a.page > v.numPages()) return 'page out of range';
@@ -563,7 +561,7 @@ export class Director {
     }
     // Region ink reveals its whole region (rule 2), so text written just before is measurable on the word.
     const early = typeof plan === 'object' ? plan : null;
-    const box: SRect | null = early ? early.bbox : target?.region != null ? WHOLE_REGION : null;
+    const box: SRect | null = early ? early.bbox : target?.region != null && a.kind !== 'svg' ? WHOLE_REGION : null;
 
     if (dep) await this.afterLayout(dep, desk, target, box, signal);
     if (signal.aborted) return;

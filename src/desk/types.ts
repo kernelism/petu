@@ -18,7 +18,8 @@ export type ViewRect = { x: number; y: number; w: number; h: number };
  * A sketch region: one section on the board. `page` is the slide it explains (its body text sets
  * the section's type size); `body` is that slide's body text height as a fraction of the page width.
  */
-export type RegionSpec = { id: string; page: number; size: RegionSize; body?: number | null; /** Board v2: one 2-D scene with a camera, continued by a later scene tag with the same id. */ scene?: boolean };
+export type RegionSpec = { id: string; page: number; size: RegionSize; body?: number | null; /** Board v2: one 2-D scene with a camera, continued by a later scene tag with the same id. */ scene?: boolean;
+  /** The svg board (src/svgboard): `extend` continues the section with this id (a follow-up draws on into it). */ svg?: boolean; extend?: boolean };
 
 /**
  * Board v2 (spec "Board v2: one connected scene"): a scene section is an unbounded 2-D world (the

@@ -14,7 +14,7 @@ import type { Beat, Tag, Word } from './segment';
 import { NEW_INK } from './segment';
 import type { GateState, Value } from './engine';
 
-export type CheckKind = 'number' | 'threshold' | 'direction' | 'deixis' | 'layout' | 'geometry' | 'erasure' | 'tag' | 'unbound' | 'order' | 'named';
+export type CheckKind = 'number' | 'threshold' | 'direction' | 'deixis' | 'layout' | 'geometry' | 'erasure' | 'tag' | 'unbound' | 'order' | 'named' | 'svg';
 export type Flag = { check: CheckKind; detail: string };
 export type Verdict = { ok: boolean; flags: Flag[]; notes: string[] };
 

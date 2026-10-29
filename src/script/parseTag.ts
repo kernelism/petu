@@ -85,10 +85,13 @@ function end(s: string | undefined, near: Pt | undefined): RawEnd | undefined {
  * `ctx`: what the stream's parser knows so far (constants' names), for slips that depend on it.
  */
 export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
-  // EXPERIMENT (svgboard): the SVG board's section, and {{show a,b}} revealing its groups.
-  if (/^\s*svgboard\s*$/.test(body)) return { kind: 'sketch', id: 'svgb', size: 'm', svgboard: true };
-  const show = /^\s*show\s+([\s\S]+)$/.exec(body);
-  if (show) { const ids = show[1].split(/[\s,]+/).map((x) => x.replace(/^id=/, '').replace(/^["“]|["”]$/g, '')).filter(Boolean); return ids.length ? { kind: 'svgshow', ids } : null; }
+  // The svg board (src/svgboard/wire.ts): {{svgboard h=900}} opens its section, {{svg <g …>…</g>}} draws a group.
+  if (/^\s*svg\s*</.test(body)) return svgGroup(body.replace(/^\s*svg\s*/, ''));
+  const sb = /^\s*svgboard\b([^}]*)$/.exec(body);
+  if (sb) {
+    const num = (k: string, d: number) => { const m = new RegExp(`\\b${k}=(\\d+(?:\\.\\d+)?)`).exec(sb[1]); const v = m ? Number(m[1]) : d; return v > 0 ? v : d; };
+    return { kind: 'sketch', id: 'svgb', size: 'm', svgboard: { w: num('w', 1000), h: num('h', 700), ...(/\bextend\b/.test(sb[1]) ? { extend: true } : {}) } };
+  }
   const t = tokenize(body);
   if (!t) return null;
   const { name, args, quotes, flags, rawArgs, dupKeys } = t;
@@ -410,4 +413,16 @@ export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
       return null;
   }
   }
+}
+
+/** Words that name a group, from its id ("arm-in" → arm, in; "forceArrow" → force, arrow). */
+export function anchorWords(id: string): string[] {
+  return id.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 2 && !/^\d+$/.test(w));
+}
+
+function svgGroup(svg: string): RawAction | null {
+  const t = svg.trim();
+  if (!t.startsWith('<')) return null;
+  const id = /^<g\b[^>]*?\bid\s*=\s*["']([^"']+)["']/i.exec(t)?.[1];
+  return { kind: 'svg', svg: t, ...(id ? { id, anchor: anchorWords(id) } : {}) };
 }

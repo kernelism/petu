@@ -15,5 +15,7 @@ export const STORYBOARD_MAX_OUTPUT = 4000;
  * this much output per repair; the eval preflight counts it too.
  */
 export const REPAIR_MAX_OUTPUT = 450;
+/** A repair in the svg answer mode rewrites a beat with its SVG group (groups run 300–1000 tokens). */
+export const SVG_REPAIR_MAX_OUTPUT = 1400;
 /** Repairs one answer may ask for (the server refuses the next with 429). */
 export const MAX_REPAIRS = 2;
