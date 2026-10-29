@@ -1881,7 +1881,8 @@ function rowEnv(b: Block, vals: C.Mat, r: number): Record<string, number> {
   vals[r].forEach((v, j) => { env[C.WIN_LETTERS[j]] = v; env[`p${C.WIN_LETTERS[j]}`] = r > 0 ? vals[r - 1][j] : NaN; });
   return env;
 }
-const ROW_VARS = ['i', ...C.WIN_LETTERS.slice(0, 12), ...C.WIN_LETTERS.slice(0, 12).map((l) => `p${l}`)];
+// `pi` stays π: the row above's column i (rarely 9 columns wide) gives way to the constant.
+const ROW_VARS = ['i', ...C.WIN_LETTERS.slice(0, 12), ...C.WIN_LETTERS.slice(0, 12).map((l) => `p${l}`).filter((v) => v !== 'pi')];
 
 async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, store: KitStore, col0?: number): Promise<ElementPlan | string> {
   const t = await store.wait(v.ref);
