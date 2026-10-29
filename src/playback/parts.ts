@@ -1,5 +1,6 @@
 // src/playback/parts.ts
 import type { ParsedScript } from './session';
+import { endsSentence } from './clock';
 
 /**
  * Answer chapters (spec "Flow across the document"): an answer that travels is split into parts at
@@ -77,4 +78,41 @@ export function partTitle(p: Part, origin: number, label?: string): string {
 export function partText(script: ParsedScript, parts: Part[], i: number): string {
   const end = parts[i + 1]?.start ?? script.words.length;
   return script.words.slice(parts[i]?.start ?? 0, end).join(' ');
+}
+
+/** How far through part `i` the narration is at `pos` (0–1), against the words known so far. */
+export function partProgress(parts: Part[], i: number, pos: number, wordCount: number): number {
+  const p = parts[i];
+  if (!p) return 0;
+  const end = parts[i + 1]?.start ?? wordCount;
+  if (end <= p.start) return 0;
+  return Math.max(0, Math.min(1, (pos - p.start) / (end - p.start)));
+}
+
+/** The first word of the sentence word `i` belongs to. */
+export function sentenceStart(words: string[], i: number): number {
+  let k = Math.max(0, Math.min(i, words.length));
+  while (k > 0 && !endsSentence(words[k - 1])) k--;
+  return k;
+}
+
+/**
+ * Replay (R): back to the start of the sentence being spoken (`pos` = the next word to speak). Within
+ * the first REPLAY_AGAIN_WORDS words of a sentence it goes to the one before, so pressing R twice
+ * steps back a sentence at a time.
+ */
+export const REPLAY_AGAIN_WORDS = 2;
+export function replayTarget(words: string[], pos: number): number {
+  const cur = sentenceStart(words, Math.max(0, pos - 1));
+  if (pos - cur > REPLAY_AGAIN_WORDS || cur === 0) return cur;
+  return sentenceStart(words, cur - 1);
+}
+
+/**
+ * Skip ahead (Shift+→): the start of the next sentence after `pos` (at a sentence boundary, the one
+ * after the sentence about to start). Null while it hasn't streamed in.
+ */
+export function nextSentence(words: string[], pos: number): number | null {
+  for (let i = Math.max(0, pos); i < words.length - 1; i++) if (endsSentence(words[i])) return i + 1;
+  return null;
 }

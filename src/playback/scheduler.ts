@@ -6,8 +6,10 @@ export type SchedulerCallbacks = {
   /**
    * Fires an action. `at` is when its word starts (clock timebase); an action can fire up to its
    * lead ahead of that, so layout (scrolls, sketches) can be under way when the word is spoken.
+   * `word`: the index of the word it fires with, so ink can follow that word if the timeline moves
+   * (pause, speed); absent for actions a forward seek fast-forwards (they are behind on purpose).
    */
-  onAction(action: Action, at: number): void;
+  onAction(action: Action, at: number, word?: number): void;
   onDone(): void;
 };
 
@@ -142,6 +144,35 @@ export class Scheduler {
     return true;
   }
 
+  /**
+   * When word `i` starts now that the timeline may have moved: null while paused (it waits for the
+   * resume), undefined while the word isn't timed yet (the stream hasn't reached it).
+   */
+  liveStart(i: number): number | null | undefined {
+    if (this.paused) return null;
+    if (i >= this.released) return undefined;
+    return this.clock.wordStart(i) ?? undefined;
+  }
+
+  /**
+   * The clock's speed changed: the words queued after the next one are re-timed at the new pace. The
+   * next word keeps its start (a journey's hold before it stays), so the change is heard on the word
+   * after it. Actions not yet fired follow their words; fired ink follows them through liveStart.
+   */
+  respeed(): boolean {
+    if (this.stopped || !this.clock.retime) return false;
+    if (this.paused) return true; // resume re-times from the next word
+    const now = this.clock.now();
+    const next = this.spoken < this.released ? this.clock.wordStart(this.spoken) : null;
+    const prev = this.spoken > 0 ? this.clock.wordStart(this.spoken - 1) : null;
+    // The next word: where it was (if timed and still ahead), else right after the word being spoken at the new pace.
+    const start = next != null && next >= now ? next
+      : Math.max(now, prev != null ? prev + this.clock.durationMs(this.words[this.spoken - 1]) : now);
+    this.retimeFrom(this.spoken, start);
+    this.tick();
+    return true;
+  }
+
   private retimeFrom(i: number, start: number) {
     this.clock.retime?.(Math.min(i, this.released), start);
   }
@@ -219,7 +250,7 @@ export class Scheduler {
       if (t.fireAt > now) { next = Math.min(next, t.fireAt); break; }
       this.fired++;
       this.lastFire = Math.max(this.lastFire, t.fireAt);
-      this.cb.onAction(a.action, t.at);
+      this.cb.onAction(a.action, t.at, a.word);
       if (this.stopped) return;
     }
     while (this.spoken < this.released) {

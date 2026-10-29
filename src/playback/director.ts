@@ -22,10 +22,17 @@ export const STAGGER_MS = 120;
 export const ACTION_TIMEOUT_MS = 3000;
 /** Rule 1: before the view moves, ink in flight gets this long to land; then it completes at once. */
 export const LAND_MS = 150;
-/** A journey (a move to a page that isn't adjacent): the narration waits this long at the move's word. */
-export const JOURNEY_HOLD_MS = 800;
+/**
+ * A journey (a move to a page that isn't adjacent): the narration waits this long at the move's word.
+ * The scroll fires 450ms ahead of the word (actionLeadMs) and glides ≤ 600ms, so it lands by about
+ * word + 150–300ms; with the arrival rest the destination is settled by the time the narration goes on.
+ * (Was 800 + 350: founder 2026-10-28 "feels slow".)
+ */
+export const JOURNEY_HOLD_MS = 500;
 /** After a journey's scroll lands, the view rests this long before the destination's first mark draws. */
-export const ARRIVAL_MS = 350;
+export const ARRIVAL_MS = 200;
+/** While ink waits on a word that may move (pause, speed), it re-reads the word's time this often. */
+const LIVE_POLL_MS = 50;
 /** Actions this far behind their word (a seek's fast-forward) travel without a journey beat. */
 const LATE_MS = 1000;
 
@@ -113,14 +120,16 @@ export class Director {
   /**
    * Runs `a`, whose word starts at `at` (performance.now() ms; default now). Raw actions (names,
    * page marks, rays, fitted regions) resolve to plain ones here: layout at once, ink when built.
+   * `live`: the word's start as it stands now (null while the narration is paused); ink waits for it
+   * rather than for `at`, so a pause or a speed change after the action fired keeps ink on its word.
    */
-  run(raw: RawAction, at: number = now()): void {
+  run(raw: RawAction, at: number = now(), live?: () => number | null): void {
     if (raw.kind === 'let') return; // definitions were taken when it was parsed (prefetch)
     if (raw.kind === 'const') { if (!this.seen.has(raw)) kitStore(this.registry).defineConsts(raw.defs); return; }
     if (!this.seen.has(raw)) this.figures.note(raw); // callers that skip prefetch (tests, demos)
     const isInk = !isLayout(raw as Action);
     const a = (isInk ? raw : this.figures.resolve(raw)) as Action;
-    this.runResolved(a, raw, at);
+    this.runResolved(a, raw, at, live);
   }
 
   private seen = new WeakSet<object>();
@@ -133,7 +142,7 @@ export class Director {
     return this.holds.reduce((n, h) => (t.queuedAt <= h.time && at >= h.from - 1 ? n + h.ms : n), 0);
   }
 
-  private runResolved(a: Action, raw: RawAction, at: number): void {
+  private runResolved(a: Action, raw: RawAction, at: number, live?: () => number | null): void {
     const signal = this.ctrl.signal;
     const t: ActionTiming = { action: a, firedAt: at, queuedAt: now(), startedAt: NaN };
     if (this.pendingReset != null) this.resetFor(a, signal);
@@ -149,7 +158,7 @@ export class Director {
     if (Math.abs(at - this.stagger.at) < 1) this.stagger.n++;
     else this.stagger = { at, n: 0 };
     const startAt = at + this.stagger.n * STAGGER_MS;
-    this.track(this.ink(a, raw, t, startAt, this.last, signal).catch((e) => console.warn('[director]', e)));
+    this.track(this.ink(a, raw, t, startAt, this.last, signal, live).catch((e) => console.warn('[director]', e)));
   }
 
   /** Resolves when every queued action has finished (immediately when nothing is queued). */
@@ -461,7 +470,23 @@ export class Director {
     return this.buildPlain(a as InkAction, env, signal);
   }
 
-  private async ink(a: InkAction, raw: RawAction, t: ActionTiming, startAt: number, dep: LaneEntry | null, signal: AbortSignal) {
+  /**
+   * Waits until the ink's word (plus its stagger) starts. With `live`, the word's time is re-read
+   * while waiting: it may move (a pause holds it at null, a speed change or a seek back moves it).
+   * Returns the word's start as it stood when the wait ended.
+   */
+  private async untilWord(fixed: number, offset: number, live: (() => number | null) | undefined, signal: AbortSignal): Promise<number> {
+    if (!live) { await wait(fixed + offset - now()); return fixed; }
+    for (;;) {
+      const w = live();
+      const d = w == null ? LIVE_POLL_MS : w + offset - now();
+      if (w != null && d <= 0) return w;
+      await wait(Math.min(d, LIVE_POLL_MS));
+      if (signal.aborted) return w ?? fixed;
+    }
+  }
+
+  private async ink(a: InkAction, raw: RawAction, t: ActionTiming, startAt: number, dep: LaneEntry | null, signal: AbortSignal, live?: () => number | null) {
     const finish = (skipped?: string | void) => {
       if (Number.isNaN(t.startedAt)) t.startedAt = now();
       this.report(t, { endedAt: now(), skipped: skipped || undefined });
@@ -486,9 +511,10 @@ export class Director {
     if (target && box) await this.reveal(desk, target, box, signal, this.anchorOf(a));
     if (signal.aborted) return;
 
-    // A journey's hold moved this ink's word later: it starts on the word as it will now be spoken.
-    const held = this.heldMs(t, t.firedAt);
-    await wait(startAt + held - now());
+    // A journey's hold moved this ink's word later: it starts on the word as it will now be spoken
+    // (a live word time already carries the hold).
+    const held = live ? 0 : this.heldMs(t, t.firedAt);
+    const word = await this.untilWord(t.firedAt + held, startAt - t.firedAt, live, signal);
     if (signal.aborted) return;
     if (!plan) {
       plan = await this.build(raw, env, signal);
@@ -506,7 +532,7 @@ export class Director {
     const p = plan;
     desk.noteInk?.(p.target, p.bbox);
     // Ink after a journey's arrival is not behind: the narration held for it.
-    const k = backlog(now() - Math.max(t.firedAt + held, dep?.arrivedAt ?? -Infinity));
+    const k = backlog(now() - Math.max(word, dep?.arrivedAt ?? -Infinity));
     this.report(t, { startedAt: now() });
     const own = new AbortController();
     const onAbort = () => own.abort();
