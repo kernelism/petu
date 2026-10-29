@@ -4,6 +4,7 @@
 // r2 (checkpoint 2: short correct answers on a contact sheet), kept behind --rubric r2 for comparison.
 import { readFileSync } from 'node:fs';
 import type { EvalResult } from '../../src/agent/evalHooks.ts';
+import type { TagParse } from './scriptTags.ts';
 
 export const FATALS = ['wrong_fact', 'mark_on_wrong_thing', 'drawing_contradicts_narration', 'unreadable_overlap', 'ignored_question'] as const;
 export type Fatal = (typeof FATALS)[number];
@@ -97,33 +98,55 @@ export function scanTags(raw: string): { start: number; end: number; inner: stri
   return out;
 }
 
-/** Tags that never become a timed action ({{let}} only names points). */
-const UNTIMED = new Set(['let']);
+/** Tags that never become a timed action: {{let}} names points, {{const}} numbers, {{find}} readouts. */
+const UNTIMED = new Set(['let', 'const', 'find']);
+
+/** What a tag became, from its name alone (when the parser's view isn't given): a {{scene}} is a sketch. */
+function byName(body: string): TagParse {
+  const name = body.split(' ')[0];
+  const ref = name === 'val' ? /(?:^|\s)id=(\S+)/.exec(body)?.[1] : undefined;
+  return { ok: true, kind: name === 'scene' ? 'sketch' : name, ...(ref ? { ref } : {}) };
+}
 
 /**
  * Narration with each tag shown as [circle #d3 ✓] or [line on=s … ✗ reason], in script order. Each tag
- * is matched to the next unused timing of the same kind, so an untimed {{let}} or an unparsed tag
- * does not shift the marks of the tags after it.
+ * is matched to the next unused timing of the kind it became, so an untimed tag ({{let}}, {{const}},
+ * {{find}}) or an unparsed one does not shift the marks of the tags after it. A {{val}} has a timing
+ * only when it could not be said (its skip); otherwise it shows what was said. `parsed` (from
+ * scriptTags.ts, lined up with scanTags) is the app parser's view: without it, tag names stand in and
+ * only a missing timing reads "not parsed".
  */
-export function renderTranscript(r: Pick<EvalResult, 'chunks' | 'timings'>): string {
+/** A recorded answer as the transcript needs it; `tags` is its parse (scriptTags.ts), when the caller has one. */
+export type Transcribed = Pick<EvalResult, 'chunks' | 'timings'> & { tags?: TagParse[] };
+
+export function renderTranscript(r: Transcribed, parsed: TagParse[] | undefined = r.tags): string {
   const raw = r.chunks.map((c) => c.d).join('');
   const order = r.timings.map((t, i) => ({ t, i })).sort((a, b) => (a.t.firedAt ?? 0) - (b.t.firedAt ?? 0) || a.i - b.i).map((x) => x.t);
   const used = new Set<number>();
+  const take = (ok: (t: (typeof order)[number]) => boolean) => {
+    const k = order.findIndex((t, n) => !used.has(n) && ok(t));
+    if (k >= 0) used.add(k);
+    return k < 0 ? undefined : order[k];
+  };
+  const mark = (t: (typeof order)[number]) => (t.skipped ? ` ✗ ${t.skipped}` : ' ✓');
   let out = '', at = 0;
-  for (const tag of scanTags(raw)) {
+  scanTags(raw).forEach((tag, n) => {
     const body = tag.inner.trim().replace(/\s+/g, ' ');
-    const kind = body.split(' ')[0];
     const short = body.length > 48 ? `${body.slice(0, 47)}…` : body;
+    const p = parsed?.[n] ?? byName(body);
     let shown: string;
-    if (UNTIMED.has(kind)) shown = `[${short}]`;
-    else {
-      const k = order.findIndex((t, n) => !used.has(n) && String(t.action.kind ?? '') === kind);
-      if (k < 0) shown = `[${short} ✗ not parsed]`;
-      else { used.add(k); const t = order[k]; shown = t.skipped ? `[${short} ✗ ${t.skipped}]` : `[${short} ✓]`; }
+    if (!p.ok) shown = `[${short} ✗ not parsed]`;
+    else if (UNTIMED.has(p.kind!)) shown = `[${short}]`;
+    else if (p.kind === 'val') {
+      const t = take((u) => u.action.kind === 'val' && (u.action as { ref?: unknown }).ref === p.ref);
+      shown = t ? `[${short}${mark(t)}]` : p.said != null ? `[${short} → "${p.said}" ✓]` : `[${short}]`;
+    } else {
+      const t = take((u) => String(u.action.kind ?? '') === p.kind);
+      shown = t ? `[${short}${mark(t)}]` : `[${short} ✗ ${parsed ? 'never ran' : 'not parsed'}]`;
     }
     out += raw.slice(at, tag.start) + shown;
     at = tag.end;
-  }
+  });
   out += raw.slice(at);
   return out.replace(/[ \t]+/g, ' ').trim();
 }
@@ -135,7 +158,7 @@ export const DEFECTS_R3 = ['board_copies_page', 'board_repeats_narration', 'writ
 
 export const RUBRIC_R3 = `You are judging a tutor. A student opened a PDF (lecture slides, a handout or a book), was looking at one page, and asked a question. The tutor answers by talking (the transcript) while it acts on screen: it scrolls to pages, highlights and marks things on the slides, and draws on a board beside them (sketches, plots, labelled diagrams, short equations). The bar is a great teacher at a whiteboard with the slides projected next to it: the student should come away understanding, not just holding an answer.
 
-You get: the question; the page the student was looking at; a digest of the document (page numbers with each page's first lines), so you can tell which other pages bear on the question; a timeline of frames (screenshots taken during playback, each with the narration spoken since the previous frame), then the final state and, when there is one, the whole board; and the full transcript. In the transcript each action tag is shown as [kind … ✓] when it ran, [kind … ✗ reason] when the engine skipped it, and [let …] for tags that only name points. Read the timeline in order: it is how the student saw the answer unfold.
+You get: the question; the page the student was looking at; a digest of the document (page numbers with each page's first lines), so you can tell which other pages bear on the question; a timeline of frames (screenshots taken during playback, each with the narration spoken since the previous frame), then the final state and, when there is one, the whole board; and the full transcript. In the transcript each action tag is shown as [kind … ✓] when it ran, [kind … ✗ reason] when the engine skipped it (or could not read it: ✗ not parsed), [let …], [const …] and [find …] for tags that only name points, numbers or readouts, and [val … → "what was said" ✓] for a value spoken in the narration. Read the timeline in order: it is how the student saw the answer unfold.
 
 Score each criterion 1-5 (integers). Give a 5 only when you cannot name a concrete improvement for that criterion.
 - understanding: would this student, with this confusion, now get it?
@@ -229,7 +252,7 @@ export function parseJudge(raw: unknown, rubric: Rubric = R2): JudgeResult {
 }
 
 /** r2: the visible page and one contact sheet. */
-export function buildJudgeRequest(a: { phase: string; question: string; result: Pick<EvalResult, 'chunks' | 'timings'>; page: { b64: string; w: number; h: number }; sheet: { b64: string; w: number; h: number } }): JudgeRequest {
+export function buildJudgeRequest(a: { phase: string; question: string; result: Transcribed; page: { b64: string; w: number; h: number }; sheet: { b64: string; w: number; h: number } }): JudgeRequest {
   return {
     phase: a.phase, instructions: RUBRIC, schema: JUDGE_SCHEMA.schema, name: JUDGE_SCHEMA.name,
     content: [
@@ -254,10 +277,10 @@ export type JudgeFrame = Img & { caption: string };
 export const FOLLOW_UP_RUBRIC = `This answer is a FOLLOW-UP: the student watched the previous answer (shown first, as PREVIOUS ANSWER) and then asked the follow-up. Judge the follow-up as a lesson in its own right and as a response to that request. When the student asks for a better picture, a simpler or more basic version, another example, more depth, or says they still don't get it, the follow-up must change the representation or the level as asked: a genuinely different picture or worked case (or a clearly simpler or deeper one), not the previous scene with more of the same added, and not the previous narration said again. Reusing the previous picture is right only when the student asked to continue it. Flag followup_repeats when it doesn't change as asked; then illustration and understanding are at most 3.`;
 
 /** The previous answer a follow-up is judged against: what the student asked and saw. */
-export type JudgePrevious = { question: string; frames: JudgeFrame[]; final?: Img; board?: Img; result: Pick<EvalResult, 'chunks' | 'timings'> };
+export type JudgePrevious = { question: string; frames: JudgeFrame[]; final?: Img; board?: Img; result: Transcribed };
 
 /** r3: question, visible page, deck digest, the frame timeline, final state, whole board, transcript (a follow-up: the previous answer's first). */
-export function buildJudgeRequestR3(a: { phase: string; question: string; result: Pick<EvalResult, 'chunks' | 'timings'>; page: Img; digest: string; frames: JudgeFrame[]; final?: Img; board?: Img; previous?: JudgePrevious }): JudgeRequest {
+export function buildJudgeRequestR3(a: { phase: string; question: string; result: Transcribed; page: Img; digest: string; frames: JudgeFrame[]; final?: Img; board?: Img; previous?: JudgePrevious }): JudgeRequest {
   const content: JudgePart[] = [];
   const p = a.previous;
   if (p) {

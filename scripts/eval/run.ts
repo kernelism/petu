@@ -14,6 +14,7 @@ import { Chrome } from './cdp.ts';
 import { CONFIGS, configEnv } from './configs.ts';
 import { deckUrlPath, pathOfSrc, pdfDirs } from './decks.ts';
 import { computeMetrics, type Metrics } from './metrics.ts';
+import { parseAnswer } from './scriptTags.ts';
 import { buildJudgeRequest, buildJudgeRequestR3, estimateJudgeTokens, fakeJudgeFetch, judgeAnswer, JUDGE_MODEL, renderTranscript, RUBRICS, type JudgeFrame, type JudgeRequest, type JudgeResult } from './judge.ts';
 import { JUDGE_MAX_OUTPUT } from './configs.ts';
 import { worstCaseUsd } from '../../server/prices.ts';
@@ -289,12 +290,14 @@ async function main(): Promise<void> {
     const sheeter = chromes[0];
     for (const d of done.sort((a, b) => QUESTIONS.indexOf(a.q) - QUESTIONS.indexOf(b.q) || a.rep - b.rep)) {
       const id = d.rep ? `${d.q.id}.${d.rep + 1}` : d.q.id;
-      const metrics = d.stored.turns.map(computeMetrics);
+      // The app parser's view of each turn: honest malformed counts and transcript marks.
+      const parsed = d.stored.turns.map(parseAnswer);
+      const metrics = d.stored.turns.map((r, i) => computeMetrics(r, parsed[i]));
       writeJson(join(d.qdir, 'metrics.json'), { turns: metrics });
       // A follow-up's judge also sees the turn before it (judge.ts FOLLOW_UP_RUBRIC).
       let before: { question: string; tf: TurnFrames; res: EvalResult } | null = null;
       for (let t = 0; t < d.stored.turns.length; t++) {
-        const res = d.stored.turns[t];
+        const res = { ...d.stored.turns[t], tags: parsed[t].tags };
         const last = t === d.stored.turns.length - 1;
         const sheetName = `${t ? `t${t + 1}-` : ''}sheet.jpg`;
         // --finish keeps the sheet the run already composed (its judgement key hashes it).

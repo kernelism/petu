@@ -16,6 +16,7 @@ import { join, relative } from 'node:path';
 import { CONFIGS } from './configs.ts';
 import { QSETS, qsetId, type Question } from './questions.ts';
 import { computeMetrics } from './metrics.ts';
+import { parseAnswer } from './scriptTags.ts';
 import { frameSchedule } from './frames.ts';
 import { fakeJudgement, parseJudge, renderTranscript, R3, type JudgeResult } from './judge.ts';
 import { deckUrlPath } from './decks.ts';
@@ -142,6 +143,7 @@ async function main(): Promise<void> {
         const res = stored?.turns[turn];
         const base = { config: c, runId: fake ? null : run, asked: row.question, frames: [] as BenchCell['frames'] };
         if (!stored || !res) { const cell: BenchCell = { ...base, transcript: '', metrics: null, missing: run ? `no ${turn ? 'follow-up ' : ''}answer in ${run}` : 'not run' }; row.cells[c] = cell; byConfig[c].push(cell); continue; }
+        const parsed = parseAnswer(res);
         const pre = turn ? `t${turn + 1}-` : '';
         const has = (f: string) => !fake && existsSync(join(qdir, f));
         const n = res.sentences.length;
@@ -157,9 +159,9 @@ async function main(): Promise<void> {
           ...base, frames,
           ...(has(`${pre}board.jpg`) ? { board: rel(join(qdir, `${pre}board.jpg`)) } : {}),
           ...(has(`${pre}final.png`) ? { final: rel(join(qdir, `${pre}final.png`)) } : {}),
-          transcript: renderTranscript(res),
+          transcript: renderTranscript(res, parsed.tags),
           // A fake answer never ran in the engine: no timings, so no skip or malformed counts.
-          metrics: fake ? { ...computeMetrics(res), malformed: 0, skipDefect: false } : computeMetrics(res),
+          metrics: fake ? { ...computeMetrics(res, parsed), malformed: 0, skipDefect: false } : computeMetrics(res, parsed),
           ...(judge ? { judge, judgeUsd, ...(fakeJudge ? { fakeJudge } : {}) } : {}),
           gate: await gateOf(g, stored, turn, qdir || out, run ?? 'fake', q.id),
           ...(fake ? { fake } : {}),

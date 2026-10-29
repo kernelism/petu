@@ -1,6 +1,7 @@
 // scripts/eval/metrics.ts — pure metrics over one recorded answer (`__petu.result()`).
 // Geometry comes from the engine's registry and timing log, never from pixels.
 import type { EvalResult, RegistryRow, SerialTiming } from '../../src/agent/evalHooks.ts';
+import type { ScriptParse } from './scriptTags.ts';
 
 type Pt = { x: number; y: number };
 type Rect = { x: number; y: number; w: number; h: number };
@@ -102,12 +103,19 @@ export function labelStats(reg: RegistryRow[]): { hits: number; clipped: number 
 const wordCount = (s: string) => (s.trim() ? s.trim().split(/\s+/).length : 0);
 const LEAK = [/\*\*/g, /`/g, /\\\(/g, /\$/g, /#/g];
 
-export function computeMetrics(r: EvalResult): Metrics {
+/**
+ * `parsed` (scriptTags.ts `parseScript` over the answer's text) gives the parser's own count of
+ * malformed tags (rejected plus unclosed) and the {{find}} readouts, which have no timing but depend
+ * on their source (a skipped plot a find reads has dependents). Without it the count is estimated from tag names and
+ * timings ({{let}}, {{const}}, {{find}} and {{val}} have no timing of their own when they work).
+ */
+export function computeMetrics(r: EvalResult, parsed?: ScriptParse): Metrics {
   const done = r.events.find((e) => e.t === 'done') as Extract<EvalResult['events'][number], { t: 'done' }> | undefined;
   const text = r.chunks.map((c) => c.d).join('');
   const tags = (text.match(/\{\{/g) ?? []).length;
-  // {{let}} only names points: it never becomes a timed action, so it is not a malformed tag.
-  const lets = (text.match(/\{\{\s*(let|const)\b/g) ?? []).length;
+  // Estimate only: tags that work without a timed action of their own are not malformed.
+  const untimed = (text.match(/\{\{\s*(let|const|find|val)\b/g) ?? []).length;
+  const malformed = parsed ? parsed.malformed : Math.max(0, tags - untimed - r.timings.filter((t) => t.action.kind !== 'val').length);
   const drawn = r.timings.filter(drew);
   const firstDraw = drawn.reduce<SerialTiming | null>((m, t) => (m == null || (t.firedAt ?? Infinity) < (m.firedAt ?? Infinity) ? t : m), null);
   const firstMark = drawn.filter((t) => !LAYOUT.has(kindOf(t))).reduce<number | null>((m, t) => (m == null || t.startedAt! < m ? t.startedAt! : m), null);
@@ -143,7 +151,8 @@ export function computeMetrics(r: EvalResult): Metrics {
     if (typeof id !== 'string' || !id) return false;
     const re = new RegExp(`(^|[^A-Za-z0-9_])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9_]|$)`);
     const strs = (v: unknown): string[] => (typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(strs) : v && typeof v === 'object' ? Object.values(v).flatMap(strs) : []);
-    return order.slice(i + 1).some((u) => { const { kind: _k, ...rest } = u.action; void _k; return strs(rest).some((x) => re.test(x)); });
+    return order.slice(i + 1).some((u) => { const { kind: _k, ...rest } = u.action; void _k; return strs(rest).some((x) => re.test(x)); }) ||
+      !!parsed?.tags.some((g) => g.of?.some((x) => re.test(x)));
   }).length;
   const labels = labelStats(r.registry);
   const scoutUsd = r.events.reduce((s, e) => s + ((e.t === 'scout' || e.t === 'storyboard') ? (e.usd ?? 0) : 0), 0);
@@ -164,12 +173,12 @@ export function computeMetrics(r: EvalResult): Metrics {
     cachedShare: done?.usage?.input_tokens ? cached / done.usage.input_tokens : 0,
     estimated: !!done?.estimated,
     tags,
-    malformed: Math.max(0, tags - lets - r.timings.length),
+    malformed,
     linted: done?.lint?.length ?? 0,
     skipped,
     skippedTotal: Object.values(skipped).reduce((a, b) => a + b, 0),
     skippedDeps: deps,
-    skipDefect: Object.values(skipped).reduce((a, b) => a + b, 0) + Math.max(0, tags - lets - r.timings.length) > 2 || deps > 0,
+    skipDefect: Object.values(skipped).reduce((a, b) => a + b, 0) + malformed > 2 || deps > 0,
     elements: drawn.filter((t) => !LAYOUT.has(kindOf(t))).length,
     maxNewPerSentence: maxNew,
     floatingPoints: floatingPoints(r.registry),
