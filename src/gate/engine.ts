@@ -9,6 +9,7 @@
 // the engine's value (`say`) and a {{contrast}} expands into the copy it draws (`expand`).
 import { computeSource, formula, colIndex } from '../desk/kit/kit';
 import * as C from '../desk/kit/compute';
+import { normalize } from '../desk/kit/ops';
 import { colRef } from '../script/parseKit';
 import { blockPart } from '../script/pointExpr';
 import type { FindAction, KitSource, MoveAction, RawAction, ValAction } from '../script/types';
@@ -108,7 +109,7 @@ export class GateState {
       case 'limit':
       case 'beforeafter': return this.move(a, beat);
     }
-    if (a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table' || a.kind === 'calc' || a.kind === 'scatter' || a.kind === 'fit') return this.kit(a, beat);
+    if (a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table' || a.kind === 'calc' || a.kind === 'scatter' || a.kind === 'fit' || a.kind === 'shares') return this.kit(a, beat);
     if ('ref' in a) return this.verb(a, beat);
     if (a.kind === 'plot' && x.region != null) { this.plot(a as PlotSrc); return; }
     // Plain shapes: resolve names for geometry checks.
@@ -140,6 +141,19 @@ export class GateState {
       if (typeof got === 'string') return got;
       this.blocks.set(id, { id, kind: a.kind, vals: got.full, full: got.full, src, region: k.region, dp: k.dp as number | undefined, ...(w ? { with: w } : {}), action: a });
       this.addValues(got.full.flat(), 'vals' in src ? 'literal' : 'computed', id, beat);
+      return;
+    }
+    if (a.kind === 'shares') {
+      // Parts of a whole, as the board shows them: the values normalised to sum to 1 (kit.ts).
+      const src = k.src as KitSource;
+      const got = computeSource(src, this.get, id, this.consts);
+      if (typeof got === 'string') return got;
+      const raw = got.full.flat();
+      if (raw.some((v) => v < 0)) return 'shares need values of 0 or more';
+      const vals = [normalize(raw)];
+      if (vals[0].some((v) => !Number.isFinite(v))) return 'shares: the values sum to 0';
+      this.blocks.set(id, { id, kind: 'shares', vals, full: vals, src, region: k.region, dp: k.dp as number | undefined, action: a });
+      this.addValues(vals[0], 'computed', id, beat);
       return;
     }
     if (a.kind === 'table') {
@@ -315,7 +329,10 @@ export class GateState {
     for (const d of this.blocks.values()) {
       if (!d.src || 'vals' in d.src) continue;
       const got = computeSource(d.src, this.get, d.id, d.with ? { ...this.consts, ...d.with } : this.consts);
-      if (typeof got !== 'string') { d.full = got.full; d.vals = got.full; this.addValues(got.full.flat(), 'computed', d.id, beat); }
+      if (typeof got === 'string') continue;
+      const full = d.kind === 'shares' ? [normalize(got.full.flat())] : got.full;
+      if (full.flat().some((v) => !Number.isFinite(v))) continue;
+      d.full = full; d.vals = full; this.addValues(full.flat(), 'computed', d.id, beat);
     }
   }
 
@@ -350,14 +367,18 @@ export class GateState {
       const id = part?.id ?? v.ref;
       const b = this.blocks.get(id);
       if (!b?.full) return `unknown block ${id}`;
+      // A share block's inputs are its raw values (the board normalises what it shows).
+      if (b.kind === 'shares' && b.src && 'vals' in b.src) b.full = b.src.vals.map((r) => r.slice());
       if (v.vals) b.full = v.vals.map((r) => r.slice());
       else if (v.fn) {
         const f = formula(v.fn, C.MAP_VARS, this.consts);
         if (!f) return 'bad fn';
         b.full = C.mapMat(b.full, f);
       } else if (v.to != null && part) b.full[part.r0]![part.c0] = v.to;
+      if (b.src && 'vals' in b.src) b.src = { vals: b.full.map((r) => r.slice()) };
+      // A share block shows its new values as parts of the whole.
+      if (b.kind === 'shares') { const n = [normalize(b.full.flat())]; if (n[0].every(Number.isFinite)) b.full = n; }
       b.vals = b.full;
-      if (b.src && 'vals' in b.src) b.src = { vals: b.full };
       this.addValues(b.full.flat(), 'computed', id, beat);
       this.recompute(beat);
       return;

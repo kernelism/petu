@@ -22,6 +22,8 @@ export type PlaceOpts = {
   view?: Box;
   /** The most recent thing (with no anchor, a new thing flows on from it). Default: the last taken rect. */
   last?: Box | null;
+  /** A fixed frame (a plain sketch): a candidate reaching outside it counts as an overlap. */
+  inside?: Box;
 };
 
 /** A deterministic number in [0, 1) from a string. */
@@ -125,7 +127,8 @@ export function placeRel(w: number, h: number, rel: Rel | null, anchor: Box | nu
         // Out of view costs a little (the camera will travel), never a lot: the scene may grow.
         const out = o.view ? 1 - area(b, o.view) / Math.max(1, w * h) : 0;
         const cross = lineHit(b, anchor, others);
-        const cost = (hit > 0 ? 1000 + hit / Math.max(1, w * h) * 100 : 0) + c.pref + k * 0.6 + dist * 0.4 + out * 0.5 + ring * 0.3 + cross * 3;
+        const outside = o.inside ? 1 - area(b, o.inside) / Math.max(1, w * h) : 0;
+        const cost = (hit > 0 || outside > 0 ? 1000 + hit / Math.max(1, w * h) * 100 + outside * 100 : 0) + c.pref + k * 0.6 + dist * 0.4 + out * 0.5 + ring * 0.3 + cross * 3;
         if (!best || cost < best.cost) best = { b, cost };
       }
     }

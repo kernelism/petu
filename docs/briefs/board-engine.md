@@ -53,10 +53,10 @@ follow-up) continues that scene; a new id starts a fresh scene section below (a 
 (`SceneSpace.claim`); later things are placed clear of all claims.
 
 - **Things**: `node` (a chip, optional live `value=`), `flow` (chips `f[1]…`, `arrows`, `down`,
-  `values=`), kit blocks placed by relation, `note` (text, or a callout with `annotate=`: a routed
-  leader; it moves with what it annotates), `group of=a,b "name"` (a loose dashed outline, seeded,
+  `values=`), kit blocks and engine plots placed by relation (a plot with no `axes=` host is placed by the scene, clear of every claim), `note` (text, or a callout with `annotate=`: a routed
+  leader; it moves with what it annotates; `value=p[2]` adds a live value after its words, refreshed on `set`), `group of=a,b "name"` (a loose dashed outline, seeded,
   never a box; nested groups never touch; if the outline would swallow a non-member, the members
-  first glide together), `pair from=a to=b "…"` (a bracket), `merge of=a,b "…"` (members glide into
+  first glide together), `pair from=a to=b "…"` (a bracket; `note` and `pair` also draw in a plain sketch, placed inside its frame clear of its ink: `flatSpace`, `placeRel` `inside`), `merge of=a,b "…"` (members glide into
   one new chip; `SceneStore.alias` makes references to them mean it, links re-route).
 - **Links**: `link from= to= strength= "label"` — one quadratic, bend proportional to length (close
   neighbours nearly straight; arcs only for far things in one row), chosen among candidates by
@@ -70,7 +70,7 @@ follow-up) continues that scene; a new id starts a fresh scene section below (a 
   line rather than loop around it.
 - **Verbs**: `move id=x below=y` (things and kit blocks; a kit block glides inside a wrapper `g`
   and keeps `Block.shift` for world-space consumers: `worldBox` in kitEndBox, resolveKitPoints and
-  the scene resolver), `split id=a "x" "y"`, `set id=a "label"` (a node, a merged chip or flow parts `f[2]`, `f[1:2]`: the words cross-fade, the chip glides to its new width, squeezing the words between row neighbours, and flashes the accent), `set id=l strength=…`. Every
+  the scene resolver), `split id=a "x" "y"`, `set id=a "label"` (a node, a merged chip or flow parts `f[2]`, `f[1:2]`: the words cross-fade, the chip glides to its new width, squeezing the words between row neighbours, and flashes the accent; a link: the old words fade, the new ones are placed again by `placeLabel` clear of things, labels and the curve — a short straight link with no clear spot glides into an arc, as at creation —; a note: its words cross-fade in place; a kit block, in a scene or not: its caption, `setCaption` in kit.ts, squeezed to the block's width only when a neighbour sits beside it), `set id=l strength=…`. Once drawn is drawn: a set is a visible change, never an erase. Every
   move calls the thing's `moved` hooks each frame: links re-route, groups re-fit, callouts follow.
 - **Camera**: follows new ink (`frameScene` → `camFor`); after the last ink, `Desk.overview()`
   eases out to show the whole scene centred (`overviewCam`, zoom ≥ 0.62 so text stays readable).
@@ -89,7 +89,7 @@ Prevention by construction: the narration never types a number the engine comput
 - **Value model** = `GateState` (`src/gate/engine.ts`): the engine's numbers, headless. Two users,
   one implementation: `ScriptParser` applies every parsed tag to it in stream order, and the commit
   gate replays recordings through it. `consts` are lowercase (the expression language lowercases
-  names); `plotSrc` keeps plot tags so curves are recomputed with the current constants.
+  names); `shares` are kept as the board shows them (normalised to sum to 1; `set` takes raw values); `plotSrc` keeps plot tags so curves are recomputed with the current constants.
 - **`{{val id=… fmt=1 as=percent|abs}}`** (`src/script/parseValues.ts`): the parser turns it into a
   caption word with the engine's value at that point of the stream (`GateState.say` → `src/values/say.ts`:
   the board's own `fmt`, plus a spoken form for TTS). It glues to touching text (`${{val id=c}}.` →
@@ -101,7 +101,11 @@ Prevention by construction: the narration never types a number the engine comput
 - **`{{find id=E of=…}}`** readouts (`src/values/readout.ts`, pure, used by the board's `KitStore.reading`
   and the model alike): `cross` (two plots on shared axes, `n=` the k-th), `level=`, `max`/`min`,
   `x=` (value), `x= slope`, `area from= to=` (under one plot or between two), and on a fit `inside=w`
-  (count) / `residual` (RMS, or `residual=k` one point's). fn= plots are exact; parametric plots use a
+  (count) / `residual` (RMS, or `residual=k` one point's).
+- **`emph id=b where="x>=q"`** (kit `emphWhere`): every matching cell of a grid or table, bar, line point or
+  share part takes the accent (a later where replaces the earlier marks). Besides `x` (the value), `r c i`
+  (row, column, index), `where` reads constants, readouts (`find` E → its value) and one-value blocks (a
+  calc's result), so a highlight selects by the engine's own threshold, never by hand. fn= plots are exact; parametric plots use a
   2000-step polyline. `x=`, `level=`, `from=`, `to=` may be formulas over constants. A find draws nothing.
 - **Readout points**: `{{point on=s at=E "E"}}` is drawn by the kit (`buildReadoutPoint`) on the
   plot's layer with drop lines to both axes, and re-placed by `spreadLabels` whenever the plot redraws
