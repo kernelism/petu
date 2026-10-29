@@ -28,6 +28,10 @@ export const SCENES: Scene[] = [
   { name: 'moves', query: 'script=moves', moments: [mid(12000), mid(26000), END] },
   // The slide as canvas: on the chart (data units), the enzyme lifted and acted out, notes in place.
   { name: 'canvas', query: 'script=canvas', moments: [mid(16000), mid(23500), mid(42000), mid(62000), END] },
+  // The prompt's few-shot examples on their own slides (public/fixtures/examples.pdf): what the model is shown, as a student sees it.
+  { name: 'ex-village', query: 'script=ex-village', moments: [mid(14000), mid(30000), END] },
+  { name: 'ex-forecast', query: 'script=ex-forecast', moments: [mid(20000), END] },
+  { name: 'ex-counter', query: 'script=ex-counter', moments: [mid(22000), END] },
   { name: 'lec09', query: 'script=lec09', moments: [mid(14000), END], needs: 'public/dev/lec09_optical_flow.pdf' },
 ];
 

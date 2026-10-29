@@ -1,10 +1,13 @@
 // server/prompt/examples.ts
 /**
  * Few-shot examples for the system prompt. RULE: invented documents on topics that appear in no eval
- * PDF and none of the founder's course material (music notation, river deltas, levers), so the model
- * learns the moves, not the content. They differ in reach on purpose (one page and two sentences;
- * one page and a drawn what-if; three pages walked with one figure that grows), and none is a shape
- * to copy: the prompt says so, and they are kept short.
+ * PDF and none of the founder's course material (music notation, a village's coins, a rain forecast,
+ * a service counter), so the model learns the moves, not the content. They differ in reach on purpose
+ * (one page and two sentences; three pages walked with one picture that changes; many cases at once;
+ * a guess tested on the slide's own chart), and none is a shape to copy: the prompt says so. Each
+ * one that draws shows the mechanism by changing what is already drawn (marks moving between
+ * clusters, a sheet filling and counted, a curve shifting on the slide's chart), never by labelled
+ * boxes and arrows.
  *
  * Every script is executable: tests/server/examples.test.ts strips the plan, parses, resolves against
  * the example's own listings (every page sent with a listing), lints, and checks the geometry and
@@ -31,7 +34,7 @@ export const EXAMPLES: Example[] = [
     question: 'What does this symbol mean?',
     page: 2,
     pages: [2],
-    plan: 'The student is asking about the sign at the start of the staff. It is all on this page: what the sign does, and that it holds for the whole line.',
+    plan: 'The student asks what the sign at the start of the staff means; the page says it all. Beats: 1 ring the sign, say what it does and that it holds for the whole line.',
     listing: String.raw`PAGE 2 (visible; portrait page; image attached)
 t1 80 100–620: Reading a key signature
 t2 140 100–880: Sharps written at the start of a staff apply to every note on that line or space,
@@ -41,61 +44,48 @@ t4 420 128–140: ♯
     script: String.raw`{{circle p=2 "♯" near=134,432}} That's a sharp: it raises a note by a half step. {{highlight p=2 "apply to every note on that line or space"}} Written at the start of the staff, it holds for every note on its line through the whole piece, not just the next one.`,
   },
   {
-    title: 'one connected scene: things placed by relation, linked to each other and to the page, then transformed',
-    question: 'Why does most of the water end up in the east channel?',
+    title: 'a misconception run on the things themselves across three pages: coins as marks that move between owners, the same marks counted when the line moves',
+    question: "If every sale is one person's income and another person's spending, why doesn't it all cancel? How does the village get any richer?",
     page: 3,
-    pages: [3],
-    plan: 'The slide gives the rule (flow follows the easier channel) and the widths, but not why the split is so uneven. Central scene: the river, its three channels, links weighted by how much each takes, and the shares of the whole; then widen one channel and let the split change.',
+    pages: [3, 4, 5],
+    plan: "Two true facts wrongly combined: sales cancel, so nothing changes. Central picture: the coins themselves, moving between outside, baker and smith. Beats: 1 the travellers' coins cross in (3); 2 the shops pay each other, no coin leaves; 3 the line rule on 4, predict, the salt coins leave, count what stays; 4 the line around the baker alone (5); 5 check: the smith alone.",
     listing: String.raw`PAGE 3 (visible; 16:9 slide; image attached)
-t1 60 40–520: Where a delta's water goes
-t2 170 40–900: Water divides between channels in proportion to how easily each one carries it.
-t3 240 40–620: Widths: west 2 m, middle 1 m, east 5 m
-#g1 figure 520,320 420×380 "delta"`,
-    script: String.raw`{{highlight p=3 "in proportion to how easily each one carries it"}} The east channel is the widest, so it carries the most: water splits by how easily each channel takes it. <plan>Scene: the river as a node; the three channels as a flow below it; the widths as bars (the page's values) beside the channels; shares from the widths; links from the river to every channel weighted by the shares. Then widen the middle channel (set) and the split follows.</plan>{{scene id=s near=p3}} Start with {{node on=s id=river "river"}} the river. {{flow on=s id=ch "west" "middle" "east" below=river}} It splits into three channels. {{connect from=p3:"Widths: west 2 m, middle 1 m, east 5 m" to=s:ch}} The slide gives their widths, {{bars on=s id=w vals=2,1,5 labels=west,middle,east right=ch}} two, one and five metres. {{shares on=s id=p op=normalize of=w labels=west,middle,east below=ch}} Each channel's share is its width over the total, {{link on=s from=river to=ch strength=p}} so the river feeds each one in that proportion, {{note on=s "over half" annotate=p[3]}} and the east takes well over half. {{set id=w vals=2,4,5}} Dredge the middle channel to four metres {{emph id=p[2]}} and its share grows, while the others shrink with nothing else changed.`,
+t1 60 40–520: A village's income
+t2 170 40–900: The baker pays the smith 30 coins for tools; the smith pays the baker 20 coins for bread.
+t3 240 40–820: Travellers spend 50 coins at the baker. The smith buys 10 coins of salt from outside.
+#g1 figure 520,320 420×380 "village"
+PAGE 4 (16:9 slide; image attached)
+t1 60 40–480: Drawing the line
+t2 170 40–900: Payments between people inside the line cancel; only payments that cross it change the total.
+PAGE 5 (16:9 slide; listing only, no image)
+t1 60 40–520: Every line agrees
+t2 170 40–880: Draw the line around any group, and its income is what crosses that line.`,
+    script: String.raw`{{highlight p=3 "Travellers spend 50 coins at the baker."}} Inside the village the sales do cancel; it gets richer only by coins that come in from outside, like these. <plan>One mark per coin, all starting outside. States outside, baker, smith; each payment glides marks between clusters. Tools: 30 baker to smith; bread: 20 back; salt: the smith's last 10 out. Count the baker's at the end.</plan>{{sketch id=v near=p3}} {{tokens on=v id=c n=50 states=outside,baker,smith "coins"}} Here are the travellers' fifty coins, still outside the village. {{set id=c state=baker n=50}} They spend them at the baker, and every one crosses in. {{set id=c[21:50] state=smith}} The baker pays the smith thirty for tools, {{set id=c[31:50] state=baker}} and twenty come back for bread. Coins changed hands twice and not one left: that's the cancelling you meant, one shop's spending is the other's income. {{scroll p=4}} {{highlight p=4 "only payments that cross it change the total"}} The page's rule says what does count: a payment across the village's edge. Before the smith buys his salt, guess what the village holds at the end. {{set id=c[21:30] state=outside}} Ten coins cross out, and the village keeps {{val id=c.baker}}, all with the baker now: fifty in, ten out. {{scroll p=5}} {{highlight p=5 "its income is what crosses that line"}} Draw the line around the baker alone and the same coins tell his story: fifty from travellers and twenty for bread came in, thirty for tools went out. Check yourself: put the line around the smith alone. What crosses it, and does his total plus the baker's give the village's?`,
   },
   {
-    title: 'several pages walked, one figure that grows: point at the rule, draw the case',
-    question: 'How can a small push lift something heavy with a lever?',
-    page: 6,
-    pages: [6, 7, 8],
-    plan: 'The student sees a bar on a pivot but not why distance trades for force. Walk: the pivot and bar on 6, the balance rule on 7, the payoff on 8. Central illustration: one bar on its pivot, a heavy load close on one side, a light push far on the other; mark both distances, then let the bar turn so the push end visibly travels farther.',
-    listing: String.raw`PAGE 6 (visible; 16:9 slide; image attached)
-t1 60 40–300: Levers
-t2 170 40–760: A lever is a rigid bar that turns about a fixed point, the pivot.
-t3 760 470–530: pivot
-#d1 dot 500,700 "pivot"
-#s1 line 150,640→850,640
-PAGE 7 (16:9 slide; image attached)
-t1 60 40–420: The law of the lever
-t2 180 40–700 math: F₁ × d₁ = F₂ × d₂
-t3 260 40–820: Force times distance from the pivot is the same on both sides.
-PAGE 8 (16:9 slide; listing only, no image)
-t1 60 40–480: Mechanical advantage
-t2 180 40–900: Push three times as far from the pivot, and a third of the force balances the load.`,
-    script: String.raw`{{circle p=6 mark=#d1}} A lever trades distance for force: push three times farther from the pivot, and a third of the force lifts the load. <plan>Side view, up negative. Pivot P=0,0. Bar from the load end A=-100,0 to the push end B=along(A,P,4) = 300,0, three times as far from P. Forces as down arrows, 50 per unit: load 3 at A to LA=-100,150; push 1 at B to PB=300,50. Turned bar: A2=-97,-25, B2=along(A2,P,4) = 291,75, so B moves three times as far as A. Draw: pivot, bar, load, push, the two distances (braces left to right, above the bar), the turned bar, both ends' paths (em on the push end's).</plan>{{sketch id=v near=p6 fit}}{{let on=v P=0,0 A=-100,0 B=along(A,P,4) LA=-100,150 PB=300,50 A2=-97,-25 B2=along(A2,P,4)}} {{point on=v at=P "pivot" dir=s}} Here's the pivot, {{line on=v from=A to=B}} with the bar across it. {{arrow on=v from=A to=LA}} A heavy load sits one step out on this side. {{arrow on=v from=B to=PB}} You push three steps out on the other, with a third of the force. {{scroll p=7}} {{highlight p=7 mark=#t2}} This rule is why that balances: force times distance must match on both sides. {{brace on=v from=A to=P "1"}} The load gives three units of force times one step, {{brace on=v from=P to=B "3"}} and you give one unit times three steps. {{line on=v from=A2 to=B2 dash}} Now let the bar turn a little. {{line on=v from=A to=A2 weight=secondary}} The load rises a short way, {{line on=v from=B to=B2 em}} while your hand travels three times as far. {{scroll p=8}} {{highlight p=8 "a third of the force balances the load"}} That's the bargain: a gentler push, over a longer path.`,
+    title: 'many cases at once: a seeded simulation at scale, stepped then swept, counted by the engine, its rows piled into a histogram',
+    question: 'Today will either rain or not. So what does a 70% chance even mean for today?',
+    page: 7,
+    pages: [7],
+    plan: 'The student puts the percentage on one day and is half right. Beats: 1 a sheet of days that got this forecast, drawn at seven in ten; 2 each row of ten wobbles (step, then sweep); 3 the rows piled up, the whole sheet near seventy percent, today one square; 4 check: a forecaster who is wrong.',
+    listing: String.raw`PAGE 7 (visible; portrait page; image attached)
+t1 80 100–640: Reading a forecast
+t2 140 100–900: A 70% chance of rain means it rains on about 7 of every 10 days
+t3 175 100–620: that get this same forecast.
+t4 230 100–860: It is not a promise about today, which will either be wet or dry.`,
+    script: String.raw`{{highlight p=7 "it rains on about 7 of every 10 days"}} The seventy percent describes all the days that get this forecast, not today on its own. <plan>A sheet of 20 rows of 10 forecast days, rain as dark cells from a seeded draw at 0.7. Right of it, each row's share of rain: step two rows, sweep the rest. Below, the rows' shares piled into a histogram; the mean of the sheet. Today is one cell.</plan>{{sketch id=d near=p7}} Here is a sheet of days that all got this forecast, {{grid on=d id=days size=20x10 fn="rand()<0.7" view=image "forecast days"}} each dark square a day it rained. {{grid on=d id=row over=days win=1x10 reduce=mean right=days "share wet"}} Take them ten at a time. {{step id=row[1,1]}} The first ten days had this share of rain, {{step id=row[2,1]}} then the next ten, {{sweep id=row dur=3}} and every row wobbles. {{bars on=d id=pile hist=row bins=7 below=days "rows"}} Pile the rows up by their share, and they bunch around seven in ten. {{calc on=d id=all of=row reduce=mean "all days"}} Over the whole sheet it comes to {{val id=all as=percent}}. {{emph id=days[1,1]}} Today is one square: wet or dry, never seventy percent of either. {{highlight p=7 "which will either be wet or dry"}} So you're right about today; the number is the forecast's track record. If a forecaster's seventy percent days turned out wet only half the time, where would their pile of rows sit?`,
   },
   {
-    title: 'worked numbers: the engine computes, the window steps, then sweeps',
-    question: 'Why does the average flatten the hot day?',
-    page: 5,
-    pages: [5],
-    plan: 'The student sees the rule but not its effect on one odd day. Central illustration: a week of temperatures with one hot day, and the 3-day means under it; step through the first windows, then sweep, so the spike visibly spreads out.',
-    listing: String.raw`PAGE 5 (visible; 16:9 slide; image attached)
-t1 60 40–520: Smoothing a noisy week
-t2 170 40–930: A 3-day moving average replaces each day by the mean of it and its neighbours.
-t3 240 40–700: Single hot or cold days count for less.`,
-    script: String.raw`{{highlight p=5 "replaces each day by the mean of it and its neighbours"}} Because each smoothed value is the mean of three days, one hot day gets shared with its neighbours. <plan>Seven days, one hot Thursday: 12 13 12 24 13 12 13. A 1×3 mean window under it. Step the first two windows, sweep the rest, then point at the three outputs that contain the hot day.</plan>{{sketch id=s near=p5}} Here's a week {{grid on=s id=t vals=12,13,12,24,13,12,13 cols=M,T,W,T,F,S,S "°C"}} with one hot Thursday. {{grid on=s id=a over=t win=1x3 reduce=mean below=t "3-day mean"}} Each smoothed value comes from one window of three days. {{step id=a[1]}} The first window takes Monday to Wednesday, {{step id=a[2]}} the next one catches the hot day, {{sweep id=a dur=3}} and the window carries on to Sunday. {{emph id=a[2:4]}} The spike is gone: the window around Thursday reads only {{val id=a[3]}}, the heat spread thinly over three days instead of standing out on one.`,
-  },
-  {
-    title: 'on the slide\'s own chart first, then a formula on the board: named readings said by the engine, a teaching move on its constant',
-    question: 'Why does the last bit of charging take so long?',
+    title: "the student's guess tested on the slide's own chart: the page's formula drawn on its axes, a readout where the guess fails, brackets for the cause, then the curve shifted with its ghost kept",
+    question: "Four people an hour wait 10 minutes. If 8 an hour come, won't they just wait 20?",
     page: 2,
     pages: [2],
-    plan: 'On the slide\'s chart: 80 percent comes early, the tail is flat. Then the curve from the page formula; read where it reaches 80 and 99; sweep the time constant down.',
+    plan: "The student assumes waiting grows in step with arrivals. All on the slide's chart. Beats: 1 the page's case and the student's guess; 2 the page's formula drawn on the same axes, far above the guess at eight; 3 why: the spare room shrinks to a third; 4 a faster counter, the curve drops; 5 check.",
     listing: String.raw`PAGE 2 (visible; 16:9 slide; image attached)
-t1 60 40–520: Charging a battery
-t2 170 40–900: The charge approaches full as 100 × (1 − e^(−t/τ)), in percent, with τ = 30 minutes.
-#c1 chart 540,330 400×560 x "minutes" 0–180, y "charge %" 0–100`,
-    script: String.raw`{{highlight p=2 "approaches full"}} Each minute adds a fixed share of what is still missing, so the fuller it is, the less it adds. <plan>Slide chart: a line at 80, a note on the tail. Board: plot the formula from tau; find and mark 80 and 99; limit tau to 10.</plan>{{line p=2 on=#c1 from=0,80 to=180,80 weight=faint}} On the slide's own graph, eighty percent comes early, {{note p=2 on=#c1 at=170,99 "the slow tail"}} and the last stretch is almost flat. {{sketch id=s near=p2}} {{const tau=30}} Here is the page's curve. {{plot on=s id=q fn="100*(1-exp(-x/tau))" domain=0,180 xlabel="minutes" ylabel="charge %" "charge"}} {{find id=a of=q level=80}} It passes eighty {{point on=s at=a "80%"}} after {{val id=a.x fmt=0}} minutes, {{find id=b of=q level=99}} {{point on=s at=b "99%"}} but ninety-nine takes {{val id=b.x fmt=0}}: notice how flat it has become. {{limit of=q tau=10 show=b}} A faster charger squeezes the curve left, yet the tail is still the slowest part.`,
+t1 60 40–560: Waiting at one counter
+t2 170 40–900: One clerk serves 10 people an hour. The average wait is 60 / (10 − a) minutes,
+t3 205 40–520: where a is the number arriving each hour.
+#c1 chart 520,330 420×560 x "arrivals per hour" 0–10, y "wait (min)" 0–60`,
+    script: String.raw`{{point p=2 on=#c1 at=4,10 "now"}} Longer than that: the wait depends on the clerk's spare room, and doubling the crowd uses up most of it. {{point p=2 on=#c1 at=8,20 "your guess"}} Your guess puts eight arrivals at twenty minutes, {{line p=2 on=#c1 from=4,10 to=8,20 dash}} on a straight line from here. {{const service=10 spare=service-4 rest=service-8}} {{plot p=2 on=#c1 id=w fn="60/(service-x)" "the page's rule"}} Let the page's own formula draw the real curve on its chart. {{find id=W of=w x=8}} {{point p=2 on=#c1 at=W "at eight"}} At eight arrivals it reads {{val id=W.y}} minutes, far above your guess. {{brace p=2 on=#c1 from=4,10 to=10,10 "spare"}} Here's why: at four an hour the clerk has room for {{val id=spare}} more, {{brace p=2 on=#c1 from=8,30 to=10,30 "spare" em}} at eight only {{val id=rest}}. {{highlight p=2 "60 / (10 − a)"}} The formula divides by that spare room, so a third of the room means three times the wait. {{beforeafter of=w service=20}} Now let the counter serve twenty an hour: the curve drops on the same axes, its old place stays as a ghost, and eight arrivals wait {{val id=W.y}} minutes. Check yourself: at that faster counter, how many an hour could come before they wait the ten minutes they wait now?`,
   },
 ];

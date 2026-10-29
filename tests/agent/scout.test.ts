@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { answerPages, imagePages, parseScout, SCOUT_MAX_PAGES } from '../../src/agent/scout';
+import { answerPages, imagePages, parseScout, SCOUT_MAX_PAGES, SCOUT_PLAN_CHARS } from '../../src/agent/scout';
 import { scoutLive, scoutPages } from '../../src/agent/client';
 
 describe('parseScout', () => {
@@ -27,7 +27,8 @@ describe('parseScout', () => {
   it('cuts a long plan at a word, with an ellipsis', () => {
     const plan = 'word '.repeat(300);
     const r = parseScout(JSON.stringify({ pages: [1], plan }), 5, 1);
-    expect(r.plan.length).toBeLessThanOrEqual(601);
+    expect(r.plan.length).toBeLessThanOrEqual(SCOUT_PLAN_CHARS + 1);
+    expect(SCOUT_PLAN_CHARS).toBeGreaterThanOrEqual(700); // ≈ 100 words: the beats at the plan's end survive the clip
     expect(r.plan.endsWith('word…')).toBe(true);
   });
 });

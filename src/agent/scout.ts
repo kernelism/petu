@@ -58,8 +58,8 @@ export type ScoutEvent =
   | { t: 'end'; usd: number; ms: number; cached?: number; input?: number };
 
 export const SCOUT_MAX_PAGES = 6;
-/** ≈ 80 words. */
-export const SCOUT_PLAN_CHARS = 600;
+/** ≈ 100 words (the plan ends with its numbered beats, so a clip must not cut them). */
+export const SCOUT_PLAN_CHARS = 750;
 /** The scout's `find` list: at most this many short strings. */
 export const SCOUT_FIND = 3;
 const FIND_CHARS = 80;
@@ -76,7 +76,7 @@ export const SCOUT_SCHEMA = {
     opener: { type: 'string', description: 'The first one or two sentences of the spoken answer, with tags that point only at the visible page.' },
     pages: { type: 'array', items: { type: 'integer' }, description: 'At most 6 page numbers of the document, in teaching order.' },
     find: { type: 'array', items: { type: 'string' }, description: 'At most 3 labels or short phrases to look up (e.g. a figure, table or equation number the answer needs); usually empty.' },
-    plan: { type: 'string', description: 'At most 80 words.' },
+    plan: { type: 'string', description: 'At most 100 words, ending with the numbered beats.' },
   },
 } as const;
 

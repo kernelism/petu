@@ -6,6 +6,8 @@ export const TAG_NAMES = new Set(['scroll', 'highlight', 'underline', 'circle', 
   'grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'step', 'sweep', 'set', 'band', 'dist', 'col', 'level', 'const',
   // Board v2 (src/script/parseScene.ts)
   'scene', 'node', 'flow', 'link', 'note', 'shares', 'blend', 'group', 'pair', 'merge', 'split',
+  // amounts, counts and distributions (a count as marks)
+  'tokens',
   // bound numbers, readouts, demonstration moves (src/script/parseValues.ts)
   'val', 'find', 'contrast', 'limit', 'beforeafter',
   // the slide as canvas: a page region onto the board

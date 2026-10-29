@@ -742,8 +742,46 @@ async function canvas(): Promise<void> {
   console.log('wrote public/fixtures/canvas.pdf (3 pages)');
 }
 
-// `npm run decks` writes every deck; `... make-decks.ts bio` (or econ, mechanics, canvas) writes only those.
-const decks: Record<string, () => Promise<void>> = { econ, mechanics, bio, canvas };
+// Deck 5: the prompt's few-shot examples (server/prompt/examples.ts) as real slides, so their scripts
+// play on the board (`?script=ex-village`, `ex-forecast`, `ex-counter`) and the gallery shows what a
+// student would see. Pages sit at the examples' own page numbers (2: the counter's chart; 3–5: the
+// village; 7: the forecast); the music page is not drawn (its sharp sign is outside WinAnsi).
+async function examples(): Promise<void> {
+  const d = await Deck.create('Prompt examples: a counter, a village, a forecast (sample deck)');
+  d.page();
+  {
+    const p = d.page('Waiting at one counter');
+    d.bullets(p, ['One clerk serves 10 people an hour. The average wait is 60 / (10 - a) minutes,', 'where a is the number arriving each hour.'], 100, 15);
+    d.axes(p, { x: 440, y: 200, w: 300, h: 280, xmax: 10, ymax: 60, xLabel: 'a', yLabel: 'wait', xTicks: [0, 2, 4, 6, 8, 10], yTicks: [0, 20, 40, 60] });
+    d.text(p, 'arrivals per hour', 520, 520, 12, d.f.sans, GRAY);
+  }
+  {
+    const p = d.page("A village's income");
+    d.bullets(p, ['The baker pays the smith 30 coins for tools; the smith pays the baker 20 coins for bread.', 'Travellers spend 50 coins at the baker. The smith buys 10 coins of salt from outside.'], 100, 14);
+    // two houses and a road: the village
+    for (const [x, c] of [[470, TINT_B], [610, TINT_R]] as const) { d.rect(p, x, 300, 90, 70, c, INK); d.poly(p, [[x - 8, 300], [x + 45, 260], [x + 98, 300]], PANEL, INK); }
+    d.text(p, 'baker', 492, 395, 13, d.f.sans, BODY);
+    d.text(p, 'smith', 634, 395, 13, d.f.sans, BODY);
+    d.line(p, [420, 430], [760, 430], 1.2, GRAY, [6, 4]);
+  }
+  {
+    const p = d.page('Drawing the line');
+    d.bullets(p, ['Payments between people inside the line cancel; only payments that cross it change the total.'], 100, 14);
+  }
+  {
+    const p = d.page('Every line agrees');
+    d.bullets(p, ['Draw the line around any group, and its income is what crosses that line.'], 100, 15);
+  }
+  d.page();
+  {
+    const p = d.page('Reading a forecast');
+    d.bullets(p, ['A 70% chance of rain means it rains on about 7 of every 10 days', 'that get this same forecast.', 'It is not a promise about today, which will either be wet or dry.'], 110, 16);
+  }
+  await d.save('public/fixtures/examples.pdf');
+}
+
+// `npm run decks` writes every deck; `... make-decks.ts bio` (or econ, mechanics, canvas, examples) writes only those.
+const decks: Record<string, () => Promise<void>> = { econ, mechanics, bio, canvas, examples };
 const only = process.argv.slice(2);
 for (const name of only) if (!decks[name]) throw new Error(`unknown deck ${name} (${Object.keys(decks).join(', ')})`);
 for (const [name, make] of Object.entries(decks)) if (!only.length || only.includes(name)) await make();
