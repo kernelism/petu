@@ -18,13 +18,13 @@ export type ViewRect = { x: number; y: number; w: number; h: number };
  * A sketch region: one section on the board. `page` is the slide it explains (its body text sets
  * the section's type size); `body` is that slide's body text height as a fraction of the page width.
  */
-export type RegionSpec = { id: string; page: number; size: RegionSize; body?: number | null; /** Board v2: one 2-D scene with a camera, continued by later answers. */ scene?: boolean };
+export type RegionSpec = { id: string; page: number; size: RegionSize; body?: number | null; /** Board v2: one 2-D scene with a camera, continued by a later scene tag with the same id. */ scene?: boolean };
 
 /**
  * Board v2 (spec "Board v2: one connected scene"): a scene section is an unbounded 2-D world (the
  * section's units, y down) seen through a camera that pans and zooms to frame the current action.
  * Elements claim room in it, so later ones are placed clear of them (src/desk/scene/place.ts). Claims
- * persist with the section across answers (a follow-up continues the scene).
+ * persist with the section across answers (a later scene tag with the same id continues it; a new id starts a fresh scene).
  */
 /** A minor claim: a label's room ('label') or a stretch of a drawn line ('line'): kept clear, never an anchor for "the last thing". */
 export type SceneClaim = { r: SRect; move(r: SRect): void; drop(): void; minor?: 'label' | 'line' };

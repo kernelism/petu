@@ -64,7 +64,54 @@ async function valueOf(v: ValueRef, env: BuildEnv): Promise<Shown> {
 /** Chip geometry at this board's type size. */
 function chipKit(m: Metrics) {
   const chipH = m.num * 2.1, padX = m.num * 0.85;
-  return { chipH, chipW: (t: string) => Math.max(chipH * 1.6, m.u(textWidth(t, m.numPx)) + 2 * padX) };
+  return { chipH, padX, chipW: (t: string) => Math.max(chipH * 1.6, m.u(textWidth(t, m.numPx)) + 2 * padX) };
+}
+
+const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+
+/**
+ * A chip takes a new label in place: the old words fade out, the chip glides to the new width about
+ * its centre (in a row of chips no wider than the room between its neighbours: the words squeeze to
+ * fit instead), its outline flashes the accent, and the new words fade in. Links on it re-route.
+ */
+async function relabel(t: Thing, i: number, text: string, chip: SVGRectElement, kit: { chipW: (s: string) => number; padX: number; gap: number }, accent: string, k: Pace, done: () => void): Promise<void> {
+  const tx = chip.parentElement?.querySelector('text');
+  if (!tx) return;
+  const parts = t.parts ?? [t.rect], p = parts[i] ?? t.rect;
+  let want = kit.chipW(text);
+  // Neighbours in the same row bound the growth (a stacked flow grows freely sideways).
+  const row = (q?: Box) => !!q && Math.abs(q.y - p.y) < p.h / 2;
+  const cx = p.x + p.w / 2;
+  let half = Infinity;
+  if (row(parts[i - 1])) half = Math.min(half, cx - (parts[i - 1].x + parts[i - 1].w) - kit.gap);
+  if (row(parts[i + 1])) half = Math.min(half, parts[i + 1].x - kit.gap - cx);
+  const squeeze = want > 2 * half;
+  if (squeeze) want = Math.max(p.w, 2 * half);
+  const dw = want - p.w;
+  const x0 = Number(chip.getAttribute('x')), w0 = Number(chip.getAttribute('width'));
+  const stroke = chip.getAttribute('stroke'), sw = chip.getAttribute('stroke-width');
+  const still = k.fadeMs != null || prefersReducedMotion();
+  await tween(still ? 0 : 160 * k.speed, (x) => tx.setAttribute('opacity', String(1 - x)));
+  tx.textContent = text;
+  if (squeeze) setAttrs(tx, { textLength: want - 2 * kit.padX, lengthAdjust: 'spacingAndGlyphs' });
+  else { tx.removeAttribute('textLength'); tx.removeAttribute('lengthAdjust'); }
+  setAttrs(chip, { stroke: accent, 'stroke-width': 1.8 });
+  const base = { ...p };
+  await tween(still ? 0 : 260 * k.speed, (x) => {
+    chip.setAttribute('x', String(x0 - (dw * x) / 2));
+    chip.setAttribute('width', String(w0 + dw * x));
+    tx.setAttribute('opacity', String(x));
+    parts[i] = { ...base, x: base.x - (dw * x) / 2, w: base.w + dw * x };
+    if (t.parts) t.parts = parts;
+    t.moved?.forEach((f) => f());
+  }, undefined, easeOut);
+  tx.setAttribute('opacity', '1');
+  const items = t.data!.text as string[] | undefined;
+  if (items) items[i] = text;
+  done();
+  // The accent fades back to the chip's own outline once the new words are in.
+  await new Promise((res) => setTimeout(res, still ? 0 : 500 * k.speed));
+  setAttrs(chip, { stroke: stroke ?? '', 'stroke-width': sw ?? '' });
 }
 
 /** One chip (a rounded label), faded in by the caller. */
@@ -535,22 +582,39 @@ export async function buildSceneRef(a: RefAction, env: BuildEnv): Promise<Elemen
     };
   }
   if (a.kind === 'set') {
+    // The chips it names: a node's (or a merged chip's) one chip, or a flow's parts f[2] / f[1:3].
+    const chips = (t.data!.chips as SVGRectElement[] | undefined) ?? [];
+    const kind = t.data!.kind;
+    const idx = part ? range(part.c0, part.c1) : kind === 'node' ? [0] : [];
+    if ((a.text != null || a.value != null) && !chips.length) return `${id} has no label to set`;
+    if ((a.text != null || a.value != null) && !idx.length) return `set a label on a part of ${id}, as ${id}[2]`;
+    if (idx.some((i) => !chips[i])) return `${a.ref} is outside ${id}`;
+    const { chipW, padX } = chipKit(m);
+    const boxes = idx.map((i) => t.parts?.[i] ?? t.rect);
     return {
-      target, bbox: grow(t.rect, 8),
+      target, bbox: grow(boxes.length ? union(boxes) : t.rect, 8),
       draw: async (_s, k) => {
-        if (a.text != null && t.data!.kind === 'node') {
-          const g = t.group; const tx = g?.querySelector('text');
-          if (tx) { await tween(160 * k.speed, (x) => tx.setAttribute('opacity', String(1 - x))); tx.textContent = a.text; await tween(200 * k.speed, (x) => tx.setAttribute('opacity', String(x))); }
+        if (a.text != null) {
+          // The thing's room grows with a wider chip (its value line below stays inside it).
+          const settle = () => {
+            const r = union([t.rect, ...(t.parts ?? [])]);
+            t.rect = r;
+            t.claim?.move(r);
+            if (env.registry.get(id)) env.registry.update(id, { bbox: r, boxes: [r] });
+            t.moved?.forEach((f) => f());
+          };
+          await Promise.all(idx.map((i) => relabel(t, i, a.text!, chips[i], { chipW, padX, gap: m.u(4) }, accent, k, settle)));
         }
         // A chip's value: the new one (a literal or a part it follows from now on), as the kit shows it.
-        const shown = t.data!.values as Shown[] | undefined, vt = (t.data!.vtexts as SVGTextElement[] | undefined)?.[0];
-        if (a.value != null && t.data!.kind === 'node' && shown && vt) {
+        const shown = t.data!.values as Shown[] | undefined, vts = t.data!.vtexts as SVGTextElement[] | undefined;
+        if (a.value != null && shown && vts) {
           const next = await valueOf(a.value, env);
-          await tween(160 * k.speed, (x) => vt.setAttribute('opacity', String(1 - x)));
-          shown[0] = next;
+          const vt = idx.map((i) => vts[i]).filter(Boolean);
+          await tween(160 * k.speed, (x) => vt.forEach((v) => v.setAttribute('opacity', String(1 - x))));
+          idx.forEach((i) => { if (i < shown.length) shown[i] = next; });
           (t.data!.paint as () => void)();
           if (next.src) kitStore(env.registry).listen(next.src, t.data!.paint as () => void);
-          await tween(200 * k.speed, (x) => vt.setAttribute('opacity', String(x)));
+          await tween(200 * k.speed, (x) => vt.forEach((v) => v.setAttribute('opacity', String(x))));
         }
         const link = t.data!.link as LinkState | undefined;
         if (link && a.weight != null) {

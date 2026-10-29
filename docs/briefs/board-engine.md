@@ -70,7 +70,7 @@ follow-up) continues that scene; a new id starts a fresh scene section below (a 
   line rather than loop around it.
 - **Verbs**: `move id=x below=y` (things and kit blocks; a kit block glides inside a wrapper `g`
   and keeps `Block.shift` for world-space consumers: `worldBox` in kitEndBox, resolveKitPoints and
-  the scene resolver), `split id=a "x" "y"`, `set id=a "label"`, `set id=l strength=…`. Every
+  the scene resolver), `split id=a "x" "y"`, `set id=a "label"` (a node, a merged chip or flow parts `f[2]`, `f[1:2]`: the words cross-fade, the chip glides to its new width, squeezing the words between row neighbours, and flashes the accent), `set id=l strength=…`. Every
   move calls the thing's `moved` hooks each frame: links re-route, groups re-fit, callouts follow.
 - **Camera**: follows new ink (`frameScene` → `camFor`); after the last ink, `Desk.overview()`
   eases out to show the whole scene centred (`overviewCam`, zoom ≥ 0.62 so text stays readable).
