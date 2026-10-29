@@ -6,7 +6,7 @@
  * world is claimed on the Desk's scene and persists across answers.
  */
 import type { Registry } from '../registry';
-import type { SceneClaim } from '../types';
+import type { BuildEnv, Pace, SceneClaim, TargetCtx } from '../types';
 import { blockPart, isBlockRef } from '../../script/pointExpr';
 import type { Box } from './place';
 
@@ -24,7 +24,16 @@ export type Thing = {
 
 export class SceneStore {
   private things = new Map<string, Thing>();
-  get(id: string): Thing | undefined { return this.things.get(id); }
+  private aliases = new Map<string, string>();
+  /** A thing by id; a thing merged into another answers as the one it became. */
+  get(id: string): Thing | undefined {
+    for (let i = 0; i < 8 && this.aliases.has(id); i++) id = this.aliases.get(id)!;
+    return this.things.get(id);
+  }
+  /** `id` is now `into` (a merge): references to it resolve there. */
+  alias(id: string, into: string): void { this.aliases.set(id, into); }
+  /** Every thing of a kind (data.kind). */
+  ofKind(kind: string): Thing[] { return [...this.things.values()].filter((t) => t.data?.kind === kind); }
   put(id: string, t: Thing): Thing {
     const prev = this.things.get(id);
     const out = prev ? Object.assign(prev, t) : t;
@@ -32,7 +41,7 @@ export class SceneStore {
     return out;
   }
   ids(): string[] { return [...this.things.keys()]; }
-  clear(): void { this.things.clear(); }
+  clear(): void { this.things.clear(); this.aliases.clear(); }
 }
 
 export const sceneStore = (r: Registry): SceneStore => r.ext('scene', () => new SceneStore());
@@ -41,6 +50,13 @@ type KitResolver = (ref: string, r: Registry) => Promise<Box | null>;
 let kitResolve: KitResolver = async () => null;
 /** kit.ts registers how a kit block or part resolves to a box (avoids an import cycle). */
 export function setKitResolver(f: KitResolver): void { kitResolve = f; }
+
+type LinkMaker = (from: string, to: string, label: string, ctx: TargetCtx, env: BuildEnv, pace: Pace) => Promise<void>;
+let linkMaker: LinkMaker = async () => {};
+/** scene.ts registers how a plain link is drawn, so kit.ts can relate a computed block to its source. */
+export function setSceneLink(f: LinkMaker): void { linkMaker = f; }
+/** Draws a link from one scene thing to another (an op between kit blocks in a scene). */
+export const sceneLink: LinkMaker = (...a) => linkMaker(...a);
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

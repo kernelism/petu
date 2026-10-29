@@ -129,6 +129,13 @@ export class Director {
     return this.busy === 0 ? Promise.resolve() : new Promise((r) => this.idlers.push(r));
   }
 
+  /** The answer's last ink has landed: a scene it drew in eases out to its overview (then 'done'). */
+  async finale(): Promise<void> {
+    await this.idle();
+    const signal = this.ctrl.signal;
+    if (!signal.aborted) await this.desk()?.overview?.();
+  }
+
   /** As soon as an action is parsed: takes its point definitions (lookahead), warms caches (text runs, KaTeX). */
   prefetch(raw: RawAction): void {
     this.seen.add(raw);

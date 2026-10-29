@@ -20,6 +20,23 @@ const union = (a: SRect, b: SRect): SRect => {
   return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
 };
 
+/** The furthest the end-of-answer overview zooms out (the whole scene at a glance; labels may be small). */
+export const ZOVER = 0.45;
+
+/**
+ * The end-of-answer overview: the whole scene `ext`, centred in the window with air, at the largest
+ * zoom that shows all of it (never past 1, never under ZOVER: a huge scene keeps its top-left in view).
+ */
+export function overviewCam(ext: SRect, win: { w: number; h: number; s: number }): Cam {
+  const air = 1 + 2 * AIR * 1.4;
+  const fit = Math.min(win.w / (win.s * ext.w * air), win.h / (win.s * ext.h * air));
+  const z = Math.min(1, Math.max(ZOVER, fit));
+  const vw = win.w / (win.s * z), vh = win.h / (win.s * z);
+  const x = ext.w * air <= vw ? ext.x + ext.w / 2 - vw / 2 : ext.x - vw * AIR;
+  const y = ext.h * air <= vh ? ext.y + ext.h / 2 - vh / 2 : ext.y - vh * AIR;
+  return { x, y, z };
+}
+
 /**
  * The camera that frames `r` (with `ctx`, the last framed rect, when both fit at a readable zoom),
  * or null when `r` is already comfortably in view. `win`: the window in px and the type scale.

@@ -633,7 +633,7 @@ export default function App() {
         if (a.kind !== 'scroll' && a.kind !== 'clear') drew = true;
         director.run(a, at);
       },
-      idle: () => director.idle(),
+      idle: () => director.finale(),
       onWord: (words) => {
         if (sessionRef.current !== session) return;
         if (DEBUG && words.length === 1) { const t = performance.now(); setDebug((d) => ({ ...d, word: t })); }

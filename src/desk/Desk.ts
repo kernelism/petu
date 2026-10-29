@@ -9,7 +9,7 @@ import { routeGutter, maskBlocker } from './route';
 import { boardLayout, bodyPx, cropSpan, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
 import { BOARD_HEAD, boardPad } from './layout';
-import { camFor, type Cam } from './scene/camera';
+import { camFor, overviewCam, type Cam } from './scene/camera';
 
 export type { DeskHost } from './types';
 
@@ -568,10 +568,21 @@ export class Desk implements DeskApi {
     const page = { x: L.pageX, y: L.tops[i] - top, w: L.pageW, h: L.heights[i] };
     const mask = this.host.contentMask?.(pageNo) ?? null;
     const { H } = this.host.viewport();
+    // Board ink between the gutter and the target (a snapshot from when the wire was made), minus the target's own.
+    const t = w.region.r, e = 0.5;
+    const within = (a: SRect, b: SRect) => a.x >= b.x - e && a.y >= b.y - e && a.x + a.w <= b.x + b.w + e && a.y + a.h <= b.y + b.h + e;
+    const obstacles = w.avoid
+      .filter((a) => !within(t, a) && !within(a, t))
+      .map((a) => this.viewRect(w.section, a))
+      .filter((a): a is ViewRect => !!a);
     let s = routeGutter(p, q, {
       page, gutterX: (page.x + page.w + f.board.x) / 2,
       blocked: mask ? maskBlocker(mask, page) : undefined,
       band: { y0: SAFE_TOP, y1: H - safeBottom() },
+      boardBlocked: obstacles.length
+        ? (r) => obstacles.some((a) => r.x < a.x + a.w && a.x < r.x + r.w && r.y < a.y + a.h && a.y < r.y + r.h)
+        : undefined,
+      board: f.board,
     });
     if (!s) return null;
     if (w.reversed) s = s.slice().reverse();
@@ -607,14 +618,14 @@ export class Desk implements DeskApi {
     const claims: SceneClaim[] = [];
     const sc: Scene = { cam: { x: 0, y: 0, z: 1 }, claims, focus: null, glide: null, paper: null, space: null as unknown as SceneSpace };
     sc.space = {
-      claim: (r) => {
-        const c: SceneClaim = { r: { ...r }, move: (n) => { c.r = { ...n }; }, drop: () => { const i = claims.indexOf(c); if (i >= 0) claims.splice(i, 1); } };
+      claim: (r, minor) => {
+        const c: SceneClaim = { r: { ...r }, move: (n) => { c.r = { ...n }; }, drop: () => { const i = claims.indexOf(c); if (i >= 0) claims.splice(i, 1); }, ...(minor ? { minor: true } : {}) };
         claims.push(c);
         return c;
       },
       rects: () => claims.map((c) => c.r),
       view: () => this.camRect(sec),
-      last: () => claims[claims.length - 1]?.r ?? null,
+      last: () => [...claims].reverse().find((c) => !c.minor)?.r ?? null,
       extent: () => (claims.length ? unionR(claims.map((c) => c.r)) : null),
     };
     sec.scene = sc;
@@ -696,6 +707,22 @@ export class Desk implements DeskApi {
     if (ep !== this.epoch) return true;
     await this.glideCam(sec, to);
     return true;
+  }
+
+  /**
+   * The answer has ended: if it drew in a scene and the student is following, the camera eases out to
+   * show the whole scene, centred (the explanation's map at a glance, every connection visible).
+   */
+  async overview(): Promise<void> {
+    const sec = [...this.ids.values()].reverse().find((s) => s.scene);
+    if (!sec || !this.open || !this.follow.following()) return;
+    const ext = sec.scene!.space.extent(), box = this.boxOf(sec);
+    if (!ext || !box) return;
+    const to = overviewCam(ext, { w: box.w, h: box.h, s: box.s });
+    const c = sec.scene!.cam;
+    if (Math.abs(to.x - c.x) < 0.5 && Math.abs(to.y - c.y) < 0.5 && Math.abs(to.z - c.z) < 1e-3) return;
+    sec.scene!.focus = null;
+    await this.glideCam(sec, to);
   }
 
   private async glideCam(sec: Section, to: Cam): Promise<void> {

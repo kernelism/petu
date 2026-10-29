@@ -29,7 +29,7 @@ import { place, wrapPieces, type Box, type Pad, type Placed } from './layout';
 import { kitText, svg, setAttrs, textWidth } from './text';
 import { applyOp, normalize } from './ops';
 import { placeRel } from '../scene/place';
-import { anchorBox, sceneStore, setKitResolver } from '../scene/store';
+import { anchorBox, sceneLink, sceneStore, setKitResolver } from '../scene/store';
 
 /** A reference waits this long for its block (still waiting on its own word) before it is skipped. */
 export const KIT_WAIT_MS = 600;
@@ -66,6 +66,8 @@ export type Block = {
   placed: Placed;
   m: Metrics;
   deps: string[];
+  /** Moved in a scene (move id=… below=…): its group glides by this much; `placed` stays in the block's own (drawing) space. */
+  shift?: { x: number; y: number };
   g: SVGGElement | null;
   ready: Promise<void>;
   markReady: () => void;
@@ -412,14 +414,14 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
   const relBox = scene && rel ? await anchorBox(rel.of, env.registry) : null;
   const P = (w: number, h: number, pad: Pad): Placed => {
     if (!scene || a.at) return place(w, h, pad, { right: a.right, below: a.below, op: a.op, at: a.at as Pt | undefined }, anchor?.placed, others, spacing);
-    const r = placeRel(pad.l + w + pad.r, pad.t + h + pad.b, rel?.rel ?? null, relBox, [...scene.rects(), ...env.registry.obstacles(ctx.target)], { gap: m.gap * 1.3, seed: id, view: scene.view() });
+    const r = placeRel(pad.l + w + pad.r, pad.t + h + pad.b, rel?.rel ?? null, relBox, [...scene.rects(), ...env.registry.obstacles(ctx.target)], { gap: m.gap * 1.3, seed: id, view: scene.view(), last: scene.last() });
     const body = { x: r.x + pad.l, y: r.y + pad.t, w, h };
-    const out: Placed = { body, rect: r };
-    if (a.op && relBox && (rel?.rel === 'right' || rel?.rel === 'below')) {
-      out.op = rel.rel === 'right' ? { x: (relBox.x + relBox.w + r.x) / 2, y: body.y + h / 2, glyph: a.op } : { x: body.x + Math.min(w, relBox.w) / 2, y: (relBox.y + relBox.h + r.y) / 2, glyph: a.op };
-    }
-    return out;
+    // In a scene an op is a relation, not a glyph in a gap: a link from the source, routed around
+    // content, labelled with the glyph unless it is a plain arrow (drawn once the block is).
+    if (a.op && a.op !== 'none' && relBox && rel) sceneOp = { from: rel.of, glyph: a.op };
+    return { body, rect: r };
   };
+  let sceneOp: { from: string; glyph: string } | null = null;
   const c = col();
   let b: Block;
   if (a.kind === 'grid' || a.kind === 'bars') {
@@ -579,6 +581,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     b.calc = { of: a.of, reduce: a.reduce, fn: a.fn, label: a.label, lines, maxW };
     b.dp = a.dp; b.em = a.em;
   }
+  if (sceneOp) b.el.sceneOp = sceneOp;
   return planFor(b, a.id, ctx, env, store, region, m, c);
 }
 
@@ -586,7 +589,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
 function planFor(b: Block, aid: string | undefined, ctx: TargetCtx, env: BuildEnv, store: KitStore, region: string, m: Metrics, c: ReturnType<typeof col>): ElementPlan {
   store.add(b);
   b.el.accent = env.settings.inkColor;
-  if (ctx.scene) { ctx.scene.claim(b.placed.rect); sceneStore(env.registry).put(b.id, { rect: b.placed.rect }); }
+  if (ctx.scene) { const claim = ctx.scene.claim(b.placed.rect); sceneStore(env.registry).put(b.id, { rect: b.placed.rect, claim, moved: new Set(), data: { kind: 'kit' } }); }
   grow(env, region, b.placed.rect);
   const reach = (x: Block) => union([x.placed.rect, ...(x.placed.op ? [{ x: x.placed.op.x - x.m.opW / 2, y: x.placed.op.y - x.m.num, w: x.m.opW, h: 2 * x.m.num }] : [])]);
   const bbox = pad(union([b.placed.rect, ...(b.placed.op ? [{ x: b.placed.op.x - m.opW, y: b.placed.op.y - m.num, w: 2 * m.opW, h: 2 * m.num }] : [])]), m.u(8));
@@ -613,6 +616,8 @@ function planFor(b: Block, aid: string | undefined, ctx: TargetCtx, env: BuildEn
       else if (b.kind === 'table') await drawTable(b, c, pace);
       else if (b.kind === 'shares') await drawShares(b, store, c, pace);
       else await drawCalc(b, store, c, env, pace, true);
+      const so = b.el.sceneOp as { from: string; glyph: string } | undefined;
+      if (so) await sceneLink(so.from, b.id, /^[→↓]$/.test(so.glyph) ? '' : so.glyph, ctx, env, pace);
     },
   };
 }
@@ -1706,8 +1711,9 @@ export async function resolveKitPoints<A extends InkAction>(a: A, registry: Regi
     if (typeof r === 'string') return r;
     if (a.kind === 'box' && k === 'at' && out.w === 0) {
       const p = r.b.m.u(3);
-      Object.assign(out, { at: { x: r.box.x - p, y: r.box.y - p }, w: r.box.w + 2 * p, h: r.box.h + 2 * p });
-    } else out[k] = { x: r.box.x + r.box.w / 2, y: r.box.y + r.box.h / 2 };
+      const wb = worldBox(r.b, r.box);
+      Object.assign(out, { at: { x: wb.x - p, y: wb.y - p }, w: wb.w + 2 * p, h: wb.h + 2 * p });
+    } else { const wb = worldBox(r.b, r.box); out[k] = { x: wb.x + wb.w / 2, y: wb.y + wb.h / 2 }; }
   }
   if (Array.isArray(out.pts)) {
     const ps = [];
@@ -1715,7 +1721,8 @@ export async function resolveKitPoints<A extends InkAction>(a: A, registry: Regi
       if (v && 'ref' in v && v.ref && isBlockRef(v.ref)) {
         const r = await resolvePart(v.ref, registry);
         if (typeof r === 'string') return r;
-        ps.push({ x: r.box.x + r.box.w / 2, y: r.box.y + r.box.h / 2 });
+        const wb = worldBox(r.b, r.box);
+        ps.push({ x: wb.x + wb.w / 2, y: wb.y + wb.h / 2 });
       } else ps.push(v);
     }
     out.pts = ps;
@@ -1843,8 +1850,11 @@ async function fadePart(b: Block, part: BlockPart | null, k: Pace) {
 /** A connector end on a kit part: its box. */
 export async function kitEndBox(region: string, ref: string, registry: Registry): Promise<{ t: Target; r: SRect } | string> {
   const r = await resolvePart(ref, registry);
-  return typeof r === 'string' ? r : { t: { region }, r: r.box };
+  return typeof r === 'string' ? r : { t: { region }, r: worldBox(r.b, r.box) };
 }
+
+/** A box in a block's drawing space → the scene's world (a moved block's group is shifted). */
+export const worldBox = (b: Block, box: Box): Box => (b.shift ? { ...box, x: box.x + b.shift.x, y: box.y + b.shift.y } : box);
 
 // ------------------------------------------------------------------------------------------------
 // table: a header per column, rows of values, computed columns that fill row by row.
@@ -2189,5 +2199,5 @@ async function setShares(b: Block, next: C.Mat, store: KitStore, ms: number, ctl
 
 setKitResolver(async (ref, r) => {
   const res = await resolvePart(ref, r);
-  return typeof res === 'string' ? null : res.box;
+  return typeof res === 'string' ? null : worldBox(res.b, res.box);
 });

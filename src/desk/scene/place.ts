@@ -20,6 +20,8 @@ export type PlaceOpts = {
   seed: string;
   /** What the student sees now: candidates inside it are preferred (less camera travel). */
   view?: Box;
+  /** The most recent thing (with no anchor, a new thing flows on from it). Default: the last taken rect. */
+  last?: Box | null;
 };
 
 /** A deterministic number in [0, 1) from a string. */
@@ -55,6 +57,39 @@ const ORDER: Record<Rel, ('right' | 'left' | 'above' | 'below')[]> = {
   beside: ['right', 'left'], near: ['right', 'below', 'left', 'above'],
 };
 
+/** The bounding box of boxes. */
+export const extentOf = (bs: Box[]): Box | null => {
+  if (!bs.length) return null;
+  const x = Math.min(...bs.map((b) => b.x)), y = Math.min(...bs.map((b) => b.y));
+  return { x, y, w: Math.max(...bs.map((b) => b.x + b.w)) - x, h: Math.max(...bs.map((b) => b.y + b.h)) - y };
+};
+
+/**
+ * Directions to try for a relation. `near` (and no relation) grows the composition toward the shape
+ * of the window: a scene already wider than the window grows down, a tall one grows right, so the
+ * board fills in both directions instead of running off along one edge.
+ */
+function dirsFor(rel: Rel, taken: Box[], view?: Box): ('right' | 'left' | 'above' | 'below')[] {
+  if (rel !== 'near' || !view) return ORDER[rel];
+  const ext = extentOf(taken);
+  if (!ext || !ext.h || !view.h) return ORDER.near;
+  return ext.w / ext.h > (view.w / view.h) * 0.9 ? ['below', 'right', 'left', 'above'] : ORDER.near;
+}
+
+/** How much of the straight line between two boxes' centres runs through other boxes (0–1). */
+function lineHit(a: Box, b: Box, others: Box[]): number {
+  const ca = centre(a), cb = centre(b);
+  let n = 0;
+  const S = 16;
+  for (let i = 1; i < S; i++) {
+    const p = { x: ca.x + (cb.x - ca.x) * (i / S), y: ca.y + (cb.y - ca.y) * (i / S) };
+    if (inBox(p, a) || inBox(p, b)) continue;
+    if (others.some((o) => inBox(p, o))) n++;
+  }
+  return n / (S - 1);
+}
+const inBox = (p: { x: number; y: number }, r: Box) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+
 /**
  * Where a w × h box goes, relative to `anchor` (or after `last`, the most recent thing, when there is
  * no anchor: the explanation flows on from where it is). `taken`: every claimed rect (the anchor's
@@ -65,12 +100,18 @@ export function placeRel(w: number, h: number, rel: Rel | null, anchor: Box | nu
   const gap = o.gap * (1 + 0.28 * hash01(`${o.seed}:g`));
   if (!anchor) {
     const ext = taken.length ? taken.reduce((u, b) => ({ x: Math.min(u.x, b.x), y: Math.min(u.y, b.y), w: 0, h: 0 }), { x: Infinity, y: Infinity, w: 0, h: 0 }) : null;
-    // The first thing in an empty scene sits a little in from its top-left (room to grow every way).
-    if (!ext || !taken.length) return { x: o.gap * 2.2, y: o.gap * 2.6, w, h };
-    const last = taken[taken.length - 1];
+    // The first thing in an empty scene sits in from the window's top-left, a little lower than the
+    // margin (room to grow every way, and the composition starts where the eye does).
+    if (!ext || !taken.length) {
+      const v = o.view;
+      return v ? { x: v.x + Math.max(o.gap * 2.2, v.w * 0.08), y: v.y + Math.max(o.gap * 2.6, v.h * 0.14), w, h } : { x: o.gap * 2.2, y: o.gap * 2.6, w, h };
+    }
+    const last = o.last ?? taken[taken.length - 1];
     return placeRel(w, h, rel ?? 'near', last, taken, o);
   }
-  const dirs = ORDER[rel ?? 'near'];
+  const dirs = dirsFor(rel ?? 'near', taken, o.view);
+  // What the line back to the anchor (a link or a leader, usually) would cross: everything but the anchor.
+  const others = taken.filter((t) => !(t.x >= anchor.x - 0.5 && t.y >= anchor.y - 0.5 && t.x + t.w <= anchor.x + anchor.w + 0.5 && t.y + t.h <= anchor.y + anchor.h + 0.5));
   const clear = gap * 0.45;
   let best = null as { b: Box; cost: number } | null;
   for (let ring = 0; ring < 14; ring++) {
@@ -83,7 +124,8 @@ export function placeRel(w: number, h: number, rel: Rel | null, anchor: Box | nu
         const dist = Math.hypot(bc.x - ac.x, bc.y - ac.y) / Math.max(1, o.gap * 10);
         // Out of view costs a little (the camera will travel), never a lot: the scene may grow.
         const out = o.view ? 1 - area(b, o.view) / Math.max(1, w * h) : 0;
-        const cost = (hit > 0 ? 1000 + hit / Math.max(1, w * h) * 100 : 0) + c.pref + k * 0.6 + dist * 0.4 + out * 0.5 + ring * 0.3;
+        const cross = lineHit(b, anchor, others);
+        const cost = (hit > 0 ? 1000 + hit / Math.max(1, w * h) * 100 : 0) + c.pref + k * 0.6 + dist * 0.4 + out * 0.5 + ring * 0.3 + cross * 3;
         if (!best || cost < best.cost) best = { b, cost };
       }
     }

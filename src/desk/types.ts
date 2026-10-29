@@ -26,14 +26,14 @@ export type RegionSpec = { id: string; page: number; size: RegionSize; body?: nu
  * Elements claim room in it, so later ones are placed clear of them (src/desk/scene/place.ts). Claims
  * persist with the section across answers (a follow-up continues the scene).
  */
-export type SceneClaim = { r: SRect; move(r: SRect): void; drop(): void };
+export type SceneClaim = { r: SRect; move(r: SRect): void; drop(): void; /** A label's or a connection's room: kept clear, never an anchor for "the last thing". */ minor?: boolean };
 export type SceneSpace = {
-  claim(r: SRect): SceneClaim;
+  claim(r: SRect, minor?: boolean): SceneClaim;
   /** Every claimed rect (earlier answers' included). */
   rects(): SRect[];
   /** The camera's world rect now. */
   view(): SRect;
-  /** The most recent claim (where the explanation is), or null. */
+  /** The most recent thing's claim (where the explanation is; labels and links aside), or null. */
   last(): SRect | null;
   /** The union of every claim, or null. */
   extent(): SRect | null;
@@ -139,6 +139,8 @@ export interface DeskApi {
   centreRegion?(id: string, x0: number, x1: number): void;
   /** Ink is landing at this target-space rect: later page framing keeps it in view when it fits. */
   noteInk?(t: Target, r: SRect): void;
+  /** The answer has ended: a scene it drew in is shown whole (Board v2 overview). */
+  overview?(): Promise<void>;
   isVisible(t: Target, r: SRect): boolean;
   /** Resolves true as soon as the rect is on screen (mid-glide is fine), false after maxMs (default 1200). */
   whenVisible(t: Target, r: SRect, maxMs?: number): Promise<boolean>;

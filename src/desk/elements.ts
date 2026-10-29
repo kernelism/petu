@@ -73,7 +73,7 @@ export const buildElement: BuildElement = async (a, env) => {
   if (a.kind === 'connect') return connect(a, env);
   if ('ref' in a) {
     // A scene thing's verb waits for the thing (it may still be building on its own word).
-    if ((a.kind === 'move' && a.place) || (a.kind === 'set' && (a.text != null || a.value != null || a.weight != null))) await sceneWait(a.ref, env);
+    if ((a.kind === 'move' && a.place) || a.kind === 'split' || (a.kind === 'set' && (a.text != null || a.value != null || a.weight != null))) await sceneWait(a.ref, env);
     if (isSceneRef(a, env)) return buildSceneRef(a, env);
     return isKitRef(a, env.registry) ? buildKitRef(a, env) : ref(a, env);
   }

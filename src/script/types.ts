@@ -109,8 +109,14 @@ export type SceneShape =
   /** A relation from one thing (or part) to another. Weight (0–1, or a part with a value) sets thickness and strength; a whole flow as `to` with a vector weight fans out. */
   | { kind: 'link'; from: string; to: string; strength?: ValueRef; text?: string; plain?: boolean; dash?: boolean; showWeight?: boolean }
   /** Text placed by relation; with `annotate`, a callout with a leader line to that thing or part. */
-  | { kind: 'note'; text: string; place?: ScenePlace; annotate?: string };
-export const SCENE_KINDS = new Set(['node', 'flow', 'link', 'note']);
+  | { kind: 'note'; text: string; place?: ScenePlace; annotate?: string }
+  /** A loose outline around a set of things (a system boundary, a category), labelled on its edge; it follows them when they move. */
+  | { kind: 'group'; of: string[]; text?: string }
+  /** A bracket joining two things or parts (a pair: "equal and opposite"), labelled at its spine. */
+  | { kind: 'pair'; from: string; to: string; text?: string }
+  /** Things that become one: they glide together into a new chip (links to them follow it). */
+  | { kind: 'merge'; of: string[]; text: string; place?: ScenePlace };
+export const SCENE_KINDS = new Set(['node', 'flow', 'link', 'note', 'group', 'pair', 'merge']);
 
 // ------------------------------------------------------------------------------------------------
 // Visual kit v1: engine-rendered blocks and the verbs that animate them (src/desk/kit/). The model
@@ -164,6 +170,8 @@ export type RefAction =
   /** Moves a point or label to `to`; in a scene, any thing to a new place by relation (links follow). */
   | { kind: 'move'; ref: string; to?: Pt; place?: ScenePlace }
   | { kind: 'fade'; ref: string }
+  /** A scene chip that becomes several (parts ref[1]…), spreading from where it was. */
+  | { kind: 'split'; ref: string; items: string[] }
   | KitVerb;
 
 /**

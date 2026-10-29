@@ -3,7 +3,7 @@ import { REGION_H, type Compass, type RawEnd, type Pt, type RawAction, type Targ
 import { tokenize, unquote } from './tokenize';
 import { NAME, normName, parsePtArg, worldPt, isBlockRef, type PtArg } from './pointExpr';
 import { parseKitBlock, parseKitVerb, sceneRel } from './parseKit';
-import { parseScene, SCENE_TAGS } from './parseScene';
+import { parseScene, parseSplit, SCENE_TAGS } from './parseScene';
 
 /** Region and element ids: a letter, then letters, digits, - or _. Case-insensitive (stored lowercased). */
 const ID = /^[a-z][a-z0-9_-]{0,23}$/;
@@ -136,6 +136,7 @@ export function parseTag(body: string): RawAction | null {
     case 'col':
     case 'level':
       return parseKitVerb(name, args, quotes, flags);
+    case 'split': return parseSplit(args, quotes);
     case 'move': {
       const ref = eid(args.id), to = pt(args.to, 1000); // clamped to the element's own space when it runs
       const rel = sceneRel(args);
