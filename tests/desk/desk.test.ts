@@ -143,6 +143,56 @@ describe('Desk: the board', () => {
     expect(boardOf(stage).querySelectorAll('.desk-region')).toHaveLength(2);
     expect(h.setSplit).toHaveBeenCalledOnce();
   });
+  it('a scene continues by its id: a follow-up naming the same scene draws on into it', async () => {
+    const d = new Desk(fakeHost(), stage);
+    const a = await d.addRegion(spec('s', 2, { scene: true }));
+    if (typeof a === 'string') throw new Error(a);
+    await d.reset(300);
+    const b = await d.addRegion(spec('s', 3, { scene: true }));
+    if (typeof b === 'string') throw new Error(b);
+    expect(boardOf(stage).querySelectorAll('.desk-region')).toHaveLength(1);
+    expect(b.scene).toBe(a.scene); // the same world
+    // A repeated scene tag in one answer continues too (never a duplicate-id skip).
+    const c = await d.addRegion(spec('s', 3, { scene: true }));
+    expect(typeof c).not.toBe('string');
+    expect(boardOf(stage).querySelectorAll('.desk-region')).toHaveLength(1);
+  });
+  it('a scene tag with a new id (a revision) starts a fresh section below; the old scene stays above, untouched', async () => {
+    const d = new Desk(fakeHost(), stage);
+    const a = await d.addRegion(spec('s', 2, { scene: true }));
+    if (typeof a === 'string') throw new Error(a);
+    const old = boardOf(stage).querySelector('.desk-region')!;
+    const before = old.outerHTML;
+    await d.reset(300);
+    const b = await d.addRegion(spec('t', 2, { scene: true }));
+    if (typeof b === 'string') throw new Error(b);
+    const secs = boardOf(stage).querySelectorAll('.desk-region');
+    expect(secs).toHaveLength(2);
+    expect(secs[0]).toBe(old); // above, never erased
+    expect(old.outerHTML).toBe(before);
+    expect(b.scene).not.toBe(a.scene);
+    // Within one answer too: a second scene with a new id is its own section.
+    const c = await d.addRegion(spec('u', 2, { scene: true }));
+    if (typeof c === 'string') throw new Error(c);
+    expect(boardOf(stage).querySelectorAll('.desk-region')).toHaveLength(3);
+    // After a revision, continuing the earlier scene by its id still finds it.
+    await d.reset(300);
+    const e = await d.addRegion(spec('s', 2, { scene: true }));
+    if (typeof e === 'string') throw new Error(e);
+    expect(e.scene).toBe(a.scene);
+    expect(boardOf(stage).querySelectorAll('.desk-region')).toHaveLength(3);
+  });
+  it('a plain sketch never continues a scene, and a scene id never continues a plain sketch', async () => {
+    const d = new Desk(fakeHost(), stage);
+    await d.addRegion(spec('s', 2, { scene: true }));
+    expect(await d.addRegion(spec('s'))).toBe('duplicate region id');
+    await d.addRegion(spec('k'));
+    await d.reset(300);
+    const r = await d.addRegion(spec('k', 2, { scene: true }));
+    if (typeof r === 'string') throw new Error(r);
+    expect(r.scene).toBeDefined();
+    expect(boardOf(stage).querySelectorAll('.desk-region')).toHaveLength(3);
+  });
   it('dismiss: the board slides out, the slides glide back to centre, the sections go once it has left', async () => {
     const h = fakeHost();
     const d = new Desk(h, stage);

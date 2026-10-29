@@ -47,8 +47,8 @@ computes every coordinate and every number.
 ## Board v2: one connected scene
 
 `{{scene id=s near=pN}}` opens a scene section: an unbounded world (section units, y down) seen
-through a camera (`Desk.makeScene`, `camFor`). A later `{{scene}}` (or a follow-up) continues the
-newest scene. Nothing in a scene takes coordinates: every thing is placed by relation
+through a camera (`Desk.makeScene`, `camFor`). A later `{{scene}}` with the same id (in this answer or a
+follow-up) continues that scene; a new id starts a fresh scene section below (a revision), the old one untouched. Nothing in a scene takes coordinates: every thing is placed by relation
 (`right= left= above= below= beside= near=` a thing or a part) and claims its room
 (`SceneSpace.claim`); later things are placed clear of all claims.
 

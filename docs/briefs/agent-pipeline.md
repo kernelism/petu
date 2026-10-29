@@ -16,7 +16,7 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 | `server/prices.ts` | `PRICES` per model (in/cached/out/write30m/write12h), `costUsd`, `worstCaseUsd`. A wrong price = a wrong ledger. |
 | `server/cacheStats.ts` | What the cache likely holds (`.petu/cache.json`): estimates for aborted calls, `systemFresh` (11.5h). |
 | `server/sse.ts`, `scriptFilter.ts`, `lint.ts` | SSE → `ResponseEvents`; strips `<plan>…</plan>` (kept for debug/eval) and markdown/TeX from narration; grammar notes (`TAG_NAMES`). |
-| `server/prompt/system.ts` | Stage-2 developer prompt, `PROMPT_VERSION` (p5.4). Sections: identity → teach (with the per-beat contract) → no-dup → timing → context → pointing → board (… NUMBERS YOU SAY, TEACHING MOVES, WORK ON THE SLIDE AND FROM IT) → tags → situations → examples (five). |
+| `server/prompt/system.ts` | Stage-2 developer prompt, `PROMPT_VERSION` (p5.5). Sections: identity → teach (with the per-beat contract) → no-dup → timing → context → pointing → board (… NUMBERS YOU SAY, TEACHING MOVES, WORK ON THE SLIDE AND FROM IT) → tags → situations → examples (five). |
 | `server/prompt/scout.ts` | `SCOUT_SYSTEM`, `SCOUT_VERSION` (s2.1): opener, ≤ 6 pages, ≤ 80-word plan, JSON order opener→pages→plan. |
 | `server/prompt/examples.ts` | Few-shot `EXAMPLES` on invented documents (music notation, shadows, levers…), each executable. |
 | `src/agent/protocol.ts` | `AskRequest`, `AskContext`, `AskEvent` (NDJSON), `SpendSummary`, `HARD_STOP_USD` 40. |
@@ -115,7 +115,7 @@ curl -s localhost:<yourport>/api/spend                # never 5180/5181
 - Changing anything before the 30m breakpoints (digest format, listing format) invalidates every
   cached prefix; scout and answer must keep the digest byte-identical.
 - `LIMITS.images` is 3 (others) + the visible image; raising `imagePages` needs both sides.
-- Follow-ups: the scout's JSON starts with `relation` (continue / revise-representation / simplify / new-example / deeper / new-topic, s2.4); the desk still continues the newest `{{scene}}` for any later scene tag (src/desk/Desk.ts addRegion), so a revision's "fresh section" is only a new section when it opens with `{{sketch}}`.
+- Follow-ups: the scout's JSON starts with `relation` (continue / revise-representation / simplify / new-example / deeper / new-topic, s2.4); the desk continues a scene by its id (`Desk.addRegion`): a follow-up that reuses the scene's id draws on into it, a revision's new id starts a fresh section below (the old scene stays, untouched).
 - `searchText` is a v2 path still wired; v3 sends the digest instead. History (follow-ups) is live:
   ≤ 3 turns to stage 2, the last one (first 600 chars) to the scout as `prior`.
 - `?debug` panel shows cost, cache share, scout verdict, handoff gap and skipped actions — use it.

@@ -164,11 +164,12 @@ export class Desk implements DeskApi {
 
   async addRegion(spec: RegionSpec, before?: BeforeMove): Promise<RegionInfo | string> {
     const ep = this.epoch;
-    if (this.ids.has(spec.id)) return 'duplicate region id';
-    // Board v2: a scene continues. A later answer (a follow-up) or a second scene tag in this one
-    // draws on into the newest scene on the board rather than starting a new box.
-    const prev = spec.scene ? this.sections[this.sections.length - 1] : undefined;
-    if (prev?.scene) {
+    // Board v2: a scene continues by its id. A later answer (a follow-up that continues) or a repeated
+    // scene tag naming a scene already on the board draws on into it; a scene tag with a new id (a
+    // revision) starts a fresh section below, and the old scene stays above, untouched.
+    const prev = spec.scene ? this.sceneNamed(spec.id) : undefined;
+    if (!prev && this.ids.has(spec.id)) return 'duplicate region id';
+    if (prev) {
       this.ids.set(spec.id, prev);
       this.last = { t: { region: spec.id }, r: WHOLE_REGION };
       if (!this.open) await this.openBoard('normal', before);
@@ -203,6 +204,17 @@ export class Desk implements DeskApi {
     }
     sec.el.classList.add('is-shown');
     return live() ? this.region(spec.id) ?? 'desk reset' : 'desk reset';
+  }
+
+  /** The newest scene section opened (or continued) under id `id`, in this answer or an earlier one. */
+  private sceneNamed(id: string): Section | undefined {
+    const now = this.ids.get(id);
+    if (now) return now.scene ? now : undefined;
+    for (let i = this.sections.length - 1; i >= 0; i--) {
+      const s = this.sections[i];
+      if (s.scene && s.id === id) return s;
+    }
+    return undefined;
   }
 
   /** A section's content needs `h` units (kit blocks stacked past 700): it grows, never shrinks. */
