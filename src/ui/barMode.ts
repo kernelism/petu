@@ -55,6 +55,10 @@ export function closingQuestion(text: string): string | null {
   // The last sentence: after the last . ! ? that ends an earlier sentence (followed by a space).
   const body = t.slice(0, -1);
   const cut = Math.max(body.lastIndexOf('. '), body.lastIndexOf('! '), body.lastIndexOf('? '));
-  const q = t.slice(cut + 1).trim();
+  let q = t.slice(cut + 1).trim();
+  // A lead-in before a colon ("Now try one yourself: …") is not the question.
+  const colon = q.lastIndexOf(': ');
+  if (colon > 0 && q.length - colon > 14) q = q.slice(colon + 2);
+  q = q.charAt(0).toUpperCase() + q.slice(1);
   return q.length >= 6 ? q : null;
 }
