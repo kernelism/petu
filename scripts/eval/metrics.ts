@@ -3,6 +3,8 @@
 import type { EvalResult, RegistryRow, SerialTiming } from '../../src/agent/evalHooks.ts';
 import type { ScriptParse } from './scriptTags.ts';
 import type { GateEvent, RepairEvent } from '../../src/gate/events.ts';
+import { PacedClock } from '../../src/playback/clock.ts';
+import { DEFAULTS } from '../../src/settings/settings.ts';
 
 type Pt = { x: number; y: number };
 type Rect = { x: number; y: number; w: number; h: number };
@@ -57,6 +59,19 @@ export type GateMetrics = {
 };
 export const HOLD_MS = 1000;
 
+/** The narration's own pacing: a word's spoken length with its clause/sentence pause (the app's default clock). */
+const paced = new PacedClock(() => DEFAULTS.wpm);
+/**
+ * Silences longer than HOLD_MS between spoken words: the time from a word's start to the next word's,
+ * minus the word's own paced length (a five-syllable word before a full stop takes 1.1 s to say; that
+ * is speech, not a hold). Word times are recorded starts; durations are the default clock's.
+ */
+export function holdCount(words: readonly { text: string; t: number }[]): number {
+  let n = 0;
+  for (let i = 1; i < words.length; i++) if (words[i].t - words[i - 1].t - paced.durationMs(words[i - 1].text) > HOLD_MS) n++;
+  return n;
+}
+
 export function gateMetrics(r: Pick<EvalResult, 'events' | 'words' | 'timings'>): GateMetrics | undefined {
   const gs = r.events.filter((e): e is GateEvent => e.t === 'gate');
   const rs = r.events.filter((e): e is RepairEvent => e.t === 'repair');
@@ -67,8 +82,7 @@ export function gateMetrics(r: Pick<EvalResult, 'events' | 'words' | 'timings'>)
     const i = r.words.findIndex((w) => w.t >= handoff.ms);
     if (i > 0) seamMs = Math.max(0, r.words[i].t - r.words[i - 1].t);
   }
-  let holds = 0;
-  for (let i = 1; i < r.words.length; i++) if (r.words[i].t - r.words[i - 1].t > HOLD_MS) holds++;
+  const holds = holdCount(r.words);
   const sentAt = new Map<string, number>();
   const repairMs: number[] = [];
   for (const e of rs) {

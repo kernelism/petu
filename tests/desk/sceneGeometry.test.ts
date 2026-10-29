@@ -149,11 +149,11 @@ describe('bracketPath', () => {
 
 describe('overviewCam', () => {
   const win = { w: 700, h: 800, s: 0.7 };
-  it('centres a small scene at zoom 1 (the composition uses the whole window)', () => {
+  it('centres a small scene, brought closer to fill a sensible share of the window', () => {
     const ext = { x: 50, y: 40, w: 300, h: 200 };
     const c = overviewCam(ext, win);
-    expect(c.z).toBe(1);
-    const vw = win.w / win.s, vh = win.h / win.s;
+    expect(c.z).toBeGreaterThan(1);
+    const vw = win.w / (win.s * c.z), vh = win.h / (win.s * c.z);
     expect(c.x + vw / 2).toBeCloseTo(ext.x + ext.w / 2);
     expect(c.y + vh / 2).toBeCloseTo(ext.y + ext.h / 2);
   });

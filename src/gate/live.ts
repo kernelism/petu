@@ -33,7 +33,7 @@ export const MAX_REPAIRS = 2;
 // Preflight: what checks one unit.
 
 export type UnitKind = 'opener' | 'sentence' | 'beat';
-export type PreflightUnit = { key: string; kind: UnitKind; text: string; fault?: FaultMode };
+export type PreflightUnit = { key: string; kind: UnitKind; text: string; fault?: FaultMode; /** The stream's end: no boundary is known after it. */ end?: boolean };
 /** A tag of the checked unit: offsets in the unit's text; `skipped` when the board (or the parser) would not draw it. */
 export type PreflightTag = { start: number; end: number; body: string; action: RawAction | null; skipped?: string };
 export type PreflightResult = { flags: GateFlag[]; notes: string[]; tags: PreflightTag[]; report?: () => Omit<RepairReport, 'later' | 'tail' | 'maxWords'> };
@@ -337,8 +337,8 @@ export class LiveGate {
     this.queue.push({ key: `o${this.nOpener++}`, kind: 'opener', text });
   }
 
-  private enqueue(us: { text: string; kind: 'sentence' | 'beat' }[]) {
-    for (const u of us) this.queue.push({ key: String(this.nUnit++), kind: u.kind, text: u.text });
+  private enqueue(us: { text: string; kind: 'sentence' | 'beat' }[], end = false) {
+    for (const u of us) this.queue.push({ key: String(this.nUnit++), kind: u.kind, text: u.text, ...(end ? { end } : {}) });
   }
 
   /** A raw chunk arrived. */
@@ -354,7 +354,7 @@ export class LiveGate {
   /** The stream ended (or was cut off): the rest is the last unit(s). */
   end(): void {
     if (!this.stage2) this.flushOpener(true);
-    else this.enqueue(this.splitter.end());
+    else this.enqueue(this.splitter.end(), true);
     this.queue.close();
   }
 
@@ -393,12 +393,34 @@ export class LiveGate {
 
   private release(u: PreflightUnit, text: string, out: Out) {
     this.d.preflight.accept({ ...u, text });
-    if (u.kind !== 'opener') this.released2 += text;
-    this.releasedAll += text;
+    const sent = this.bounded(u, text);
+    if (u.kind !== 'opener') this.released2 += sent;
+    this.releasedAll += sent;
     this.stats.released++;
     this.dropsInRow = 0;
-    out.push(text);
+    out.push(sent);
   }
+
+  /**
+   * A closed unit ends on a word that the stream follows with whitespace: a stage-2 unit closes only
+   * once its last word is followed by whitespace (BeatSplitter), and an opener piece without trailing
+   * whitespace is the opener's last (OpenerGate cuts after the space; only its end() has none). The
+   * session's parser emits a word once it sees what follows, so released without that boundary the
+   * unit's last word would wait for the next unit to be checked and released (the seam holds of draw
+   * run 5b74be89: 2.3 s). The boundary goes out with the unit; the next unit's leading space, which
+   * is that same boundary in the stream, is dropped once. Only whitespace moves: words and tags are
+   * released exactly as checked (I1–I3).
+   */
+  private owedSpace = false;
+  private bounded(u: PreflightUnit, text: string): string {
+    let t = text;
+    if (this.owedSpace && t.startsWith(' ')) t = t.slice(1);
+    if (t) this.owedSpace = false;
+    const closed = u.end ? false : u.kind === 'opener' ? /[.!?,;:…]["'’”)\]]*$/.test(t) : true;
+    if (closed && t.trim() && !/\s$/.test(t)) { t += ' '; this.owedSpace = true; }
+    return t;
+  }
+
 
   private drop(u: PreflightUnit, r: PreflightResult | null, ms: number, notes: string[] = []) {
     this.d.preflight.reject(u);
@@ -423,7 +445,7 @@ export class LiveGate {
     const strip = this.stripOf(u, r);
     if (strip) {
       this.d.preflight.reject(u);
-      const su: PreflightUnit = { key: u.key, kind: u.kind, text: strip.text };
+      const su: PreflightUnit = { key: u.key, kind: u.kind, text: strip.text, ...(u.end ? { end: true } : {}) };
       const r2 = await this.d.preflight.check(su);
       if (signal.aborted) return;
       if (!r2.flags.length) {
@@ -509,7 +531,7 @@ export class LiveGate {
     if (!/^\s/.test(text)) text = (leadWs(u.text) || ' ') + text;
     this.d.onEvent({ t: 'repair', k: u.key, phase: 'ok', ms: Math.round(ms), text: res.text, ...(res.usd != null ? { usd: res.usd } : {}) });
     // `&gatefail=K:bad`: the original comes back and its injected skip with it.
-    const ru: PreflightUnit = { key: u.key, kind: u.kind, text, ...(u.fault === 'bad' ? { fault: 'skip' as const } : {}) };
+    const ru: PreflightUnit = { key: u.key, kind: u.kind, text, ...(u.end ? { end: true } : {}), ...(u.fault === 'bad' ? { fault: 'skip' as const } : {}) };
     const t1 = this.now();
     const r2 = await this.d.preflight.check(ru);
     if (signal.aborted) return;

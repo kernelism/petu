@@ -44,14 +44,14 @@ export const GLIDE_MS = 320;
 // ------------------------------------------------------------------------------------------------
 // Metrics: everything is sized from the board's type (the slide's body size), in section units.
 
-export type Metrics = { s: number; numPx: number; labelPx: number; num: number; label: number; cell: number; gap: number; opW: number; margin: number; top: number; u: (px: number) => number };
+export type Metrics = { s: number; numPx: number; labelPx: number; num: number; label: number; /** The board's measured body size (units): no reading text under it. */ body: number; cell: number; gap: number; opW: number; margin: number; top: number; u: (px: number) => number };
 
 export function metrics(scale: number, bodyPx: number): Metrics {
   const s = Math.max(scale, 1e-3);
   // Numerals at the slide's body size, never under 13px, and growing with a wide board (to 20px).
   const numPx = Math.max(13, bodyPx * 0.9, Math.min(20, (1000 * s) / 50)), labelPx = Math.max(MIN_TEXT_PX, numPx * 0.82);
   const u = (px: number) => px / s;
-  return { s, numPx, labelPx, num: u(numPx), label: u(labelPx), cell: u(numPx * 2.3), gap: u(numPx * 1.7), opW: u(numPx * 1.4), margin: 40, top: 32, u };
+  return { s, numPx, labelPx, num: u(numPx), label: u(labelPx), body: u(Math.max(MIN_TEXT_PX, Number.isFinite(bodyPx) ? bodyPx : 0)), cell: u(numPx * 2.3), gap: u(numPx * 1.7), opW: u(numPx * 1.4), margin: 40, top: 32, u };
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -681,11 +681,12 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     const n = tokenCount(a.n, withConsts(store.consts, a.with));
     if (typeof n === 'string') return n;
     const states = a.states.length ? a.states : [''];
-    // Marks in clusters of up to ten a row, one cluster per state, side by side: room for all of them apart.
-    const cols = n <= 12 ? n : 10, pitch = m.cell * 0.7, gap = pitch * 1.4;
-    const rows = Math.ceil(n / cols);
-    const W = states.length * Math.min(cols, n) * pitch + (states.length - 1) * gap;
-    const pad: Pad = { l: 0, t: m.label * 0.4, r: 0, b: m.num * 1.4 + (states[0] ? m.label * 1.3 : 0) + (a.caption ? m.label * 1.9 : 0) + m.label * 0.4 };
+    // One cluster per state, side by side, each a compact grid (room for every mark in any one state);
+    // marks and labels sized from the board's type, the whole block within the section's width.
+    const { cols, pitch } = tokenGrid(n, states.length, m);
+    const rows = Math.ceil(n / cols), T = tokenType(m);
+    const W = (states.length * cols + (states.length - 1) * TOKEN_GAP) * pitch;
+    const pad: Pad = { l: 0, t: T.label * 0.4, r: 0, b: T.num * 1.4 + (states[0] ? T.label * 1.3 : 0) + (a.caption ? T.label * 1.9 : 0) + T.label * 0.4 };
     b = newBlock(id, 'tokens', region, P(W, rows * pitch, pad), m, []);
     b.tok = { states, st: Array(n).fill(0), cols, pitch };
     Object.assign(b, { full: [[n]], vals: [[n]], em: a.em });
@@ -2094,7 +2095,7 @@ type TokenEls = { marks: SVGCircleElement[]; labels: SVGGElement; at: { x: numbe
 
 /** Where each mark sits for these states (clusters left to right in state order, centred), and each cluster's label spot and count. */
 function tokenLayout(b: Block, st: number[]): { at: { x: number; y: number }[]; groups: { x: number; count: number; j: number }[] } {
-  const t = b.tok!, { body } = b.placed, gap = t.pitch * 1.4;
+  const t = b.tok!, { body } = b.placed, gap = t.pitch * TOKEN_GAP;
   const counts = t.states.map((_, j) => st.filter((s) => s === j).length);
   const used = counts.map((c, j) => ({ c, j })).filter((g) => g.c > 0);
   const widths = used.map((g) => Math.min(g.c, t.cols) * t.pitch);
@@ -2110,9 +2111,32 @@ function tokenLayout(b: Block, st: number[]): { at: { x: number; y: number }[]; 
   return { at, groups };
 }
 
+/** Gap between state clusters, in mark pitches. */
+const TOKEN_GAP = 1.4;
+/** A tokens block's type: counts and state names at the board's body size or larger (the final board reads on its own). */
+function tokenType(m: Metrics): { num: number; label: number } {
+  return { num: Math.max(m.num, m.body), label: Math.max(m.label, m.body) };
+}
+/**
+ * Marks per row and the mark pitch for n marks in `states` clusters: a compact grid (rows, never one
+ * thin line), the columns that leave fewest empty slots at about √n; marks a little larger than the
+ * type. Too wide for the section: taller clusters first, then smaller marks.
+ */
+export function tokenGrid(n: number, states: number, m: Metrics): { cols: number; pitch: number } {
+  const root = Math.ceil(Math.sqrt(n));
+  let cols = n <= 5 ? n : root;
+  if (n > 5) for (let c = root; c <= Math.min(n, root * 2); c++) if (c * Math.ceil(n / c) - n < cols * Math.ceil(n / cols) - n) cols = c;
+  let pitch = tokenType(m).num * 2;
+  const maxW = 1000 - 2 * m.margin;
+  const width = (c: number, p: number) => (states * c + (states - 1) * TOKEN_GAP) * p;
+  while (width(cols, pitch) > maxW && cols > Math.max(1, Math.ceil(root / 2))) cols--;
+  if (width(cols, pitch) > maxW) pitch = maxW / (states * cols + (states - 1) * TOKEN_GAP);
+  return { cols, pitch };
+}
+
 /** Each cluster's count (the engine's) over its state's name, under the marks. */
 function paintTokenLabels(b: Block, groups: { x: number; count: number; j: number }[], c: ReturnType<typeof col>, opacity = 1) {
-  const e = b.el.tok as TokenEls, m = b.m, { body } = b.placed;
+  const e = b.el.tok as TokenEls, m = tokenType(b.m), { body } = b.placed;
   e.labels.replaceChildren();
   const y = body.y + body.h + m.num * 0.85;
   for (const g of groups) {
@@ -2129,7 +2153,8 @@ async function drawTokens(b: Block, c: ReturnType<typeof col>, k: Pace) {
   const marks = at.map((p, i) => svg(markG, 'circle', { cx: p.x, cy: p.y, r, fill: partTone(t.st[i], c), opacity: 0 }));
   b.el.tok = { marks, labels: svg(g, 'g'), at } satisfies TokenEls;
   const cap = b.el.caption as string | undefined;
-  if (cap) caption(g, b.placed.body.x + b.placed.body.w / 2, b.placed.body.y + b.placed.body.h + b.m.num * 1.4 + (t.states[0] ? b.m.label * 2.4 : b.m.label * 1.1), cap, b.m, c);
+  const T = tokenType(b.m);
+  if (cap) caption(g, b.placed.body.x + b.placed.body.w / 2, b.placed.body.y + b.placed.body.h + T.num * 1.4 + (t.states[0] ? T.label * 2.4 : T.label * 1.1), cap, { ...b.m, label: T.label }, c);
   // Counted out one by one (quickly), then the count.
   const fast = k.fadeMs != null || prefersReducedMotion();
   const each = fast ? 0 : Math.min(90, 900 / marks.length) * k.speed;

@@ -1,7 +1,7 @@
 // The live gate in the eval (design 2026-10-29 §8): per-answer and run metrics from recorded gate and
 // repair events, compare.ts reject rules, report rows, the runner's flags, and repairs in the preflight.
 import { describe, it, expect } from 'vitest';
-import { computeMetrics, gateMetrics, aggregate } from '../../scripts/eval/metrics';
+import { computeMetrics, gateMetrics, aggregate, holdCount } from '../../scripts/eval/metrics';
 import { compare, format, gateRules, THRESHOLDS } from '../../scripts/eval/compare';
 import { buildSummary, type QuestionSummary } from '../../scripts/eval/summary';
 import { gateRows, renderReport } from '../../scripts/eval/report';
@@ -28,8 +28,8 @@ function gated(): EvalResult {
     gate('4', { result: 'fail', action: 'drop', text: 'Look {{circle on=s at=Q}} at Q here.', notes: ['shadow drift 3px'], ms: 40 }),
     rep('4', 'sent', 0), rep('4', 'late', 2900),
   ];
-  // Words: a seam of 450 ms at the handoff (2850 → 3300) and one hold of 1.2 s.
-  r.words = [{ text: 'a', t: 1000 }, { text: 'b', t: 2850 - 0 }, { text: 'c', t: 3300 }, { text: 'd', t: 3600 }, { text: 'e', t: 4800 }];
+  // Words: a seam of 450 ms at the handoff (2850 → 3300) and one hold: 1.5 s after "d" starts (it is said in 0.3 s).
+  r.words = [{ text: 'a', t: 1000 }, { text: 'b', t: 2850 - 0 }, { text: 'c', t: 3300 }, { text: 'd', t: 3600 }, { text: 'e', t: 5100 }];
   r.words[1].t = 2850; r.words[0].t = 2500;
   r.timings = [{ action: { kind: 'circle' }, firedAt: 3400, queuedAt: 3400, startedAt: null, endedAt: null, skipped: 'unknown point Q' }];
   return r;
@@ -43,6 +43,13 @@ describe('gate metrics', () => {
     expect(g.repairUsd).toBeCloseTo(0.006);
     expect(g.repairMs).toEqual([1500]);
     expect(g.shadowMs).toEqual([2, 12, 20, 9, 6, 30, 40]);
+  });
+  // Evidence: draw run 5b74be89 — four of its eight "holds" were one long word ("inhibitor." 1118 ms,
+  // "possibility," 1047 ms, "0.00098," 1196 ms) followed at once by the next: speech, not silence.
+  it('a hold is silence beyond the word’s own spoken length, not a long word', () => {
+    expect(holdCount([{ text: 'inhibitor.', t: 87400 }, { text: 'So', t: 88518 }])).toBe(0);
+    expect(holdCount([{ text: 'possibility,', t: 54890 }, { text: 'and', t: 55936 }])).toBe(0);
+    expect(holdCount([{ text: 'is', t: 9572 }, { text: 'bound.', t: 11892 }])).toBe(1); // the seam the gate made
   });
   it('an ungated answer has no gate metrics; answerUsd includes repairs', () => {
     expect(gateMetrics(emptyResult('q', 0))).toBeUndefined();
