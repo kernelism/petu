@@ -16,6 +16,7 @@ import { SCENE_RELS, type ColRef, type KitBlock, type KitReduce, type KitSource,
 import type { PtArg } from './pointExpr';
 import { isBlockRef, NAME, normName } from './pointExpr';
 import { parseCells, parseVals, MAX_LIT } from '../desk/kit/compute';
+import { applyOp, VEC_OPS, type VecOp } from '../desk/kit/ops';
 import { valueRef } from './parseScene';
 
 const MAX_FN = 120;
@@ -102,8 +103,37 @@ export const colStr = (cr: ColRef) => `${cr[0]}.${cr[2] ?? String.fromCharCode(9
 /** A source block for map= / zip=: a block id, or a table column `t.c` / `t.Header`. */
 const srcRef = (s?: string) => { const cr = colRef(s); return cr ? colStr(cr) : eid(s); };
 
+/** What the parser knows when a tag is parsed (absent: nothing, e.g. lint and tests). */
+export type ParseCtx = { isConst?(name: string): boolean };
+
+/**
+ * Slips whose intent is unambiguous, rewritten before the source is read:
+ * - `vals=<block id>` (not a number, not a constant's name) is `map=<id> fn="x"`: that block's values;
+ * - `op=<one-block op> vals=<literals>` is the op over those literals (shares normalise anyway).
+ * Returns the source, or undefined to read the args as written.
+ */
+function slipSource(kind: string, args: Args, ctx: ParseCtx | undefined): KitSource | null | undefined {
+  const v = args.vals?.trim();
+  const op = args.op?.trim().toLowerCase();
+  if (v == null || ['map', 'zip', 'over', 'size', 'of'].some((k) => args[k] != null)) return undefined;
+  if (op && OPS.has(op)) {
+    const lit = parseVals(v);
+    if (!lit || op === 'matmul' || !VEC_OPS.has(op as VecOp)) return null;
+    if (kind === 'shares' && op === 'normalize') return { vals: lit };
+    const t = num(args.t);
+    if (args.t != null && !(t != null && t > 0)) return null;
+    const r = applyOp(op as VecOp, lit, undefined, t ?? undefined);
+    return typeof r === 'string' || !r.flat().every(Number.isFinite) ? null : { vals: r };
+  }
+  const id = /^[A-Za-z][A-Za-z0-9_-]*$/.test(v) ? eid(v) : undefined;
+  if (!id || parseVals(v) || ctx?.isConst?.(id)) return undefined;
+  return { map: id, fn: 'x' };
+}
+
 /** vals= / map= fn= / zip= fn= / over= (slide= | win= reduce=|fn=) / size= fn=: where a block's values come from. */
-function source(args: Args, flags: Set<string>): KitSource | null {
+function source(args: Args, flags: Set<string>, kind = '', ctx?: ParseCtx): KitSource | null {
+  const slip = slipSource(kind, args, ctx);
+  if (slip !== undefined) return slip;
   // op=softmax of=v (t=2): a standard operation the engine computes (src/desk/kit/ops.ts).
   const op = args.op?.trim().toLowerCase();
   if (op && OPS.has(op)) {
@@ -170,7 +200,7 @@ const dpOf = (args: Args) => {
 };
 
 /** A kit block tag (target and id/em are added by the caller). Null when malformed. */
-export function parseKitBlock(name: string, args: Args, quotes: string[], flags: Set<string>, P: (s?: string) => PtArg | undefined): KitBlock<PtArg> | null {
+export function parseKitBlock(name: string, args: Args, quotes: string[], flags: Set<string>, P: (s?: string) => PtArg | undefined, ctx?: ParseCtx): KitBlock<PtArg> | null {
   const caption = quotes[0]?.trim() ? { caption: quotes[0].trim().slice(0, 80) } : {};
   const pl = name === 'fit' ? {} : place(args, P);
   if (!pl) return null;
@@ -178,7 +208,7 @@ export function parseKitBlock(name: string, args: Args, quotes: string[], flags:
   if (!dp) return null;
   switch (name) {
     case 'grid': {
-      const src = source(args, flags);
+      const src = source(args, flags, name, ctx);
       const rows = list(args.rows), cols = list(args.cols);
       if (!src || rows === null || cols === null) return null;
       const sh = args.shade != null ? args.shade.toLowerCase() : flags.has('shade') ? 'heat' : undefined;
@@ -195,7 +225,7 @@ export function parseKitBlock(name: string, args: Args, quotes: string[], flags:
       return { kind: 'table', vals: v, ...(got!.cells ? { cells: got!.cells } : {}), heads, ...(args.vals!.includes('/') ? { frac: true } : {}), ...dp, ...caption, ...pl } as KitBlock<PtArg>;
     }
     case 'bars': {
-      const src = source(args, flags);
+      const src = source(args, flags, name, ctx);
       const view = args.view?.toLowerCase();
       if (view != null && view !== 'line' && view !== 'bars') return null;
       const axes = args.axes != null ? eid(args.axes) : undefined;
@@ -242,7 +272,7 @@ export function parseKitBlock(name: string, args: Args, quotes: string[], flags:
         const of = (args.of ?? '').split(',').map((x) => eid(x.trim()));
         if (of.length !== 2 || !of[0] || !of[1]) return null;
         src = { op: 'normalize', of: [of[0]] }; mix = of[1];
-      } else src = source(args, flags);
+      } else src = source(args, flags, name, ctx);
       const labels = list(args.labels);
       if (!src || labels === null) return null;
       return { kind: 'shares', src, ...(labels ? { labels } : {}), ...(mix ? { mix } : {}), ...dp, ...caption, ...pl } as KitBlock<PtArg>;

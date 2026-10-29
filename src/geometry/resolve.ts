@@ -184,7 +184,8 @@ export class Figures {
     if (a.kind === 'connect') {
       // Page marks resolve here; quotes, ids and coords resolve in the toolkit.
       const named = (e: RawEnd) => 'ref' in e && !this.elements.has(`r:${e.region}:${e.ref}`) && this.figure({ region: e.region }).has(e.ref);
-      if (!('mark' in a.from) && !('mark' in a.to) && !named(a.from) && !named(a.to)) return a as Action;
+      const built = (e: RawEnd) => 'region' in e && 'at' in e && !isLiteral(e.at);
+      if (!('mark' in a.from) && !('mark' in a.to) && !named(a.from) && !named(a.to) && !built(a.from) && !built(a.to)) return a as Action;
       const from = this.markEnd(a.from), to = this.markEnd(a.to);
       if (typeof from === 'string') return from;
       if (typeof to === 'string') return to;
@@ -259,6 +260,16 @@ export class Figures {
     }
     // World lengths scale with a fitted region (radii, axes sizes); text sizes are screen px and don't.
     if (t.region != null && f.fitted) for (const k of ['rx', 'ry', 'r', 'w', 'h'] as const) if (typeof out[k] === 'number') out[k] = f.scaleLen(out[k] as number, k === 'rx' || k === 'w' ? 'x' : k === 'ry' || k === 'h' ? 'y' : undefined);
+    // {{arc center=P from=D to=B}}: exactly an angle's arc when D and B are equally far from P, less than a half turn apart.
+    if (a.kind === 'angle' && a.arc) {
+      const c = out.at as Pt, p = out.from as Pt, q = out.to as Pt;
+      const r1 = Math.hypot(p.x - c.x, p.y - c.y), r2 = Math.hypot(q.x - c.x, q.y - c.y);
+      const turn = Math.abs(Math.atan2((p.x - c.x) * (q.y - c.y) - (p.y - c.y) * (q.x - c.x), (p.x - c.x) * (q.x - c.x) + (p.y - c.y) * (q.y - c.y)));
+      if (!(r1 > 0 && r2 > 0) || Math.abs(r1 - r2) > 0.02 * Math.max(r1, r2)) return 'arc: from and to are not equally far from the centre (use angle at= from= to= r=, or curve)';
+      if (turn < 0.05 || turn > Math.PI - 0.05) return 'arc: from and to are a half turn apart, so either side could be meant (use curve through a point on the side)';
+      delete out.arc;
+      out.r = Math.min((r1 + r2) / 2, 1000);
+    }
     // Boxes and axes stay inside their target (axes grow up from their origin).
     const at = out.at as Pt | undefined;
     if (at && a.kind === 'box' && typeof out.w === 'number' && 'x' in at && !out.centered) { out.w = Math.min(out.w as number, 1000 - at.x); out.h = Math.min(out.h as number, h - at.y); }
@@ -270,6 +281,13 @@ export class Figures {
 
   /** A connector end on a page mark (or a let-only name): a dot or line end → its point, a line → its midpoint, text → its quote, else its box. */
   private markEnd(e: RawEnd): End | string {
+    // A section point named by a construction (`w:mid(A,B)`): its place in the section.
+    if ('region' in e && 'at' in e && !isLiteral(e.at)) {
+      const f = this.figure({ region: e.region });
+      const w = f.world(e.at);
+      if (!('x' in w)) return 'missing' in w ? `unknown point ${w.missing}` : w.degenerate;
+      return { region: e.region, at: f.toLocal(w, REGION_H) };
+    }
     // A region end naming a point that only a {{let}} defines (no element has that id): the point itself.
     if ('ref' in e && !this.elements.has(`r:${e.region}:${e.ref}`)) {
       const f = this.figure({ region: e.region });
@@ -279,7 +297,7 @@ export class Figures {
         return { region: e.region, at: f.toLocal(w, REGION_H) };
       }
     }
-    if (!('mark' in e)) return e;
+    if (!('mark' in e)) return e as End;
     const [base, end] = e.mark.split('.');
     const m = this.ground.mark(e.page, base);
     if (!m) return `unknown mark ${e.mark}`;
@@ -298,6 +316,14 @@ export class Figures {
     if (a.kind === 'line' || a.kind === 'arrow') {
       if (m.kind !== 'line' && m.kind !== 'arrow') return `${a.mark} is not a line`;
       return { kind: a.kind, ...base, from: m.from, to: m.to, ...dash };
+    }
+    if ((a.kind === 'highlight' || a.kind === 'underline') && m.kind !== 'text') {
+      // A mark with no words (a figure, an equation, a line): a highlight frames it, an underline runs under it.
+      if (m.kind === 'chart') return `${a.mark} is a chart: draw on it with on=${a.mark}`;
+      const r = m.kind === 'dot' ? { x: m.at.x - 8, y: m.at.y - 8, w: 16, h: 16 } : markRect(m);
+      if (a.kind === 'underline') { const y = Math.min(r.y + r.h + MARK_PAD, 1000); return { kind: 'line', ...base, from: { x: r.x, y }, to: { x: r.x + r.w, y } }; }
+      return m.kind === 'dot' ? { kind: 'circle', ...base, at: m.at, rx: 14, ry: 14 }
+        : { kind: 'box', ...base, at: { x: r.x - MARK_PAD, y: r.y - MARK_PAD }, w: r.w + 2 * MARK_PAD, h: r.h + 2 * MARK_PAD };
     }
     if (a.kind === 'highlight' || a.kind === 'underline') {
       if (m.kind !== 'text') return `${a.mark} is not text`;

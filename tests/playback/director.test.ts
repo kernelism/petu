@@ -1,6 +1,6 @@
 // tests/playback/director.test.ts
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Director, backlog, STAGGER_MS, ACTION_TIMEOUT_MS, LAND_MS, type ActionTiming } from '../../src/playback/director';
+import { Director, backlog, STAGGER_MS, ACTION_TIMEOUT_MS, LAND_MS, REGION_WAIT_MS, type ActionTiming } from '../../src/playback/director';
 import type { ViewerApi } from '../../src/pdf/viewerApi';
 import type { BuildElement, DeskApi, ElementPlan, RegionInfo } from '../../src/desk/types';
 import { DEFAULTS } from '../../src/settings/settings';
@@ -239,6 +239,34 @@ describe('Director on the desk', () => {
     d.run(a, 0);
     await vi.advanceTimersByTimeAsync(500);
     expect(ended.get(a)?.skipped).toBe('unknown region');
+  });
+  it('a connector to a section declared a moment later waits for it, bounded (C12l)', async () => {
+    const ctxBuild: BuildElement = (a, env) => env.ctx({ region: 's' }).then((c) => (typeof c === 'string' ? c : fakeBuild().build(a, env)));
+    const { d, ended } = make({ build: ctxBuild });
+    const c: Action = { kind: 'connect', from: { page: 1, at: { x: 1, y: 1 } }, to: { region: 's', ref: 'ray' } };
+    const s: Action = { kind: 'sketch', id: 's', page: 1, size: 'm', scene: true };
+    d.prefetch(c as RawAction); d.prefetch(s as RawAction); // parsed: the scene is in the stream after the connector
+    d.run(c, 0);
+    await vi.advanceTimersByTimeAsync(900);
+    d.run(s, 900); // the scene's word comes later
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(ended.get(c)?.skipped).toBeUndefined();
+    expect(ended.get(c)?.endedAt).toBeGreaterThan(900 + 420);
+  });
+  it('…but never waits for a section no tag declares, nor past the bound', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ctxBuild: BuildElement = (a, env) => env.ctx({ region: 's' }).then((c) => (typeof c === 'string' ? c : fakeBuild().build(a, env)));
+    const { d, ended } = make({ build: ctxBuild });
+    const c: Action = { kind: 'connect', from: { page: 1, at: { x: 1, y: 1 } }, to: { region: 's', ref: 'ray' } };
+    d.run(c, 0);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(ended.get(c)?.skipped).toBe('unknown region');
+    const m = make({ build: ctxBuild });
+    const c2: Action = { ...c } as Action;
+    m.d.prefetch({ kind: 'sketch', id: 's', page: 1, size: 'm' }); // declared, but its tag never runs
+    m.d.run(c2, 0);
+    await vi.advanceTimersByTimeAsync(REGION_WAIT_MS + 500);
+    expect(m.ended.get(c2)?.skipped).toBe('unknown region');
   });
   it('a third sketch is skipped when the desk refuses it (rule 8)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});

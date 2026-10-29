@@ -2,7 +2,7 @@
 import { REGION_H, type Compass, type RawEnd, type Pt, type RawAction, type Target, type Weight } from './types';
 import { tokenize, unquote } from './tokenize';
 import { NAME, normName, parsePtArg, worldPt, isBlockRef, type PtArg } from './pointExpr';
-import { parseKitBlock, parseKitVerb, sceneRel } from './parseKit';
+import { parseKitBlock, parseKitVerb, sceneRel, type ParseCtx } from './parseKit';
 import { parseScene, parseSplit, SCENE_TAGS } from './parseScene';
 import { parseFind, parseMove, parseVal } from './parseValues';
 
@@ -74,11 +74,17 @@ function end(s: string | undefined, near: Pt | undefined): RawEnd | undefined {
   const at = pt(rest, REGION_H);
   if (at) return { region, at };
   const ref = rid(rest);
-  return ref ? { region, ref } : undefined;
+  if (ref) return { region, ref };
+  // A construction (`w:mid(A,B)`): a point of the section, resolved with its names when built.
+  const c = /^(mid|along|meet|foot)\(/.test(rest) ? parsePtArg(rest, worldPt) : undefined;
+  return c ? { region, at: c } as RawEnd : undefined;
 }
 
-/** Parses the inside of a `{{ ... }}` tag. Returns null for anything malformed (the caller warns). */
-export function parseTag(body: string): RawAction | null {
+/**
+ * Parses the inside of a `{{ ... }}` tag. Returns null for anything malformed (the caller warns).
+ * `ctx`: what the stream's parser knows so far (constants' names), for slips that depend on it.
+ */
+export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
   const t = tokenize(body);
   if (!t) return null;
   const { name, args, quotes, flags, rawArgs, dupKeys } = t;
@@ -219,7 +225,7 @@ export function parseTag(body: string): RawAction | null {
   }
   if (name === 'grid' || name === 'bars' || name === 'scatter' || name === 'table' || name === 'calc' || name === 'fit' || name === 'shares' || name === 'blend') {
     if (!inRegion) return null;
-    const b = parseKitBlock(name, args, quotes, flags, P);
+    const b = parseKitBlock(name, args, quotes, flags, P, ctx);
     return b ? ({ ...b, ...target, ...mark } as RawAction) : null;
   }
   const markArg = args.mark;
@@ -324,6 +330,12 @@ export function parseTag(body: string): RawAction | null {
       if (!at || !from || !to || (r !== undefined && !(r > 0))) return null;
       return { kind: 'angle', ...target, at, from, to, ...(r ? { r: Math.min(r, MAX_R) } : {}), ...(quote ? { text: quote } : {}), ...weight, ...mark };
     }
+    case 'arc': {
+      // Not a tag: read as an angle whose radius reaches from and to (the resolver checks it is exact).
+      const c = P(args.center ?? args.at), from = P(args.from), to = P(args.to);
+      if (!inRegion || !c || !from || !to || (args.center != null && args.at != null) || args.r != null) return null;
+      return { kind: 'angle', ...target, at: c, from, to, ...(quote ? { text: quote } : {}), ...weight, ...mark, arc: true };
+    }
     case 'brace': {
       const from = P(args.from), to = P(args.to);
       return from && to ? { kind: 'brace', ...target, from, to, ...(quote ? { text: quote } : {}), ...weight, ...mark } : null;
@@ -351,7 +363,8 @@ export function parseTag(body: string): RawAction | null {
       const dnum = pair(args.domain);
       if (!inRegion && !chart) return null;
       // On a chart the domain defaults to its x axis (the resolver fills it in).
-      if (!param && (!fn || fn.length > MAX_FN_CHARS || (!dsrc && !chart))) return null;
+      // axes= another plot without domain=: the parser gives it the host plot's domain (ScriptParser.take).
+      if (!param && (!fn || fn.length > MAX_FN_CHARS || (!dsrc && !chart && !axes))) return null;
       if (chart && (axes || args.xlabel || args.ylabel)) return null; // the chart has its own axes
       if (!param && dnum && !(dnum[1] > dnum[0])) return null;
       if (param && (args.x!.length > MAX_FN_CHARS || args.y!.length > MAX_FN_CHARS)) return null;

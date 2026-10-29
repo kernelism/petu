@@ -56,6 +56,9 @@ export function parsePtArg(s: string | undefined, lit: (s: string) => Pt | undef
   if (!s) return undefined;
   const t = s.trim();
   if (/^-?\d*\.?\d+,-?\d*\.?\d+$/.test(t)) return lit(t);
+  // A slip: a literal in one pair of parentheses (`at=(0,-150)`) is that literal.
+  const paren = /^\((-?\d*\.?\d+,-?\d*\.?\d+)\)$/.exec(t);
+  if (paren) return lit(paren[1]);
   const e = expr(t, 0);
   return e ? e : undefined;
 }

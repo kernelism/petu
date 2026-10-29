@@ -29,7 +29,10 @@ export function parseVal(args: Record<string, string>): ValAction | null {
   if ((args.fmt ?? args.dp) != null && !(fmt != null && Number.isInteger(fmt) && fmt >= 0 && fmt <= 6)) return null;
   const as = args.as?.toLowerCase();
   if (as != null && as !== 'percent' && as !== 'abs') return null;
-  return { kind: 'val', ref: r, ...(fmt != null ? { fmt } : {}), ...(as ? { as: as as 'percent' | 'abs' } : {}) };
+  // x=: the plot's value at x (a slip for {{find … x=}}); a field other than .x/.y, or a part, is no plot.
+  const x = args.x != null ? formula(args.x) : undefined;
+  if (args.x != null && (x == null || r.includes('[') || !/^[^.]+(\.[xy])?$/.test(r))) return null;
+  return { kind: 'val', ref: r, ...(x != null ? { x } : {}), ...(fmt != null ? { fmt } : {}), ...(as ? { as: as as 'percent' | 'abs' } : {}) };
 }
 
 export function parseFind(args: Record<string, string>, flags: Set<string>): FindAction | null {

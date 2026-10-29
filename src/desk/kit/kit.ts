@@ -438,6 +438,12 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
   const id = a.id ?? store.anonId();
   if (a.id && store.get(a.id)) return 'duplicate id';
   a = await withColumns(a, store);
+  // bars axes=<another bar chart> (not a line): one y scale for both, drawn as bars (a line has no bar axes to sit on).
+  let shareScale: Block | undefined;
+  if (a.kind === 'bars' && a.axes) {
+    const host = await store.wait(a.axes);
+    if (host?.kind === 'bars' && !host.plot && host.group) { shareScale = host; a = { ...a, axes: undefined, view: undefined }; }
+  }
   // In a scene, a neighbour may be any thing (a node, a note): the scene places by its box, so only a kit neighbour is waited for here.
   const anchor = ctx.scene && (a.right || a.below) && !store.get(a.right ?? a.below ?? '') && sceneStore(env.registry).get(a.right ?? a.below ?? '') ? undefined : await anchorOf(store, a);
   const sceneNeighbour = !!ctx.scene && !anchor && !!(a.right || a.below) && !!(await anchorBox(a.right ?? a.below!, env.registry, 0));
@@ -528,9 +534,9 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
       const mine = ext(ev[0]);
       b.full = ev;
       // Side by side (right=) is a comparison: one scale. Below is a new picture: its own.
-      const g0 = anchor?.kind === 'bars' && a.right ? anchor.group : undefined;
+      const g0 = shareScale?.group ?? (anchor?.kind === 'bars' && a.right ? anchor.group : undefined);
       const span = (e: { pos: number; neg: number }) => e.pos + e.neg || 1;
-      if (g0 && span(mine) / span(g0) < 4 && span(g0) / span(mine) < 4) {
+      if (g0 && (shareScale || (span(mine) / span(g0) < 4 && span(g0) / span(mine) < 4))) {
         g0.pos = Math.max(g0.pos, mine.pos); g0.neg = Math.max(g0.neg, mine.neg); g0.members.push(b); b.group = g0;
       } else b.group = { ...mine, members: [b] };
       if (a.ghost) {

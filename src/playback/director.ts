@@ -20,6 +20,8 @@ import { journeyBeat } from './parts';
 export const STAGGER_MS = 120;
 /** No single step of an action (resolving it, drawing it, a pan) may hold its lane longer. */
 export const ACTION_TIMEOUT_MS = 3000;
+/** A connector to a section whose tag comes a moment later waits at most this long for it to be laid out. */
+export const REGION_WAIT_MS = 4000;
 /** Rule 1: before the view moves, ink in flight gets this long to land; then it completes at once. */
 export const LAND_MS = 150;
 /**
@@ -134,12 +136,23 @@ export class Director {
       return;
     }
     if (!this.seen.has(raw)) this.figures.note(raw); // callers that skip prefetch (tests, demos)
+    if (raw.kind === 'sketch') this.declared.add(raw.id);
     const isInk = !isLayout(raw as Action);
     const a = (isInk ? raw : this.figures.resolve(raw)) as Action;
     this.runResolved(a, raw, at, live);
   }
 
   private seen = new WeakSet<object>();
+  /** Section ids some parsed tag of this answer declares (a connector may name one a moment before its tag). */
+  private declared = new Set<string>();
+
+  /** Waits (bounded) until every section a connector names that a later tag declares is on the desk. */
+  private async sectionsFor(a: InkAction, desk: DeskApi, signal: AbortSignal): Promise<void> {
+    if (a.kind !== 'connect') return;
+    const ids = [a.from, a.to].flatMap((e) => ('region' in e && this.declared.has(e.region) ? [e.region] : []));
+    const t0 = now();
+    while (ids.some((id) => !desk.region(id)) && now() - t0 < REGION_WAIT_MS && !signal.aborted) await wait(50);
+  }
   /**
    * Holds asked for by journeys: words from `from` on were pushed back `ms` at `time`. Ink fired
    * before a hold, for a word at or after it, carries the old word time: it moves with its word.
@@ -183,6 +196,7 @@ export class Director {
   /** As soon as an action is parsed: takes its point definitions (lookahead), warms caches (text runs, KaTeX). */
   prefetch(raw: RawAction): void {
     this.seen.add(raw);
+    if (raw.kind === 'sketch') this.declared.add(raw.id);
     if (raw.kind === 'const') { kitStore(this.registry).defineConsts(raw.defs); return; }
     if (raw.kind === 'find') kitStore(this.registry).finds.set(raw.id, raw);
     this.figures.note(raw);
@@ -209,6 +223,7 @@ export class Director {
     this.registry.settle(); // kit animations (a sweep) land in their end state
     this.pendingReset = null; // an answer stopped before it acted leaves the desk as it is
     this.holds = [];
+    this.declared.clear();
     this.desk()?.abort(); // pans stop, and no desk move in flight (a column glide, entering B) lands later
     this.gen++;
     this.busy = 0;
@@ -526,6 +541,8 @@ export class Director {
     const word = await this.untilWord(t.firedAt + held, startAt - t.firedAt, live, signal);
     if (signal.aborted) return;
     if (!plan) {
+      await this.sectionsFor(a, desk, signal);
+      if (signal.aborted) return;
       plan = await this.build(raw, env, signal);
       if (signal.aborted) return;
       if (typeof plan === 'string') return finish(plan);
