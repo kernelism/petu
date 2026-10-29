@@ -864,6 +864,13 @@ async function makeLine(a: Extract<KitBlock, { kind: 'bars' }>, got: { full: C.M
   if (typeof b === 'string') return b;
   Object.assign(b, { src: a.src, dp: a.dp, em: (a as { em?: boolean }).em });
   b.el.caption = a.caption;
+  // ghost= as on bars: the earlier values, dashed; the plot's scale holds them too.
+  const gb = a.ghost ? store.get(a.ghost) : undefined;
+  if (gb?.vals && gb.vals[0].length === ys.length) {
+    b.ghost = gb.vals[0].slice();
+    const pl = b.plot!;
+    pl.dom = domOf(pl.members.map((x) => ({ xs: x.xs!, ys: [...x.full![0], ...(x.ghost ?? [])] })));
+  }
   return b;
 }
 

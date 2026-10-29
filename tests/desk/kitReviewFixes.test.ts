@@ -68,4 +68,16 @@ describe('kit review fixes', () => {
     expect(kitStore(e.registry).get('ax')).toBeUndefined(); // drawn on the hand axes, not a kit plot
     expect(await tag(e, 'plot on=s axes=ax fn="q*x" domain=0,1')).toBe('bad fn');
   });
+
+  it('ghost= on bars drawn as a line keeps the earlier values, dashed and in scale', async () => {
+    const { e, layers } = env();
+    await tag(e, 'bars on=s id=before vals=1,9,3');
+    await tag(e, 'bars on=s id=after vals=2,3,4 ghost=before view=line');
+    const b = kitStore(e.registry).get('after')!;
+    expect(b.view).toBe('line');
+    expect(b.ghost).toEqual([1, 9, 3]);
+    expect(b.plot!.dom.y1).toBeGreaterThanOrEqual(9);
+    const dashed = [...layers.agent.querySelectorAll('[data-kit="bars"] path[stroke-dasharray]')].map((p) => p.getAttribute('d'));
+    expect(dashed.some((d) => !!d)).toBe(true);
+  });
 });
