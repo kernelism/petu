@@ -4,6 +4,7 @@
 import type { AskEvent } from './protocol';
 import type { ActionTiming } from '../playback/director';
 import type { Target } from '../script/types';
+import type { GateLogEvent } from '../gate/events';
 
 type Pt = { x: number; y: number };
 type Rect = { x: number; y: number; w: number; h: number };
@@ -131,6 +132,23 @@ export function loopAround(r: Rect, pad = 14, n = 40): Pt[] {
   return pts;
 }
 
+/**
+ * The live gate's events outside an eval answer (dev scripts under `&gate=audit`, the gallery's audit):
+ * the app publishes each GateEvent / RepairEvent here (dev builds only), the gallery reads the list.
+ */
+export const GATE_LOG_KEY = '__petuGateLog';
+type GateHost = { [GATE_LOG_KEY]?: GateLogEvent[] };
+export function publishGate(ev: GateLogEvent, w: object = globalThis): void {
+  const h = w as GateHost;
+  (h[GATE_LOG_KEY] ??= []).push(JSON.parse(JSON.stringify(ev)) as GateLogEvent);
+}
+export const isGateEvent = (e: { t: string }): e is GateLogEvent => e.t === 'gate' || e.t === 'repair';
+/** The gate's events of the answer being recorded, else what the app published (dev scripts). */
+export function gateEvents(r: Pick<EvalResult, 'events'>, w: object = globalThis): GateLogEvent[] {
+  const own = r.events.filter(isGateEvent);
+  return own.length ? own : [...((w as GateHost)[GATE_LOG_KEY] ?? [])];
+}
+
 const sameAction = (a: Record<string, unknown>, b: Record<string, unknown>) => JSON.stringify(a) === JSON.stringify(b);
 
 export function emptyResult(question: string, t0: number): EvalResult {
@@ -154,6 +172,8 @@ export function installEvalHooks(be: EvalBackend, w: Window & { __petu?: unknown
     inkAroundLargestMark: (page: number) => h.inkAroundLargestMark(page),
     replay: (log: EvalResult) => h.replay(log),
     result: () => h.result(),
+    /** The live gate's verdicts and repairs (design §8): this answer's, else the dev script's. */
+    gate: () => gateEvents(h.result(), w),
   };
   return h;
 }

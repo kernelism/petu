@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { EvalHooks, installEvalHooks, outOfFrameOf, loopAround, type EvalBackend } from '../../src/agent/evalHooks';
+import type { GateEvent } from '../../src/gate/events';
+import { EvalHooks, installEvalHooks, outOfFrameOf, loopAround, publishGate, gateEvents, GATE_LOG_KEY, type EvalBackend } from '../../src/agent/evalHooks';
 
 function backend(over: Partial<EvalBackend> = {}): EvalBackend {
   return {
@@ -61,7 +62,18 @@ describe('evalHooks', () => {
   it('installs window.__petu with its calls', () => {
     const w = {} as Window & { __petu?: Record<string, unknown> };
     installEvalHooks(backend(), w);
-    expect(Object.keys(w.__petu!).sort()).toEqual(['addInk', 'ask', 'inkAroundLargestMark', 'ready', 'replay', 'result']);
+    expect(Object.keys(w.__petu!).sort()).toEqual(['addInk', 'ask', 'gate', 'inkAroundLargestMark', 'ready', 'replay', 'result']);
+  });
+  it('__petu.gate(): the answer’s gate and repair events, else what the app published (dev scripts)', async () => {
+    const w = {} as Window & { __petu?: Record<string, () => unknown> };
+    const g: GateEvent = { t: 'gate', k: '2', unit: 'beat', result: 'fail', action: 'drop', flags: [{ check: 'named', detail: 'point Z' }], notes: [], ms: 4, bufferedMs: 6100, mode: 'beat' };
+    publishGate(g, w);
+    expect((w as unknown as Record<string, unknown[]>)[GATE_LOG_KEY]).toHaveLength(1);
+    const h = installEvalHooks(backend({ ask: async (_q, rec) => { rec.event({ t: 'text', d: 'x' }); rec.event({ ...g, k: '0', action: 'release', result: 'pass', flags: [] }); rec.event({ t: 'repair', k: '0', phase: 'sent', ms: 0 }); } }), w);
+    expect(w.__petu!.gate()).toEqual([g]);
+    await h.ask('q');
+    expect((w.__petu!.gate() as { k: string }[]).map((e) => e.k)).toEqual(['0', '0']);
+    expect(gateEvents({ events: [] }, {})).toEqual([]);
   });
   it('outOfFrameOf sums fitted regions from director.figures', () => {
     const figs = { figure: (t: { region: string }) => ({ outOfFrame: t.region === 'a' ? 2 : 3 }) };
