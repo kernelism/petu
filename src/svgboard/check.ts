@@ -5,7 +5,8 @@
  * text's box from its font size (at least the board's minimum, as the renderer will set it), anchor,
  * baseline and character count; strokes as segments (paths sampled, curves flattened); transforms
  * (translate, scale, rotate, matrix) applied. A text's box is shrunk a little before the stroke test
- * (estimates run wide), so a label that only touches a line passes.
+ * (estimates run wide), so a label that only touches a line passes; a line of the text's own group
+ * crossing it only notes (the renderer's paper halo keeps it legible).
  */
 import { parseGroup } from './sanitize';
 
@@ -188,8 +189,9 @@ export const newBoardState = (w = 1000, h = 700): BoardState => ({ w, h, ids: ne
 export const GROW = 1.6;
 
 /** Checks a beat's groups against the board so far. Pure; `board` is not changed. */
-export function checkGroups(srcs: string[], board: BoardState, minFont = 16): { flags: SvgFlag[]; geos: GroupGeo[]; grow?: number } {
+export function checkGroups(srcs: string[], board: BoardState, minFont = 16): { flags: SvgFlag[]; notes: string[]; geos: GroupGeo[]; grow?: number } {
   const flags: SvgFlag[] = [];
+  const notes: string[] = [];
   const geos = srcs.map((s) => groupGeometry(s, minFont));
   const ids = new Set(board.ids);
   const texts = [...board.texts], segs = [...board.segs];
@@ -219,13 +221,18 @@ export function checkGroups(srcs: string[], board: BoardState, minFont = 16): { 
       if (Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y) < 3) return;
       const key = `${t.group}|${t.text}`;
       if (crossed.has(key)) return;
-      if (segHitsBox(s.a, s.b, core(t))) { crossed.add(key); flags.push({ check: 'svg', detail: `a line of ${s.group} crosses text "${t.text}" (${t.group})` }); }
+      if (!segHitsBox(s.a, s.b, core(t))) return;
+      crossed.add(key);
+      const detail = `a line of ${s.group} crosses text "${t.text}" (${t.group})`;
+      // Within one group it is the model's own composition (a label on its curve): the paper halo keeps
+      // it legible, so it notes; a later group drawn through earlier text (or the reverse) fails.
+      if (s.group === t.group) notes.push(`svg: ${detail}`); else flags.push({ check: 'svg', detail });
     };
     for (const t of g.texts) for (const s of segs) test(t, s);
     for (const s of g.segs) for (const t of texts) test(t, s);
     segs.push(...g.segs);
   }
-  return { flags, geos, ...(grow ? { grow } : {}) };
+  return { flags, notes, geos, ...(grow ? { grow } : {}) };
 }
 
 /** Adds an accepted beat's groups to the board state. */
