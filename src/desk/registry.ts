@@ -19,6 +19,8 @@ export type ElementEntry = {
   group: SVGGElement;
   /** The traced strokes, for emph's re-trace. Text elements have none. */
   strokes?: Stroke[];
+  /** A closed shape's outline (circle, box, shade): a point label on it goes outside. */
+  outline?: SPt[];
   faded?: boolean;
 };
 
@@ -97,6 +99,13 @@ export class Registry {
       if (e.faded || !e.strokes || !sameTarget(e.target, t)) continue;
       for (const s of e.strokes) for (let i = 0; i + 1 < s.length; i++) out.push({ a: s[i], b: s[i + 1] });
     }
+    return out;
+  }
+
+  /** Outlines of the closed shapes drawn in `t` (faded ones excluded). */
+  outlines(t: Target): SPt[][] {
+    const out: SPt[][] = [];
+    for (const e of this.byId.values()) if (e.outline && !e.faded && sameTarget(e.target, t)) out.push(e.outline);
     return out;
   }
 
