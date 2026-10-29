@@ -163,6 +163,7 @@ async function renderScene(browser: any, browserName: string, base: string, scen
       for (const m of [...pending]) {
         const anchor = m.after === 'start' ? start : done;
         if (anchor == null || fake < anchor + m.ms) continue;
+        for (const k of m.keys ?? []) await page.keyboard.press(k);
         await sleep(SETTLE_MS);
         const name = shotName({ scene: scene.name, moment: m.name, browser: browserName, size });
         const file = `shots/${name}.png`;

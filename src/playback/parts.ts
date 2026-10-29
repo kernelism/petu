@@ -98,10 +98,10 @@ export function sentenceStart(words: string[], i: number): number {
 
 /**
  * Replay (R): back to the start of the sentence being spoken (`pos` = the next word to speak). Within
- * the first REPLAY_AGAIN_WORDS words of a sentence it goes to the one before, so pressing R twice
+ * the first REPLAY_AGAIN_WORDS word of a sentence it goes to the one before, so pressing R twice
  * steps back a sentence at a time.
  */
-export const REPLAY_AGAIN_WORDS = 2;
+export const REPLAY_AGAIN_WORDS = 1;
 export function replayTarget(words: string[], pos: number): number {
   const cur = sentenceStart(words, Math.max(0, pos - 1));
   if (pos - cur > REPLAY_AGAIN_WORDS || cur === 0) return cur;

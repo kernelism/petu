@@ -2,7 +2,8 @@
 // checkpoint: `start` (the answer began: the ask bar's stop button appears) or `done` (it went away).
 // The page's clock is Playwright's fake clock, advanced in fixed steps, so a moment is the same frame
 // on every run.
-export type Moment = { name: string; after: 'start' | 'done'; ms: number };
+/** `keys`: pressed (Playwright key names) when the moment is reached, before the shot (playback controls). */
+export type Moment = { name: string; after: 'start' | 'done'; ms: number; keys?: string[] };
 export type Scene = { name: string; query: string; moments: Moment[]; /** A local file the scene needs (skipped when absent). */ needs?: string };
 
 const mid = (ms: number): Moment => ({ name: `${Math.round(ms / 1000)}s`, after: 'start', ms });
@@ -17,6 +18,8 @@ export const SCENES: Scene[] = [
   { name: 'relational', query: 'script=relational', moments: [mid(8000), END] },
   // Flow across the document: a unit highlight on p9, the journey to p2 (route chip, parts), the return.
   { name: 'flow', query: 'script=flow', moments: [mid(3000), mid(9000), mid(15000), mid(24000), END] },
+  // The playback row: speed stepped up (>) and paused (Space) in the journey's part (rail, title, 1.25×).
+  { name: 'flow-controls', query: 'script=flow', moments: [{ name: 'paused', after: 'start', ms: 15000, keys: ['>', 'Space'] }] },
   { name: 'scene', query: 'script=scene', moments: [mid(20000), END] },
   { name: 'scene-econ', query: 'script=scene-econ', moments: [mid(20000), END] },
   { name: 'scene-bio', query: 'script=scene-bio', moments: [mid(20000), END] },

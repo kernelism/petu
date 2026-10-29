@@ -24,7 +24,8 @@ dock, follow mode and settings. All geometry derives from the window, never the 
 | `src/ui/CanvasToolbar.tsx` + `src/ink/student/*` | Student drawing (D toggles, pen/highlighter/eraser, undo); strokes in `ink` store, sent as `STUDENT INK`. |
 | `src/ui/FollowPill.tsx`, `EmptyState.tsx` | "Back to answer" (→ `desk.resume()`); drop/open screen with the sample. |
 | `src/ui/RouteChip.tsx` | Journeys: "p9 → p2 · <section>" at the top of the slide column for `ROUTE_MS` (App), then "Back to pN" (`returnTarget`: N = the page in view when the question was asked; shown only once the answer has played past its first part and the view is elsewhere, so an answer that opens by moving to its page never offers it; mid-answer, pressing it is the student taking over: follow pauses). Journeys land with the same split framing as any scroll (`framedTop`: slide top on the board's top). |
-| `src/ui/PartsBar.tsx` | The answer's parts (`src/playback/parts.ts`) as a stepper in the caption, in place of the question line, with pause/resume and Go deeper. Shown while busy with ≥ 2 parts, or paused. |
+| `src/ui/PartsBar.tsx` | The playing answer's controls: one slim row in the caption, in place of the question line, once the first word is spoken: pause/resume · `n/N` + the current part's title (the question for a one-part answer; hover/focus a segment previews its title) · a segment rail for ≥ 2 parts (`src/playback/parts.ts`; done = full, current = its progress, upcoming = empty; click to jump) · replay sentence · speed (cycles 0.75/1/1.25/1.5×) · Go deeper (icon). |
+| `src/ui/playbackKeys.ts` | Pure key map for a playing answer: Space pause/resume, R replay sentence (again at once: the one before), Shift+← = R, Shift+→ next sentence, ←/→ parts (≥ 2), `<` `>` speed, Esc closes the inset. Never while typing, with ⌘/Ctrl/Alt, with a popover open, or with nothing playing; Shift+R stays Report. |
 | `src/ui/DeeperInset.tsx` | Go deeper: pauses the answer; a follow-up (part as context, narration only) plays in the dock's caption slot; Return / Esc resumes from the paused word. |
 | `src/pdf/sections.ts` | `SectionLabels`: a page's label = deepest bookmark at or before it, else the page title (tallest top line). |
 | `src/ui/ui.css`, `src/app.css`, `src/styles/tokens.css`, `src/desk/desk.css`, `src/pdf/viewer.css` | Styles; tokens are the source for ink colours/weights (`ink/agent/tokens.ts` mirrors them). |
@@ -52,9 +53,14 @@ from `PETU_PDF_DIRS`), `&page=N` (with `&eval`), `&debug`, `&noplay`, `&style=ha
 Demo/script/fail paths play canned scripts and make no API call.
 
 - **Flow across the document** (spec section of that name): the director reports journeys (a scroll
-  to a page that isn't adjacent) → route chip; the session's parsed script → `deriveParts`. Keys in a
-  capture-phase listener in App: Space pause/resume, ←/→ parts, Esc closes the inset (before
-  AskBar's Esc-stops). Dev: `?script=flow` (econ.pdf, asked on p9).
+  to a page that isn't adjacent) → route chip; the session's parsed script → `deriveParts`. Keys
+  (`playbackKey`) in a capture-phase listener in App, before AskBar's Esc-stops. Journey beat:
+  `JOURNEY_HOLD_MS` 500 + `ARRIVAL_MS` 200 (director.ts). Dev: `?script=flow` (econ.pdf, asked on p9);
+  gallery `flow-controls` shows the row paused at 1.25×.
+- **Speed**: `settings.speed` (localStorage with the other settings) is the `PacedClock` rate (every
+  word and pause ÷ speed; the wpm setting is unchanged); a change calls `session.respeed()` (words
+  after the next re-time). Ink waits on its word's *live* start (`onAction(a, at, live)` →
+  `director.run(a, at, live)`; null while paused), so pause, speed and seek-back keep ink on its word.
 
 ## Invariants / contracts
 
