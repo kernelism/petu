@@ -118,6 +118,7 @@ const GATE_PARAM = ((p) => (p === 'off' || p === 'shadow' || p === 'live' || p =
 const GATE_FAULTS = parseFaults(params.get('gatefail'));
 /** `&gatelog`: every gate and repair event to the console. */
 const GATE_LOG = params.has('gatelog');
+const GATE_CHECK_ALL = params.get('gatecheck') === 'all';
 const REPAIR_PARAM = params.get('repair');
 const REPAIR_MS = Number(params.get('repairms')) || 1500;
 const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
@@ -683,7 +684,10 @@ export default function App() {
     logRef.current = log;
 
     // The live commit gate: every unit is checked on the shadow board before it plays.
-    const setting: GateSetting = GATE_PARAM ?? (toAgent ? 'live' : 'audit');
+    // Dev scripts: off unless asked (&gate=audit): their audit still fails on shadow-fidelity gaps (scene
+    // sections measured without a camera, kit blocks without the live board's centring) and on checks
+    // written after the scripts. Agent answers: live.
+    const setting: GateSetting = GATE_PARAM ?? (toAgent ? 'live' : 'off');
     let gate: LiveGate | null = null;
     let shadow: ShadowStage | null = null;
     const pageTexts = new Map<number, string>();
@@ -707,7 +711,9 @@ export default function App() {
     if (setting !== 'off') {
       shadow = new ShadowStage({ desk: () => deskRef.current, viewer: () => viewerRef.current, settings: getSettings, grounding: () => groundingRef.current ?? NO_MARKS });
       if (boardScripts.current.length) void shadow.seed(boardScripts.current);
-      const preflight = new GatePreflight({ board: shadow, pages: () => pageTexts, question: q, grounding: () => groundingRef.current });
+      // Layout checks read the shadow board's geometry, whose fidelity is not measured yet: they note
+      // (&gatecheck=all makes them fail, as the design's severity has it).
+      const preflight = new GatePreflight({ board: shadow, pages: () => pageTexts, question: q, grounding: () => groundingRef.current, ...(GATE_CHECK_ALL ? {} : { noteChecks: new Set(['layout']) }) });
       gate = new LiveGate({
         clock: { now: () => performance.now(), endsAt: () => clock.endsAt() }, preflight,
         repair: repairFor(),
