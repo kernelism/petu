@@ -99,6 +99,8 @@ export class Desk implements DeskApi {
   private nextHead: { el: HTMLElement; h: number; aside: boolean } | null = null;
   /** An aside is playing: its sections are tinted, the rest of the board steps back, nothing is cropped. */
   private asideOpen = false;
+  /** Sections of the paused answer cropped to their ink while an aside plays (restored when it ends). */
+  private held = new Set<Section>();
   /** The student's board zoom: a multiplier on every section's scale (1 = the board as laid out). */
   private zoomK = 1;
   private zoomCtl: { out: HTMLButtonElement; pct: HTMLSpanElement; in: HTMLButtonElement; fit: HTMLButtonElement };
@@ -398,8 +400,24 @@ export class Desk implements DeskApi {
    * steps back. Ended: every open aside collapses to its marker (its head), and the board re-lays.
    */
   setAside(on: boolean): void {
+    if (on === this.asideOpen) return;
     this.asideOpen = on;
     this.board.classList.toggle('has-aside', on);
+    // The paused answer's open sections show just their ink while the aside plays (the inset sits right
+    // under it), and get their whole height back when the answer resumes and draws on.
+    if (on) {
+      for (const s of this.sections) {
+        if (s.scene || s.y0 !== 0 || s.y1 !== s.full) continue;
+        this.crop(s);
+        if (s.y0 !== 0 || s.y1 !== s.full) this.held.add(s);
+      }
+    } else {
+      for (const s of this.held) {
+        s.y0 = 0; s.y1 = s.full;
+        s.el.querySelectorAll('svg').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${s.full}`));
+      }
+      this.held.clear();
+    }
     if (!on) for (const [sec, hd] of this.heads) if (hd.aside && !hd.collapsed) this.collapse(sec, hd, true);
     if (!on && this.nextHead?.aside) this.nextHead = null;
     this.position();

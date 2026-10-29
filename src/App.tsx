@@ -27,6 +27,8 @@ import { StudentInkLayer } from './ink/student/StudentInkLayer';
 import { ink, PEN_COLORS, useInk } from './ink/student/store';
 import { EmptyState } from './ui/EmptyState';
 import { TopBar } from './ui/TopBar';
+import { isShortcutsKey, ShortcutsOverlay } from './ui/ShortcutsOverlay';
+import { boardZoomKey, isMacPlatform } from './ui/zoomKeys';
 import { SettingsPopover } from './ui/SettingsPopover';
 import { CanvasToolbar } from './ui/CanvasToolbar';
 import { Caption, joinWords } from './ui/Caption';
@@ -417,6 +419,9 @@ export default function App() {
   const trailN = useRef(0);
   /** The shortcuts card (?). */
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const shortcutsOpenRef = useRef(false);
+  shortcutsOpenRef.current = shortcutsOpen;
+  const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
   const labelsRef = useRef<SectionLabels | null>(null);
   const [, setLabelTick] = useState(0);
   const journeyRef = useRef<(j: Journey) => void>(() => {});
@@ -1250,7 +1255,7 @@ export default function App() {
     for (const st of steps) {
       if (st.words != null) await until(() => (sessionRef.current?.position() ?? 0) >= st.words!);
       if (st.asideDone != null) { await until(() => asideRef.current?.state === 'done'); await sleep(st.asideDone); }
-      if (st.idle != null) { await until(() => !busyRef.current && !asideRef.current); await sleep(st.idle); }
+      if (st.idle != null) { await until(() => !sessionRef.current && !asideRef.current); await sleep(st.idle); }
       if (st.ms != null) await sleep(st.ms);
       if (st.type != null || st.ask != null) {
         // Typed into the bar: mid-answer, the first character pauses the answer.
@@ -1259,6 +1264,7 @@ export default function App() {
         setRestore((r) => ({ text, seq: (r?.seq ?? 0) + 1 }));
         if (st.ask != null) {
           await sleep(700);
+          if (ink.get().canvasOn) ink.setCanvas(false); // the pen goes down to send
           setRestore((r) => ({ text: '', seq: (r?.seq ?? 0) + 1 }));
           onAsk(st.ask);
         }
@@ -1373,6 +1379,20 @@ export default function App() {
     else if (DEMO) void openSample();
   }, [open, openSample]);
 
+  // ? opens the shortcuts card (it closes itself); ⌘− / ⌘+ / ⌘0 zoom the board (never the page).
+  useEffect(() => {
+    const mac = isMacPlatform();
+    const onKey = (e: KeyboardEvent) => {
+      if (!shortcutsOpenRef.current && isShortcutsKey(e)) { e.preventDefault(); setShortcutsOpen(true); return; }
+      const z = boardZoomKey(e, { boardOpen: !!deskRef.current && deskRef.current.state().split !== 'none', mac });
+      if (!z) return;
+      e.preventDefault();
+      if (z === 'fit') deskRef.current?.setZoom('fit'); else deskRef.current?.zoomStep(z === 'in' ? 1 : -1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // Esc between answers closes the board (while playing, Esc stops the answer first).
   const boardOpen = !!desk && desk.split !== 'none';
   useEffect(() => {
@@ -1427,6 +1447,8 @@ export default function App() {
   }, [director, fileName]);
 
   const dock = dockPlacement(viewportW, desk);
+  /** The shortcuts card sits just above the dock (its top edge, from the window's bottom). */
+  const dockBottom = dockRef.current ? Math.max(0, window.innerHeight - dockRef.current.getBoundingClientRect().top) : 96;
   // The playback row shows once an answer speaks (the question line holds its place until then).
   const curPart = Math.max(0, Math.min(partIdx, parts.length - 1));
   const partsView: PartsView | undefined = busy && !waiting
@@ -1476,6 +1498,7 @@ export default function App() {
       <RouteChip route={route} backTo={backTo} onBack={onBack} x={dock.x} />
       <SettingsPopover open={settingsOpen} onClose={closeSettings} />
       <CanvasToolbar />
+      <ShortcutsOverlay open={shortcutsOpen} onClose={closeShortcuts} x={dock.x} bottom={dockBottom} dev={import.meta.env.DEV} />
       {/* left/width are set directly rather than through custom properties, so the dock's glide never
           depends on var() invalidation (suspected in a Safari report of the dock staying left; not
           reproduced in Playwright WebKit). */}

@@ -44,10 +44,10 @@ export const LEARNER_Q = {
 
 const MAIN =
   `{{scroll p=12}} Both sides do: {{highlight p=12 "Buyers and sellers split the tax"}} the tax drives a wedge between the price buyers pay and the price sellers keep. ` +
-  `{{sketch id=w near=p12}} {{const t=2}} Before the tax everyone traded at seven. {{bars on=w id=pay vals=7,8 labels=before,after "buyers pay"}} With a tax of two, buyers pay eight. ` +
+  `{{sketch id=w near=p12}} Before the tax {{const t=2}} everyone traded at seven. {{bars on=w id=pay vals=7,8 labels=before,after "buyers pay"}} With a tax of two, buyers pay eight. ` +
   `{{split id=pay[2] vals=t "sellers keep" "tax"}} Out of those eight, {{val id=pay[2,2]}} goes to the tax, so sellers keep {{val id=pay[2,1]}}. ` +
-  `{{connect from=p12:"P_b = 8" to=w:pay}} That is the slide's own pair of prices. ` +
-  `{{bars on=w id=share vals=1,1 labels=buyers,sellers right=pay "who carries the 2"}} Against the old seven, buyers carry one and sellers carry one. ` +
+  `{{connect from=p12:"Pb = 8, Ps = 6, Q = 20" to=w:pay}} That is the slide's own pair of prices. ` +
+  `{{bars on=w id=share vals=1,1 labels=buyers,sellers below=pay "who carries the 2"}} Against the old seven, buyers carry one and sellers carry one. ` +
   `{{emph id=share}} The split is even because the two curves are equally steep: when one side is steeper, it carries more.`;
 
 const ASIDE =
@@ -56,7 +56,7 @@ const ASIDE =
   `{{emph id=lost[2]}} Flat means elastic: buyers walk away fast.`;
 
 const FOLLOW =
-  `{{sketch id=f near=p12}} {{const b=0.2}} Picture it on the chart. ` +
+  `{{sketch id=f near=p12}} Picture it {{const b=0.2}} on the chart. ` +
   `{{plot on=f id=dem fn="7+b*(25-x)" domain=0,50 xlabel="quantity" ylabel="price" "demand"}} Here is demand, ` +
   `{{plot on=f id=tx fn="4+x/5" domain=0,50 axes=dem "supply + tax"}} and supply lifted by the tax. ` +
   `{{find id=E of=tx,dem}} They cross where buyers pay {{val id=E.y}}. ` +
@@ -71,7 +71,7 @@ const POINT =
   `Now try one yourself: with a tax of four instead of two, what would buyers pay?`;
 
 const REPLY =
-  `{{sketch id=ck near=p12}} {{const t=4}} Let's check it on the chart. ` +
+  `{{sketch id=ck near=p12}} Let's check it {{const t=4}} on the chart. ` +
   `{{plot on=ck id=dem fn="12-x/5" domain=0,60 xlabel="quantity" ylabel="price" "demand"}} Demand stays put, ` +
   `{{plot on=ck id=tx fn="2+t+x/5" domain=0,50 axes=dem "supply + tax"}} and supply lifts by four. ` +
   `{{plot on=ck id=you fn="10" domain=0,60 axes=dem "your 10"}} Your ten is here. ` +
@@ -94,9 +94,9 @@ export const LEARNER_SCRIPT = {
     // 5: the pen: a loop around the shaded triangle; the chip attaches, and they type their question.
     { idle: 2500, circle: { page: 12, x: 284, y: 532, rx: 56, ry: 62 } },
     { ms: 600, type: LEARNER_Q.point },
-    { ms: 3000, ask: LEARNER_Q.point },
+    { ms: 5000, ask: LEARNER_Q.point },
     // 6: the answer ended on a check question: the bar reads "Your answer…"; they reply.
-    { idle: 3000, ask: LEARNER_Q.reply },
+    { idle: 10000, ask: LEARNER_Q.reply },
     // 7: what did we cover: zoom the board out to fit, and the shortcuts card.
     { idle: 2500, zoom: 'fit' },
     { ms: 800, shortcuts: true },

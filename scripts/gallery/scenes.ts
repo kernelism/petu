@@ -40,6 +40,12 @@ export const SCENES: Scene[] = [
   // injected skip and the fake repair (1.5 s), the demo's replacement plays in its place.
   { name: 'gate', query: 'script=gate&gate=live', moments: [END], audit: false },
   { name: 'gate-repair', query: 'script=gate&gate=live&gatefail=2:skip&repair=fake&repairms=1500', moments: [END], audit: false },
+  // v1 learner UX (storyboard frames 1–7), one simulated session on econ.pdf p12 (src/demo/learner.ts).
+  { name: 'learner', query: 'script=learner', moments: [
+    { name: '1-ask', after: 'start', ms: 12000 }, { name: '2-aside', after: 'start', ms: 24000 }, { name: '3-resume', after: 'start', ms: 36000 },
+    { name: '4-follow', after: 'start', ms: 66000 }, { name: '5-point', after: 'start', ms: 78000 }, { name: '6-check', after: 'start', ms: 112000 },
+    { name: '6-judged', after: 'start', ms: 134000 }, { name: '7-trail', after: 'start', ms: 160000 },
+  ] },
   { name: 'lec09', query: 'script=lec09', moments: [mid(14000), END], needs: 'public/dev/lec09_optical_flow.pdf' },
 ];
 

@@ -20,6 +20,8 @@ function parseAll(script: string): Action[] {
 }
 const em = (as: Action[]) => as.filter((a) => 'em' in a && a.em).map((a) => a.kind);
 const ALL = [DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.values(SCRIPTS).map((x) => x.script)];
+/** A simulated session's later answers (asides, follow-ups, check replies). */
+const ANSWERS = Object.values(SCRIPTS).flatMap((x) => Object.values(x.answers ?? {}));
 
 const look = (a: Action) => ('weight' in a ? a.weight : undefined);
 
@@ -132,6 +134,10 @@ describe('toolkit', () => {
 describe('every script', () => {
   it('parses with no warnings', () => {
     for (const s of ALL) expect(parseAll(s).length).toBeGreaterThan(5);
+  });
+  it("a session's later answers parse with no warnings and never stack tags", () => {
+    expect(ANSWERS.length).toBeGreaterThan(4);
+    for (const s of ANSWERS) { parseAll(s); expect(s).not.toMatch(/\}\}\s*\{\{/); }
   });
   it('never stacks two tags on one word', () => {
     for (const s of ALL) expect(s).not.toMatch(/\}\}\s*\{\{/);
