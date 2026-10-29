@@ -102,6 +102,9 @@ Dev URLs (append to the dev server URL):
 - `?demo=plane` — a `size=l` sketch: the wide split (slides 0.4, board 0.6)
 - `?script=kit` — the visual kit: six board sections (a sliding window, vectors as bars, a scatter
   with a band, a demand table, a thrown ball's table, dice), half outside CS, all numbers engine-computed
+- `?script=canvas` — the slide as canvas (`public/fixtures/canvas.pdf`): drawing on a slide's calibrated
+  chart in its data units (`p=N on=#c1`), lifting its figure onto the board (`{{lift}}`), notes in place
+  (`{{note p=N … annotate=}}`); see docs/briefs/board-engine.md
 - `?script=lec09`, `?script=toolkit`, `?script=relational` — dev scripts, no API call (lec09 needs a
   local, gitignored PDF; relational shows the `let`/construction grammar on the fixture)
 - `?src=<pdf url>` — open a PDF by URL (e.g. `/api/dev-pdf/<name>.pdf` from `PETU_PDF_DIRS`)
