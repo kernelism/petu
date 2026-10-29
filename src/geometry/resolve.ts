@@ -168,7 +168,7 @@ export class Figures {
       const n = (k: string) => (typeof x[k] === 'number' ? (x[k] as number) : undefined);
       const w = n('w'), h = n('h'), rx = n('rx') ?? n('r'), ry = n('ry') ?? n('r');
       if (a.kind === 'box' && w != null && h != null) f.noteSpan(x.at as PtArg, [{ x: w, y: h }]);
-      else if (a.kind === 'axes' && w != null && h != null) f.noteSpan(x.at as PtArg, [{ x: w, y: -h }]);
+      else if (a.kind === 'axes' && w != null && h != null) { f.noteSpan(x.at as PtArg, [{ x: w, y: -h }]); f.markData(); }
       else if ((a.kind === 'circle' || a.kind === 'shade') && rx != null && ry != null) f.noteSpan(x.at as PtArg, [{ x: -rx, y: -ry }, { x: rx, y: ry }]);
     }
     // Named elements are named points: a point at its centre, a line at its ends.
@@ -258,7 +258,7 @@ export class Figures {
       out.pts = ps;
     }
     // World lengths scale with a fitted region (radii, axes sizes); text sizes are screen px and don't.
-    if (t.region != null && f.fitted) for (const k of ['rx', 'ry', 'r', 'w', 'h'] as const) if (typeof out[k] === 'number') out[k] = f.scaleLen(out[k] as number);
+    if (t.region != null && f.fitted) for (const k of ['rx', 'ry', 'r', 'w', 'h'] as const) if (typeof out[k] === 'number') out[k] = f.scaleLen(out[k] as number, k === 'rx' || k === 'w' ? 'x' : k === 'ry' || k === 'h' ? 'y' : undefined);
     // Boxes and axes stay inside their target (axes grow up from their origin).
     const at = out.at as Pt | undefined;
     if (at && a.kind === 'box' && typeof out.w === 'number' && 'x' in at && !out.centered) { out.w = Math.min(out.w as number, 1000 - at.x); out.h = Math.min(out.h as number, h - at.y); }

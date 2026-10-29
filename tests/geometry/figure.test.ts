@@ -71,10 +71,39 @@ describe('Figure', () => {
   });
   it('fitBox handles points and lines without collapsing', () => {
     expect(fitBox({ x0: 5, y0: 5, x1: 5, y1: 5 })).toEqual({ s: 1, dx: 495, dy: 345 });
-    const h = fitBox({ x0: 0, y0: 100, x1: 100, y1: 100 }); // horizontal segment: width decides, capped
-    expect(h.s).toBe(4);
+    const h = fitBox({ x0: 0, y0: 100, x1: 100, y1: 100 }); // horizontal segment: width decides (no magnification cap)
+    expect(h.s).toBeCloseTo((1000 - 2 * FIT_MX) / 100);
     const w = fitBox({ x0: 0, y0: 0, x1: 2000, y1: 10 });
     expect(w.s).toBeCloseTo((1000 - 2 * FIT_MX) / 2000);
+  });
+});
+
+// Evidence E (opus-low-code D7): a fit sketch in small units (0–4.5) collapsed to a 4× sliver.
+describe('fit sketches fill their region', () => {
+  const area = (f: Figure, x0: number, y0: number, x1: number, y1: number) => {
+    const a = f.toLocal({ x: x0, y: y0 }), b = f.toLocal({ x: x1, y: y1 });
+    return (Math.abs(b.x - a.x) * Math.abs(b.y - a.y)) / (1000 * 700);
+  };
+  it('small units are not capped at 4×: a 0–4.5 figure fills the region', () => {
+    const f = new Figure(true);
+    f.define('A', P('0,0')); f.define('B', P('4,0')); f.define('C', P('0,-4'));
+    const a = f.toLocal({ x: 0, y: 0 }), b = f.toLocal({ x: 4, y: 0 });
+    expect(b.x - a.x).toBeGreaterThan(400);
+  });
+  it('a data figure (axes) with x 0–4 and y 1–4 scales each axis and fills ≥ 60% of the region', () => {
+    const f = new Figure(true);
+    f.define('P', P('0,1')); f.define('Q', P('4,4'));
+    f.markData();
+    expect(area(f, 0, 1, 4, 4)).toBeGreaterThanOrEqual(0.6);
+    const fit = f.freeze();
+    expect(fit.sx).not.toBeCloseTo(fit.sy!);
+    expect(f.scaleLen(4, 'x')).toBeCloseTo(f.toLocal({ x: 4, y: 1 }).x - f.toLocal({ x: 0, y: 1 }).x);
+  });
+  it('a geometric figure keeps one scale (angles kept)', () => {
+    const f = new Figure(true);
+    f.define('P', P('0,1')); f.define('Q', P('4,4'));
+    const fit = f.freeze();
+    expect(fit.sx ?? fit.s).toBe(fit.sy ?? fit.s);
   });
 });
 

@@ -6,10 +6,14 @@ import { isLiteral, MAX_ABS, type PtArg, type PtExpr } from '../script/pointExpr
 /** Room kept around a fitted figure for labels (region units). */
 export const FIT_MX = 80;
 export const FIT_MY = 70;
-/** A fitted figure is never blown up more than this (a tiny figure stays modest). */
-export const FIT_MAX_SCALE = 4;
 
-export type Fit = { s: number; dx: number; dy: number };
+/**
+ * World → region: x·sx + dx, y·sy + dy. A geometric figure has one uniform scale (sx = sy = s: angles
+ * and ratios are kept); a data figure (it has axes: x and y are different quantities) scales each axis
+ * to fill the region. No magnification cap: labels are screen px whatever the scale, so a figure drawn in
+ * small units (0–4) fills the region instead of collapsing to a sliver.
+ */
+export type Fit = { s: number; dx: number; dy: number; sx?: number; sy?: number };
 const IDENTITY: Fit = { s: 1, dx: 0, dy: 0 };
 export type Unresolved = { missing: string } | { degenerate: string };
 
@@ -30,6 +34,8 @@ export class Figure {
   private literals: Pt[] = [];
   private spans: { at: PtArg; offsets: Pt[] }[] = [];
   private fit: Fit | null;
+  /** A data figure (axes were drawn in it): independent x and y scales. */
+  private data = false;
   /** Points that landed outside the frozen frame and were clamped (eval metric). */
   outOfFrame = 0;
   constructor(readonly fitted: boolean, private marks: (id: string) => Pt | undefined = () => undefined) {
@@ -48,6 +54,8 @@ export class Figure {
   /** Records an element's world-size reach from its anchor (a box's far corner, a circle's radii), for the fit's extent. */
   noteSpan(at: PtArg, offsets: Pt[]): void { this.spans.push({ at, offsets }); }
   has(name: string): boolean { return this.defs.has(name); }
+  /** Marks this a data figure (it has axes): x and y scale independently when the fit freezes. */
+  markData(): void { this.data = true; }
 
   /** World coords of a point argument. */
   world(p: PtArg, seen = new Set<string>()): Pt | Unresolved {
@@ -108,7 +116,7 @@ export class Figure {
   /** Freezes the fit (idempotent). */
   freeze(): Fit {
     if (this.fit) return this.fit;
-    this.fit = fitBox(this.extent());
+    this.fit = fitBox(this.extent(), this.data);
     return this.fit;
   }
   frozen(): boolean { return this.fit != null; }
@@ -116,23 +124,32 @@ export class Figure {
   /** World → region coords (freezing the fit if needed), clamped to the region; counts clamps. */
   toLocal(p: Pt, h = REGION_H): Pt {
     const f = this.freeze();
-    const x = p.x * f.s + f.dx, y = p.y * f.s + f.dy;
+    const x = p.x * (f.sx ?? f.s) + f.dx, y = p.y * (f.sy ?? f.s) + f.dy;
     const cx = Math.min(REGION_W, Math.max(0, x)), cy = Math.min(h, Math.max(0, y));
     if (Math.abs(cx - x) > 1 || Math.abs(cy - y) > 1) this.outOfFrame++;
     return { x: cx, y: cy };
   }
-  /** A world length → region units (radii, axes sizes). */
-  scaleLen(n: number): number { return n * this.freeze().s; }
+  /** A world length → region units (radii, axes sizes): along x, along y, or (no axis) the smaller scale. */
+  scaleLen(n: number, axis?: 'x' | 'y'): number {
+    const f = this.freeze();
+    return n * (axis === 'x' ? f.sx ?? f.s : axis === 'y' ? f.sy ?? f.s : f.s);
+  }
 }
 
-/** The uniform fit of a world box into the region, centred, with label margins. */
-export function fitBox(b: { x0: number; y0: number; x1: number; y1: number } | null): Fit {
+/**
+ * The fit of a world box into the region, centred, with label margins: one uniform scale, or (`data`)
+ * each axis its own, so data whose x and y ranges differ fills the region. A flat extent (a horizontal
+ * segment) takes the other axis's scale; a single point is not scaled.
+ */
+export function fitBox(b: { x0: number; y0: number; x1: number; y1: number } | null, data = false): Fit {
   if (!b) return IDENTITY;
   const w = b.x1 - b.x0, h = b.y1 - b.y0;
-  const sx = w > 1e-6 ? (REGION_W - 2 * FIT_MX) / w : Infinity;
-  const sy = h > 1e-6 ? (REGION_H - 2 * FIT_MY) / h : Infinity;
-  const s = Number.isFinite(Math.min(sx, sy)) ? Math.min(sx, sy, FIT_MAX_SCALE) : 1; // a single point: no scaling
-  return { s, dx: REGION_W / 2 - s * (b.x0 + w / 2), dy: REGION_H / 2 - s * (b.y0 + h / 2) };
+  let sx = w > 1e-6 ? (REGION_W - 2 * FIT_MX) / w : Infinity;
+  let sy = h > 1e-6 ? (REGION_H - 2 * FIT_MY) / h : Infinity;
+  const s = Number.isFinite(Math.min(sx, sy)) ? Math.min(sx, sy) : 1; // a single point: no scaling
+  if (!data || !Number.isFinite(sx) || !Number.isFinite(sy)) { sx = s; sy = s; }
+  const out: Fit = { s, dx: REGION_W / 2 - sx * (b.x0 + w / 2), dy: REGION_H / 2 - sy * (b.y0 + h / 2) };
+  return sx !== s || sy !== s ? { ...out, sx, sy } : out;
 }
 
 const inRange = (p: Pt) => Number.isFinite(p.x) && Number.isFinite(p.y) && Math.abs(p.x) <= MAX_ABS && Math.abs(p.y) <= MAX_ABS;
