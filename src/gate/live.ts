@@ -261,6 +261,7 @@ export class LiveGate {
   private dropsInRow = 0;
   private cascade = false;
   private released2 = '';
+  private releasedAll = '';
   private t0: number;
   private queue = new Chan<PreflightUnit>();
   reqId: string | null = null;
@@ -286,6 +287,10 @@ export class LiveGate {
     if (carry) this.enqueue(this.splitter.push(carry));
   }
   setReq(reqId: string): void { this.reqId = reqId; }
+  /** Opus repairs take longer: more checked narration before repairs are allowed. */
+  setHeadroom(ms: number): void { this.d.headroomMs = ms; }
+  /** Everything released so far (opener and stage 2): what the student heard and saw. */
+  releasedText(): string { return this.releasedAll; }
 
   private flushOpener(force: boolean) {
     if (!this.openerBuf || (!force && openTag(this.openerBuf))) return;
@@ -352,6 +357,7 @@ export class LiveGate {
   private release(u: PreflightUnit, text: string, out: Out) {
     this.d.preflight.accept({ ...u, text });
     if (u.kind !== 'opener') this.released2 += text;
+    this.releasedAll += text;
     this.stats.released++;
     this.dropsInRow = 0;
     out.push(text);

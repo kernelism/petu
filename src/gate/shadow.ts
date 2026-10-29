@@ -31,20 +31,28 @@ function hiddenHost(widthPx: number): HTMLDivElement {
 
 /** The board, offscreen: sections from the live Desk's factory, no pans, no glides. */
 export class ShadowDesk implements DeskApi {
+  /** Every section on the board (they persist across answers), and this answer's ids. */
+  private all: { sec: DeskSection; spec: RegionSpec; claims: SceneClaim[] }[] = [];
   private secs = new Map<string, { sec: DeskSection; spec: RegionSpec; claims: SceneClaim[] }>();
   constructor(private host: HTMLDivElement, private live: () => DeskApi | null) {}
 
   async reset(): Promise<void> { /* the board persists, as the live one does */ }
-  clear(): void { this.secs.clear(); this.host.replaceChildren(); }
+  clear(): void { this.secs.clear(); this.all = []; this.host.replaceChildren(); }
+  /** A new answer: ids are freed, the sections stay (a scene tag with the same id continues its scene). */
+  forgetIds(): void { this.secs.clear(); }
 
   metrics() { return this.live()?.metrics?.() ?? { boardPx: 666, bodyPx: () => 14 }; }
 
   async addRegion(spec: RegionSpec): Promise<RegionInfo | string> {
     const prev = this.secs.get(spec.id);
     if (prev) return spec.scene && prev.spec.scene ? this.region(spec.id)! : 'duplicate region id';
+    const scene = spec.scene ? [...this.all].reverse().find((s) => s.spec.scene && s.spec.id === spec.id) : undefined;
+    if (scene) { this.secs.set(spec.id, scene); return this.region(spec.id)!; }
     const sec = createSection(spec);
     this.host.appendChild(sec.el);
-    this.secs.set(spec.id, { sec, spec, claims: [] });
+    const s = { sec, spec, claims: [] };
+    this.all.push(s);
+    this.secs.set(spec.id, s);
     return this.region(spec.id)!;
   }
 
@@ -196,9 +204,19 @@ export class ShadowStage implements ShadowBoard {
       this.director.registry.clear();
       this.director.figures.clear();
       this.desk.clear();
-      for (const a of [...this.seedActs, ...accepted]) this.director.prefetch(a);
-      for (const a of [...this.seedActs, ...accepted]) this.director.run(a, performance.now());
-      await Promise.race([this.director.idle(), new Promise((r) => setTimeout(r, 2500))]);
+      const settle = () => Promise.race([this.director.idle(), new Promise((r) => setTimeout(r, 2500))]);
+      if (this.seedActs.length) {
+        for (const a of this.seedActs) this.director.prefetch(a);
+        for (const a of this.seedActs) this.director.run(a, performance.now());
+        await settle();
+        // Earlier answers' ids are freed, as the live director's are at a new answer; their sections stay.
+        this.director.registry.clear();
+        this.director.figures.clear();
+        this.desk.forgetIds();
+      }
+      for (const a of accepted) this.director.prefetch(a);
+      for (const a of accepted) this.director.run(a, performance.now());
+      await settle();
     };
     const p = this.chain.then(run, run);
     this.chain = p.catch(() => {});

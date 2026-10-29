@@ -38,6 +38,10 @@ export type AgentAsk = {
   handlers: AskHandlers;
   /** The marks of the pages sent with this question, for the director's resolver. */
   onGrounding(g: Grounding): void;
+  /** The grounds themselves (the live gate checks numbers and names against the pages' text). */
+  onGrounds?(pages: PageGround[]): void;
+  /** The text the live gate released (what played): memory records it rather than the raw stream. */
+  released?(): string;
 };
 
 export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
@@ -142,12 +146,14 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
           return { ...r, context: { ...r.context, ...scout, ...(mem ? { memory: mem } : {}) } };
         },
         ask: (context) => askStream({ question: a.question, history: hist, context, ...(phase ? { phase } : {}) }, signal, handlers),
-        onGrounding: (pages) => a.onGrounding(groundingOf(pages)),
+        onGrounding: (pages) => { a.onGrounding(groundingOf(pages)); a.onGrounds?.(pages); },
       }, signal);
       try {
         for await (const c of stream) { script += c; yield c; }
       } finally {
-        if (script.trim()) memory.add(recordOf({ question: a.question, page: a.page, pages: taught, plan, script, ...(relation ? { relation } : {}), ...(story ? { storyboard: story } : {}), ...(signal.aborted ? { stopped: true } : {}) }));
+        // What played, not what was streamed: a unit the gate dropped was never said or drawn.
+        const said = a.released ? a.released() : script;
+        if (said.trim()) memory.add(recordOf({ question: a.question, page: a.page, pages: taught, plan, script: said, ...(relation ? { relation } : {}), ...(story ? { storyboard: story } : {}), ...(signal.aborted ? { stopped: true } : {}) }));
       }
     } finally {
       inFlight.current--;
