@@ -8,7 +8,7 @@
 // The gallery root is shared by every worktree of the repo: <main checkout>/.petu/gallery (override
 // with PETU_GALLERY_DIR), so a baseline made on main serves every branch.
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
@@ -66,17 +66,28 @@ async function startServer(): Promise<{ base: string; stop(): void }> {
   throw new Error('dev server did not come up');
 }
 
+/** Every npx cache dir that holds playwright-core (another machine's `npx playwright-core` lands under a different hash). */
+function npxDirs(): string[] {
+  const root = join(process.env.HOME ?? '', '.npm/_npx');
+  try { return readdirSync(root).map((d) => join(root, d, 'node_modules/')).filter((d) => existsSync(join(d, 'playwright-core'))); }
+  catch { return []; }
+}
+
 function playwright(): { chromium: any; webkit: any } {
   // playwright-core is looked up, not installed (as the eval's --webkit does); PLAYWRIGHT_DIR overrides.
-  const dir = process.env.PLAYWRIGHT_DIR ?? '/Users/arjuns/.npm/_npx/9833c18b2d85bc59/node_modules/';
-  try { return createRequire(dir)('playwright-core'); }
-  catch { throw new Error(`playwright-core not found under ${dir}: run \`npx playwright-core --version\` once or set PLAYWRIGHT_DIR`); }
+  const dirs = process.env.PLAYWRIGHT_DIR ? [process.env.PLAYWRIGHT_DIR] : ['/Users/arjuns/.npm/_npx/9833c18b2d85bc59/node_modules/', ...npxDirs()];
+  for (const dir of dirs) { try { return createRequire(dir)('playwright-core'); } catch { /* next */ } }
+  throw new Error(`playwright-core not found under ${dirs.join(', ')}: run \`npx playwright-core --version\` once or set PLAYWRIGHT_DIR`);
 }
+
+const MAC_CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 async function launch(name: string): Promise<any> {
   const pw = playwright();
   if (name === 'webkit') return pw.webkit.launch();
-  return pw.chromium.launch({ executablePath: process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', args: ['--hide-scrollbars'] });
+  // System Chrome (CHROME overrides); without one (Linux), Playwright's own (`npx playwright-core install chromium`).
+  const exe = process.env.CHROME ?? (existsSync(MAC_CHROME) ? MAC_CHROME : undefined);
+  return pw.chromium.launch({ ...(exe ? { executablePath: exe } : {}), args: ['--hide-scrollbars'] });
 }
 
 /** [answer playing, worker messages so far, finite CSS transitions/animations still running (real time)]. */
