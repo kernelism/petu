@@ -711,15 +711,22 @@ export default function App() {
     if (setting !== 'off') {
       shadow = new ShadowStage({ desk: () => deskRef.current, viewer: () => viewerRef.current, settings: getSettings, grounding: () => groundingRef.current ?? NO_MARKS });
       if (boardScripts.current.length) void shadow.seed(boardScripts.current);
-      // Layout checks read the shadow board's geometry, whose fidelity is not measured yet: they note
-      // (&gatecheck=all makes them fail, as the design's severity has it).
-      const preflight = new GatePreflight({ board: shadow, pages: () => pageTexts, question: q, grounding: () => groundingRef.current, ...(GATE_CHECK_ALL ? {} : { noteChecks: new Set(['layout']) }) });
+      // verdict.ts SEVERITY: `default` fails only skipped/unparsable actions, unbound numbers, erasure and
+      // labelled references to nothing; &gatecheck=all is the design's table.
+      const preflight = new GatePreflight({ board: shadow, pages: () => pageTexts, question: q, grounding: () => groundingRef.current, severity: GATE_CHECK_ALL ? 'design' : 'default' });
       gate = new LiveGate({
         clock: { now: () => performance.now(), endsAt: () => clock.endsAt() }, preflight,
         repair: repairFor(),
         faults: GATE_FAULTS, setting: setting === 'shadow' ? 'shadow' : 'live', onEvent: gateEvent,
         headroomMs: HEADROOM_MS,
       });
+    }
+    // Warm the pages the first units point at (the visible page; a dev script's own pages): the gate
+    // vouches for page pointing from their text, so the first word never waits on loading them.
+    if (gate) {
+      const v = viewerRef.current;
+      const want = new Set<number>([page, ...(!toAgent && DEV_SCRIPT ? [...DEV_SCRIPT.script.matchAll(/\bp=(\d+)/g)].map((m) => Number(m[1])) : [])]);
+      if (v) for (const p of want) if (p >= 1 && p <= v.numPages()) void v.textRuns(p).then((rs) => { if (!pageTexts.has(p)) pageTexts.set(p, rs.map((r) => r.text).join(' ')); }).catch(() => {});
     }
     const handlers: AskHandlers = {
       onEvent: (e) => { log.event(e); run.rec?.event(e); },

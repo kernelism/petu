@@ -11,7 +11,7 @@
 import { BeatSplitter, BEAT_DEFAULTS, NEW_INK, tokenize, units, type Beat, type Tag, type Word } from './segment';
 import { MAX_TAG_CHARS, ScriptParser } from '../script/parser';
 import { GateState } from './engine';
-import { checkBeat, namedScene } from './verdict';
+import { checkBeat, namedScene, withSeverity, type Severity } from './verdict';
 import { textNumbers } from './numbers';
 import type { El, Rect } from './layout';
 import type { Grounding } from '../geometry/resolve';
@@ -53,6 +53,8 @@ export interface ShadowBoard {
   apply(actions: RawAction[]): Promise<{ skipped: Map<RawAction, string>; added?: Map<RawAction, El[]> }> | { skipped: Map<RawAction, string>; added?: Map<RawAction, El[]> };
   /** Back to exactly the accepted actions (after a failed or unreleased check). */
   rebuild(accepted: RawAction[]): Promise<void> | void;
+  /** Skips the board reported after their check returned (drained by the preflight into notes). */
+  drift?: string[];
   /** The board's elements per section (the repair note's ON THE BOARD NOW). */
   scene?(): { section: string; items: { id: string; kind: string; label?: string }[] }[];
 }
@@ -65,8 +67,8 @@ export type PreflightEnv = {
   grounding?: () => Grounding | undefined;
   /** A page's text lines in target space (annotations covering page text). */
   lines?: (page: number) => Rect[] | undefined;
-  /** Checks that only note here (a stricter or looser gate; default: the design's severity in verdict.ts). */
-  noteChecks?: Set<string>;
+  /** Which checks fail a unit (verdict.ts SEVERITY): `default`, or the design's (`&gatecheck=all`). */
+  severity?: Severity;
   /** Offline: a recorded board's skip reason for a tag (by its body), standing in for the shadow board. */
   recorded?: (body: string) => string | undefined;
 };
@@ -80,6 +82,23 @@ const STRIPPABLE = (a: RawAction | null): boolean => {
   if (a.kind === 'circle' || a.kind === 'box') return x.page != null && x.region == null;
   return false;
 };
+
+const squash = (t: string) => t.toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}]+/gu, '');
+
+/**
+ * Page pointing the gate can vouch for without the shadow board: a scroll, or a highlight / underline /
+ * circle / box on a page whose quote is in the page's text, whose mark is in the grounding, or which
+ * gives coordinates. Anything else (or a quote not found) takes the full check.
+ */
+export function pagePointingOk(a: RawAction, pageText: (p: number) => string | undefined, g: Grounding | undefined): boolean {
+  const x = a as { kind: string; page?: number; region?: string; quote?: string; mark?: string; at?: unknown };
+  if (x.region != null) return false;
+  if (a.kind === 'scroll') return (x.page ?? 0) >= 1;
+  if (!['highlight', 'underline', 'circle', 'box'].includes(a.kind) || x.page == null) return false;
+  if (x.mark) return !!g?.mark(x.page, x.mark.replace(/\.[ab]$/, ''));
+  if (x.quote != null) { const t = pageText(x.page); const q = squash(x.quote); return !!t && q.length > 0 && squash(t).includes(q); }
+  return x.at != null;
+}
 
 /** One unit as a beat (all of its sentences). */
 function beatOf(text: string, toks = tokenize(text)): Beat {
@@ -139,9 +158,15 @@ export class GatePreflight implements Preflight {
       t.action = primary;
       if (!as.length) skipped.set(t, 'not parsed');
     }
-    // (2) The shadow board.
+    // (2) The shadow board. Opener and sentence units that only point at the page are vouched for from
+    // the page's text and marks (first word: no waiting on a build against text runs still loading);
+    // the shadow still applies them, off the critical path.
     const unitActs = tags.flatMap((t) => tagActs.get(t) ?? []);
-    const shadow = board ? await board.apply(unitActs) : { skipped: new Map<RawAction, string>() };
+    const pt = this.env.pages?.();
+    const fast = !!board && u.kind !== 'beat' && !u.fault && unitActs.length > 0 && unitActs.every((a) => pagePointingOk(a, (p) => pt?.get(p), this.env.grounding?.()));
+    let shadow: { skipped: Map<RawAction, string>; added?: Map<RawAction, El[]> };
+    if (fast) { shadow = { skipped: new Map() }; void board!.apply(unitActs); }
+    else shadow = board ? await board.apply(unitActs) : { skipped: new Map<RawAction, string>() };
     if (board && unitActs.length) this.dirty = true;
     for (const t of tags) for (const a of tagActs.get(t) ?? []) { const r = shadow.skipped.get(a); if (r && !skipped.has(t)) skipped.set(t, r); }
     if (this.env.recorded) for (const t of tags) { const r = this.env.recorded(t.body); if (r && !skipped.has(t)) skipped.set(t, r); }
@@ -162,15 +187,15 @@ export class GatePreflight implements Preflight {
     const added = tags.flatMap((t) => (skipped.has(t) ? [] : (tagActs.get(t) ?? []).flatMap((a) => shadow.added?.get(a) ?? [])));
     const kept = tags.flatMap((t) => (skipped.has(t) ? [] : tagActs.get(t) ?? []));
     const pageWords = new Set([...pageText.values()].flatMap((t) => t.split(/[^\p{L}\p{N}′']+/u)).filter(Boolean));
-    const v = checkBeat({
+    const v0 = checkBeat({
       beat, k, state, skipped, added, drawn: this.drawn, pageVals,
       consts: [...this.consts, ...unitConsts.map((c) => ({ ...c, beat: k }))],
       lines: this.env.lines, scene: namedScene([...this.beats.flat(), ...kept], pageWords),
     });
+    const v = withSeverity(v0, this.env.severity ?? 'default');
+    if (board?.drift?.length) v.notes.push(...board.drift.splice(0));
     this.last = { u, acts: kept, added, consts: unitConsts };
     const scene = board?.scene?.();
-    const nc = this.env.noteChecks;
-    if (nc) { v.notes.push(...v.flags.filter((f) => nc.has(f.check)).map((f) => `${f.check}: ${f.detail}`)); v.flags = v.flags.filter((f) => !nc.has(f.check)); }
     return {
       flags: v.flags.map((f) => ({ check: f.check, detail: f.detail })),
       notes: v.notes,

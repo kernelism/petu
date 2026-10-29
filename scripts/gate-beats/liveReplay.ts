@@ -58,14 +58,14 @@ export type ReplayResult = {
 const hasWord = (s: string) => tokenize(s).some((t) => t.kind === 'word');
 
 /** Replays one recorded answer through the gate. */
-export async function replayGate(rec: Recording, o: { gatefail?: string; seed?: number; setting?: 'live' | 'shadow'; pages?: Map<number, string>; noteChecks?: Set<string> } = {}): Promise<ReplayResult> {
+export async function replayGate(rec: Recording, o: { gatefail?: string; seed?: number; setting?: 'live' | 'shadow'; pages?: Map<number, string>; severity?: 'default' | 'design' } = {}): Promise<ReplayResult> {
   const time = new FakeTime();
   const clock = new PacedClock(() => 170, time.now);
   // The recorded board's skips, by tag body (the director's timings, matched to tags in order).
   const skips = liveSkips(rec.script, rec.timings);
   const skippedBodies = new Set<string>();
   for (const t of tokenize(rec.script)) if (t.kind === 'tag' && skips.has(t.start)) skippedBodies.add((t as Tag).body);
-  const pre = new GatePreflight({ recorded: (b) => (skippedBodies.has(b) ? 'recorded skip' : undefined), pages: o.pages ? () => o.pages! : undefined, question: rec.question, ...(o.noteChecks ? { noteChecks: o.noteChecks } : {}) });
+  const pre = new GatePreflight({ recorded: (b) => (skippedBodies.has(b) ? 'recorded skip' : undefined), pages: o.pages ? () => o.pages! : undefined, question: rec.question, severity: o.severity ?? 'default' });
   const checkMs: number[] = [];
   const timed: Preflight = {
     async check(u) { const t0 = performance.now(); const r = await pre.check(u); checkMs.push(performance.now() - t0); return r; },
@@ -152,7 +152,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const rows: ReplayResult[] = [];
   for (const run of runs) for (const rec of loadRun(run, runsDir())) {
     const { text } = await g.pages(rec);
-    rows.push(await replayGate(rec, { gatefail: opt('--gatefail'), pages: text, ...(opt('--note') ? { noteChecks: new Set(opt('--note')!.split(',')) } : {}) }));
+    rows.push(await replayGate(rec, { gatefail: opt('--gatefail'), pages: text, severity: argv.includes('--design') ? 'design' : 'default' }));
   }
   await g.close();
   const sum = (f: (r: ReplayResult) => number) => rows.reduce((n, r) => n + f(r), 0);

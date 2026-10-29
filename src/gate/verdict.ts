@@ -7,7 +7,29 @@ import type { GateState } from './engine';
 import type { Beat, Tag } from './segment';
 import type { RawAction } from '../script/types';
 
-/** Layout kinds that only note until their precision is measured (design §3 SEVERITY). */
+/**
+ * SEVERITY: which checks fail a unit (it is not released) and which only note (logged, in ?debug and
+ * the eval). `default` fails only what is measured or mechanical: a skipped or unparsable action (tag),
+ * a number said with no engine value (unbound), erasing released ink (erasure), a labelled reference
+ * to nothing drawn (named). Deixis, the number family, geometry and every layout check note until
+ * their precision on the recorded corpus is measured (gate-beats: 19% false flags on clean beats).
+ * `design` is the design's table (2026-10-29 §3; `&gatecheck=all`).
+ */
+export type Severity = 'default' | 'design';
+export const SEVERITY: Record<Severity, Record<Flag['check'], 'fail' | 'note'>> = {
+  default: { tag: 'fail', unbound: 'fail', erasure: 'fail', named: 'fail', deixis: 'note', number: 'note', threshold: 'note', direction: 'note', geometry: 'note', layout: 'note', order: 'note' },
+  design: { tag: 'fail', unbound: 'fail', erasure: 'fail', named: 'fail', deixis: 'fail', number: 'fail', threshold: 'fail', direction: 'fail', geometry: 'fail', layout: 'fail', order: 'note' },
+};
+
+/** A verdict under a severity: flags whose check only notes move to the notes. */
+export function withSeverity(v: Verdict, sev: Severity = 'default'): Verdict {
+  const t = SEVERITY[sev];
+  const flags = v.flags.filter((f) => t[f.check] === 'fail');
+  const notes = [...v.notes, ...v.flags.filter((f) => t[f.check] !== 'fail').map((f) => `${f.check}: ${f.detail}`)];
+  return { ok: flags.length === 0, flags, notes };
+}
+
+/** Layout kinds that only note even under the design severity (design §3 SEVERITY). */
 export const NOTE_LAYOUT = new Set<LayoutFlag['kind']>(['small-text', 'bar-labels', 'label-far']);
 /** Checks that only note (order: a constant stated a beat early). */
 export const NOTE_CHECKS = new Set<Flag['check']>(['order']);

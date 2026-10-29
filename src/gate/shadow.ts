@@ -4,6 +4,7 @@
 // released. Its skip reasons are the live board's skip reasons (shadow fidelity is audited by
 // liveSkipAfterPass). Page ink draws into hidden page layers; text runs come from the live viewer.
 import { Director, type ActionTiming } from '../playback/director';
+import { kitStore } from '../desk/kit/kit';
 import { createSection, sceneSpaceOf, type DeskSection } from '../desk/Desk';
 import { REGION_H, REGION_W, type RawAction } from '../script/types';
 import { ScriptParser } from '../script/parser';
@@ -18,6 +19,10 @@ import type { ShadowBoard } from './live';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const WHOLE = { x: 0, y: 0, w: REGION_W, h: REGION_H };
+/** One action's bound in the shadow (a build that hangs is cut off, not waited on). */
+const PER_ACTION_MS = 60;
+/** A rebuild replays actions that already passed: it only keeps their order. */
+const REBUILD_ACTION_MS = 10;
 
 /** A hidden host as wide as the live board: laid out (so text measures), never seen. */
 function hiddenHost(widthPx: number): HTMLDivElement {
@@ -152,14 +157,41 @@ export class ShadowStage implements ShadowBoard {
       onScrolledTo: () => {}, grounding: o.grounding, instant: true,
       onTiming: (t) => this.onTiming(t),
     });
+    this.noWaits();
   }
 
+  /**
+   * The shadow applies a unit's actions one after another, each settled before the next: a reference
+   * to something not drawn yet will never be drawn, so it resolves at once (no REF_WAIT_MS on the
+   * critical path). Re-installed after every registry clear (the kit store is recreated).
+   */
+  private noWaits() {
+    const reg = this.director.registry;
+    reg.wait = (id: string) => Promise.resolve(reg.get(id));
+    const store = kitStore(reg);
+    store.wait = (id: string) => Promise.resolve(store.get(id));
+  }
+
+  /** Runs actions one by one, each to its end (bounded): the shadow never waits on the live board's time. */
+  private async runAll(actions: RawAction[], boundMs = PER_ACTION_MS) {
+    for (const a of actions) this.director.prefetch(a);
+    for (const a of actions) {
+      this.director.run(a, performance.now());
+      await Promise.race([this.director.idle(), new Promise((r) => setTimeout(r, boundMs))]);
+    }
+    this.director.registry.settle();
+  }
+
+  /** Skips reported after their unit's check returned (an action past PER_ACTION_MS): shadow drift. */
+  readonly drift: string[] = [];
+  private current = new Set<RawAction>();
   private onTiming(t: ActionTiming) {
     if (t.endedAt == null || !t.skipped) return;
     const a = t.action as unknown as RawAction;
     // Layout actions are resolved copies: matched to their raw action by kind and id/page.
-    const raw = this.pendingLayout.find((r) => r.kind === a.kind && ((r as { id?: string }).id ?? (r as { page?: number }).page) === ((a as { id?: string }).id ?? (a as { page?: number }).page));
-    this.skips.set(raw ?? a, t.skipped);
+    const raw = this.pendingLayout.find((r) => r.kind === a.kind && ((r as { id?: string }).id ?? (r as { page?: number }).page) === ((a as { id?: string }).id ?? (a as { page?: number }).page)) ?? a;
+    if (!this.current.has(raw)) { this.drift.push(`shadow drift: ${a.kind} skipped after its check (${t.skipped})`); return; }
+    this.skips.set(raw, t.skipped);
   }
 
   /** The board as earlier answers left it (they persist): their released scripts. */
@@ -175,15 +207,15 @@ export class ShadowStage implements ShadowBoard {
 
   apply(actions: RawAction[]): Promise<{ skipped: Map<RawAction, string>; added: Map<RawAction, El[]> }> {
     const run = async () => {
-      const reg = this.director.registry as unknown as { byId: Map<string, ElementEntry> };
-      const before = new Set(reg.byId.keys());
+      const reg = this.director.registry;
+      const before = new Set(reg.entries().map((e) => e.id));
       this.skips = new Map();
       this.pendingLayout = actions.filter((a) => a.kind === 'scroll' || a.kind === 'sketch' || a.kind === 'clear');
-      for (const a of actions) this.director.prefetch(a);
-      for (const a of actions) this.director.run(a, performance.now());
-      await Promise.race([this.director.idle(), new Promise((r) => setTimeout(r, 2500))]);
+      this.current = new Set(actions);
+      await this.runAll(actions);
+      this.current = new Set();
       const added = new Map<RawAction, El[]>();
-      const fresh = [...reg.byId.values()].filter((e) => !before.has(e.id));
+      const fresh = reg.entries().filter((e) => !before.has(e.id));
       const used = new Set<ElementEntry>();
       for (const a of actions) {
         if (this.skips.has(a)) continue;
@@ -207,19 +239,17 @@ export class ShadowStage implements ShadowBoard {
       this.director.registry.clear();
       this.director.figures.clear();
       this.desk.clear();
-      const settle = () => Promise.race([this.director.idle(), new Promise((r) => setTimeout(r, 2500))]);
+      this.noWaits();
+      this.current = new Set([...this.seedActs, ...accepted]); // a rebuild's late skips are not drift
       if (this.seedActs.length) {
-        for (const a of this.seedActs) this.director.prefetch(a);
-        for (const a of this.seedActs) this.director.run(a, performance.now());
-        await settle();
+        await this.runAll(this.seedActs, REBUILD_ACTION_MS);
         // Earlier answers' ids are freed, as the live director's are at a new answer; their sections stay.
         this.director.registry.clear();
         this.director.figures.clear();
         this.desk.forgetIds();
+        this.noWaits();
       }
-      for (const a of accepted) this.director.prefetch(a);
-      for (const a of accepted) this.director.run(a, performance.now());
-      await settle();
+      await this.runAll(accepted, REBUILD_ACTION_MS);
     };
     const p = this.chain.then(run, run);
     this.chain = p.catch(() => {});
@@ -227,9 +257,8 @@ export class ShadowStage implements ShadowBoard {
   }
 
   scene(): { section: string; items: { id: string; kind: string; label?: string }[] }[] {
-    const reg = this.director.registry as unknown as { byId: Map<string, ElementEntry> };
     const out = new Map<string, { id: string; kind: string }[]>();
-    for (const e of reg.byId.values()) {
+    for (const e of this.director.registry.entries()) {
       const s = e.target.region;
       if (s == null) continue;
       if (!out.has(s)) out.set(s, []);
