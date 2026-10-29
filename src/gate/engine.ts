@@ -73,7 +73,7 @@ export class GateState {
    * `grounding`: page marks and calibrated charts. Without one (the live parser), charts come from the
    * latest grounding the app built (charts.ts latestCharts), so a chart plot's readouts are said at parse time.
    */
-  constructor(private grounding: Grounding = latestCharts) { this.figures = new Figures(grounding); }
+  constructor(private grounding: Grounding = latestCharts) { this.figures = new Figures(grounding, () => this.consts); }
 
   addValues(vs: number[], source: ValueSource, of: string, beat: number): void {
     for (const v of vs) if (Number.isFinite(v)) this.values.push({ v, source, of, beat });
@@ -96,7 +96,13 @@ export class GateState {
           const v = f ? f({}) : NaN;
           // A constant written as a number is the model's own literal; one written as a formula (T=2*v/g) is computed.
           const lit = /^[-−+]?\d*\.?\d+$/.test(src.trim());
-          if (Number.isFinite(v)) { this.consts[k.toLowerCase()] = v; this.declared.set(k.toLowerCase(), beat); this.addValues([v], lit ? 'const' : 'computed', k, beat); }
+          if (Number.isFinite(v)) {
+            const key = k.toLowerCase();
+            this.consts[key] = v; this.declared.set(key, beat); this.addValues([v], lit ? 'const' : 'computed', k, beat);
+            // A formula constant follows the constants it reads when they change (as on the board: KitStore.setConst).
+            this.derived = this.derived.filter(([d]) => d !== key);
+            if (!lit) this.derived.push([key, src]);
+          }
         }
         return;
       }
@@ -118,6 +124,7 @@ export class GateState {
       }
       case 'limit':
       case 'beforeafter': return this.move(a, beat);
+      case 'tween': return this.tween(a, beat);
     }
     if (a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table' || a.kind === 'calc' || a.kind === 'scatter' || a.kind === 'fit' || a.kind === 'shares' || a.kind === 'tokens') return this.kit(a, beat);
     if ('ref' in a) return this.verb(a, beat);
@@ -356,6 +363,30 @@ export class GateState {
     return { ...rest, id, right: a.ref, op: '', caption: text, with: { ...(b.with ?? {}), [key]: v } } as unknown as RawAction;
   }
 
+  /** Formula constants, in definition order (lowercase name, source): they follow the constants they read. */
+  private derived: [string, string][] = [];
+  private setConst(key: string, v: number): void {
+    this.consts[key] = v;
+    this.derived = this.derived.filter(([d]) => d !== key);
+    C.rederive(this.consts, this.derived, key);
+  }
+  /** tween: each constant ends on its target (a yoyo ends where it started); everything drawn from them follows. */
+  private tween(a: Extract<RawAction, { kind: 'tween' }>, beat: number): string | undefined {
+    const vals: [string, number][] = [];
+    for (const [k, src] of a.sets) {
+      const key = k.toLowerCase();
+      if (!(key in this.consts)) return `no constant ${k}`;
+      const f = formula(src, [], this.consts);
+      const v = f ? f({}) : NaN;
+      if (!Number.isFinite(v)) return `bad value ${src}`;
+      vals.push([key, a.yoyo ? this.consts[key] : v]);
+    }
+    for (const [key, v] of vals) { this.setConst(key, v); this.addValues([v], 'const', key, beat); }
+    this.recompute(beat);
+    for (const [id, f] of this.finds) { const r = this.reading(id); if (typeof r !== 'string') this.addReading(f, r, beat); }
+    return;
+  }
+
   /** limit / beforeafter: the constant takes its new value; every plot, readout and computed block follows. */
   private move(a: Extract<MoveAction, { kind: 'limit' | 'beforeafter' }>, beat: number): string | undefined {
     const [k, src] = a.set;
@@ -365,7 +396,7 @@ export class GateState {
     const f = formula(src, [], this.consts);
     const v = f ? f({}) : NaN;
     if (!Number.isFinite(v)) return `bad value ${src}`;
-    this.consts[key] = v;
+    this.setConst(key, v);
     this.addValues([v], 'const', k, beat);
     this.recompute(beat);
     for (const [id, f] of this.finds) { const r = this.reading(id); if (typeof r !== 'string') this.addReading(f, r, beat); }

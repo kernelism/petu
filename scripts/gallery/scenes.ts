@@ -34,6 +34,11 @@ export const SCENES: Scene[] = [
   { name: 'scene-bio', query: 'script=scene-bio', moments: [mid(20000), END] },
   // Demonstration moves and bound numbers: beforeafter (market), contrast (colony), limit (drag).
   { name: 'moves', query: 'script=moves', moments: [mid(12000), mid(26000), END] },
+  // Live geometry: figures that move as a {{tween}} changes their constants (end + two moments mid-motion).
+  { name: 'moving-tunnel', query: 'script=moving-tunnel', moments: [mid(24000), mid(28000), mid(32000), mid(36000), END] },
+  { name: 'moving-skater', query: 'script=moving-skater', moments: [mid(20000), mid(23000), mid(26000), mid(29000), END] },
+  { name: 'moving-market', query: 'script=moving-market', moments: [mid(16000), mid(19000), mid(22000), END] },
+  { name: 'moving-pendulum', query: 'script=moving-pendulum', moments: [mid(10000), mid(12000), mid(14000), END] },
   // The slide as canvas: on the chart (data units), the enzyme lifted and acted out, notes in place.
   { name: 'canvas', query: 'script=canvas', moments: [mid(16000), mid(23500), mid(42000), mid(62000), END] },
   // The live gate: beat 3 names a point nothing carries. Live: it is dropped (no words, no ink). With an

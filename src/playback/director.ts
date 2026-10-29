@@ -8,6 +8,7 @@ import { fadeOut } from '../ink/agent/marks';
 import type { Settings } from '../settings/settings';
 import { Registry } from '../desk/registry';
 import { kitStore } from '../desk/kit/kit';
+import { liveGeo } from '../desk/live';
 import { regionRuns } from '../desk/runs';
 import { buildElement } from '../desk/elements';
 import { preloadMath } from '../desk/math';
@@ -121,7 +122,7 @@ export class Director {
   readonly figures: Figures;
   constructor(private d: Deps) {
     const g = () => this.d.grounding?.() ?? NO_GROUNDING;
-    this.figures = new Figures({ mark: (p, id) => g().mark(p, id), aspect: (p) => g().aspect?.(p), obstacles: (p) => g().obstacles?.(p) ?? [] });
+    this.figures = new Figures({ mark: (p, id) => g().mark(p, id), aspect: (p) => g().aspect?.(p), obstacles: (p) => g().obstacles?.(p) ?? [] }, () => kitStore(this.registry).consts);
   }
   private desk(): DeskApi | null { return this.d.desk(); }
 
@@ -498,7 +499,14 @@ export class Director {
     const a = this.figures.resolve(raw);
     if (a == null) return 'nothing to draw';
     if (typeof a === 'string') return a;
-    return this.buildPlain(a as InkAction, env, signal);
+    if (!this.figures.isLive(raw)) return this.buildPlain(a as InkAction, env, signal);
+    // Live geometry: drawn as usual, then it follows the constants (src/desk/live.ts). It needs an id to be found each frame.
+    const live = liveGeo(this.registry);
+    const id = (a as { id?: string }).id ?? live.anonId();
+    const plan = await this.buildPlain({ ...a, id } as InkAction, env, signal);
+    if (typeof plan === 'string') return plan;
+    const resolve = () => { const r = this.figures.resolve(raw); return r && typeof r === 'object' ? ({ ...r, id } as Action) : r; };
+    return { ...plan, draw: async (sig, k) => { const r = await plan.draw(sig, k); if (!r) await live.add(id, raw, resolve, env); return r; } };
   }
 
   /**

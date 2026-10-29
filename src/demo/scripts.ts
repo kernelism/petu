@@ -214,6 +214,89 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number;
       `{{limit of=v k=0.05 dur=4 show=end}} Let the drag fade toward nothing, and the curve straightens into free fall: {{val id=end}} after six seconds.`,
   },
   /**
+   * Live geometry (src/desk/live.ts): a figure whose points are formulas over constants moves when a
+   * {{tween}} changes them, every element built from them following each frame. A tunnel through the
+   * Earth: the ball in it keeps pace with the shadow of a satellite on a grazing orbit (foot() of the
+   * satellite on the tunnel), so the half trip is half an orbit: a readout computes pi*sqrt(R/g).
+   */
+  'moving-tunnel': {
+    src: '/fixtures/mechanics.pdf',
+    question: 'How long does a fall through the Earth take?',
+    script:
+      `{{scroll p=1}} Drop a ball into a tunnel through the Earth and it falls, races through the centre, and climbs to the far side. ` +
+      `{{sketch id=t near=p1 fit}} Picture {{const R=260 th=0 Re=6371000 g=9.8 T=pi*sqrt(Re/g)/60}} the Earth ` +
+      `{{let on=t O=0,0 A=-R,0 B=R,0 S=R*cos(th),-R*sin(th) F=foot(S,A,B)}} in section, ` +
+      `here {{circle on=t at=O r=R}}, with {{line on=t from=A to=B weight=secondary}} a tunnel straight through {{point on=t at=O "centre" dir=s}} its centre. ` +
+      `{{point on=t at=F "ball" dir=s em}} Inside, the pull toward the centre grows with the distance from it, ` +
+      `the same pull that keeps a satellite circling just above the ground. ` +
+      `{{point on=t at=S "satellite" dir=ne}} So start a satellite at the tunnel's mouth, beside the ball, ` +
+      `{{line on=t from=S to=F dash}} and watch its shadow on the tunnel. ` +
+      `{{tween th=7*pi/3 dur=14 ease=linear}} Let both go. The satellite sweeps round, its shadow slides along the tunnel, ` +
+      `and the ball stays exactly on the shadow, all the way across, and all the way back. ` +
+      `{{write on=t at=-260,330 "half trip:" value=T fmt=1 unit=min}} So the trip to the far side is half an orbit: ` +
+      `{{val id=T fmt=1}} minutes, the same for any straight tunnel.`,
+  },
+  /**
+   * Live geometry: a spinning skater seen from above. One constant (t) drives everything: the arms'
+   * reach r(t) pulls in, the moment of inertia I and the spin rate w = L/I follow (formula constants
+   * follow the constants they read), the arm angle is the integral of the spin rate, and the bars
+   * (angular momentum, spin energy) are computed from the same constants.
+   */
+  'moving-skater': {
+    src: '/fixtures/mechanics.pdf',
+    question: 'Why does a skater spin faster when she pulls her arms in?',
+    script:
+      `{{scroll p=1}} She spins faster because her spin, the angular momentum, cannot change, while pulling in makes her easier to turn. ` +
+      `{{sketch id=k near=p1 fit}} Seen {{const t=0 m=2 Ib=3 L=10 Sc=150 r=1.4-0.9/(1+exp(-2.5*(t-3))) I=Ib+2*m*r^2 w=L/I KE=L*w/2 KE0=L^2/(2*(Ib+2*m*1.4^2)) ph=integral(L/(Ib+2*m*(1.4-0.9/(1+exp(-2.5*(u-3))))^2),u,0,t)}} ` +
+      `from {{let on=k O=0,0 H1=Sc*r*cos(ph),Sc*r*sin(ph) H2=-Sc*r*cos(ph),-Sc*r*sin(ph)}} above, ` +
+      `{{circle on=k at=O r=40}} here is her body, ` +
+      `{{circle on=k at=O r=Sc*1.4 dash}} and the reach of her arms held out. ` +
+      `{{line on=k from=O to=H1 weight=secondary}} Her arms {{line on=k from=O to=H2 weight=secondary}} stretch out, ` +
+      `{{point on=k at=H1 "hand" dir=e trace}} with her hands {{point on=k at=H2}} far from the axis. ` +
+      `{{write on=k at=-210,-265 "spin:" value=w fmt=1 unit=rad/s em}} She turns slowly. ` +
+      `{{sketch id=q near=p1}} Her {{bars on=q id=am size=1x2 fn="L" labels=start,now "angular momentum"}} angular momentum is fixed; ` +
+      `{{bars on=q id=ke size=1x2 fn="if(c==1,KE0,KE)" labels=start,now right=am op=none "spin energy"}} her spin energy is not. ` +
+      `{{tween t=6 dur=7 ease=linear}} Now she pulls her hands in. Each hand comes closer to the axis, so she is easier to turn, ` +
+      `and with the same angular momentum the spin rate climbs: her hands trace a tightening spiral as they speed up. ` +
+      `The angular momentum bar stays level; the energy bar grows, paid for by the work her arms do pulling in. ` +
+      `She ends spinning at {{val id=w fmt=1}} radians a second.`,
+  },
+  /**
+   * Live geometry outside physics: a market whose supply line shifts with a tax. The equilibrium is a
+   * meet() of the two lines, so it glides down the demand line (leaving a trace) while the old supply
+   * stays as a faint ghost; the price readout is a formula constant that follows the tax.
+   */
+  'moving-market': {
+    src: '/fixtures/econ.pdf',
+    question: 'Who pays a tax on sellers?',
+    script:
+      `{{scroll p=1}} A tax on sellers is shared: the price buyers pay rises, but by less than the tax. ` +
+      `{{sketch id=e near=p1 fit}} Picture {{const tax=0 q=(10-tax)/0.3 p=12-q/5}} the market ` +
+      `{{let on=e O=0,0 X=520,0 Y=0,-460 D1=0,-420 D2=500,-70 S1=0,-35*(2+tax) S2=500,-35*(7+tax) E=meet(D1,D2,S1,S2)}} on ` +
+      `{{arrow on=e from=O to=X weight=secondary}} quantity {{label on=e at=440,30 "quantity"}} and ` +
+      `{{arrow on=e from=O to=Y weight=secondary}} price {{label on=e at=12,-470 "price"}} axes. ` +
+      `{{line on=e from=D1 to=D2}} Buyers {{label on=e at=along(D1,D2,1.02) "demand"}} want less as the price rises; ` +
+      `{{line on=e from=0,-70 to=500,-245 weight=faint dash}} sellers {{line on=e from=S1 to=S2 id=supply}} offer {{label on=e at=along(S1,S2,1.02) "supply"}} more. ` +
+      `{{point on=e at=E "E" dir=ne trace em}} They meet here, ` +
+      `{{line on=e from=E to=foot(E,O,Y) dash}} at {{line on=e from=E to=foot(E,O,X) dash}} one price and one quantity: ` +
+      `{{write on=e at=40,90 "buyers pay:" value=p fmt=2}} buyers pay {{val id=p fmt=2}}. ` +
+      `{{tween tax=3 dur=6}} Now tax sellers {{val id=tax}} a unit. Their line lifts by the tax, the old one stays as a ghost, ` +
+      `and the meeting point slides up the demand line, ` +
+      `ending where buyers pay {{val id=p fmt=2}}: two thirds of the tax, because demand is the steeper line; sellers absorb the rest.`,
+  },
+  /** Live geometry: a pendulum swinging (a yoyo tween is a true oscillation), its bob tracing its arc. */
+  'moving-pendulum': {
+    src: '/fixtures/mechanics.pdf',
+    question: 'How does a pendulum swing?',
+    script:
+      `{{scroll p=1}} A pendulum trades height for speed and back, every swing. ` +
+      `{{sketch id=p near=p1 fit}} Hang {{const Lp=300 a=0.5}} a bob {{let on=p O=0,0 B=Lp*sin(a),Lp*cos(a) R=0,Lp}} from ` +
+      `{{line on=p from=-180,0 to=180,0 weight=secondary}} a beam, {{line on=p from=O to=R dash}} above its lowest point. ` +
+      `{{line on=p from=O to=B}} Here is the string, {{point on=p at=B "bob" trace em}} and the bob pulled aside ` +
+      `{{angle on=p at=O from=R to=B "θ"}} by an angle theta. ` +
+      `{{tween a=-0.5 dur=1.4 repeat=3 yoyo}} Let it go: fastest at the bottom, slowing as it climbs, and back, its bob tracing one arc.`,
+  },
+  /**
    * Toolkit check (not a teaching demo): every v2 element once, in one board section for the sample
    * deck's page 3, for screenshots and the timing audit. Also every look flag: the three weights
    * (primary default, secondary, faint), dash (faint by default), shade plain / outline / em.

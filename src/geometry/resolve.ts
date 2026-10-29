@@ -3,6 +3,8 @@ import { SCENE_KINDS } from '../script/types';
 import { REGION_H, type Action, type End, type Pt, type RawAction, type RawEnd, type Target } from '../script/types';
 import { isBlockRef, isLiteral, type PtArg } from '../script/pointExpr';
 import { Figure, rayEnd } from './figure';
+import { evalConst } from './live';
+import { fmt as fmtNum } from '../desk/kit/compute';
 import type { PageRect } from './space';
 import { chartToPage, type ChartAxis } from '../agent/context/charts';
 
@@ -91,7 +93,22 @@ export class Figures {
   private elements = new Set<string>();
   /** Readout names ({{find}}): points the kit places on their plot when built (like a block's part). */
   private readouts = new Set<string>();
-  constructor(private ground: Grounding) {}
+  /** `consts`: the answer's named numbers right now (live geometry reads them on every resolve). */
+  constructor(private ground: Grounding, private consts: () => Record<string, number> = () => ({})) {}
+
+  /**
+   * Whether an action depends on a constant: a point built from a formula (directly or through names
+   * and constructions), a length written as one (`r=R`, `len=k`), or a live readout (`value=`). Such
+   * an element is redrawn whenever a constant changes.
+   */
+  isLive(a: RawAction): boolean {
+    const x = a as Record<string, unknown>;
+    if (x.exprs || x.value != null) return true;
+    if ((x.region == null && x.page == null) || 'ref' in a || 'mark' in a || a.kind === 'let' || a.kind === 'sketch' || a.kind === 'scroll' || SCENE_KINDS.has(a.kind)) return false;
+    const f = this.figure(tgt(a as { page?: number; region?: string; chart?: string }));
+    for (const k of [...ptFields, 'through'] as const) if (x[k] && f.isLive(x[k] as PtArg)) return true;
+    return Array.isArray(x.pts) && (x.pts as PtArg[]).some((p) => f.isLive(p));
+  }
 
   clear(): void { this.figs.clear(); this.fitted.clear(); this.elements.clear(); this.readouts.clear(); this.lifts.clear(); }
 
@@ -112,7 +129,7 @@ export class Figures {
         // On a chart, a page mark is the data point under it.
         const c = this.ground.mark(page, chart);
         return c?.kind === 'chart' ? pageToData(c, p) ?? undefined : undefined;
-      });
+      }, this.consts);
       this.figs.set(k, f);
     }
     return f;
@@ -169,7 +186,12 @@ export class Figures {
       const w = n('w'), h = n('h'), rx = n('rx') ?? n('r'), ry = n('ry') ?? n('r');
       if (a.kind === 'box' && w != null && h != null) f.noteSpan(x.at as PtArg, [{ x: w, y: h }]);
       else if (a.kind === 'axes' && w != null && h != null) { f.noteSpan(x.at as PtArg, [{ x: w, y: -h }]); f.markData(); }
-      else if ((a.kind === 'circle' || a.kind === 'shade') && rx != null && ry != null) f.noteSpan(x.at as PtArg, [{ x: -rx, y: -ry }, { x: rx, y: ry }]);
+      else if ((a.kind === 'circle' || a.kind === 'shade') && rx != null && ry != null) {
+        // A live radius (r=R): its value now, when the constants are known.
+        const er = (x.exprs as { r?: string } | undefined)?.r;
+        const rv = er != null ? evalConst(er, this.consts()) : rx;
+        if (typeof rv === 'number') f.noteSpan(x.at as PtArg, [{ x: -rv, y: -(er != null ? rv : ry) }, { x: rv, y: er != null ? rv : ry }]);
+      }
     }
     // Named elements are named points: a point at its centre, a line at its ends.
     const id = x.id as string | undefined;
@@ -222,6 +244,30 @@ export class Figures {
     };
     const out: Record<string, unknown> = { ...a };
     delete out.chart;
+    // Live numbers: lengths written as formulas over constants, and readouts on text (value=).
+    const ex = (a as { exprs?: { r?: string; len?: string } }).exprs;
+    if (ex) {
+      delete out.exprs;
+      if (ex.r != null) {
+        const r = evalConst(ex.r, this.consts());
+        if (typeof r === 'string') return r;
+        if (!(r > 0)) return `r=${ex.r} is not positive`;
+        if (a.kind === 'angle') out.r = r; else { out.rx = r; out.ry = r; }
+      }
+      if (ex.len != null) {
+        const l = evalConst(ex.len, this.consts());
+        if (typeof l === 'string') return l;
+        if (!(l > 0)) return `len=${ex.len} is not positive`;
+        out.len = l;
+      }
+    }
+    if (typeof out.value === 'string') {
+      const v = evalConst(out.value, this.consts());
+      if (typeof v === 'string') return v;
+      const fx = out.fmt as number | undefined, unit = out.unit as string | undefined;
+      out.text = `${out.text as string} ${fmtNum(v, fx)}${unit ? ` ${unit}` : ''}`;
+      delete out.value; delete out.fmt; delete out.unit;
+    }
     if (chart && a.kind === 'plot') {
       // On the chart's own axes: the domain defaults to its x axis; values off its y axis are cut.
       const xs = [chart.x.lo, chart.x.hi].sort((p, q) => p - q), ys = [chart.y.lo, chart.y.hi].sort((p, q) => p - q);
@@ -243,7 +289,7 @@ export class Figures {
       const from = local(a.from), via = local(a.through);
       if (typeof from === 'string') return from;
       if (typeof via === 'string') return via;
-      const len = a.len ?? (t.region != null ? null : PAGE_RAY_LEN);
+      const len = (out.len as number | undefined) ?? (t.region != null ? null : PAGE_RAY_LEN);
       const to = len != null ? { x: from.x + len * (via.x - from.x), y: from.y + len * (via.y - from.y) } : rayEnd(from, via, 1000, h);
       if (!to) return 'ray with no direction';
       delete out.through; delete out.len;

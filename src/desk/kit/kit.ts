@@ -25,7 +25,7 @@ import { MIN_TEXT_PX } from '../layout';
 import * as C from './compute';
 import { breakPoles } from '../plot';
 import type { VarFn } from '../expr';
-import { Animations, tween, pause, easeOut, type Ctl } from './anim';
+import { Animations, tween, pause, easeOut, easeInOut, type Ctl } from './anim';
 import { clearDown, place, wrapPieces, type Box, type Pad, type Placed } from './layout';
 import { kitText, svg, setAttrs, textWidth } from './text';
 import { applyOp, normalize } from './ops';
@@ -134,10 +134,31 @@ export class KitStore {
     for (const [k, v] of defs) {
       const f = C.compileFn(v, Object.keys(this.consts));
       const x = f ? f(this.consts) : NaN;
-      if (Number.isFinite(x)) this.consts[k.toLowerCase()] = x;
-      else console.warn('[kit] const dropped:', `${k}=${v}`);
+      const key = k.toLowerCase();
+      if (Number.isFinite(x)) {
+        this.consts[key] = x;
+        this.derived = this.derived.filter(([d]) => d !== key);
+        if (!C.isPlainNumber(v)) this.derived.push([key, v]);
+      } else console.warn('[kit] const dropped:', `${k}=${v}`);
     }
   }
+  /** Constants written as formulas, in definition order: they follow the constants they read (C.rederive). */
+  private derived: [string, string][] = [];
+  /**
+   * A constant takes a new value (a tween's frame, a limit, a beforeafter): the formula constants that
+   * read it follow. Set directly, a formula constant becomes an input (it no longer follows its formula).
+   */
+  setConst(key: string, v: number): void {
+    this.consts[key] = v;
+    if (this.derived.some(([d]) => d === key)) this.derived = this.derived.filter(([d]) => d !== key);
+    C.rederive(this.consts, this.derived, key);
+  }
+  /** Live geometry: called after constants changed (each frame of a tween, limit or beforeafter). */
+  private constSubs = new Set<() => void>();
+  onConsts(f: () => void): () => void { this.constSubs.add(f); return () => this.constSubs.delete(f); }
+  constsChanged(): void { this.constSubs.forEach((f) => f()); }
+  /** Live geometry's place on the board (target and box of what a constant moves), for a tween's framing. */
+  liveBox?: (keys: string[]) => { target: Target; bbox: { x: number; y: number; w: number; h: number } } | null;
   /** Named readouts ({{find}}) of this answer, computed when read. */
   readonly finds = new Map<string, FindAction>();
   /** A plot's curve with the current constants (readouts compute on it, exactly as the value model does). */
@@ -186,7 +207,7 @@ export class KitStore {
     return out;
   }
   settle(): void { this.anim.settle(); }
-  clear(): void { this.blocks.clear(); this.n = 0; this.consts = {}; this.subs.clear(); this.finds.clear(); }
+  clear(): void { this.blocks.clear(); this.n = 0; this.consts = {}; this.derived = []; this.subs.clear(); this.finds.clear(); this.constSubs.clear(); }
   /** Board v2: things showing a block's values (a node's value, a link's weight) follow it. */
   private subs = new Map<string, Set<() => void>>();
   listen(id: string, f: () => void): void { const s = this.subs.get(id) ?? new Set(); s.add(f); this.subs.set(id, s); }
@@ -2386,7 +2407,7 @@ export async function resolveKitPoints<A extends InkAction>(a: A, registry: Regi
 /** Whether a ref action is the kit's: a kit verb, or emph / fade on a block or its part. */
 export function isKitRef(a: RefAction, registry: Registry): boolean {
   if (a.kind === 'step' || a.kind === 'sweep' || a.kind === 'set' || a.kind === 'band' || a.kind === 'dist' || a.kind === 'col' || a.kind === 'level') return true;
-  if (a.kind === 'limit' || a.kind === 'beforeafter' || a.kind === 'contrast' || a.kind === 'splitBar') return true;
+  if (a.kind === 'limit' || a.kind === 'beforeafter' || a.kind === 'contrast' || a.kind === 'splitBar' || a.kind === 'tween') return true;
   if (a.kind === 'emph' && a.where) return true;
   if (a.kind !== 'emph' && a.kind !== 'fade') return false;
   if (isBlockRef(a.ref)) return true;
@@ -2403,6 +2424,7 @@ export async function buildKitRef(a: RefAction, env: BuildEnv): Promise<ElementP
     case 'set': return setVerb(a, env, store);
     case 'splitBar': return splitVerb(a, env, store);
     case 'limit': return limitMove(a, env, store);
+    case 'tween': return tweenMove(a, env, store);
     case 'beforeafter': return beforeAfter(a, env, store);
     case 'contrast': return 'contrast: its copy is made when the script is parsed';
     case 'band': return band(a, env, store);
@@ -2969,10 +2991,10 @@ function domFor(pl: Plot, store: KitStore, key: string, vs: number[]): Plot['dom
   const keep = store.consts[key];
   const members: { xs: number[]; ys: number[] }[] = [];
   for (const v of vs) {
-    store.consts[key] = v;
+    store.setConst(key, v);
     for (const b of pl.members) { const s = b.el.plotSrc ? resample(b, store) : null; members.push(s ?? { xs: b.xs!, ys: b.vals![0] }); }
   }
-  store.consts[key] = keep;
+  store.setConst(key, keep);
   for (const b of pl.members) if (b.ghost) members.push({ xs: (b.el.ghostXs as number[] | undefined) ?? b.xs!, ys: b.ghost });
   return domOf(members.filter((m) => m.ys.some(Number.isFinite)));
 }
@@ -3013,7 +3035,7 @@ async function limitMove(v: Extract<MoveV, { kind: 'limit' }>, env: BuildEnv, st
       await w.ready;
       let first!: () => void;
       const started = new Promise<void>((r) => { first = r; });
-      const ids = [...plots, ...blocks].map((b) => b.id);
+      const ids = [...plots, ...blocks].map((b) => b.id).concat(`const:${key}`);
       void store.anim.run(ids, async (ctl) => {
         if (signal.aborted) ctl.ff = true;
         const t = moveReadout(w, label(from), c, accent);
@@ -3032,7 +3054,8 @@ async function limitMove(v: Extract<MoveV, { kind: 'limit' }>, env: BuildEnv, st
         first();
         let last = 0;
         const frame = (x: number, force = false) => {
-          store.consts[key] = x;
+          store.setConst(key, x);
+          store.constsChanged();
           for (const b of plots) { const s = resample(b, store); if (s) { b.xs = s.xs; b.vals = [s.ys]; b.full = [s.ys.slice()]; paintLine(b, s.ys, c); } }
           for (const pl of pls) void placeReadoutPts(pl, store);
           const now = performance.now();
@@ -3041,6 +3064,60 @@ async function limitMove(v: Extract<MoveV, { kind: 'limit' }>, env: BuildEnv, st
         };
         await tween(ctl.ff ? 0 : (v.dur ?? LIMIT_S) * 1000, (k) => frame(from + (to - from) * k), ctl);
         frame(to, true);
+        for (const pl of pls) spreadLabels(pl);
+        plots.forEach((b) => store.notify(b.id));
+      }).finally(() => first());
+      await Promise.race([started, new Promise((r) => setTimeout(r, 600))]);
+    },
+  };
+}
+
+/** Default duration of one leg of a tween (s). */
+export const TWEEN_S = 3;
+const EASE = { linear: (t: number) => Math.min(1, Math.max(0, t)), inout: easeInOut, out: easeOut } as const;
+
+/**
+ * tween: constants glide to new values (TweenAction). Each frame every plot and computed block drawn
+ * from the constants repaints and live geometry re-resolves (KitStore.constsChanged); `repeat` and
+ * `yoyo` make it an oscillation. Never blocks the narration: draw resolves once the motion is under way.
+ */
+async function tweenMove(v: Extract<RefAction, { kind: 'tween' }>, env: BuildEnv, store: KitStore): Promise<ElementPlan | string> {
+  const keys = v.sets.map(([k]) => k.toLowerCase());
+  const missing = v.sets.find(([k]) => !(k.toLowerCase() in store.consts));
+  if (missing) return `no constant ${missing[0]}`;
+  const from = keys.map((k) => store.consts[k]);
+  const to = v.sets.map(([, src]) => valueOf(src, store.consts));
+  const bad = to.findIndex((x) => !Number.isFinite(x));
+  if (bad >= 0) return `bad value ${v.sets[bad][1]}`;
+  const plots = [...new Set(keys.flatMap((k) => constPlots(store, k)))], blocks = [...new Set(keys.flatMap((k) => constBlocks(store, k)))];
+  const live = store.liveBox?.(keys) ?? null;
+  if (!plots.length && !blocks.length && !live) return `nothing is drawn from ${v.sets.map(([k]) => k).join(', ')}`;
+  const host = plots[0]?.plot?.host ?? plots[0] ?? blocks[0];
+  const c = col();
+  return {
+    target: live ? live.target : tgtOf(host!), bbox: live ? live.bbox : host!.placed.rect,
+    draw: async (signal) => {
+      let first!: () => void;
+      const started = new Promise<void>((r) => { first = r; });
+      void store.anim.run(keys.map((k) => `const:${k}`), async (ctl) => {
+        if (signal.aborted) ctl.ff = true;
+        const pls = [...new Set(plots.map((b) => b.plot!))];
+        first();
+        let last = 0;
+        const frame = (k: number, force = false) => {
+          keys.forEach((key, i) => store.setConst(key, from[i] + (to[i] - from[i]) * k));
+          for (const b of plots) { const s = resample(b, store); if (s) { b.xs = s.xs; b.vals = [s.ys]; b.full = [s.ys.slice()]; paintLine(b, s.ys, c); } }
+          for (const pl of pls) void placeReadoutPts(pl, store);
+          const now = performance.now();
+          if (blocks.length && (force || now - last > 90)) { last = now; void refreshBlocks(blocks, store, 0, undefined, env, c); }
+          store.constsChanged();
+        };
+        const legs = (v.repeat ?? 1) * (v.yoyo ? 2 : 1), ms = (v.dur ?? TWEEN_S) * 1000;
+        for (let leg = 0; leg < legs && !ctl.ff; leg++) {
+          const back = !!v.yoyo && leg % 2 === 1;
+          await tween(ms, (t) => frame(back ? 1 - t : t), ctl, EASE[v.ease ?? 'inout']);
+        }
+        frame(v.yoyo ? 0 : 1, true);
         for (const pl of pls) spreadLabels(pl);
         plots.forEach((b) => store.notify(b.id));
       }).finally(() => first());
@@ -3074,7 +3151,8 @@ async function beforeAfter(v: Extract<MoveV, { kind: 'beforeafter' }>, env: Buil
         // The snapshot: the watched thing's old state stays, dashed and muted.
         w.ghost = before[0].slice();
         if (beforeXs) w.el.ghostXs = beforeXs;
-        store.consts[key] = to;
+        store.setConst(key, to);
+        store.constsChanged();
         const jobs: Promise<void>[] = [];
         for (const b of plots) { const s = resample(b, store); if (s) { b.xs = s.xs; b.full = [s.ys.slice()]; jobs.push(setLineVals(b, [s.ys], ms, ctl, c)); } }
         if (blocks.length) jobs.push(refreshBlocks(blocks, store, ms, ctl, env, c));

@@ -16,7 +16,7 @@ describe('pointExpr', () => {
     expect(P('meet(O,X,mid(A,B),B)')).toEqual({ fn: 'meet', args: [{ ref: 'O' }, { ref: 'X' }, { fn: 'mid', args: [{ ref: 'A' }, { ref: 'B' }] }, { ref: 'B' }] });
   });
   it('rejects malformed arguments', () => {
-    for (const bad of ['mid(A)', 'along(A,B)', 'along(A,B,x)', 'meet(A,B,C)', 'foo(A,B)', 'mid(A,B', '9x', '#D3', 'along(A,B,99)']) {
+    for (const bad of ['mid(A)', 'along(A,B)', 'along(A,B,#)', 'along(A,B,x;y)', 'meet(A,B,C)', 'foo(A,B)', 'mid(A,B', '9x', '#D3', 'along(A,B,99)']) {
       expect(parsePtArg(bad, worldPt), bad).toBeUndefined();
     }
   });
