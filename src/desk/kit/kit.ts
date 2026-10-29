@@ -17,7 +17,7 @@ import type { SRect } from '../../geometry/space';
 import type { ColRef, DrawAction, FindAction, InkAction, KitBlock, KitSource, KitVerb, Pt, RefAction, Target } from '../../script/types';
 import { blockPart, isBlockRef, type BlockPart } from '../../script/pointExpr';
 import { colRef, colStr } from '../../script/parseKit';
-import type { BuildEnv, ElementPlan, Pace, TargetCtx } from '../types';
+import type { BuildEnv, ElementPlan, Pace, SceneSpace, TargetCtx } from '../types';
 import type { Registry } from '../registry';
 import { token } from '../../ink/agent/tokens';
 import { prefersReducedMotion } from '../../ink/agent/animate';
@@ -26,11 +26,12 @@ import * as C from './compute';
 import { breakPoles } from '../plot';
 import type { VarFn } from '../expr';
 import { Animations, tween, pause, easeOut, type Ctl } from './anim';
-import { place, wrapPieces, type Box, type Pad, type Placed } from './layout';
+import { clearDown, place, wrapPieces, type Box, type Pad, type Placed } from './layout';
 import { kitText, svg, setAttrs, textWidth } from './text';
 import { applyOp, normalize } from './ops';
 import { placeRel } from '../scene/place';
-import { anchorBox, sceneLink, sceneStore, setKitResolver } from '../scene/store';
+import { inkIn, pageInkOf } from '../pageInk';
+import { anchorBox, sceneLink, sceneStore, setKitResolver, unclaimed } from '../scene/store';
 import { curveOf, read, withConsts, type Curve, type FitData, type Reading } from '../../values/readout';
 
 /** A reference waits this long for its block (still waiting on its own word) before it is skipped. */
@@ -84,6 +85,8 @@ export type Block = {
   vals?: C.Mat;
   dp?: number;
   cs?: number;
+  /** An image grid's row height when its cells are not square (a long thin image); else cs. */
+  ch?: number;
   cellPx?: number;
   shade?: 'heat' | 'image';
   win?: Win;
@@ -507,8 +510,9 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
   const rel = a.rel ?? (a.right ? { rel: 'right' as const, of: a.right } : a.below ? { rel: 'below' as const, of: a.below } : undefined);
   const relBox = scene && rel ? await anchorBox(rel.of, env.registry) : null;
   const P = (w: number, h: number, pad: Pad): Placed => {
-    if (!scene || a.at) return place(w, h, pad, { right: a.right, below: a.below, op: a.op, at: a.at as Pt | undefined }, anchor?.placed, others, spacing);
-    const r = placeRel(pad.l + w + pad.r, pad.t + h + pad.b, rel?.rel ?? null, relBox, [...scene.rects(), ...env.registry.obstacles(ctx.target)], { gap: m.gap * 1.3, seed: id, view: scene.view(), last: scene.last() });
+    if (a.at) return place(w, h, pad, { right: a.right, below: a.below, op: a.op, at: a.at as Pt | undefined }, anchor?.placed, others, spacing);
+    if (!scene) return clearDown(place(w, h, pad, { right: a.right, below: a.below, op: a.op }, anchor?.placed, others, spacing), looseInk(env, ctx.target), m.gap);
+    const r = placeRel(pad.l + w + pad.r, pad.t + h + pad.b, rel?.rel ?? null, relBox, [...scene.rects(), ...unclaimed(env, ctx.target)], { gap: m.gap * 1.3, seed: id, view: scene.view(), last: scene.last() });
     const body = { x: r.x + pad.l, y: r.y + pad.t, w, h };
     // In a scene an op is a relation, not a glyph in a gap: a link from the source, routed around
     // content, labelled with the glyph unless it is a plain arrow (drawn once the block is).
@@ -535,7 +539,17 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     // An image's pixels share a side of about 13 numerals' height.
     let cellPx = image ? Math.min(m.numPx * 2.5, (m.numPx * 13) / Math.max(R, Cn)) : Math.max(m.numPx * 2.5, wide + m.numPx * 0.8);
     if (anchor?.cellPx && anchor.kind === a.kind) cellPx = image ? (anchor.view === 'image' ? anchor.cellPx : cellPx) : anchor.view === 'image' ? cellPx : Math.max(cellPx, anchor.cellPx);
-    const cs = m.u(cellPx);
+    let cs = m.u(cellPx);
+    // An image keeps a readable shape: a long thin one (10×200 samples, 1000 draws × 10) gets taller
+    // (wider) cells, so its short side is never under IMG_ASPECT of its long side; beside another image
+    // of the same rows, it keeps that one's row height (rows line up).
+    let ch = cs;
+    if (image) {
+      const W = Cn * cs, H = R * cs, short = Math.max(W, H) * IMG_ASPECT;
+      if (H < short) ch = short / R;
+      if (W < short) cs = short / Cn;
+      if (anchor?.view === 'image' && anchor.ch && anchor.vals?.length === R) ch = anchor.ch;
+    }
     const filled = got.win ? got.full.map((r) => r.map(() => false)) : null;
     const vals = filled ? got.full.map((r) => r.map(() => NaN)) : got.full.map((r) => r.slice());
     if (a.kind === 'grid') {
@@ -545,7 +559,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
         t: cols ? m.label * 1.6 : 0, r: 0,
         b: a.caption ? m.label * 2 : 0,
       };
-      const placed = P(Cn * cs, R * cs, pad);
+      const placed = P(Cn * cs, R * ch, pad);
       // A window's output right under its input: each output cell sits under its window's centre.
       if (got.win && a.below && anchor?.id === got.win.over && anchor.cs) {
         const [kr, kc] = C.winSize(got.win.spec);
@@ -557,7 +571,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
         }
       }
       b = newBlock(id, 'grid', region, placed, m, got.deps);
-      Object.assign(b, { src: a.src, full: got.full, vals, dp: a.dp, cs, cellPx, shade: image ? a.shade ?? 'image' : a.shade, em: a.em, ...(image ? { view: 'image' } : {}) });
+      Object.assign(b, { src: a.src, full: got.full, vals, dp: a.dp, cs, cellPx, shade: image ? a.shade ?? 'image' : a.shade, em: a.em, ...(image ? { view: 'image', ch } : {}) });
       b.el.rows = rows; b.el.cols = cols; b.el.caption = a.caption;
     } else if (line) {
       const made = await makeLine(a as Extract<KitBlock, { kind: 'bars' }>, got, id, region, m, P, store);
@@ -638,7 +652,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     // axes=: the points go onto a line's or plot's axes (one scale with its curves), no axes of their own.
     const host = a.axes ? await store.wait(a.axes) : undefined;
     if (a.axes && !host?.plot) return `no line or plot ${a.axes} to put the points on`;
-    const w = a.right ? m.cell * 7 : CHART_W, h = a.right ? m.cell * 4.6 : CHART_W * 0.58;
+    const w = a.right ? Math.max(CHART_MIN.w, m.cell * 7) : CHART_W, h = a.right ? Math.max(CHART_MIN.h, m.cell * 4.6) : CHART_W * 0.58;
     const tickW = Math.max(...C.ticks(y0, y1).map((t) => textWidth(C.fmt(t), m.labelPx)));
     // Above the plot: the y label (left) and live readouts (right), never over the data.
     const pad: Pad = { l: m.u(tickW + m.labelPx * 0.9), t: m.label * 2, r: m.label * 0.6, b: m.label * 1.8 + (a.xLabel ? m.label * 1.5 : 0) + (a.caption ? m.label * 1.9 : 0) };
@@ -838,7 +852,7 @@ function rangeOf(b: Block): [number, number] {
 
 async function drawGrid(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: Pace) {
   if (b.view === 'image') return drawImage(b, c, k);
-  const g = b.g!, { body } = b.placed, cs = b.cs!, m = b.m;
+  const g = b.g!, { body } = b.placed, cs = b.cs!, ch = b.ch ?? cs, m = b.m;
   const [R, Cn] = C.shape(b.vals!);
   const frame = svg(g, 'g');
   const [lo, hi] = rangeOf(b);
@@ -885,7 +899,7 @@ async function drawGrid(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: P
  * no numerals; a light frame and the caption. Its numerals exist (detached) so every verb works the same.
  */
 async function drawImage(b: Block, c: ReturnType<typeof col>, k: Pace) {
-  const g = b.g!, { body } = b.placed, cs = b.cs!, m = b.m;
+  const g = b.g!, { body } = b.placed, cs = b.cs!, ch = b.ch ?? cs, m = b.m;
   const [R, Cn] = C.shape(b.vals!);
   const frame = svg(g, 'g');
   const [lo, hi] = rangeOf(b);
@@ -898,8 +912,8 @@ async function drawImage(b: Block, c: ReturnType<typeof col>, k: Pace) {
   for (let i = 0; i < Math.ceil(R / br); i++) {
     squares.push([]); numerals.push([]);
     for (let j = 0; j < Math.ceil(Cn / bc); j++) {
-      const h = Math.min(br, R - i * br) * cs, w = Math.min(bc, Cn - j * bc) * cs;
-      squares[i].push(svg(frame, 'rect', { x: body.x + j * bc * cs, y: body.y + i * br * cs, width: w + ov, height: h + ov, fill: shadeOf(binMean(b.vals!, i, j, br, bc), b.shade, lo, hi, c).fill }));
+      const h = Math.min(br, R - i * br) * ch, w = Math.min(bc, Cn - j * bc) * cs;
+      squares[i].push(svg(frame, 'rect', { x: body.x + j * bc * cs, y: body.y + i * br * ch, width: w + ov, height: h + ov, fill: shadeOf(binMean(b.vals!, i, j, br, bc), b.shade, lo, hi, c).fill }));
       numerals[i].push(document.createElementNS('http://www.w3.org/2000/svg', 'text'));
     }
   }
@@ -965,8 +979,8 @@ const decimals = (v: number) => { const s = C.fmt(v); const i = s.indexOf('.'); 
 
 /** Section box of a grid's cells r0–r1 × c0–c1 (0-based, inclusive). */
 function cellBox(b: Block, r0: number, r1: number, c0: number, c1: number): Box {
-  const cs = b.cs!, { body } = b.placed;
-  return { x: body.x + c0 * cs, y: body.y + r0 * cs, w: (c1 - c0 + 1) * cs, h: (r1 - r0 + 1) * cs };
+  const cs = b.cs!, ch = b.ch ?? cs, { body } = b.placed;
+  return { x: body.x + c0 * cs, y: body.y + r0 * ch, w: (c1 - c0 + 1) * cs, h: (r1 - r0 + 1) * ch };
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -1199,7 +1213,7 @@ async function makeLineXY(id: string, region: string, m: Metrics, P: (w: number,
     pl.dom = domOf(pl.members.map((x) => ({ xs: x === b ? xs : x.xs!, ys: x === b ? ys : x.full![0] })));
   } else {
     // A chart uses the board: about three quarters of its width (smaller beside another block).
-    const w = beside ? m.cell * 7 : CHART_W, h = beside ? m.cell * 4.2 : CHART_W * 0.58;
+    const w = beside ? Math.max(CHART_MIN.w, m.cell * 7) : CHART_W, h = beside ? Math.max(CHART_MIN.h, m.cell * 4.2) : CHART_W * 0.58;
     const dom = domOf([{ xs, ys }]);
     const tickW = Math.max(...C.ticks(dom.y0, dom.y1).map((t) => textWidth(C.fmt(t), m.labelPx)));
     // Room on the right for each line's name at its end, above for the y label and readouts.
@@ -1212,10 +1226,14 @@ async function makeLineXY(id: string, region: string, m: Metrics, P: (w: number,
   return b;
 }
 
+/** An image's short side is at least this share of its long side (no slivers). */
+const IMG_ASPECT = 0.3;
 /** A histogram's body width (section units): every histogram on shared bins is this wide. */
 const HIST_W = 520;
 /** A chart's default body width in section units (the section is 1000 wide): ~75% of the board with its labels. */
 const CHART_W = 600;
+/** The smallest a chart's body gets, beside another block too (section units): its ticks, labels and readouts stay apart (design 3.3a). */
+export const CHART_MIN = { w: 520, h: 300 };
 
 /**
  * {{plot}} without hand-drawn axes: the engine samples fn= over domain= (or x=, y= over t=) with the
@@ -1240,8 +1258,8 @@ export async function buildKitPlot(a: Extract<DrawAction, { kind: 'plot' }> & { 
   // In a scene a new chart is placed as every other thing is: by the scene, clear of all its claims
   // (chips, labels, links), flowing on from the last thing; never stacked from the section's top.
   const P = (w: number, h: number, pad: Pad): Placed => {
-    if (!scene) return place(w, h, pad, {}, undefined, others, spacing);
-    const r = placeRel(pad.l + w + pad.r, pad.t + h + pad.b, null, null, [...scene.rects(), ...env.registry.obstacles(ctx.target)], { gap: m.gap * 1.3, seed: id, view: scene.view(), last: scene.last() });
+    if (!scene) return clearDown(place(w, h, pad, {}, undefined, others, spacing), looseInk(env, ctx.target), m.gap);
+    const r = placeRel(pad.l + w + pad.r, pad.t + h + pad.b, null, null, [...scene.rects(), ...unclaimed(env, ctx.target)], { gap: m.gap * 1.3, seed: id, view: scene.view(), last: scene.last() });
     return { body: { x: r.x + pad.l, y: r.y + pad.t, w, h }, rect: r };
   };
   const b = await makeLineXY(id, region, m, P, store, xs, ys, a.axes, [], false, { x: a.xLabel, y: a.yLabel });
@@ -1711,6 +1729,47 @@ async function dist(v: Extract<KitVerb, { kind: 'dist' }>, env: BuildEnv, store:
 }
 
 // ------------------------------------------------------------------------------------------------
+// One placement authority: in a scene every block, calc line and plot holds a claim in the scene's
+// world (SceneSpace), and everything placed later is placed clear of all of them.
+
+const sceneOf = (env: BuildEnv, region: string) => env.desk.region?.(region)?.scene;
+
+/** A plain section's ink that is not a kit block (kit blocks are placed among themselves by place()): kit blocks are placed clear of it. */
+const looseInk = (env: BuildEnv, t: Target): Box[] => env.registry.entries().filter((e) => !e.faded && e.target.region === t.region && !e.kind.startsWith('kit-')).flatMap((e) => e.boxes);
+
+/** Claims a block's room in its scene (world space): later things keep clear of it. */
+function claimRoom(b: Block, env: BuildEnv): void {
+  const scene = sceneOf(env, b.region);
+  if (!scene) return;
+  const r = worldBox(b, b.placed.rect);
+  sceneStore(env.registry).put(b.id, { rect: r, claim: scene.claim(r), moved: new Set(), data: { kind: 'kit' } });
+}
+
+/** A block's room changed size (a table grew a column, a calc line a wider expansion): its claim follows. */
+function roomMoved(b: Block, env: BuildEnv): void {
+  const th = sceneStore(env.registry).get(b.id);
+  if (!th?.claim) return;
+  const r = worldBox(b, b.placed.rect);
+  th.claim.move(r);
+  if (b.shift) th.rect = r;
+}
+
+/**
+ * Where a line that belongs under block `owner` goes in a scene: `body` (owner's drawing space) when it
+ * is clear of every claim, else the nearest room below the owner the scene finds (placeRel).
+ */
+function clearOf(owner: Block, body: Box, scene: SceneSpace, m: Metrics, env: BuildEnv): Box {
+  const own = sceneStore(env.registry).get(owner.id)?.claim?.r;
+  const taken = scene.rects().filter((r) => r !== own);
+  const w = worldBox(owner, body);
+  if (!taken.some((r) => overlapsBox(w, r, m.gap * 0.25))) return body;
+  const r = placeRel(w.w, w.h, 'below', worldBox(owner, owner.placed.rect), taken, { gap: m.gap * 0.7, seed: `${owner.id}:calc`, view: scene.view() });
+  const sx = owner.shift?.x ?? 0, sy = owner.shift?.y ?? 0;
+  return { x: r.x - sx, y: r.y - sy, w: body.w, h: body.h };
+}
+const overlapsBox = (a: Box, b: Box, p: number) => a.x - p < b.x + b.w && b.x < a.x + a.w + p && a.y - p < b.y + b.h && b.y < a.y + a.h + p;
+
+// ------------------------------------------------------------------------------------------------
 // calc lines
 
 /** A calc's expansion now, from its blocks' shown values. */
@@ -1782,7 +1841,9 @@ function ensureWinCalc(out: Block, store: KitStore, env: BuildEnv): Block | stri
   const m = out.m;
   const parts = [input, kernel, out].filter((x): x is Block => !!x);
   const x = Math.min(...parts.map((p) => p.placed.body.x));
-  const all = store.inRegion(out.region);
+  const scene = sceneOf(env, out.region);
+  // A plain section: under everything in it. A scene: under the composition, clear of every claim.
+  const all = scene ? parts : store.inRegion(out.region);
   const y = Math.max(...all.map((p) => p.placed.rect.y + p.placed.rect.h)) + m.gap * 0.9;
   const maxW = 1000 - m.margin - x;
   // Room for the longest expansion this window will show.
@@ -1791,11 +1852,20 @@ function ensureWinCalc(out: Block, store: KitStore, env: BuildEnv): Block | stri
     const e = C.winCell(input.vals!, r, q, w.spec, out.dp);
     if (e) lines = Math.max(lines, wrapPieces(piecesOf(e), maxW, (s) => m.u(textWidth(s, m.numPx))).length);
   }
-  const body = { x, y, w: maxW, h: lines * m.num * 1.55 };
+  // In a scene the line takes the room its longest expansion needs, not the whole row to the margin.
+  let longest = 0;
+  if (scene) for (let r = 0; r < w.geo.R; r++) for (let q = 0; q < w.geo.C; q++) {
+    const e = C.winCell(input.vals!, r, q, w.spec, out.dp);
+    if (e) longest = Math.max(longest, ...wrapPieces(piecesOf(e), maxW, (s) => m.u(textWidth(s, m.numPx))).map((l) => m.u(textWidth(l.join(''), m.numPx))));
+  }
+  let body = { x, y, w: scene ? Math.max(longest, m.u(m.numPx * 4)) : maxW, h: lines * m.num * 1.55 };
+  if (scene) body = clearOf(input, body, scene, m, env);
   const cb = newBlock(store.anonId(), 'calc', out.region, { body, rect: { ...body } }, m, [out.id]);
   cb.calc = { of: [], reduce: 'sum', win: out.id, lines, maxW };
   cb.dp = out.dp;
+  if (input.shift) cb.shift = { ...input.shift };
   store.add(cb);
+  claimRoom(cb, env);
   grow(env, out.region, cb.placed.rect);
   // The line runs to the margin: re-centre the section with it, so a composition centred earlier never pushes it off the board.
   const span = union(store.inRegion(out.region).map((b) => b.placed.rect));
@@ -1813,9 +1883,9 @@ function winParts(out: Block, store: KitStore): Parts | null {
 
 /** Where the window sits (input's section units) when it makes output (r, c). */
 function winRect(p: Parts, r: number, q: number): Box {
-  const w = p.out.win!, [kr, kc] = C.winSize(w.spec), [r0, c0] = C.winOrigin(r, q, w.geo), cs = p.input.cs!;
+  const w = p.out.win!, [kr, kc] = C.winSize(w.spec), [r0, c0] = C.winOrigin(r, q, w.geo), cs = p.input.cs!, ch = p.input.ch ?? cs;
   const { body } = p.input.placed;
-  return { x: body.x + c0 * cs, y: body.y + r0 * cs, w: kc * cs, h: kr * cs };
+  return { x: body.x + c0 * cs, y: body.y + r0 * ch, w: kc * cs, h: kr * ch };
 }
 
 /** Moves the window to output (r, c) and fills it: the overlay glides, the calc line shows its expansion, the cell fills in the accent. */
@@ -1868,14 +1938,14 @@ async function winGo(p: Parts, r: number, q: number, ctl: Ctl, glideMs: number, 
 const frameAt = (r: Box, p: number) => ({ x: r.x - p, y: r.y - p, width: r.w + 2 * p, height: r.h + 2 * p });
 
 function drawPadding(p: Parts, r: number, q: number, g: SVGGElement, c: ReturnType<typeof col>) {
-  const w = p.out.win!, [kr, kc] = C.winSize(w.spec), [r0, c0] = C.winOrigin(r, q, w.geo), cs = p.input.cs!;
+  const w = p.out.win!, [kr, kc] = C.winSize(w.spec), [r0, c0] = C.winOrigin(r, q, w.geo), cs = p.input.cs!, ch = p.input.ch ?? cs;
   const [R, Cn] = C.shape(p.input.vals!);
   const { body } = p.input.placed;
   for (let i = 0; i < kr; i++) for (let j = 0; j < kc; j++) {
     const rr = r0 + i, cc = c0 + j;
     if (rr >= 0 && cc >= 0 && rr < R && cc < Cn) continue;
-    const x = body.x + cc * cs, y = body.y + rr * cs;
-    svg(g, 'rect', { x, y, width: cs, height: cs, fill: c.cell, 'fill-opacity': 0.7, stroke: c.muted, 'stroke-dasharray': '2 3', ...hair(1) });
+    const x = body.x + cc * cs, y = body.y + rr * ch;
+    svg(g, 'rect', { x, y, width: cs, height: ch, fill: c.cell, 'fill-opacity': 0.7, stroke: c.muted, 'stroke-dasharray': '2 3', ...hair(1) });
     if (p.input.view !== 'image') kitText(g, x + cs / 2, y + cs / 2, '0', { size: p.input.m.num, fill: c.muted });
   }
 }
@@ -2561,18 +2631,39 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
   // Every value now (rows read the cells to their left and the row above, as they will be shown).
   const full = t.full!;
   for (let r = 0; r < R; r++) full[r][j] = fn(rowEnv(t, full, r));
-  // Its calc line under the table, room for the longest row.
+  // A wider table holds more room in its section.
+  roomMoved(t, env);
+  // Its calc line under the table, room for the longest row: one live line per table, rewritten by
+  // every column (a second column's working replaces the first's, never stacks under it).
   const x = t.placed.body.x;
-  const others = store.inRegion(t.region).filter((o) => o !== t);
-  const below = (o: Block) => o.placed.rect.y >= t.placed.rect.y + t.placed.rect.h - 1;
-  const yBelow = Math.max(t.placed.rect.y + t.placed.rect.h, ...others.filter(below).map((o) => o.placed.rect.y + o.placed.rect.h));
   const maxW = 1000 - m.margin - x;
   const exps = full.map((_, r) => rowExp(v, fn, full, r, t.dp));
   const lines = Math.max(1, ...exps.map((e) => wrapPieces(piecesOf(e, tb.heads[j]), maxW, (s) => m.u(textWidth(s, m.numPx))).length));
-  const body = { x, y: yBelow + m.gap * 0.7, w: Math.min(maxW, Math.max(...exps.map((e) => m.u(textWidth(piecesOf(e, tb.heads[j]).join(''), m.numPx))))), h: lines * m.num * 1.55 };
-  const cb = newBlock(store.anonId(), 'calc', t.region, { body, rect: { ...body } }, m, []);
-  cb.calc = { of: [], reduce: 'sum', live: true, label: tb.heads[j], lines, maxW };
-  store.add(cb);
+  const textW = Math.min(maxW, Math.max(...exps.map((e) => m.u(textWidth(piecesOf(e, tb.heads[j]).join(''), m.numPx)))));
+  const prev = t.el.colCalc ? store.get(t.el.colCalc as string) : undefined;
+  let cb: Block;
+  if (prev?.calc) {
+    cb = prev;
+    cb.placed.body.w = cb.placed.rect.w = Math.max(cb.placed.body.w, textW);
+    cb.placed.body.h = cb.placed.rect.h = Math.max(cb.placed.body.h, lines * m.num * 1.55);
+    cb.calc = { ...cb.calc!, label: tb.heads[j], lines: Math.max(cb.calc!.lines ?? 1, lines) };
+    roomMoved(cb, env);
+  } else {
+    const others = store.inRegion(t.region).filter((o) => o !== t);
+    const below = (o: Block) => o.placed.rect.y >= t.placed.rect.y + t.placed.rect.h - 1;
+    const scene = sceneOf(env, t.region);
+    // A plain section: under the table and whatever already sits under it. A scene: right under the
+    // table when that is clear of every claim, else wherever the scene finds room below it.
+    const yBelow = scene ? t.placed.rect.y + t.placed.rect.h : Math.max(t.placed.rect.y + t.placed.rect.h, ...others.filter(below).map((o) => o.placed.rect.y + o.placed.rect.h));
+    let body = { x, y: yBelow + m.gap * 0.7, w: textW, h: lines * m.num * 1.55 };
+    if (scene) body = clearOf(t, body, scene, m, env);
+    cb = newBlock(store.anonId(), 'calc', t.region, { body, rect: { ...body } }, m, []);
+    cb.calc = { of: [], reduce: 'sum', live: true, label: tb.heads[j], lines, maxW };
+    if (t.shift) cb.shift = { ...t.shift };
+    store.add(cb);
+    claimRoom(cb, env);
+    t.el.colCalc = cb.id;
+  }
   grow(env, t.region, cb.placed.rect);
   const c = col(), accent = env.settings.inkColor;
   const dur = v.dur;
@@ -2580,7 +2671,7 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
     target: tgtOf(t), bbox: union([t.placed.rect, cb.placed.rect]),
     draw: async (signal) => {
       await t.ready;
-      cb.g = svg(t.g!.parentNode as SVGGElement, 'g', { class: 'kit-block', 'data-kit': 'calc' });
+      if (!cb.g) cb.g = svg(t.g!.parentNode as SVGGElement, 'g', { class: 'kit-block', 'data-kit': 'calc' });
       cb.markReady();
       const e = t.el.table as TableEls;
       // A new column's header and cells.
@@ -3038,7 +3129,7 @@ async function beforeAfter(v: Extract<MoveV, { kind: 'beforeafter' }>, env: Buil
 // own layer (a dot, faint drop lines to both axes, the label beside it) and re-places them whenever
 // the plot redraws: a widened axis, a limit sweep, a beforeafter. They always sit where E is now.
 
-type ReadoutPt = { ref: string; dot: SVGCircleElement; drops: SVGPathElement; label: SVGTextElement | null; at: { x: number; y: number } | null };
+type ReadoutPt = { ref: string; dot: SVGCircleElement; drops: SVGPathElement; label: SVGTextElement | null; at: { x: number; y: number } | null; /** The label's width (units) and where it sits now. */ lw?: number; side?: number; box?: Box };
 
 /** Whether a region point names a readout (`at=E`). */
 export function isReadoutPoint(a: InkAction, registry: Registry): boolean {
@@ -3061,8 +3152,62 @@ function paintReadoutPt(o: ReadoutPt, pl: Plot, x: number, y: number) {
   // Drop lines to the axes: where the reading is on each scale.
   const inside = x >= body.x - 1 && x <= body.x + body.w + 1 && y >= body.y - 1 && y <= body.y + body.h + 1;
   o.drops.setAttribute('d', inside ? `M${body.x} ${y}H${x}V${body.y + body.h}` : '');
-  if (o.label) setAttrs(o.label, { x: x + m.label * 0.55, y: y - m.label * 0.75 });
   o.at = { x, y };
+  if (o.label) {
+    const at = readoutLabelAt(o, pl, x, y, inside);
+    setAttrs(o.label, { x: at.x, y: at.y, 'text-anchor': at.anchor });
+  }
+}
+
+/** Where a readout point's label goes around it: NE first; then the side that touches the fewest strokes (its plot's lines, its own drop lines, other readout labels) and, on a slide's chart, the least of what the slide painted (its printed labels and curves). */
+const LABEL_SIDES: { dx: number; dy: number; anchor: 'start' | 'end' | 'middle' }[] = [
+  { dx: 0.55, dy: -0.75, anchor: 'start' }, { dx: -0.55, dy: -0.75, anchor: 'end' }, { dx: 0.55, dy: 0.95, anchor: 'start' }, { dx: -0.55, dy: 0.95, anchor: 'end' },
+  { dx: 0.75, dy: 0, anchor: 'start' }, { dx: -0.75, dy: 0, anchor: 'end' }, { dx: 0, dy: -1.15, anchor: 'middle' }, { dx: 0, dy: 1.3, anchor: 'middle' },
+];
+function readoutLabelAt(o: ReadoutPt, pl: Plot, x: number, y: number, drops: boolean): { x: number; y: number; anchor: string } {
+  const m = pl.host.m, L = m.label, lw = o.lw ?? m.u(textWidth(o.label?.textContent ?? '', m.labelPx));
+  const { body } = pl.host.placed;
+  const segs: { a: Pt; b: Pt }[] = [];
+  for (const b of pl.members) {
+    const ys = b.vals?.[0], xs = b.xs;
+    if (!ys || !xs) continue;
+    let prev: Pt | null = null;
+    for (let i = 0; i < ys.length; i++) {
+      const p = Number.isFinite(ys[i]) ? linePt(pl, xs[i], ys[i]) : null;
+      if (p && prev) segs.push({ a: prev, b: p });
+      prev = p;
+    }
+  }
+  if (drops) segs.push({ a: { x: body.x, y }, b: { x, y } }, { a: { x, y }, b: { x, y: body.y + body.h } });
+  const others = ((pl.host.el.readoutPts as ReadoutPt[] | undefined) ?? []).filter((q) => q !== o && q.box).map((q) => q.box!);
+  const ink = pl.fixed ? pageInkOf(pl.host.g) : null;
+  let best = 0, bestCost = Infinity, bestBox: Box | null = null;
+  LABEL_SIDES.forEach((sd, i) => {
+    const ax = x + sd.dx * L, cy = y + sd.dy * L;
+    const bx = sd.anchor === 'start' ? ax : sd.anchor === 'end' ? ax - lw : ax - lw / 2;
+    const box = { x: bx, y: cy - L * 0.55, w: lw, h: L * 1.1 };
+    const hits = segs.filter((sg) => segCrossesBox(sg.a, sg.b, box)).length;
+    const cost = hits * 3 + inkIn(ink, box) * 12 + others.filter((r) => overlapsBox(r, box, 0)).length * 5 + i * 0.05 - (o.side === i ? 0.04 : 0);
+    if (cost < bestCost) { bestCost = cost; best = i; bestBox = box; }
+  });
+  o.side = best;
+  o.box = bestBox!;
+  const sd = LABEL_SIDES[best];
+  return { x: x + sd.dx * L, y: y + sd.dy * L, anchor: sd.anchor };
+}
+
+/** Whether segment a–b passes through box r (an end inside, or crossing one of its edges). */
+function segCrossesBox(a: Pt, b: Pt, r: Box): boolean {
+  const inR = (p: Pt) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+  if (inR(a) || inR(b)) return true;
+  const cross = (p: Pt, q: Pt, u: Pt, v: Pt) => {
+    const d = (q.x - p.x) * (v.y - u.y) - (q.y - p.y) * (v.x - u.x);
+    if (Math.abs(d) < 1e-12) return false;
+    const t = ((u.x - p.x) * (v.y - u.y) - (u.y - p.y) * (v.x - u.x)) / d, s2 = ((u.x - p.x) * (q.y - p.y) - (u.y - p.y) * (q.x - p.x)) / d;
+    return t >= 0 && t <= 1 && s2 >= 0 && s2 <= 1;
+  };
+  const c = [{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h }, { x: r.x, y: r.y + r.h }];
+  return c.some((u, i) => cross(a, b, u, c[(i + 1) % 4]));
 }
 
 /** Re-places a plot's readout points at their readouts now (over `ms`, from where they were). */
@@ -3102,6 +3247,7 @@ export async function buildReadoutPoint(a: Extract<InkAction, { kind: 'point' }>
         drops: svg(g, 'path', { d: '', fill: 'none', stroke: c.muted, 'stroke-dasharray': '3 3', ...hair(1) }),
         dot: svg(g, 'circle', { r: rad, fill: color }),
         label: text ? kitText(g, 0, 0, text, { size: m.label, fill: color, anchor: 'start', halo: c.halo }) : null,
+        lw,
       };
       if (o.label && isVarName(text!)) { o.label.setAttribute('font-style', 'italic'); o.label.setAttribute('font-family', 'KaTeX_Math, "STIX Two Math", "Cambria Math", "Times New Roman", serif'); }
       paintReadoutPt(o, pl, p.x, p.y);

@@ -20,8 +20,8 @@ const union = (a: SRect, b: SRect): SRect => {
   return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
 };
 
-/** The furthest the end-of-answer overview zooms out: as far as framing does, so every label stays readable. */
-export const ZOVER = ZMIN;
+/** The furthest the end-of-answer overview zooms out: a little past framing (ZMIN), so a composition that grew wider or taller than the window is seen whole, not clipped (design 3.1: the final board reads on its own). */
+export const ZOVER = 0.5;
 
 /**
  * The end-of-answer overview: the whole scene `ext`, centred in the window with air, at the largest

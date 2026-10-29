@@ -21,7 +21,7 @@ import { penDown, penLift, penTo } from '../../ink/agent/penCursor';
 import { overlaps, placeRel, type Box } from './place';
 import { routeLink, pathD, at, dirAt, samples, placeLabel, ribbon, type Route, type P } from './route';
 import { lassoPath, bracketPath } from './shapes';
-import { anchorBox, sceneStore, setSceneLink, type Thing } from './store';
+import { anchorBox, unclaimed, sceneStore, setSceneLink, type Thing } from './store';
 
 type S = SceneShape & DrawAction;
 type LinkSpec = Extract<SceneShape, { kind: 'link' }> & { em?: boolean };
@@ -134,7 +134,8 @@ export async function buildScene(a: S, ctx: TargetCtx, env: BuildEnv): Promise<E
   const c = colors(), accent = env.settings.inkColor;
   const scene = ctx.scene ?? flatSpace(ctx);
   const inside = ctx.scene ? undefined : scene.view();
-  const taken = () => [...scene.rects(), ...env.registry.obstacles(ctx.target)];
+  // A scene: its claims (script order) and the ink that holds none; a plain sketch: all its ink.
+  const taken = () => [...scene.rects(), ...(ctx.scene ? unclaimed(env, ctx.target) : env.registry.obstacles(ctx.target))];
   // Things sit a link's length apart (room for an arrow and its word); text sits closer.
   const placeBox = async (w: number, h: number, place?: { rel: string; of: string }, gapK = 1.25) => {
     const anchor = place ? await anchorBox(place.of, env.registry) : null;
@@ -468,7 +469,9 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
   const m = metrics(ctx.scale(), ctx.body?.() ?? 16);
   const store = sceneStore(env.registry);
   const c = colors(), accent = env.settings.inkColor;
-  const taken = () => [...scene.rects(), ...env.registry.obstacles(ctx.target)];
+  // The registry id this link draws as (set once drawn): its own old route is never in its way.
+  let rid: string | undefined;
+  const taken = () => [...scene.rects(), ...unclaimed(env, ctx.target, rid)];
   const from = await anchorBox(L.from, env.registry), to = await anchorBox(L.to, env.registry);
   if (!from) return `unknown ${L.from}`;
   if (!to) return `unknown ${L.to}`;
@@ -480,7 +483,7 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
   const fromKey = L.from, ends = await Promise.all(targets.map((t) => anchorBox(t, env.registry)));
   // Other links' paths: this one keeps off them where it can.
   const others = () => store.ofKind('link').flatMap((t) => ((t.data!.link as LinkState | undefined)?.routes ?? []).map((q) => samples(q, 16)));
-  const solid = () => [...scene.rects({ lines: false }), ...env.registry.obstacles(ctx.target, undefined, true)];
+  const solid = () => [...scene.rects({ lines: false }), ...unclaimed(env, ctx.target, rid, true)];
   const route = (f: Box, e: Box) => routeLink(f, e, clear(solid(), f, e), m.u(4), m.u(3), others());
   const routes = ends.map((e) => route(from, e!));
   let corridor = routes.flatMap((q) => claimCorridor(scene, q, m));
@@ -540,7 +543,7 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
       }
       paint(1);
       const boxes = () => routes.flatMap((q) => samples(q, 10).map((p) => ({ x: p.x - m.u(3), y: p.y - m.u(3), w: m.u(6), h: m.u(6) })));
-      env.registry.define({ id: aid, kind: 'scene-link', target: ctx.target, bbox, boxes: [...boxes(), ...(lbox ? [lbox] : [])], anchor: at(routes[0], 1), group: g, strokes: routes.map((q) => samples(q, 16)) });
+      rid = env.registry.define({ id: aid, kind: 'scene-link', target: ctx.target, bbox, boxes: [...boxes(), ...(lbox ? [lbox] : [])], anchor: at(routes[0], 1), group: g, strokes: routes.map((q) => samples(q, 16)) });
       /**
        * A new label (set id=l "…"): once drawn is drawn, so the old words fade out where they are, the
        * new ones are measured and placed again (clear of things, labels and the curve) and fade in with
@@ -553,7 +556,7 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
         text = next;
         lclaim?.drop();
         const w = lw([next, L.showWeight ? '100%' : ''].filter(Boolean).join(' '));
-        const room = () => [...scene.rects(), ...env.registry.obstacles(ctx.target, aid)];
+        const room = () => [...scene.rects(), ...unclaimed(env, ctx.target, rid)];
         const hit = (b: Box) => solid().reduce((s, r) => s + (overlaps(b, r) ? 1 : 0), 0);
         lbox = placeLabel(routes[0], w, lh, room(), m.u(5));
         // Longer words with no clear spot beside a short straight link: the link bends up into an arc
@@ -576,7 +579,7 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
         const el = label;
         el.textContent = said();
         setAttrs(el, { x: lbox.x + lbox.w / 2, y: lbox.y + lbox.h / 2, opacity: 0, fill: accent });
-        if (aid && env.registry.get(aid)) env.registry.update(aid, { boxes: [...boxes(), lbox], strokes: routes.map((q) => samples(q, 16)) });
+        if (rid && env.registry.get(rid)) env.registry.update(rid, { boxes: [...boxes(), lbox], strokes: routes.map((q) => samples(q, 16)) });
         await tween(still ? 0 : 240 * k.speed, (x) => el.setAttribute('opacity', String(x)), undefined, easeOut);
         el.setAttribute('opacity', '1');
         await new Promise((res) => setTimeout(res, still ? 0 : 500 * k.speed));
@@ -586,19 +589,20 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
       store.put(id, { rect: bbox, data: { kind: 'link', link } });
       // Re-weight when the values move (set), re-route when an end moves (move, split, merge).
       strengths.forEach((s) => s?.src && kitStore(env.registry).listen(s.src, () => paint()));
-      const reroute = async () => {
+      // Re-routes go through the scene's queue (store.reroute): never two at once, in creation order.
+      const order = store.nextOrder();
+      const release = () => { corridor.forEach((cl) => cl.drop()); corridor = []; lclaim?.drop(); lclaim = null; };
+      const run = async () => {
         const f = await anchorBox(fromKey, env.registry, 0);
-        if (!f) return;
-        now.f = f;
-        corridor.forEach((cl) => cl.drop());
-        lclaim?.drop();
-        for (let i = 0; i < targets.length; i++) { const e = await anchorBox(targets[i], env.registry, 0); if (e) { now.e[i] = e; routes[i] = route(f, e); } }
+        if (f) now.f = f;
+        for (let i = 0; i < targets.length; i++) { const e = await anchorBox(targets[i], env.registry, 0); if (e) now.e[i] = e; }
+        if (f) for (let i = 0; i < targets.length; i++) routes[i] = route(now.f, now.e[i]);
         corridor = routes.flatMap((q) => claimCorridor(scene, q, m));
         if (lbox) { lbox = placeLabel(routes[0], lbox.w, lbox.h, taken(), m.u(5)); lclaim = scene.claim(lbox, 'label'); }
-        if (aid && env.registry.get(aid)) env.registry.update(aid, { boxes: [...boxes(), ...(lbox ? [lbox] : [])], strokes: routes.map((q) => samples(q, 16)) });
+        if (rid && env.registry.get(rid)) env.registry.update(rid, { boxes: [...boxes(), ...(lbox ? [lbox] : [])], strokes: routes.map((q) => samples(q, 16)) });
         paint();
       };
-      for (const key of [fromKey, ...targets]) store.get(blockPart(key)?.id ?? key)?.moved?.add(() => void reroute());
+      for (const key of [fromKey, ...targets]) store.get(blockPart(key)?.id ?? key)?.moved?.add(() => void store.reroute({ order, release, run }));
     },
   };
 }

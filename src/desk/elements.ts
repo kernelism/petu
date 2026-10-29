@@ -1,6 +1,7 @@
 // src/desk/elements.ts
 import type { SPt, SRect } from '../geometry/space';
 import type { DrawAction, End, InkAction, RefAction, Target, Weight } from '../script/types';
+import { inkBoxes, pageInkOf } from './pageInk';
 import { circleStroke, lineStroke, arrowStrokes, boxStroke, curveStroke, crossesItself, arcStroke, bisector, bracketStroke, bracketSide, sideNormal, type Stroke } from '../ink/agent/strokes';
 import { drawStrokes, prefersReducedMotion } from '../ink/agent/animate';
 import { weightOf, weightStyle } from '../ink/agent/weights';
@@ -206,8 +207,10 @@ function strokePlan(a: DrawAction, ctx: TargetCtx, env: BuildEnv, ink: Ink, extr
 function placeText(ctx: TargetCtx, env: BuildEnv, layer: SVGGElement, text: string, o: TextOpts, anchor: SPt, dir: Parameters<typeof placeLabel>[3], clear: number, skip?: string, outside = false): SRect {
   const m = measureText(layer, text, o);
   const segs: Seg[] = env.registry.segments(ctx.target); // every stroke of the target, this element's own included
+  // On a page, what the slide painted near the anchor (its text, printed labels, curves) is in the way too.
+  const painted = isRegion(ctx.target) ? [] : inkBoxes(pageInkOf(ctx.layers.agent), { x: anchor.x - m.w * 3, y: anchor.y - m.h * 4, w: m.w * 6, h: m.h * 8 });
   // outside: the anchor's label goes outside a closed shape it sits on (a point on a circle).
-  return placeClear(anchor, m.w, m.h, dir ?? 'ne', clear, segs, env.registry.obstacles(ctx.target, skip), bounds(ctx), outside ? env.registry.outlines(ctx.target) : []);
+  return placeClear(anchor, m.w, m.h, dir ?? 'ne', clear, segs, [...env.registry.obstacles(ctx.target, skip), ...painted], bounds(ctx), outside ? env.registry.outlines(ctx.target) : []);
 }
 
 async function writeLabel(g: SVGGElement, box: SRect, text: string, o: TextOpts, env: BuildEnv, signal: AbortSignal, k: Pace) {
@@ -298,8 +301,11 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       const labH = a.text ? textPx(ctx, 'label') * 1.4 / Math.max(ctx.scale(), 1e-3) : 0;
       const reach = o.gap + o.tick + o.notch + px(6) + labH;
       // What sits beside it: drawn ink, and on a page its text lines.
+      // What sits beside it: drawn ink, and on a page its text lines and everything else it painted (curves, labels).
       const page = isRegion(ctx.target) ? [] : (await ctx.runs()).map((r) => ctx.rectToSpace(r.rect));
-      const side = bracketSide(f, t, reach, [...env.registry.obstacles(ctx.target), ...page], env.registry.segments(ctx.target));
+      const span = { x: Math.min(f.x, t.x) - reach, y: Math.min(f.y, t.y) - reach, w: Math.abs(t.x - f.x) + 2 * reach, h: Math.abs(t.y - f.y) + 2 * reach };
+      const painted = isRegion(ctx.target) ? [] : inkBoxes(pageInkOf(ctx.layers.agent), span);
+      const side = bracketSide(f, t, reach, [...env.registry.obstacles(ctx.target), ...page, ...painted], env.registry.segments(ctx.target));
       const s = bracketStroke(f, t, { ...o, side });
       if (!a.text) return strokePlan(a, ctx, env, { strokes: [s] });
       const n = sideNormal(f, t, side);
