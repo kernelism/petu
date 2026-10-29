@@ -18,6 +18,7 @@ import { tween, easeOut } from '../kit/anim';
 import { fmt } from '../kit/compute';
 import { token } from '../../ink/agent/tokens';
 import { prefersReducedMotion } from '../../ink/agent/animate';
+import { penDown, penLift, penTo } from '../../ink/agent/penCursor';
 import { overlaps, placeRel, type Box } from './place';
 import { routeLink, pathD, at, dirAt, samples, placeLabel, ribbon, type Route, type P } from './route';
 import { lassoPath, bracketPath } from './shapes';
@@ -430,7 +431,11 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
       const now = { f: from, e: ends as Box[] };
       const endsNow = (i: number): [Box, Box] => [now.f, now.e[i]];
       // Traced from its start, like a hand drawing it.
-      if (k.fadeMs == null && !prefersReducedMotion()) await tween(Math.min(700, 300 + routes.length * 60) * k.speed, (t) => paint(t));
+      if (k.fadeMs == null && !prefersReducedMotion()) {
+        const pen = {};
+        penDown(pen);
+        try { await tween(Math.min(700, 300 + routes.length * 60) * k.speed, (t) => { paint(t); penTo(pen, g, at(routes[0], t), L.em ? accent : c.ink); }); } finally { penLift(pen); }
+      }
       paint(1);
       const boxes = () => routes.flatMap((q) => samples(q, 10).map((p) => ({ x: p.x - m.u(3), y: p.y - m.u(3), w: m.u(6), h: m.u(6) })));
       env.registry.define({ id: aid, kind: 'scene-link', target: ctx.target, bbox, boxes: [...boxes(), ...(lbox ? [lbox] : [])], anchor: at(routes[0], 1), group: g, strokes: routes.map((q) => samples(q, 16)) });

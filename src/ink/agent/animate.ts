@@ -1,5 +1,6 @@
 import type { SPt } from '../../geometry/space';
 import type { Stroke } from './strokes';
+import { penDown, penLift, penTo } from './penCursor';
 
 export const PX_PER_SEC = 700;
 /** No single stroke takes longer than this, however long it is. */
@@ -90,25 +91,30 @@ export async function drawStrokes(g: SVGGElement, strokes: Stroke[], o: InkOpts)
   tip.setAttribute('fill', o.color);
   if (o.opacity != null) tip.setAttribute('fill-opacity', String(o.opacity)); // a faint stroke's pen is faint too
   tip.style.transition = 'opacity 160ms ease-out';
-  for (let k = 0; k < strokes.length; k++) {
-    const s = strokes[k];
-    const cum = cumulative(s), L = cum[cum.length - 1];
-    const dur = strokeDurationMs(L * o.scale, o.minMs, o.speed);
-    const p = makePath(g, o);
-    g.appendChild(tip);
-    tip.style.opacity = '1';
-    const t0 = performance.now();
-    for (;;) {
-      const t = o.signal?.aborted ? 1 : (performance.now() - t0) / dur;
-      const { points, tip: at } = partial(s, cum, L * ease(t));
-      p.setAttribute('d', toD(points));
-      tip.setAttribute('cx', String(at.x));
-      tip.setAttribute('cy', String(at.y));
-      if (t >= 1) break;
-      await frame();
+  const pen = {};
+  penDown(pen);
+  try {
+    for (let k = 0; k < strokes.length; k++) {
+      const s = strokes[k];
+      const cum = cumulative(s), L = cum[cum.length - 1];
+      const dur = strokeDurationMs(L * o.scale, o.minMs, o.speed);
+      const p = makePath(g, o);
+      g.appendChild(tip);
+      tip.style.opacity = '1';
+      const t0 = performance.now();
+      for (;;) {
+        const t = o.signal?.aborted ? 1 : (performance.now() - t0) / dur;
+        const { points, tip: at } = partial(s, cum, L * ease(t));
+        p.setAttribute('d', toD(points));
+        tip.setAttribute('cx', String(at.x));
+        tip.setAttribute('cy', String(at.y));
+        penTo(pen, g, at, o.color);
+        if (t >= 1) break;
+        await frame();
+      }
+      if (k < strokes.length - 1 && !o.signal?.aborted) await wait(BETWEEN_STROKES_MS * (o.speed ?? 1));
     }
-    if (k < strokes.length - 1 && !o.signal?.aborted) await wait(BETWEEN_STROKES_MS * (o.speed ?? 1));
-  }
+  } finally { penLift(pen); }
   tip.style.opacity = '0';
   setTimeout(() => tip.remove(), 200);
 }
