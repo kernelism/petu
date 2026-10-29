@@ -184,7 +184,7 @@ function strokePlan(a: DrawAction, ctx: TargetCtx, env: BuildEnv, ink: Ink, extr
     draw: async (signal, k) => {
       const g = own(ctx.layers.agent);
       const last = ink.strokes[ink.strokes.length - 1];
-      env.registry.define({ id: a.id, kind: a.kind, target: ctx.target, bbox, boxes: [...boxes, ...extra], anchor: last[last.length - 1], group: g, strokes: ink.strokes });
+      env.registry.define({ id: a.id, kind: a.kind, target: ctx.target, bbox, boxes: [...boxes, ...extra], anchor: last[last.length - 1], group: g, strokes: ink.strokes, ...(ink.closed ? { outline: ink.strokes[0] } : {}) });
       const fade = s.inkStyle === 'clean' || prefersReducedMotion();
       await drawStrokes(g, ink.strokes, {
         color: ws.color, width: ws.width, opacity: ws.opacity < 1 ? ws.opacity : undefined, scale: ctx.scale(), signal,
@@ -201,10 +201,11 @@ function strokePlan(a: DrawAction, ctx: TargetCtx, env: BuildEnv, ink: Ink, extr
  * Places a label box next to `anchor` toward `dir`, nudged off the target's other elements
  * (rule 5). Runs at draw time, so it sees everything drawn before it.
  */
-function placeText(ctx: TargetCtx, env: BuildEnv, layer: SVGGElement, text: string, o: TextOpts, anchor: SPt, dir: Parameters<typeof placeLabel>[3], clear: number, skip?: string): SRect {
+function placeText(ctx: TargetCtx, env: BuildEnv, layer: SVGGElement, text: string, o: TextOpts, anchor: SPt, dir: Parameters<typeof placeLabel>[3], clear: number, skip?: string, outside = false): SRect {
   const m = measureText(layer, text, o);
   const segs: Seg[] = env.registry.segments(ctx.target); // every stroke of the target, this element's own included
-  return placeClear(anchor, m.w, m.h, dir ?? 'ne', clear, segs, env.registry.obstacles(ctx.target, skip), bounds(ctx));
+  // outside: the anchor's label goes outside a closed shape it sits on (a point on a circle).
+  return placeClear(anchor, m.w, m.h, dir ?? 'ne', clear, segs, env.registry.obstacles(ctx.target, skip), bounds(ctx), outside ? env.registry.outlines(ctx.target) : []);
 }
 
 async function writeLabel(g: SVGGElement, box: SRect, text: string, o: TextOpts, env: BuildEnv, signal: AbortSignal, k: Pace) {
@@ -344,7 +345,7 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
           const od = textOpts(ctx, env, textPx(ctx, 'label'), a.em); // sized for the scale now (a column glide may have run since build)
-          const box = a.text ? placeText(ctx, env, g, a.text, od, c, a.dir ?? 'ne', rad) : null;
+          const box = a.text ? placeText(ctx, env, g, a.text, od, c, a.dir ?? 'ne', rad, undefined, true) : null;
           env.registry.define({ id: a.id, kind: 'point', target: ctx.target, bbox: union([dot, ...(box ? [box] : [])]), boxes: [dot, ...(box ? [box] : [])], anchor: c, group: g });
           await drawDot(g, c, rad, color, k, signal);
           if (box && a.text) await writeLabel(g, box, a.text, od, env, signal, k);
@@ -402,7 +403,9 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
           const region = isRegion(ctx.target);
           const g = region ? sheetSlot(ctx.layers.agent) : own(ctx.layers.highlight);
           // Shades are not obstacles: labels may sit inside a shaded area.
-          env.registry.define({ id: a.id, kind: 'shade', target: ctx.target, bbox, boxes: [], anchor: { x: bbox.x + bbox.w / 2, y: bbox.y + bbox.h / 2 }, group: g });
+          // Its outline still counts for a point on its edge: that point's label goes outside it.
+          const outline = 'pts' in shape ? shape.pts : Array.from({ length: 48 }, (_, i) => ({ x: shape.c.x + shape.rx * Math.cos((i / 48) * 2 * Math.PI), y: shape.c.y + shape.ry * Math.sin((i / 48) * 2 * Math.PI) }));
+          env.registry.define({ id: a.id, kind: 'shade', target: ctx.target, bbox, boxes: [], anchor: { x: bbox.x + bbox.w / 2, y: bbox.y + bbox.h / 2 }, group: g, outline });
           const accent = env.settings.inkColor, line = a.outline ? token('--shade-line') : undefined;
           const look: ShadeLook = a.em
             ? { fill: accent, fillOpacity: tokenNum('--shade-tint'), stroke: a.outline ? accent : undefined, strokeOpacity: 0.6 }
