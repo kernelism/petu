@@ -1,6 +1,7 @@
 // src/agent/protocol.ts — shared by the browser (src/agent/client.ts) and the dev server (server/).
 import type { Usage } from '../../server/prices';
 import type { Storyboard } from './storyboard';
+import type { Relation } from './context/memory';
 
 /** What the browser sends to POST /api/ask (and /api/prewarm, without question/history/ink). */
 export type AskRequest = {
@@ -31,8 +32,13 @@ export type AskContext = {
   pagesText?: string;
   /** Volatile tail: JPEGs of the scout's first other pages (with the visible page, at most 4 images). */
   images?: { page: number; b64: string; w: number; h: number }[];
-  /** Volatile tail: the scout's pages (teaching order) and plan. */
-  scout?: { pages: number[]; plan: string };
+  /** Volatile tail: the scout's pages (teaching order), plan, and how the question relates to the previous answer. */
+  scout?: { pages: number[]; plan: string; relation?: Relation };
+  /**
+   * Session MEMORY (src/agent/context/memory.ts): what earlier answers taught (plan, board as data,
+   * claims, check question). Append-only per session; sent after the page block with its own breakpoint.
+   */
+  memory?: string;
   /**
    * Volatile tail: the opener the scout wrote, already spoken (and its marks drawn) before this
    * answer's first word. The answer continues from it without repeating it.
@@ -53,7 +59,7 @@ export type AskEvent =
        * first opener sentence. `opener`: what the opener said (script). `cached`/`input`: its tokens. */
       atMs?: number; openerMs?: number; opener?: string; cached?: number; input?: number;
       /** The scout's `find` strings, and the context it read (?debug: tier, tokens per block, candidate pages). */
-      find?: string[]; ctx?: { mode: string; tier: string; tokens: Record<string, number>; candidates: string[]; printedOffset?: number; ms: number } }
+      find?: string[]; relation?: Relation; ctx?: { mode: string; tier: string; tokens: Record<string, number>; candidates: string[]; printedOffset?: number; ms: number } }
   /** Client-side: stage 2's first text reached the player (ms from Enter); the opener's words were then due to end at `openerEndMs`. */
   | { t: 'handoff'; ms: number; openerEndMs?: number }
   /**

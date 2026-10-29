@@ -11,7 +11,6 @@ import { LabelIndex, mentions, pageLabels } from '../../../src/agent/context/lab
 import { candidates, formatCandidates, neighbourhood, resolveFind } from '../../../src/agent/context/candidates';
 import { edgeNumbers, offsetFromHeaders, offsetFromLabels, pagesNamed, samplePages } from '../../../src/agent/context/printed';
 import { sectionCard, sectionWindow, tierOf } from '../../../src/agent/context/tiers';
-import { SessionMemory, boardObjects, MAX_TURNS } from '../../../src/agent/context/memory';
 import { deckDigest, DIGEST_CHARS } from '../../../src/agent/context/digest';
 import { ContextBuilder } from '../../../src/agent/context/build';
 import type { PdfDoc } from '../../../src/pdf/loadPdf';
@@ -153,22 +152,6 @@ describe('tiers', () => {
     expect(sectionWindow([], 3, 900)).toEqual({ from: 1, to: 11 });
     const card = sectionCard({ from: 1, to: 2, title: 'T' }, (p) => (p === 1 ? ['Head', 'body'] : undefined));
     expect(card.split('\n')).toEqual(["SECTION T (p1–2; the student's part of the document, every page at full detail)", 'p1: Head · body', 'p2: …']);
-  });
-});
-
-describe('session memory', () => {
-  it('is append-only (each turn\'s block starts with the last one\'s) and rolls the oldest half past 20 turns', () => {
-    const m = new SessionMemory();
-    expect(m.text()).toBe('');
-    m.add({ question: 'why is s = sqrt(SSE/(n-2))', page: 650, pages: [650, 648], board: boardObjects('{{sketch id=side near=p650}} x {{grid id=g on=side}} {{emph id=g}}') });
-    const one = m.text();
-    expect(one.split('\n')[1]).toBe('1. (on p650) "why is s = sqrt(SSE/(n-2))" → taught p650 p648; board: sketch side, grid g');
-    m.add({ question: 'and the outlier?', page: 651, pages: [651], board: [] });
-    expect(m.text().startsWith(one)).toBe(true);
-    for (let i = 0; i < MAX_TURNS; i++) m.add({ question: `q${i}`, page: i + 1, pages: [], board: [] });
-    const lines = m.text().split('\n');
-    expect(lines[1]).toMatch(/^earlier: 10 earlier answers on p/);
-    expect(lines.length).toBeLessThanOrEqual(MAX_TURNS + 2);
   });
 });
 

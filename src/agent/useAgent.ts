@@ -1,5 +1,5 @@
 // src/agent/useAgent.ts — the agent path's per-document state for App: the context builder, the
-// answer history, prewarm on intent and the spend state.
+// answer history and session memory, prewarm on intent and the spend state.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PdfDoc } from '../pdf/loadPdf';
 import type { StudentStroke } from '../ink/student/store';
@@ -9,7 +9,10 @@ import type { ScoutContext } from './context/build';
 import type { AskContext, SpendSummary } from './protocol';
 import { twoStage } from './twoStage';
 import { AskError, askStream, capLine, getSpend, scoutLive, spendBlocked, spendPhase, type AskHandlers } from './client';
+import type { ScoutResult } from './scout';
 import { History } from './history';
+import { SessionMemory, recordOf } from './context/memory';
+import type { Storyboard } from './storyboard';
 import { Prewarm } from './prewarm';
 
 /** What App needs from the context builder (Lane G's ContextBuilder, src/agent/context/build.ts). */
@@ -21,8 +24,6 @@ export type ContextSource = {
   build(page: number, question: string, ink: StudentStroke[], scout?: { pages: number[]; plan: string; find?: string[] }): Promise<{ context: AskContext; grounds: PageGround[]; found?: { q: string; page: number; via: string }[] }>;
   /** Stage 1, tiered (ctx=new; old mode returns the digest): everything the scout reads. */
   scout?(page: number, question: string, prior?: { q: string }): Promise<ScoutContext>;
-  /** A finished answer, for the session memory. */
-  remember?(t: { question: string; page: number; pages: number[]; script: string }): void;
   pagePrefix(page: number): Promise<AskContext>;
   /** The visible page's listing and ground (the opener's grounding). */
   visible(page: number): Promise<{ pageText: string; ground: PageGround }>;
@@ -49,6 +50,8 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
   spendRef.current = spend;
   const builder = useRef<ContextSource | null>(null);
   const history = useRef(new History()).current;
+  /** What each answer taught (plan, board as data, claims): the follow-up's MEMORY block. */
+  const memory = useRef(new SessionMemory()).current;
   const inFlight = useRef(0);
   const prewarm = useRef(new Prewarm({ inFlight: () => inFlight.current > 0, blocked: () => spendBlocked(spendRef.current) })).current;
 
@@ -58,10 +61,11 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
     const b = make(doc, name);
     builder.current = b;
     history.reset();
+    memory.reset();
     prewarm.reset();
     b.warm(1);
     return () => { b.destroy(); if (builder.current === b) builder.current = null; };
-  }, [doc, name, enabled, make, history, prewarm]);
+  }, [doc, name, enabled, make, history, memory, prewarm]);
 
   // The system block is shared by every document: warm it once spend is known not to be blocked.
   useEffect(() => {
@@ -108,35 +112,47 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
       const hist = history.last();
       const prior = hist[hist.length - 1];
       const hash = doc?.fingerprints?.[0] ?? name;
+      const mem = memory.text();
       const sc0 = b.scout ? await b.scout(a.page, a.question, prior) : null;
       const [digest, vis] = sc0 ? [sc0.digest, { pageText: sc0.pageText, ground: sc0.ground }] : await Promise.all([b.digest(a.page, a.question), b.visible(a.page)]);
       if (signal.aborted) return;
       const live = scoutLive({
         question: a.question, ...(prior ? { prior } : {}), docName: name, docHash: hash, numPages: doc?.numPages ?? a.page,
         page: a.page, digest, pageText: vis.pageText, ...(phase ? { phase } : {}),
-        ...(sc0?.section ? { section: sc0.section } : {}), ...(sc0?.memory ? { memory: sc0.memory } : {}),
+        ...(sc0?.section ? { section: sc0.section } : {}), ...(mem ? { memory: mem } : {}),
         ...(sc0?.candidates ? { candidates: sc0.candidates } : {}), ...(sc0?.image ? { image: sc0.image } : {}),
       }, signal);
-      // The session memory records what this answer taught once it has played (new mode).
+      // The session memory records what this answer taught once it has played (or was stopped).
       let script = '';
       let taught: number[] = [];
+      let plan = '';
+      let relation: ScoutResult['relation'];
+      let story: Storyboard | undefined;
+      const handlers: AskHandlers = { ...a.handlers, onStoryboard: (e) => { if (e.board) story = e.board; a.handlers.onStoryboard?.(e); } };
       const stream = twoStage({
-        live, visible: vis.ground, handlers: a.handlers, since, ...(sc0 ? { ctx: sc0.info } : {}),
+        live, visible: vis.ground, handlers, since, ...(sc0 ? { ctx: sc0.info } : {}),
         build: async (sc) => {
           const r = await b.build(a.page, a.question, a.ink(), { pages: sc.pages, plan: sc.plan, ...(sc.find?.length ? { find: sc.find } : {}) });
           for (const f of r.found ?? []) a.handlers.onNote?.(`find "${f.q}" → p${f.page} (${f.via})`);
           taught = r.context.scout?.pages ?? sc.pages;
-          return r;
+          plan = sc.plan;
+          relation = sc.relation;
+          // A follow-up: stage 2 gets the MEMORY block and how this question relates to the last answer.
+          const scout = r.context.scout && relation ? { scout: { ...r.context.scout, relation } } : {};
+          return { ...r, context: { ...r.context, ...scout, ...(mem ? { memory: mem } : {}) } };
         },
-        ask: (context) => askStream({ question: a.question, history: hist, context, ...(phase ? { phase } : {}) }, signal, a.handlers),
+        ask: (context) => askStream({ question: a.question, history: hist, context, ...(phase ? { phase } : {}) }, signal, handlers),
         onGrounding: (pages) => a.onGrounding(groundingOf(pages)),
       }, signal);
-      for await (const c of stream) { script += c; yield c; }
-      if (!signal.aborted) b.remember?.({ question: a.question, page: a.page, pages: taught, script });
+      try {
+        for await (const c of stream) { script += c; yield c; }
+      } finally {
+        if (script.trim()) memory.add(recordOf({ question: a.question, page: a.page, pages: taught, plan, script, ...(relation ? { relation } : {}), ...(story ? { storyboard: story } : {}), ...(signal.aborted ? { stopped: true } : {}) }));
+      }
     } finally {
       inFlight.current--;
     }
-  }, [history, doc, name]);
+  }, [history, memory, doc, name]);
 
   const blocked = useMemo(() => (spendBlocked(spend) ? capLine(spend) : undefined), [spend]);
 
@@ -146,5 +162,5 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
     return b ? (await b.build(page, '', [], { pages, plan: '' })).grounds : [];
   }, []);
 
-  return { spend, blocked, refreshSpend, pageChanged, intent, source, history, grounds };
+  return { spend, blocked, refreshSpend, pageChanged, intent, source, history, memory, grounds };
 }
