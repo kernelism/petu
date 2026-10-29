@@ -175,11 +175,11 @@ export function relationNote(r: Relation): string {
   if (r === 'new-topic') return `${head} A new question: answer it on its own; refer to earlier answers only when they help.`;
   const change: Record<string, string> = {
     'revise-representation': 'The student wants the same idea shown another, better way: choose a different kind of picture, the one that shows the cause producing the effect most directly for what this student is missing (a physical picture, a count of things, a before and after, a picture on the slide\'s own figure), not the same kind of chart redrawn.',
-    'simplify': 'The student wants it simpler: fewer things on the board, plain everyday words, and one everyday comparison mapped part for part onto the real thing (say which part of the comparison stands for which part of the idea), then show the real idea in that light.',
+    'simplify': 'The student wants it simpler: fewer things on the board, plain everyday words, and one everyday comparison mapped part for part onto the real thing: draw the comparison itself, each part labelled with the real thing it stands for, so the mapping is something the student sees, then show the real idea in that light.',
     'new-example': 'The student wants another example: a new case with new values that the same idea runs on, so they watch the same mechanism work again.',
     'deeper': 'The student wants to go deeper: the next level of the mechanism under what you showed, built on a concrete case.',
   };
-  return `${head} ${change[r]} What you showed did not land, or not well enough. Do not add to the old picture: open a fresh board section with a new id and teach the idea with this deliberately different representation or level; your first beat says in a few words what is different this time. Reuse the slide's own figure when it can carry the new picture, and point back to the earlier picture only to contrast. Never repeat a claim or a drawing MEMORY lists.`;
+  return `${head} ${change[r]} What you showed did not land, or not well enough. Do not add to the old picture: open a fresh board section with a new id and teach the idea with this deliberately different representation or level. The new picture shows the mechanism happening (change one thing and let the student watch what follows) and its final state shows the point on its own. Your first beat says in a few words what is different this time. Reuse the slide's own figure when it can carry the new picture, and point back to the earlier picture only to contrast. Never repeat a claim or a drawing MEMORY lists.`;
 }
 
 /** The storyboard's cache key: one per storyboard prompt version, shared by every document. */
