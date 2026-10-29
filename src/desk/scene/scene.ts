@@ -390,6 +390,13 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
   const txt0 = [L.text, L.showWeight ? '100%' : ''].filter(Boolean).join(' ');
   const lh = m.label * 1.25;
   let lbox: Box | null = txt0 ? placeLabel(routes[0], lw(txt0), lh, taken(), m.u(5)) : null;
+  // No clear spot beside a short straight link (close neighbours): it arcs over the row instead, its label on top.
+  if (lbox && !fan && solid().some((r) => overlaps(lbox!, r))) {
+    routes[0] = routeLink(from, ends[0]!, clear(solid(), from, ends[0]!), m.u(4), m.u(3), others(), true);
+    corridor.forEach((cl) => cl.drop());
+    corridor = routes.flatMap((q) => claimCorridor(scene, q, m));
+    lbox = placeLabel(routes[0], lbox.w, lbox.h, taken(), m.u(5));
+  }
   let lclaim = lbox ? scene.claim(lbox, 'label') : null;
   const bbox = grow(union([...routes.flatMap((q) => samples(q, 8)).map((p) => ({ x: p.x, y: p.y, w: 0, h: 0 })), ...(lbox ? [lbox] : [])]), m.u(10));
   return {

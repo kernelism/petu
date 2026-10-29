@@ -50,7 +50,7 @@ export function length(q: Route): number {
  * caller) as far as a single bend allows. `gap`: air at the ends; `pad`: clearance from content.
  * `avoid`: other links' paths (sampled points) it should not run along or cross if it can help it.
  */
-export function routeLink(a: Box, b: Box, obstacles: Box[], gap: number, pad: number, avoid: P[][] = []): Route {
+export function routeLink(a: Box, b: Box, obstacles: Box[], gap: number, pad: number, avoid: P[][] = [], arc = false): Route {
   const ca = { x: a.x + a.w / 2, y: a.y + a.h / 2 }, cb = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
   const dx = cb.x - ca.x, dy = cb.y - ca.y;
   const cands: { q: Route; pref: number }[] = [];
@@ -58,7 +58,8 @@ export function routeLink(a: Box, b: Box, obstacles: Box[], gap: number, pad: nu
   // In one row and far apart (a fan, a long hop over things between): an arc. Close neighbours are
   // joined nearly straight, whatever row they share.
   const facing = Math.abs(dx) - (a.w + b.w) / 2;
-  const sameRow = Math.abs(dy) < hMax * 0.6 && facing > hMax * 3;
+  // `arc`: the caller needs room over the link (its label does not fit beside a short straight one).
+  const sameRow = Math.abs(dy) < hMax * 0.6 && facing > (arc ? 0 : hMax * 3);
   if (sameRow) {
     // Over the row (preferred) or under it, from the facing top (bottom) edges; the lift grows with
     // the span (proportional), so a short hop is a low arc and a long one never towers.
