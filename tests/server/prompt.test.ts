@@ -26,7 +26,7 @@ describe('system prompt', () => {
   it('is stable (one cacheable prefix) and within budget', () => {
     expect(systemPrompt()).toBe(s);
     expect(PROMPT_VERSION).toMatch(/^p\d+\.\d+$/);
-    expect(s.length / 3.6).toBeLessThan(8300); // ~tokens (the slide as canvas — charts, lifts, page notes — ~250 more; the visual kit's card added ~1,000; views, plots and FORMULAS ~400; Board v2's scene ~700; bound numbers, readouts, moves and a fifth example ~650; p5.6: four examples, chart-first and beats in TEACH, amounts/counts/histograms in the card, wave-1 helpers — 8,208)
+    expect(s.length / 3.6).toBeLessThan(8300); // ~tokens (the slide as canvas — charts, lifts, page notes — ~250 more; the visual kit's card added ~1,000; views, plots and FORMULAS ~400; Board v2's scene ~700; bound numbers, readouts, moves and a fifth example ~650; p5.6: four examples, chart-first and beats in TEACH, amounts/counts/histograms in the card, wave-1 helpers — 8,208; p5.7: live geometry in the card and TEACH, a moving example, the scope-relative length budget — 8,274)
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
   });
 
@@ -46,8 +46,18 @@ describe('system prompt', () => {
     expect([...at].sort((a, b) => a - b)).toEqual(at);
   });
 
-  it('is a brief, not a rulebook: no modes, no per-question-type recipes, no length or element caps', () => {
+  it('is a brief, not a rulebook: no modes, no per-question-type recipes, no element caps; length only as the scope-relative beat budget', () => {
+    let s = systemPrompt();
     expect(s).not.toMatch(/ANSWER SHAPE|BY QUESTION TYPE|hard rules/i);
+    // Founder 2026-10-29: live answers ran 94–160 s on narrow questions; "cap answer length by the
+    // question's scope (narrow question → 30–60 s, not minutes)". So ONE length budget is allowed, and only
+    // relative to the plan's beats and scope (narrow vs broad); it is no per-question-type recipe or mode,
+    // and no other fixed count or cap may appear. The budget's own sentences are checked here, then
+    // removed before the cap checks below.
+    const budget = /Say less and let the board carry it\. The PLAN's beats are your budget[^\n]*?a broad one may take longer\./;
+    expect(s).toMatch(budget);
+    expect(s.match(budget)![0]).toMatch(/narrow question lands in 30–60 seconds/);
+    s = s.replace(budget, '');
     expect(s).not.toMatch(/\b(point-at|what-if|derive|compare|navigation)\s*[:(]/i); // no playbook entries
     expect(s).not.toMatch(/\bat most \d|\bat least \d|\d+\s*[–-]\s*\d+ (words|elements|drawn)|\bexactly one\b|\bmax(imum)? \d/i);
     expect(s).not.toMatch(/\b(quick|lesson) mode\b|\bmode\b/i);
@@ -55,7 +65,7 @@ describe('system prompt', () => {
   });
 
   it('states the craft principles and the no-duplication rule', () => {
-    for (const p of [/understands/, /walk them/, /mechanism/, /One central illustration that grows/, /whatever understanding takes/, /Never invent page content/,
+    for (const p of [/understands/, /walk them/, /mechanism/, /One central illustration that grows/, /beats are your budget/, /Never invent page content/,
       /Never copy onto the board a formula, sentence or list that a page already shows/, /Never write on the board what your narration is saying/, /labels on drawn things/, /never written out as sentences/]) expect(s).toMatch(p);
   });
 

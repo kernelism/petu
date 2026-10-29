@@ -438,6 +438,6 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number;
   },
   // The prompt's examples (server/prompt/examples.ts) on their own slides.
   'ex-village': example('coins as marks'),
-  'ex-forecast': example('many cases at once'),
+  'ex-lighthouse': example('made to happen'),
   'ex-counter': example("slide's own chart"),
 };
