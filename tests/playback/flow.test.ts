@@ -48,6 +48,14 @@ describe('Scheduler pause / resume / seek / hold', () => {
     expect(log[log.length - 1]).toMatch(/done$/);
   });
 
+  it('wordsBefore counts the words said before an action\'s word, however late the action is handled', () => {
+    const { s, ats } = make();
+    s.push([scroll(3), ...words('a b c.'), scroll(9), ...words('d e.'), END]);
+    vi.advanceTimersByTime(1000); // everything spoken: the layout lane may run the opening scroll only now
+    expect(s.wordsBefore(ats[0])).toBe(0); // the opening move: nothing said yet
+    expect(s.wordsBefore(ats[1])).toBe(3);
+  });
+
   it('keeps buffering while paused', () => {
     const { s, log } = make();
     s.push(words('one two,'));

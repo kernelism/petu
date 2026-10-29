@@ -377,7 +377,7 @@ export default function App() {
       onScrolledTo: () => setPageTick((n) => n + 1),
       onJourney: (j) => journeyRef.current(j),
       hold: (at, ms) => sessionRef.current?.hold(at, ms),
-      spoken: () => sessionRef.current?.position() ?? 0,
+      spoken: (at) => sessionRef.current?.wordsBefore(at) ?? 0,
       onTiming: (t) => {
         logRef.current?.timing(t);
         recRef.current?.timing(t);
@@ -715,7 +715,8 @@ export default function App() {
         partsRef.current = ps;
         setParts(ps);
         const labels = labelsRef.current;
-        for (const p of ps) if (labels && labels.get(p.page) == null) void labels.load(p.page).then((l) => { if (l) setLabelTick((n) => n + 1); });
+        // Titles only show in the stepper (two parts or more): a one-part answer reads no page text for them.
+        if (ps.length > 1) for (const p of ps) if (labels && labels.get(p.page) == null) void labels.load(p.page).then((l) => { if (l) setLabelTick((n) => n + 1); });
       },
       onAction: (a, at) => {
         if (sessionRef.current !== session) return;
@@ -990,8 +991,9 @@ export default function App() {
       window.clearTimeout(autoplayTimer.current);
       // A dev script may be asked from a given page (?script=flow: p9).
       const at = DEV_SCRIPT?.page;
-      const ready = at && at <= api.numPages() ? api.scrollToPage(at).then(() => { pageRef.current = at; }) : Promise.resolve();
-      void ready.then(() => { autoplayTimer.current = window.setTimeout(() => onAsk(autoplay), 800); });
+      const play = () => { autoplayTimer.current = window.setTimeout(() => onAsk(autoplay), 800); };
+      if (at && at <= api.numPages()) void api.scrollToPage(at).then(() => { pageRef.current = at; play(); });
+      else play();
     }
   }, [onAsk]);
 

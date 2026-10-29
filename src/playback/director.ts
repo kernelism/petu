@@ -66,8 +66,8 @@ type Deps = {
   onJourney?(j: Journey): void;
   /** Asks the narration for `ms` of silence before the first word at or after `at` (the arrival beat). */
   hold?(at: number, ms: number): void;
-  /** Words of the answer spoken so far: a move before the first word frames the answer, it isn't a journey. Default: some. */
-  spoken?(): number;
+  /** Words of the answer said before `at` (an action's word time): a move before the first word frames the answer, it isn't a journey. Default: some. */
+  spoken?(at: number): number;
   /** Highlights and underlines grow to meaningful units (src/locate/unit.ts). Default on. */
   units?: boolean;
 };
@@ -318,7 +318,7 @@ export class Director {
     if (!desk.following()) return 'student is driving'; // rule 6
     // A journey: the route is shown, the narration holds at the move's word, and ink waits for the arrival.
     const from = v.currentPage();
-    const journey = journeyBeat(from, a.page, this.d.spoken?.() ?? Infinity) && now() - at < LATE_MS;
+    const journey = journeyBeat(from, a.page, this.d.spoken?.(at) ?? Infinity) && now() - at < LATE_MS;
     if (journey && entry) entry.journey = true;
     if (journey) {
       this.d.onJourney?.({ from, to: a.page, at });

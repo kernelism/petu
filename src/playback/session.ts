@@ -38,6 +38,8 @@ export class AnswerSession {
   canPause(): boolean { return this.scheduler?.canPause() ?? false; }
   /** Index of the next word to be spoken. */
   position(): number { return this.scheduler?.position() ?? 0; }
+  /** Words that start before `t` (see Scheduler.wordsBefore). */
+  wordsBefore(t: number): number { return this.scheduler?.wordsBefore(t) ?? 0; }
   seek(word: number): boolean { return this.scheduler?.seek(word) ?? false; }
   /** A journey's arrival beat: `ms` of silence before the first word at or after `at`. */
   hold(at: number, ms: number): void { this.scheduler?.hold(at, ms); }

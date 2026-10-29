@@ -74,6 +74,13 @@ export class Scheduler {
   /** Index of the next word to be spoken (= the number spoken so far). */
   position(): number { return this.spoken; }
 
+  /** How many words of the timeline start before `t` (an action's `at`: the words said before it). */
+  wordsBefore(t: number): number {
+    let n = 0;
+    while (n < this.released && (this.clock.wordStart(n) ?? Infinity) < t - 1) n++;
+    return n;
+  }
+
   /**
    * Stops handing out words and actions at the current word. Words keep streaming in (buffered);
    * ink already under way finishes.
