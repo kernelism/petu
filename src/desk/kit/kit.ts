@@ -844,7 +844,8 @@ function lineXs(a: Extract<KitBlock, { kind: 'bars' }>, n: number, store: KitSto
   return Array.from({ length: n }, (_, i) => i + 1);
 }
 
-const padDom = (lo: number, hi: number) => { const d = hi - lo || Math.abs(hi) || 1; return [lo - d * 0.06, hi + d * 0.06] as const; };
+// A span lost in float noise (sin²+cos², 1 ± 1e-16) is flat: a step below one ulp would never advance the ticks.
+const padDom = (lo: number, hi: number) => { const d = hi - lo > 1e-9 * Math.max(Math.abs(lo), Math.abs(hi)) ? hi - lo : Math.abs(hi) || 1; return [lo - d * 0.06, hi + d * 0.06] as const; };
 function domOf(members: { xs: number[]; ys: number[] }[]): Plot['dom'] {
   const xs = members.flatMap((m) => m.xs), ys = members.flatMap((m) => m.ys.filter(Number.isFinite));
   const [y0, y1] = padDom(Math.min(...ys), Math.max(...ys));
@@ -927,9 +928,12 @@ export async function buildKitPlot(a: Extract<DrawAction, { kind: 'plot' }> & { 
     if (!f) return `bad fn ${a.fn}`;
     for (let i = 0; i <= N; i++) { const x = d0 + ((d1 - d0) * i) / N; xs.push(x); ys.push(f({ x })); }
   }
-  // A pole or a value outside range= breaks the curve there.
+  // A pole or a value outside range= breaks the curve there. The cap sits well above the bulk of
+  // |y| (its 10–90% spread), not a multiple of the median: a peak, exp's tail or max(0,x)'s zero
+  // half keep their shape; only a pole's spike is cut.
   const fin = ys.filter(Number.isFinite).map(Math.abs).sort((p, q) => p - q);
-  const cap = a.range ? null : Math.max((fin[Math.floor(fin.length / 2)] ?? 1) * 20, 1e-9);
+  const q = (p: number) => fin[Math.min(fin.length - 1, Math.floor(fin.length * p))] ?? 1;
+  const cap = a.range ? null : Math.max(q(0.9) + 3 * (q(0.9) - q(0.1)), q(0.9) * 2, 1e-9);
   for (let i = 0; i < ys.length; i++) {
     const bad = !Number.isFinite(xs[i]) || !Number.isFinite(ys[i]) || (a.range ? ys[i] < a.range[0] || ys[i] > a.range[1] : Math.abs(ys[i]) > cap!);
     if (bad) { ys[i] = NaN; if (!Number.isFinite(xs[i])) xs[i] = i > 0 ? xs[i - 1] : 0; }
