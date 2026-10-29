@@ -144,11 +144,13 @@ function compassOf(v: SPt): Compass {
  * (at 1× then 1.8× the offset); else the least-bad side, nudged. Labels stay inside `bounds`.
  * `outlines`: closed shapes on the target. When the anchor sits on one (shapesAt), its label goes
  * outside it: a side that reaches into the shape is not clear, and the fallback sides start from
- * the one pointing away from the shape's interior.
+ * the one pointing away from the shape's interior. `labels` (other labels) are as hard as strokes; with
+ * any, the search reaches farther out before settling for the least-bad side.
  */
-export function placeClear(anchor: SPt, w: number, h: number, dir: Compass, clear: number, segs: Seg[], boxes: SRect[], bounds: SRect, outlines: Outline[] = []): SRect {
+export function placeClear(anchor: SPt, w: number, h: number, dir: Compass, clear: number, segs: Seg[], boxes: SRect[], bounds: SRect, outlines: Outline[] = [], labels: SRect[] = []): SRect {
   const on = shapesAt(anchor, outlines, LABEL_OFFSET + clear);
-  const cost = (r: SRect) => segs.filter((s) => segHitsRect(s, r)).length * 1e6 + on.filter((o) => rectInPoly(r, o)).length * 1e6 + boxes.reduce((n, o) => n + overlapArea(r, o), 0);
+  // `labels`: other labels' boxes. Text on text is as unreadable as text on a stroke.
+  const cost = (r: SRect) => (segs.filter((s) => segHitsRect(s, r)).length + labels.filter((o) => overlapArea(r, o) > 0).length) * 1e6 + on.filter((o) => rectInPoly(r, o)).length * 1e6 + boxes.reduce((n, o) => n + overlapArea(r, o), 0);
   let order = ORDER[dir];
   if (on.length) {
     // Away from the interior: from the shapes' centre (their vertices' mean) through the anchor.
@@ -157,7 +159,7 @@ export function placeClear(anchor: SPt, w: number, h: number, dir: Compass, clea
     order = [dir, ...ORDER[out].filter((d) => d !== dir)];
   }
   let best: SRect | null = null, bestCost = Infinity;
-  for (const k of on.length ? [1, 1.8, 2.6] : [1, 1.8]) for (const d of order) {
+  for (const k of on.length || labels.length ? [1, 1.8, 2.6, 3.4] : [1, 1.8]) for (const d of order) {
     const r = clampTo(placeLabel(anchor, w, h, d, clear + (k - 1) * LABEL_OFFSET), bounds);
     const c = cost(r);
     if (c === 0) return r;

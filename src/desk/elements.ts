@@ -9,7 +9,7 @@ import { token, tokenNum } from '../ink/agent/tokens';
 import { drawHighlight } from '../ink/agent/marks';
 import { locateQuote } from '../locate/locateQuote';
 import { plotStrokes } from './plot';
-import { nudge, placeClear, placeLabel, type Seg } from './nudge';
+import { nudge, placeClear, placeLabel, segHitsRect, type Seg } from './nudge';
 import { boxOf, strokeBoxes, union, type ElementEntry } from './registry';
 import { TEXT_PX, MATH_PX, own, makeText, measureText, reveal, drawDot, drawShade, emphPass, moveGroupTo, translateOf, fadeGroup, textSegments, type TextOpts, type ShadeShape, type ShadeLook } from './render';
 import { preloadMath, texToHtml, placeMath, revealMath, setMathAt } from './math';
@@ -176,7 +176,7 @@ function inkOf(a: Stroked, t: Target, env: BuildEnv) {
 }
 
 /** A plan for stroked elements: traced in order, registered when drawing starts. */
-function strokePlan(a: DrawAction, ctx: TargetCtx, env: BuildEnv, ink: Ink, extra: SRect[] = [], after?: (g: SVGGElement, sig: AbortSignal, k: Pace) => Promise<void>): ElementPlan {
+function strokePlan(a: DrawAction, ctx: TargetCtx, env: BuildEnv, ink: Ink, extra: SRect[] = [], after?: (g: SVGGElement, sig: AbortSignal, k: Pace, id: string) => Promise<void>): ElementPlan {
   const boxes = strokeBoxes(ink.strokes);
   const bbox = union([...boxes, ...extra].map((b) => ({ x: b.x - PAD, y: b.y - PAD, w: b.w + 2 * PAD, h: b.h + 2 * PAD })));
   const ws = inkOf(a, ctx.target, env);
@@ -187,7 +187,8 @@ function strokePlan(a: DrawAction, ctx: TargetCtx, env: BuildEnv, ink: Ink, extr
     draw: async (signal, k) => {
       const g = own(ctx.layers.agent);
       const last = ink.strokes[ink.strokes.length - 1];
-      env.registry.define({ id: a.id, kind: a.kind, target: ctx.target, bbox, boxes: [...boxes, ...extra], anchor: last[last.length - 1], group: g, strokes: ink.strokes, ...(ink.closed ? { outline: ink.strokes[0] } : {}) });
+      const id = env.registry.define({ id: a.id, kind: a.kind, target: ctx.target, bbox, boxes: [...boxes, ...extra], anchor: last[last.length - 1], group: g, strokes: ink.strokes, ...(ink.closed ? { outline: ink.strokes[0] } : {}) });
+      relabel(env, ctx.target, ink.strokes, id, signal);
       const fade = s.inkStyle === 'clean' || prefersReducedMotion();
       await drawStrokes(g, ink.strokes, {
         color: ws.color, width: ws.width, opacity: ws.opacity < 1 ? ws.opacity : undefined, scale: ctx.scale(), signal,
@@ -195,9 +196,37 @@ function strokePlan(a: DrawAction, ctx: TargetCtx, env: BuildEnv, ink: Ink, extr
         minMs: ink.closed ? CLOSED_MIN_MS : undefined,
         speed: ink.closed ? Math.max(k.speed, CLOSED_FLOOR_MS / CLOSED_MIN_MS) : k.speed,
       });
-      if (after) await after(g, signal, k);
+      if (after) await after(g, signal, k, id);
     },
   };
+}
+
+/** How long a label takes to glide clear of a stroke drawn across it. */
+const RELABEL_MS = 260;
+
+/**
+ * Labels never sit on strokes: a label placed before a stroke that now crosses it (a point's name, then
+ * a line through it) finds its clear spot again and glides there as the stroke is drawn.
+ */
+function relabel(env: BuildEnv, t: Target, strokes: Stroke[], self: string, signal: AbortSignal) {
+  const segs: Seg[] = strokes.flatMap((s) => s.slice(1).map((b, i) => ({ a: s[i], b })));
+  for (const l of env.registry.labels(t)) {
+    if (l.owner === self || !segs.some((s) => segHitsRect(s, l.box, 0))) continue;
+    const nb = l.place();
+    if (Math.abs(nb.x - l.box.x) < 0.5 && Math.abs(nb.y - l.box.y) < 0.5) continue;
+    const boxes = l.entry.boxes.slice();
+    boxes[l.index] = nb;
+    env.registry.update(l.owner, { boxes, bbox: union(boxes) });
+    const tr = translateOf(l.group);
+    void moveGroupTo(l.group, tr.x + nb.x - l.box.x, tr.y + nb.y - l.box.y, prefersReducedMotion() ? 0 : RELABEL_MS, signal);
+  }
+}
+
+/** Writes a label beside its owner (boxes[index]) and records it, so a later stroke across it moves it. */
+async function writePlaced(g: SVGGElement, owner: string, index: number, box: SRect, text: string, o: TextOpts, env: BuildEnv, signal: AbortSignal, k: Pace, place: () => SRect) {
+  const tg = own(g);
+  env.registry.addLabel({ owner, index, text, group: tg, place });
+  await writeLabel(tg, box, text, o, env, signal, k);
 }
 
 /**
@@ -210,7 +239,8 @@ function placeText(ctx: TargetCtx, env: BuildEnv, layer: SVGGElement, text: stri
   // On a page, what the slide painted near the anchor (its text, printed labels, curves) is in the way too.
   const painted = isRegion(ctx.target) ? [] : inkBoxes(pageInkOf(ctx.layers.agent), { x: anchor.x - m.w * 3, y: anchor.y - m.h * 4, w: m.w * 6, h: m.h * 8 });
   // outside: the anchor's label goes outside a closed shape it sits on (a point on a circle).
-  return placeClear(anchor, m.w, m.h, dir ?? 'ne', clear, segs, [...env.registry.obstacles(ctx.target, skip), ...painted], bounds(ctx), outside ? env.registry.outlines(ctx.target) : []);
+  const labels = env.registry.labels(ctx.target).filter((l) => l.owner !== skip).map((l) => l.box);
+  return placeClear(anchor, m.w, m.h, dir ?? 'ne', clear, segs, [...env.registry.obstacles(ctx.target, skip), ...painted], bounds(ctx), outside ? env.registry.outlines(ctx.target) : [], labels);
 }
 
 async function writeLabel(g: SVGGElement, box: SRect, text: string, o: TextOpts, env: BuildEnv, signal: AbortSignal, k: Pace) {
@@ -267,15 +297,32 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       }
       if (a.kind === 'circle') {
         const { rx, ry } = anchored ? encloseRect(box.w, box.h) : { rx: box.w / 2, ry: box.h / 2 };
-        return strokePlan(a, ctx, env, { strokes: [circleStroke({ x: box.x + box.w / 2, y: box.y + box.h / 2 }, rx, ry, r)], closed: true, dash: 'dash' in a && a.dash });
+        // On the board a centre and radius are geometry (points named on it must land on it); on a page it rings a mark loosely.
+        const exact = !anchored && isRegion(ctx.target);
+        return strokePlan(a, ctx, env, { strokes: [circleStroke({ x: box.x + box.w / 2, y: box.y + box.h / 2 }, rx, ry, r, exact)], closed: true, dash: 'dash' in a && a.dash });
       }
       const pad = anchored ? 5 : 0;
       return strokePlan(a, ctx, env, { strokes: [boxStroke(box.x - pad, box.y - pad, box.w + pad * 2, box.h + pad * 2, r)], closed: true });
     }
     case 'line':
-      return strokePlan(a, ctx, env, { strokes: [lineStroke(P(a.from), P(a.to), r)], dash: a.dash });
-    case 'arrow':
-      return strokePlan(a, ctx, env, { strokes: arrowStrokes(P(a.from), P(a.to), r), dash: a.dash });
+    case 'arrow': {
+      const f = P(a.from), t = P(a.to);
+      const strokes = a.kind === 'line' ? [lineStroke(f, t, r)] : arrowStrokes(f, t, r);
+      if (!a.text) return strokePlan(a, ctx, env, { strokes, dash: a.dash });
+      // Its own label beside its middle, on the side toward the top of the board first (then any clear side).
+      const L = Math.hypot(t.x - f.x, t.y - f.y) || 1, nx = -(t.y - f.y) / L, ny = (t.x - f.x) / L;
+      const n = ny > 0 || (ny === 0 && nx < 0) ? { x: -nx, y: -ny } : { x: nx, y: ny };
+      const mid = { x: (f.x + t.x) / 2, y: (f.y + t.y) / 2 };
+      return strokePlan(a, ctx, env, { strokes, dash: a.dash }, [], async (g, sig, k, id) => {
+        const o = textOpts(ctx, env, textPx(ctx, 'label'), a.em);
+        const e = env.registry.get(id), anchor0 = e?.anchor ?? t;
+        const at = () => { const now = env.registry.get(id)?.anchor ?? anchor0; return { x: mid.x + now.x - anchor0.x, y: mid.y + now.y - anchor0.y }; };
+        const place = () => placeText(ctx, env, g, a.text!, o, at(), compassOf(n), px(2), id);
+        const box = place();
+        if (e) env.registry.update(id, { boxes: [...e.boxes, box], bbox: union([e.bbox, box]) });
+        await writePlaced(g, id, e ? e.boxes.length : 0, box, a.text!, o, env, sig, k, place);
+      });
+    }
     case 'curve': {
       // Points out of order make the spline loop back on itself: skip it, never draw it wrong.
       if (crossesItself(curveStroke(a.pts.map(P), null))) { console.warn('[desk] curve crosses itself', where(ctx.target)); return 'curve crosses itself'; }
@@ -366,9 +413,9 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
           const g = own(ctx.layers.agent);
           const od = textOpts(ctx, env, textPx(ctx, 'label'), a.em); // sized for the scale now (a column glide may have run since build)
           const box = a.text ? placeText(ctx, env, g, a.text, od, c, a.dir ?? 'ne', rad, undefined, true) : null;
-          env.registry.define({ id: a.id, kind: 'point', target: ctx.target, bbox: union([dot, ...(box ? [box] : [])]), boxes: [dot, ...(box ? [box] : [])], anchor: c, group: g });
+          const id = env.registry.define({ id: a.id, kind: 'point', target: ctx.target, bbox: union([dot, ...(box ? [box] : [])]), boxes: [dot, ...(box ? [box] : [])], anchor: c, group: g });
           await drawDot(g, c, rad, color, k, signal);
-          if (box && a.text) await writeLabel(g, box, a.text, od, env, signal, k);
+          if (box && a.text) await writePlaced(g, id, 1, box, a.text, od, env, signal, k, () => placeText(ctx, env, g, a.text!, od, env.registry.get(id)?.anchor ?? c, a.dir ?? 'ne', rad, id, true));
         },
       };
     }
@@ -668,8 +715,8 @@ async function ref(a: RefAction, env: BuildEnv): Promise<ElementPlan | string> {
           const g = own(ctx.layers.agent);
           const o = textOpts(ctx, env, textPx(ctx, 'label'), a.em);
           const box = placeText(ctx, env, g, a.text, o, e.anchor, a.dir ?? 'ne', clear);
-          env.registry.define({ kind: 'label', target: e.target, bbox: box, boxes: [box], anchor: { x: box.x, y: box.y + box.h / 2 }, group: g });
-          await writeLabel(g, box, a.text, o, env, signal, k);
+          const id = env.registry.define({ kind: 'label', target: e.target, bbox: box, boxes: [box], anchor: { x: box.x, y: box.y + box.h / 2 }, group: g });
+          await writePlaced(g, id, 0, box, a.text, o, env, signal, k, () => placeText(ctx, env, g, a.text, o, e.anchor, a.dir ?? 'ne', clear, id));
         },
       };
     }

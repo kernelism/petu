@@ -52,8 +52,9 @@ export type Shape<P = Pt> =
   | ({ kind: 'underline'; quote: string; near?: P } & W)
   | ({ kind: 'circle'; at: P; rx: number; ry: number; dash?: boolean } & W)
   | ({ kind: 'circle'; quote: string; near?: P; dash?: boolean } & W)
-  | ({ kind: 'line'; from: P; to: P; dash?: boolean } & W)
-  | ({ kind: 'arrow'; from: P; to: P; dash?: boolean } & W)
+  /** `text`: the line's own label (`{{arrow … "gravity"}}`), placed beside its middle, clear of every stroke. */
+  | ({ kind: 'line'; from: P; to: P; dash?: boolean; text?: string } & W)
+  | ({ kind: 'arrow'; from: P; to: P; dash?: boolean; text?: string } & W)
   /**
    * at = top-left corner (or the centre with `centered`); w in x units, h in y units. A kit region
    * reference (`at=g[1:2,1:3]`, w = h = 0) frames those cells.
@@ -270,7 +271,7 @@ export type LetAction = { kind: 'let'; defs: [string, PtArg][]; /** names of dat
 /** A shape on a page mark: `{{circle p=4 mark=#d3}}`, `{{line p=4 mark=#s2}}`, `{{box p=4 mark=#t12}}`. */
 export type MarkShape = { kind: 'circle' | 'box' | 'highlight' | 'underline' | 'line' | 'arrow'; page: number; region?: never; mark: string } & Ink;
 /** A ray: from A through B, to the frame edge (regions) or `len` × |AB| (pages default 1.5). */
-export type RayShape = { kind: 'line' | 'arrow'; from: PtArg; through: PtArg; len?: number } & Target & Ink;
+export type RayShape = { kind: 'line' | 'arrow'; from: PtArg; through: PtArg; len?: number; text?: string } & Target & Ink;
 /** A connector end as written: also a page mark (`p4:#d3`, `p4:#s2.a`), resolved by the resolver. */
 /** Before resolving: a page mark, or a section point named by a construction (`w:mid(A,B)`). */
 export type RawEnd = End | { page: number; mark: string } | { region: string; at: PtExpr };

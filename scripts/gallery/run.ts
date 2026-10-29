@@ -20,6 +20,7 @@ import { diffImages, shotName, DEFAULT_DIFF, type ShotRow } from './diff.ts';
 import { SCENES, SIZES, audited, pickBrowsers, type Scene } from './scenes.ts';
 import { auditGate } from './audit.ts';
 import { renderSheet } from './sheet.ts';
+import { pdfDirs } from '../eval/decks.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -60,7 +61,8 @@ async function startServer(): Promise<{ base: string; stop(): void }> {
   const p: ChildProcess = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', join(ROOT, 'scripts/gallery/serve.ts'), String(port)], {
     cwd: ROOT, stdio: 'ignore',
     // Belt and braces: the gallery never asks, and a $0 cap refuses any call before it is sent.
-    env: { ...process.env, PETU_TOTAL_CAP_USD: '0', PETU_DAILY_CAP_USD: '0' },
+    // /api/dev-pdf/ serves the eval's PDF places too (course, dev, corpus): corpus scenes open public PDFs.
+    env: { ...process.env, PETU_TOTAL_CAP_USD: '0', PETU_DAILY_CAP_USD: '0', PETU_PDF_DIRS: pdfDirs(ROOT).join(',') },
   });
   const base = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 300; i++) {

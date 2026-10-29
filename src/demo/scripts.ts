@@ -122,6 +122,25 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number;
       `{{circle p=3 mark=#d1}} that is why, {{circle p=3 mark=#d2}} for this pair of cameras, the search is one-dimensional.`,
   },
   /**
+   * A founder live test, verbatim (Opus author, 2026-10-29): a frictionless chord tunnel through the
+   * Earth, on the public corpus copy of OpenStax University Physics vol 1 (`.petu/corpus`, served by
+   * /api/dev-pdf/ when PETU_PDF_DIRS includes it; the gallery's server does). A fit sketch with no axes:
+   * the chord's ends A, B lie on the circle r=400 about O, so they must land on its stroke; the arrows'
+   * labels must show; "New York"/"Tokyo" go west/east, outside the circle, off every stroke.
+   */
+  tunnel: {
+    src: '/api/dev-pdf/openstax-university-physics-volume-1.pdf',
+    page: 617,
+    question: 'If I dug a frictionless tunnel through the Earth from New York to Tokyo, why would the trip take 42 minutes?',
+    script:
+      `{{sketch id=s near=p617 fit}} {{let on=s O=0,0 A=-300,-265 B=300,-265 M=mid(A,B) P=along(M,B,0.6) G=along(P,O,0.35) F=foot(G,A,B)}} The forty-two minutes comes from one fact about the pull inside the Earth. Let's build it piece by piece, starting with {{circle on=s at=O r=400}} the Earth, {{line on=s from=A to=B}} {{point on=s at=A "New York" dir=w}} {{point on=s at=B "Tokyo" dir=e}} and your chord tunnel. {{point on=s at=M "M" dir=n}} M is its midpoint, the point on the chord closest to the centre, {{point on=s at=O "O" dir=s}} and O is the centre itself. {{line on=s from=O to=M dash}}\n\n` +
+      `{{scroll p=620}} {{box p=620 mark=#i1}} First, gravity always points at the centre, like these field lines. {{point on=s at=P "ball" dir=n}} So put the ball partway down the tunnel, {{arrow on=s from=P to=G "gravity"}} and its pull aims at O, slanted across the tunnel. {{arrow on=s from=P to=F em "along tunnel"}} The frictionless walls take care of the sideways part, so only this piece along the tunnel moves the ball.\n\n` +
+      `{{scroll p=617}} {{highlight p=617 "We also examine the gravitational effects within spherical bodies."}} Second, inside a uniform Earth the pull is not g everywhere. It shrinks in proportion to your distance from the centre: halfway down you feel half of g, and at the centre you feel nothing. Third, the slant does the same trick to the along-tunnel part. Similar triangles shrink that part so it is proportional to the ball's distance from M. On every chord, then, the push toward the middle is g over R times the distance from M.\n\n` +
+      `{{scroll p=724}} {{highlight p=724 "independent of amplitude"}} A pull proportional to distance is exactly a spring, and a spring's period ignores how far out you start. Here the role of k over m is played by g over R. {{const g=9.8 R=6.37e6 half=pi*sqrt(R/g)/60}} The ball goes from New York to Tokyo in half a period, pi times the square root of R over g, which is {{val id=half fmt=1}} minutes. {{line on=s from=O to=B weight=secondary}} A diameter is just a longer swing on the same spring, with a stronger pull at its ends, so it takes the same time.\n\n` +
+      `{{scroll p=630}} {{box p=630 mark=#b2}} Now the satellite. Put r equal to R in this period, and use GM equal to g R squared from the Weight section. The orbit's period becomes two pi times the root of R over g, exactly twice the tunnel time. {{scroll p=724}} {{box p=724 mark=#i1}} The match is no accident. The shadow of a uniform circular motion on any straight line moves in simple harmonic motion, and the tunnel ball keeps pace with the shadow of a satellite skimming the surface overhead.\n\n` +
+      `One caution: the real Earth has a dense core, so its pull inside doesn't fall off in step with distance, and a real trip would be somewhat faster. Check yourself: on a planet with the same density but half Earth's radius, would the tunnel trip take longer, shorter, or the same?`,
+  },
+  /**
    * Visual kit v1 check (spec "Visual kit v1"), no API call: six board sections, half of them outside
    * computer science, every number computed by the engine. 1 a window sliding over a patch with an
    * edge (live calc line, output filling); 2 two vectors as bars, a brightness change, a raw distance

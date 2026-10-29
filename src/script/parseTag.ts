@@ -283,11 +283,12 @@ export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
     case 'line':
     case 'arrow': {
       const from = P(args.from), to = P(args.to), through = P(args.through), len = num(args.len);
+      const text = quote ? { text: quote } : {}; // its own label, beside it
       if (from && through && !to) {
         if (args.len !== undefined && !(len! > 0 && len! <= 20)) return null;
-        return { kind: name, ...target, from, through, ...(len ? { len } : {}), ...dash, ...weight, ...mark } as RawAction;
+        return { kind: name, ...target, from, through, ...(len ? { len } : {}), ...text, ...dash, ...weight, ...mark } as RawAction;
       }
-      return from && to && !through ? ({ kind: name, ...target, from, to, ...dash, ...weight, ...mark } as RawAction) : null;
+      return from && to && !through ? ({ kind: name, ...target, from, to, ...text, ...dash, ...weight, ...mark } as RawAction) : null;
     }
     case 'box': {
       if (anchor) return { kind: 'box', ...target, ...anchor, ...weight, ...mark };
