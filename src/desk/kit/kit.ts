@@ -3179,6 +3179,12 @@ function readoutLabelAt(o: ReadoutPt, pl: Plot, x: number, y: number, drops: boo
     }
   }
   if (drops) segs.push({ a: { x: body.x, y }, b: { x, y } }, { a: { x, y }, b: { x, y: body.y + body.h } });
+  // A board plot's own axes (and the zero line), and its tick labels left of and under the body.
+  if (!pl.fixed) {
+    const y0 = pl.dom.y0 < 0 && pl.dom.y1 > 0 ? linePt(pl, pl.dom.x0, 0).y : null;
+    segs.push({ a: { x: body.x, y: body.y }, b: { x: body.x, y: body.y + body.h } }, { a: { x: body.x, y: body.y + body.h }, b: { x: body.x + body.w, y: body.y + body.h } }, ...(y0 != null ? [{ a: { x: body.x, y: y0 }, b: { x: body.x + body.w, y: y0 } }] : []));
+  }
+  const ticks = pl.fixed ? 0 : 1;
   const others = ((pl.host.el.readoutPts as ReadoutPt[] | undefined) ?? []).filter((q) => q !== o && q.box).map((q) => q.box!);
   const ink = pl.fixed ? pageInkOf(pl.host.g) : null;
   let best = 0, bestCost = Infinity, bestBox: Box | null = null;
@@ -3187,7 +3193,8 @@ function readoutLabelAt(o: ReadoutPt, pl: Plot, x: number, y: number, drops: boo
     const bx = sd.anchor === 'start' ? ax : sd.anchor === 'end' ? ax - lw : ax - lw / 2;
     const box = { x: bx, y: cy - L * 0.55, w: lw, h: L * 1.1 };
     const hits = segs.filter((sg) => segCrossesBox(sg.a, sg.b, box)).length;
-    const cost = hits * 3 + inkIn(ink, box) * 12 + others.filter((r) => overlapsBox(r, box, 0)).length * 5 + i * 0.05 - (o.side === i ? 0.04 : 0);
+    const outside = ticks && (box.x < body.x || box.y + box.h > body.y + body.h) ? 2 : 0;
+    const cost = hits * 3 + outside + inkIn(ink, box) * 12 + others.filter((r) => overlapsBox(r, box, 0)).length * 5 + i * 0.05 - (o.side === i ? 0.04 : 0);
     if (cost < bestCost) { bestCost = cost; best = i; bestBox = box; }
   });
   o.side = best;
