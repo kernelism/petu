@@ -22,9 +22,39 @@ export type Thing = {
   data?: Record<string, unknown>;
 };
 
+/** A link's re-route: `release` drops its room (corridor, label), `run` routes it again and claims anew. */
+export type RerouteJob = { order: number; release(): void; run(): Promise<void> };
+
 export class SceneStore {
   private things = new Map<string, Thing>();
   private aliases = new Map<string, string>();
+  private order = 0;
+  private pending = new Map<number, RerouteJob>();
+  private flushing: Promise<void> | null = null;
+  /** The next creation number (links re-route in creation order). */
+  nextOrder(): number { return ++this.order; }
+  /**
+   * Queues a link's re-route (an end moved). Re-routes never interleave: a batch drops the room of
+   * every queued link first, then routes them one by one in creation order, so the end state depends
+   * only on where things are, never on frame timing or on which re-route finished first.
+   */
+  reroute(job: RerouteJob): Promise<void> {
+    this.pending.set(job.order, job);
+    if (!this.flushing) this.flushing = this.flush().finally(() => { this.flushing = null; });
+    return this.flushing;
+  }
+  private async flush(): Promise<void> {
+    // One frame's hooks (every link on a moving thing) gather into one batch.
+    await Promise.resolve();
+    while (this.pending.size) {
+      const jobs = [...this.pending.values()].sort((a, b) => a.order - b.order);
+      this.pending.clear();
+      jobs.forEach((j) => j.release());
+      for (const j of jobs) { try { await j.run(); } catch (e) { console.warn('[scene] re-route failed', e); } }
+    }
+  }
+  /** Settles pending re-routes (tests; the end of an answer). */
+  idle(): Promise<void> { return this.flushing ?? Promise.resolve(); }
   /** A thing by id; a thing merged into another answers as the one it became. */
   get(id: string): Thing | undefined {
     for (let i = 0; i < 8 && this.aliases.has(id); i++) id = this.aliases.get(id)!;
@@ -41,7 +71,7 @@ export class SceneStore {
     return out;
   }
   ids(): string[] { return [...this.things.keys()]; }
-  clear(): void { this.things.clear(); this.aliases.clear(); }
+  clear(): void { this.things.clear(); this.aliases.clear(); this.pending.clear(); }
 }
 
 export const sceneStore = (r: Registry): SceneStore => r.ext('scene', () => new SceneStore());
@@ -80,3 +110,20 @@ export async function anchorBox(ref: string, r: Registry, ms = 600): Promise<Box
     await wait(30);
   }
 }
+
+/**
+ * Ink in a scene that holds no claim of its own (a readout point, a level line, a hand-drawn mark):
+ * things, kit blocks, links, notes, groups and pairs are already in the scene's claims, which are made
+ * in script order at build time, so placement never depends on how far their drawing has got.
+ */
+export function unclaimed(env: Pick<BuildEnv, 'registry'>, t: TargetCtx['target'], skip?: string, solid = false): Box[] {
+  const out: Box[] = [];
+  for (const e of env.registry.entries()) {
+    if (e.id === skip || e.faded || e.target.region !== t.region || CLAIMED.test(e.kind)) continue;
+    if (solid && e.kind === 'connect') continue;
+    out.push(...e.boxes);
+  }
+  return out;
+}
+const CLAIMED = /^(scene-|kit-(grid|bars|table|scatter|calc|tokens|shares|fit)$)/;
+

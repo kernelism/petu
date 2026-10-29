@@ -62,6 +62,23 @@ export function place(w: number, h: number, pad: Pad, spec: PlaceSpec, anchor: P
 }
 
 /**
+ * A placed block moved down, as a whole, until it overlaps none of `ink` (other ink in a plain
+ * section: a hand-drawn figure, a note, a label); the alignment `place` chose is kept across. Pure.
+ */
+export function clearDown(p: Placed, ink: Box[], gap: number): Placed {
+  let dy = 0;
+  for (let i = 0; i < 24; i++) {
+    const r = { ...p.rect, y: p.rect.y + dy };
+    const hit = ink.filter((o) => o.x < r.x + r.w && r.x < o.x + o.w && o.y < r.y + r.h && r.y < o.y + o.h);
+    if (!hit.length) break;
+    dy = Math.max(...hit.map((o) => o.y + o.h)) + gap - p.rect.y;
+  }
+  if (dy <= 0) return p;
+  const sh = (b: Box) => ({ ...b, y: b.y + dy });
+  return { body: sh(p.body), rect: sh(p.rect), ...(p.op ? { op: { ...p.op, y: p.op.y + dy } } : {}) };
+}
+
+/**
  * Splits pieces of a calculation into lines no wider than `maxW`, breaking only between pieces
  * (each piece carries its own trailing " + "). `width(s)` measures a piece.
  */
