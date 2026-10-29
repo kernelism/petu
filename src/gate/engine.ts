@@ -7,7 +7,7 @@
 // Two users, one implementation: the commit gate replays a recorded answer beat by beat, and the
 // script parser (src/script/parser.ts) applies every tag as it is parsed, so a {{val}} is said with
 // the engine's value (`say`) and a {{contrast}} expands into the copy it draws (`expand`).
-import { computeSource, formula, colIndex } from '../desk/kit/kit';
+import { computeSource, formula, colIndex, splitParts, tokenCount, tokenMoves } from '../desk/kit/kit';
 import * as C from '../desk/kit/compute';
 import { normalize } from '../desk/kit/ops';
 import { colRef } from '../script/parseKit';
@@ -25,6 +25,10 @@ type Block = {
   id: string; kind: string; vals?: number[][]; full?: number[][]; src?: KitSource; tab?: { heads: string[] }; computedCols?: Set<number>; region?: string;
   dp?: number; with?: Record<string, number>; action?: RawAction;
   data?: C.Pt[]; cols?: { id: string; x: number; y: number }; of?: string; pick?: [number, number];
+  /** Stacked bars: each bar's parts (a bar not split is one part); full holds the totals. */
+  parts?: number[][];
+  /** Tokens: each mark's state (an index into `states`). */
+  tok?: { states: string[]; st: number[] };
 };
 
 const ROW_VARS = ['i', ...C.WIN_LETTERS.slice(0, 12), ...C.WIN_LETTERS.slice(0, 12).map((l) => `p${l}`)];
@@ -42,6 +46,7 @@ type PlotSrc = Extract<RawAction, { kind: 'plot' }> & { id?: string; chart?: str
  * number. The director records it as a skipped action and the gate fails its beat.
  */
 export const UNBOUND_TEXT = '—';
+
 
 export class GateState {
   readonly values: Value[] = [];
@@ -114,7 +119,7 @@ export class GateState {
       case 'limit':
       case 'beforeafter': return this.move(a, beat);
     }
-    if (a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table' || a.kind === 'calc' || a.kind === 'scatter' || a.kind === 'fit' || a.kind === 'shares') return this.kit(a, beat);
+    if (a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table' || a.kind === 'calc' || a.kind === 'scatter' || a.kind === 'fit' || a.kind === 'shares' || a.kind === 'tokens') return this.kit(a, beat);
     if ('ref' in a) return this.verb(a, beat);
     // A plot on a board section, or on a slide's calibrated chart (p=N on=#c1: data units, the chart's axes).
     if (a.kind === 'plot' && (x.region != null || (a as PlotSrc).chart)) { this.plot(a as PlotSrc); return; }
@@ -140,6 +145,23 @@ export class GateState {
     const k = a as unknown as Record<string, unknown> & { id?: string; region?: string; kind: string };
     const id = k.id ?? `_${++this.anon}`;
     this.ids.add(id);
+    if (a.kind === 'tokens') {
+      const n = tokenCount(a.n, this.consts);
+      if (typeof n === 'string') return n;
+      const states = a.states.length ? a.states : [''];
+      this.blocks.set(id, { id, kind: 'tokens', full: [[n]], vals: [[n]], tok: { states, st: Array(n).fill(0) }, region: k.region });
+      this.addValues([n], /^\d+$/.test(a.n) ? 'literal' : 'computed', id, beat);
+      return;
+    }
+    if (a.kind === 'bars' && a.stack) {
+      // Stacked: each bar the sum of its parts (formula parts over the constants).
+      const parts = C.resolveCells(a.stack.vals, a.stack.cells, this.consts);
+      if (typeof parts === 'string') return parts;
+      const full = [parts.map((r) => r.reduce((s, v) => s + v, 0))];
+      this.blocks.set(id, { id, kind: 'bars', vals: full, full, src: { vals: full }, parts, region: k.region, dp: k.dp as number | undefined, action: a });
+      this.addValues([...parts.flat(), ...full[0]], a.stack.cells ? 'computed' : 'literal', id, beat);
+      return;
+    }
     if (a.kind === 'grid' || a.kind === 'bars') {
       const src = k.src as KitSource;
       const w = k.with as Record<string, number> | undefined;
@@ -270,6 +292,12 @@ export class GateState {
     const b = this.blocks.get(id);
     if (!b && !idx && !field && id.toLowerCase() in this.consts) return { v: this.consts[id.toLowerCase()] };
     if (!b) return `unknown ${id}`;
+    // Tokens: k is how many marks; k.tax how many are in that state.
+    if (b.tok && !idx) {
+      if (field == null) return { v: b.tok.st.length };
+      const j = b.tok.states.indexOf(field);
+      return j < 0 ? `${id} has no state ${field}` : { v: b.tok.st.filter((s) => s === j).length };
+    }
     const full = b.full;
     if (!full) return `${id} has no values`;
     const fin = (v: number | undefined) => (v != null && Number.isFinite(v) ? { v, dp: b.dp } : `${ref}: no value`);
@@ -288,6 +316,8 @@ export class GateState {
       return fin(full[r]?.[j]);
     }
     if (field) return `${ref}: no field ${field}`;
+    // A stacked bar: [i] its total, [i,j] its j-th part.
+    if (b.parts && !part.one) return fin(b.parts[part.r0]?.[part.c0]);
     if (part.one) { const flat = full.length === 1 ? full[0] : full.map((row) => row[0]); return fin(flat[part.c0]); }
     return fin(full[part.r0]?.[part.c0]);
   }
@@ -380,11 +410,20 @@ export class GateState {
       }
       return;
     }
+    if (v.kind === 'splitBar') return this.split(a as Extract<RawAction, { kind: 'splitBar' }>, beat);
     if (v.kind === 'set') {
       const part = blockPart(v.ref);
       const id = part?.id ?? v.ref;
       const b = this.blocks.get(id);
       if (!b?.full) return `unknown block ${id}`;
+      if (b.parts) return this.setParts(b, v, part, beat);
+      if (b.tok) {
+        const got = tokenMoves(b.tok, v as { state?: string; count?: string }, part, this.consts);
+        if (typeof got === 'string') return got;
+        b.tok.st = got;
+        this.addValues(b.tok.states.map((_, j) => got.filter((s) => s === j).length), 'computed', id, beat);
+        return;
+      }
       // A share block's inputs are its raw values (the board normalises what it shows).
       if (b.kind === 'shares' && b.src && 'vals' in b.src) b.full = b.src.vals.map((r) => r.slice());
       if (v.vals) b.full = v.vals.map((r) => r.slice());
@@ -401,6 +440,43 @@ export class GateState {
       this.recompute(beat);
       return;
     }
+    return;
+  }
+
+  /** {{split}}: bar i of a bars block becomes parts that sum to it. */
+  private split(a: Extract<RawAction, { kind: 'splitBar' }>, beat: number): string | undefined {
+    const part = blockPart(a.ref);
+    const b = this.blocks.get(part?.id ?? a.ref);
+    if (!b?.full || b.kind !== 'bars') return `no bars ${part?.id ?? a.ref}`;
+    const totals = b.full.flat();
+    const i = part ? (part.one ? part.c0 : -1) : totals.length === 1 ? 0 : -1;
+    if (i < 0 || i >= totals.length) return `split: name one bar (${b.id}[1])`;
+    const got = splitParts(a, totals[i], this.consts);
+    if (typeof got === 'string') return got;
+    b.parts = b.parts ?? totals.map((v) => [v]);
+    b.parts[i] = got;
+    this.addValues(got, 'computed', b.id, beat);
+    return;
+  }
+
+  /** set on a stacked bar: one part (to=), or the totals (vals=, fn=; the parts keep their proportions). */
+  private setParts(b: Block, v: { to?: number; vals?: number[][]; fn?: string }, part: ReturnType<typeof blockPart>, beat: number): string | undefined {
+    const parts = b.parts!;
+    if (v.to != null && part && !part.one) { if (parts[part.r0]?.[part.c0] == null) return 'set: no such part'; parts[part.r0][part.c0] = v.to; }
+    else {
+      const old = b.full!.flat();
+      let next: number[];
+      if (v.vals) next = v.vals.flat();
+      else if (v.fn) { const f = formula(v.fn, C.MAP_VARS, this.consts); if (!f) return 'bad fn'; next = C.mapMat([old], f)[0]; }
+      else if (v.to != null && part?.one) { next = old.slice(); next[part.c0] = v.to; }
+      else return 'set: name a part or give values';
+      if (next.length !== old.length) return 'set: shape differs';
+      next.forEach((t, i) => { parts[i] = parts[i].map((p) => (old[i] ? (p * t) / old[i] : t / parts[i].length)); });
+    }
+    b.full = [parts.map((r) => r.reduce((s, x) => s + x, 0))];
+    b.vals = b.full; b.src = { vals: b.full };
+    this.addValues([...parts.flat(), ...b.full[0]], 'computed', b.id, beat);
+    this.recompute(beat);
     return;
   }
 

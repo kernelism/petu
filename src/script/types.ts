@@ -156,6 +156,8 @@ export type KitSource =
   | { gen: [number, number]; fn: string }
   /** A table's column (0-based index) as a vector: it follows the table as rows fill. */
   | { col: ColRef }
+  /** A histogram of any block's values: counts in `bins` equal bins over their range, or over histogram `like`'s bins (one x scale). */
+  | { hist: string; bins: number; like?: string }
   /** A standard operation the engine computes (src/desk/kit/ops.ts): softmax (t = temperature), normalize, l2, cumsum, rank, scale (t = factor), matmul (two blocks). */
   | { op: 'softmax' | 'normalize' | 'l2' | 'cumsum' | 'rank' | 'matmul' | 'scale'; of: string[]; t?: number };
 /** A table column: [table, index] by letter, or [table, -1, header] by its header (resolved when the table is known). */
@@ -165,7 +167,11 @@ export type KitBlock<P = Pt> =
   /** view=image: cells as shaded pixels, no numerals (implied past 12 rows or columns). */
   | ({ kind: 'grid'; src: KitSource; rows?: string[]; cols?: string[]; shade?: 'heat' | 'image'; view?: 'image'; dp?: number; caption?: string } & KitPlace<P>)
   /** view=line: the values as a curve on axes (implied past 16 values); axes=v draws onto line v's axes (an overlay). */
-  | ({ kind: 'bars'; src: KitSource; labels?: string[]; labelsFrom?: ColRef; ghost?: string; view?: 'line'; axes?: string; dp?: number; caption?: string } & KitPlace<P>)
+  | ({ kind: 'bars'; src: KitSource; labels?: string[]; labelsFrom?: ColRef; ghost?: string; view?: 'line'; axes?: string; dp?: number; caption?: string;
+      /** stack: each bar is the sum of its parts (rows of `vals=100;90,20`, ragged; formula cells over constants), on one scale. */
+      stack?: { vals: number[][]; cells?: (string | null)[][] };
+      /** The parts' names, by position (a stacked bar's segments, or a split's). */
+      parts?: string[] } & KitPlace<P>)
   /** Data points, literal or two of a table's columns (x, y: 0-based), which appear as the rows fill. */
   | ({ kind: 'scatter'; data?: Pt[]; cols?: { id: string; x: number; y: number; xName?: string; yName?: string }; xLabel?: string; yLabel?: string; caption?: string; /** draw the points onto this line's or plot's axes */ axes?: string } & KitPlace<P>)
   /** A table: a header per column, rows of values; `col` adds computed columns that fill row by row. */
@@ -175,8 +181,14 @@ export type KitBlock<P = Pt> =
   /** A line through a scatter's data: least squares, or through two of its points (`pick`, 1-based). */
   | { kind: 'fit'; of: string; pick?: [number, number] }
   /** Shares of a whole: one bar split into parts that sum to 1 (any source; the engine normalises). `mix`: a blend, the values mixed in those shares, with its result. */
-  | ({ kind: 'shares'; src: KitSource; labels?: string[]; mix?: string; dp?: number; caption?: string } & KitPlace<P>);
-export const KIT_BLOCKS = new Set(['grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'shares']);
+  | ({ kind: 'shares'; src: KitSource; labels?: string[]; mix?: string; dp?: number; caption?: string } & KitPlace<P>)
+  /**
+   * A count drawn as that many marks (coins, seats, molecules), each in one of `states` (the first at
+   * the start). `set id=k[7:8] state=tax` (or `n=` how many) moves marks to another state's cluster;
+   * the clusters' counts are readouts (`k.tax`). `n`: a number or a formula over constants.
+   */
+  | ({ kind: 'tokens'; n: string; states: string[]; caption?: string } & KitPlace<P>);
+export const KIT_BLOCKS = new Set(['grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'shares', 'tokens']);
 
 /**
  * Page drawings on a calibrated chart (`p=12 on=#c1`): their points are data coordinates on that
@@ -207,13 +219,19 @@ export type RefAction =
 export type KitVerb =
   | { kind: 'step'; ref: string }
   | { kind: 'sweep'; ref: string; dur?: number }
-  | { kind: 'set'; ref: string; fn?: string; to?: number; vals?: number[][]; /** scene things: a new label, value or link weight */ text?: string; value?: ValueRef; weight?: ValueRef }
+  | { kind: 'set'; ref: string; fn?: string; to?: number; vals?: number[][]; /** scene things: a new label, value or link weight */ text?: string; value?: ValueRef; weight?: ValueRef;
+      /** tokens: the marks' new state, and how many (a formula; default: the marks named by the part) */ state?: string; count?: string }
   | { kind: 'band'; ref: string; w: number; label?: string }
   | { kind: 'dist'; ref: string; from: string }
   /** A computed column added to a table, filled row by row over `dur` seconds (a b c… this row's cells, pa pb… the row above's, i the row number). */
   | { kind: 'col'; ref: string; head: string; fn: string; dur?: number }
   /** A reference line at value `at` across bars, a scatter (y = at) or a table column (`t.c`), labelled. */
-  | { kind: 'level'; ref: string; at: number; col?: number; colName?: string; label?: string };
+  | { kind: 'level'; ref: string; at: number; col?: number; colName?: string; label?: string }
+  /**
+   * {{split id=v[2] vals=8-t,t "kept" "tax"}}: one bar becomes stacked parts on its own scale (they must
+   * sum to it; with one value fewer than the names, the first part is what remains). Formulas over constants.
+   */
+  | { kind: 'splitBar'; ref: string; vals: string[]; labels: string[] };
 export const KIT_VERBS = new Set(['step', 'sweep', 'set', 'band', 'dist', 'col', 'level']);
 
 export type ConnectAction = { kind: 'connect'; from: End; to: End; id?: string };
