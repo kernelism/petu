@@ -15,7 +15,7 @@ computes every coordinate and every number.
 | `src/script/parseKit.ts` | `parseKitBlock` / `parseKitVerb`: grid, bars, table, scatter, calc, fit; step, sweep, set, band, dist, col, level. |
 | `src/script/pointExpr.ts` | Point args: literals, names, `#d3`, `mid/along/meet/foot`, kit parts `g[2,3]`. |
 | `src/geometry/resolve.ts` | `Figures`: `note()` takes `let` names at parse time; `resolve()` turns names, marks, rays, fitted coords into plain `Action`s, or a skip reason string. |
-| `src/geometry/figure.ts` | One figure per target; `fit` sketches freeze one uniform scale at first build. |
+| `src/geometry/figure.ts` | One figure per target; `fit` sketches freeze their scale at first build: uniform (angles kept), or per axis once the sketch has `{{axes}}` (data); no magnification cap. |
 | `src/playback/clock.ts` | `NarrationClock` interface (TTS-ready); `PacedClock` = syllable-weighted pace from `settings.wpm` (170). |
 | `src/playback/scheduler.ts` | Words → clock; actions fire with the first word after them. `START_MS` 600, `RESUME_MS` 1000, `FLUSH_MS` 200. `actionLeadMs`: 450ms for everything but `clear`. |
 | `src/playback/session.ts` | `AnswerSession`: stream → parser → scheduler; states idle/loading/playing/done/stopped/error; `done` waits for `idle()` (App passes `director.finale()`: last ink, then the scene overview). |
@@ -125,6 +125,26 @@ Prevention by construction: the narration never types a number the engine comput
 - Demo: `?script=moves` (gallery scene `moves`): beforeafter on a market, contrast on a growing
   colony, limit on a falling stone with drag; every number in its narration is a val.
 - Tests: `tests/values/values.test.ts`, `tests/gate/bound.test.ts`.
+
+## Expressions and computed data
+
+`src/desk/expr.ts` (no eval) reads a name as `[A-Za-z][A-Za-z0-9_]*`, lowercased (`K2`, `n10`, `T0`,
+`rate0` are names; only a digit-leading term multiplies: `2x` = 2·x, `x2` is a name). `if(c, a, b)` is
+`a` when `c` ≠ 0, else `b`. `integral(f, a, b)` is ∫ₐᵇ f dt over `t`, and `integral(f, u, a, b)` names
+the variable (it shadows any outer name inside `f`; outer names such as `x` and constants stay
+visible): tanh-sinh quadrature, ~1e-10 on smooth integrands, never evaluates the ends (so `1/sqrt(t)`
+from 0 works), NaN when it can't converge. So a curve defined by an integral is an engine plot:
+`plot fn="2/pi*integral(1/sqrt(1-sin(rad(x)/2)^2*sin(t)^2), 0, pi/2)" domain=0,170` is the true
+pendulum period over T₀ (1.0732 at 60°). `calc of=v reduce=quantile q=0.9` is the ⌈q·n⌉-th smallest
+value (a value of the data, as a conformal q̂ is; `q=90` reads as 0.9; default 0.5). Constants reach
+every formula path: kit maps, generated data, plots on hand-drawn `{{axes}}`, and `vals=` / table
+cells written as formulas (`vals=z*sigma/sqrt(n10),…`, `vals=a`; resolved when the block builds; a
+missing name is a skip naming it). Plots break only at real poles (`breakPoles` in `plot.ts`: a sign
+change or a local max of |y| that blows up when refined between neighbours), so a narrow peak is
+drawn whole. Computed data is computed in full up to `MAX_CELLS` (200 000 cells; past it a skip names
+the limit) and a big image shows decimated (≤ `MAX_IMG` squares a side, each the mean of its cells);
+literal vals / tables / labels take up to `MAX_LIT` (40) rows and columns; a `fn=` window names its
+cells a…z (≤ 26, a skip says so), a `reduce=` window may be any size.
 
 ## The slide as canvas (spec "The slide is part of the canvas")
 
