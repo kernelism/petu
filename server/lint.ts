@@ -9,7 +9,9 @@ export const TAG_NAMES = new Set(['scroll', 'highlight', 'underline', 'circle', 
   // bound numbers, readouts, demonstration moves (src/script/parseValues.ts)
   'val', 'find', 'contrast', 'limit', 'beforeafter',
   // the slide as canvas: a page region onto the board
-  'lift']);
+  'lift',
+  // slips the parser reads as another tag ({{arc center= from= to=}} is an angle's arc when exact)
+  'arc']);
 /** A curve through this many hand-placed points or more is probably something that follows from a formula. */
 const HAND_CURVE_PTS = 4;
 /** Kit tags whose values come from the engine: a literal result in them (`result=`, `=…` after an op) is the model computing by hand. */
@@ -27,6 +29,7 @@ export class Lint {
   /** Constants declared so far, and names used (in a formula or a {{val}}) before any constant had that name. */
   private consts = new Set<string>();
   private early = new Map<string, string>();
+  private sections = new Set<string>();
   notes: string[] = [];
   push(s: string): string {
     let out = '';
@@ -39,7 +42,10 @@ export class Lint {
       }
       this.buf += c;
       if (this.buf.endsWith('}}')) { out += this.tag(this.buf); this.buf = ''; this.inTag = false; }
-      else if (this.buf.length > 800 || c === '\n') { out += this.buf; this.buf = ''; this.inTag = false; } // not a tag (parser rule)
+      else if (this.buf.length > 800 || c === '\n') { // not a tag (parser rule)
+        if (this.buf.length > 800) this.notes.push(`tag over 800 characters (spoken as words, not drawn): ${this.buf.slice(0, 60)} — ${/^\{\{\s*curve\b/i.test(this.buf) ? 'draw a curve from its formula with {{plot fn=}}' : 'split it into several tags'}`);
+        out += this.buf; this.buf = ''; this.inTag = false;
+      }
     }
     return out;
   }
@@ -52,7 +58,10 @@ export class Lint {
     if (KIT_COMPUTED.test(t)) this.notes.push(`hand-computed result in ${JSON.stringify(t.slice(0, 40))}`);
     // The same parser the client runs: a malformed tag is dropped there, so note it here with its raw text.
     const a = name && TAG_NAMES.has(name) ? parseTag(t.slice(2, -2)) : null;
-    if (name && TAG_NAMES.has(name) && !a) this.notes.push(`malformed (dropped): ${t.slice(0, 300)}`);
+    if (name && TAG_NAMES.has(name) && !a) { const h = hint(t.slice(2, -2)); this.notes.push(`malformed (dropped): ${t.slice(0, 300)}${h ? ` — ${h}` : ''}`); }
+    if (a?.kind === 'sketch') this.sections.add(a.id);
+    // A section is not an element: emph flashes its frame, but fade has no one meaning (which of its elements?).
+    if (a?.kind === 'fade' && this.sections.has(a.ref.toLowerCase())) this.notes.push(`fade id=${a.ref} names a section: fade the elements inside it by their ids`);
     if (a) {
       const x = a as unknown as Record<string, unknown>;
       // Constants before statements: a name a formula or a {{val}} used before its {{const}}.
@@ -76,6 +85,15 @@ export class Lint {
     }
     return t;
   }
+}
+
+/** For a malformed tag the engine cannot read in one way only: what to write instead (or undefined). */
+function hint(body: string): string | undefined {
+  const two = /\bvals=([A-Za-z][\w]*\.[^\s,;]+),([A-Za-z][\w]*\.[^\s,;]+)/.exec(body);
+  if (two) return `vals= takes one column: use map=${two[1]} fn="x" for one, or two blocks`;
+  if (/^\s*plot\b/i.test(body) && !/\bdomain=/.test(body) && !/\bt=/.test(body)) return 'a plot needs domain=a,b (or axes= another plot, to share its domain)';
+  if (/^\s*arc\b/i.test(body)) return 'arc is an angle\'s arc in a section: arc on=s center=P from=A to=B (A and B equally far from P)';
+  return undefined;
 }
 
 /** Names a tag reads as numbers: identifiers in its formulas, and a {{val}}'s base name. */

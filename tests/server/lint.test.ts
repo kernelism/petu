@@ -43,3 +43,22 @@ describe('Lint (grammar checks only)', () => {
     for (let i = 0; i < s.length; i += 3) expect(run(s, [i, i + 1, i + 2])).toEqual(whole);
   });
 });
+
+describe('Lint: what to write instead, for slips the engine cannot recover (Task 1c)', () => {
+  it('two table columns in vals=: map= or two blocks', () => {
+    const { notes } = run('{{bars on=hotel id=burden vals=prices.guests,prices.hotel labels=guests,hotel below=prices}}');
+    expect(notes[0]).toMatch(/^malformed \(dropped\): .* — vals= takes one column: use map=prices\.guests fn="x" for one, or two blocks$/);
+  });
+  it('a tag over 800 characters: a hand curve should be a plot', () => {
+    const pts = Array.from({ length: 90 }, (_, i) => `${(i / 20).toFixed(6)},-1.0001`).join(' ');
+    const { notes } = run(`The period {{curve on=pend pts=${pts} em}} grows.`);
+    expect(notes).toEqual([expect.stringMatching(/^tag over 800 characters \(spoken as words, not drawn\): \{\{curve .* — draw a curve from its formula with \{\{plot fn=\}\}$/)]);
+  });
+  it('fade on a section: fade its elements by id', () => {
+    const { notes } = run('{{sketch id=s near=p2}} {{box on=s at=1,1 size=10,10 id=b}} {{fade id=s}}');
+    expect(notes).toEqual(['fade id=s names a section: fade the elements inside it by their ids']);
+  });
+  it('a recovered slip is not noted (arc is read as an angle)', () => {
+    expect(run('{{sketch id=p}} {{arc on=p center=P from=D to=B}}').notes).toEqual([]);
+  });
+});
