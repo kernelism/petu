@@ -47,6 +47,19 @@ export const isScrollKey = (e: { key: string; target?: EventTarget | null }) => 
 };
 
 /**
+ * Whether a wheel event will scroll `el`: it has a delta in a direction `el` still has room to go. A
+ * wheel that moves nothing (a trackpad or touch-surface mouse brushed while the cursor moves, the
+ * board already at its end) is not the student taking over.
+ */
+export function wheelScrolls(el: { scrollTop: number; scrollLeft: number; scrollHeight: number; clientHeight: number; scrollWidth: number; clientWidth: number }, e: { deltaX: number; deltaY: number }): boolean {
+  const dy = e.deltaY, dx = e.deltaX;
+  if (dy < 0 && el.scrollTop > 0.5) return true;
+  if (dy > 0 && el.scrollTop < el.scrollHeight - el.clientHeight - 0.5) return true;
+  if (dx < 0 && el.scrollLeft > 0.5) return true;
+  return dx > 0 && el.scrollLeft < el.scrollWidth - el.clientWidth - 0.5;
+}
+
+/**
  * Tells the student's scrolls from the engine's. Every programmatic write to scrollTop goes
  * through `write()`; a scroll event that lands more than `tol` px from the last written value, while
  * no glide is writing, came from somewhere else (scrollbar drag, find-in-page, middle-click, focus).

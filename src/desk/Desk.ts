@@ -4,7 +4,7 @@ import type { PageLayers } from '../pdf/viewerApi';
 import { REGION_H, REGION_W, type RegionSize, type Target } from '../script/types';
 import type { Stroke } from '../ink/agent/strokes';
 import { animateScrollTo } from '../pdf/scroll';
-import { Follow, ScrollOwner } from './follow';
+import { Follow, ScrollOwner, wheelScrolls } from './follow';
 import { routeGutter, maskBlocker } from './route';
 import { boardLayout, bodyPx, fitZoom, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
@@ -101,6 +101,8 @@ export class Desk implements DeskApi {
   private asideOpen = false;
   /** Sections of the paused answer cropped to their ink while an aside plays (restored when it ends). */
   private held = new Set<Section>();
+  /** The paused answer's last target when its aside opened (the aside's moves overwrite `last`). */
+  private asideFrom: Desk['last'] = null;
   /** The student's board zoom: a multiplier on every section's scale (1 = the board as laid out). */
   private zoomK = 1;
   private zoomCtl: { out: HTMLButtonElement; pct: HTMLSpanElement; in: HTMLButtonElement; fit: HTMLButtonElement };
@@ -131,7 +133,7 @@ export class Desk implements DeskApi {
     stage.append(this.board, this.wireLayer);
 
     const user = () => this.follow.userTookOver();
-    this.scroller.addEventListener('wheel', user, { passive: true });
+    this.scroller.addEventListener('wheel', (e) => { if (e.ctrlKey || wheelScrolls(this.scroller, e)) user(); }, { passive: true });
     this.scroller.addEventListener('touchstart', user, { passive: true });
     this.scroller.addEventListener('scroll', () => {
       if (this.owner.isForeign(this.scroller.scrollTop, this.scroller.scrollHeight - this.scroller.clientHeight)) user();
@@ -225,10 +227,11 @@ export class Desk implements DeskApi {
       if (!live()) { sec.el.classList.add('is-shown'); return 'desk reset'; }
     }
     // Rule 1: the new section is framed as it lands, so its first ink needs no pan.
+    // A headed section (an answer's first, an aside's inset) lands with its head at the top of the view.
     if (sec.scene) { if (this.follow.following()) await this.showScene(sec, before); }
-    else if (this.follow.following() && !this.isVisible({ region: spec.id }, WHOLE_REGION)) {
+    else if (this.follow.following() && (this.heads.has(sec) ? !this.landed(sec) : !this.isVisible({ region: spec.id }, WHOLE_REGION))) {
       await before?.();
-      if (live()) await this.glideBoard(() => this.boardTop(sec, WHOLE_REGION));
+      if (live()) await this.glideBoard(() => (this.heads.has(sec) ? this.landTop(sec) : this.boardTop(sec, WHOLE_REGION)));
     }
     sec.el.classList.add('is-shown');
     return live() ? this.region(spec.id) ?? 'desk reset' : 'desk reset';
@@ -403,6 +406,11 @@ export class Desk implements DeskApi {
     if (on === this.asideOpen) return;
     this.asideOpen = on;
     this.board.classList.toggle('has-aside', on);
+    // Asking is the student handing the view back: the aside is followed (its inset lands in view, its
+    // ink is kept in view), even if they had scrolled away before asking. Scrolling during the aside
+    // stops following as ever. When it ends, the board returns to where the paused answer was.
+    if (on) { this.asideFrom = this.last; this.follow.resume(); }
+    else { this.last = this.asideFrom; this.asideFrom = null; }
     // The paused answer's open sections show just their ink while the aside plays (the inset sits right
     // under it), and get their whole height back when the answer resumes and draws on.
     if (on) {
@@ -421,6 +429,7 @@ export class Desk implements DeskApi {
     if (!on) for (const [sec, hd] of this.heads) if (hd.aside && !hd.collapsed) this.collapse(sec, hd, true);
     if (!on && this.nextHead?.aside) this.nextHead = null;
     this.position();
+    if (!on && this.last) void this.reveal(this.last.t, this.last.r);
   }
 
   /** A collapsed aside's marker was clicked: it opens again in place (and closes when clicked again). */
@@ -660,12 +669,28 @@ export class Desk implements DeskApi {
   private boardTop(sec: Section, r: SRect): number {
     const box = this.boxOf(sec), b = this.frame().board;
     if (!box || !b) return this.scroller.scrollTop;
-    if (sec.scene) return box.y - BOARD_HEAD;
+    if (sec.scene) return this.landTop(sec);
     const y = box.y + (r.y - sec.y0) * box.s, h = r.h * box.s, top = this.scroller.scrollTop;
     if (h + 2 * BOARD_AIR >= b.h) return y - BOARD_AIR;
     if (y - BOARD_AIR < top) return y - BOARD_AIR;
     if (y + h + BOARD_AIR > top + b.h) return y + h + BOARD_AIR - b.h;
     return top;
+  }
+
+  /**
+   * Board scroll top that lands a section: its head (if it has one) sits where the first head sits on
+   * a fresh board, under the board's head row (clear of ×), with the section right below; a scene's
+   * window then fills the rest of the view. Never the section's own top: that clips its head.
+   */
+  private landTop(sec: Section): number {
+    const box = this.boxOf(sec);
+    if (!box) return this.scroller.scrollTop;
+    return box.y - (this.heads.get(sec)?.h ?? 0) - BOARD_HEAD;
+  }
+  /** The board already sits where landTop puts it (within the scroll range). */
+  private landed(sec: Section): boolean {
+    const max = this.scroller.scrollHeight - this.scroller.clientHeight;
+    return Math.abs(Math.max(0, Math.min(this.landTop(sec), max)) - this.scroller.scrollTop) < 2;
   }
 
   private async glideBoard(top: () => number): Promise<void> {
@@ -799,12 +824,12 @@ export class Desk implements DeskApi {
   // ---------------------------------------------------------------------------------------------
   // Board v2 scenes: one world per scene section, seen through a camera.
 
-  /** Layout specs for every section: a scene fills the board's visible height under its head row. */
+  /** Layout specs for every section: a scene fills the board's visible height under the head row and its own head. */
   private specs(f: Frame) {
     const fill = f.board ? f.board.h - BOARD_HEAD - boardPad(f.board.w) : 0;
     return this.sections.map((s) => {
       const hd = this.heads.get(s);
-      return { body: bodyPx(s.body, f.page.pageW), span: s.y1 - s.y0, ...(s.scene ? { fill } : {}), ...(hd ? { head: hd.h, hidden: hd.collapsed } : {}) };
+      return { body: bodyPx(s.body, f.page.pageW), span: s.y1 - s.y0, ...(s.scene ? { fill: fill - (hd?.h ?? 0) } : {}), ...(hd ? { head: hd.h, hidden: hd.collapsed } : {}) };
     });
   }
 
@@ -825,30 +850,22 @@ export class Desk implements DeskApi {
     const rect = paper.appendChild(document.createElementNS(SVG, 'rect')) as SVGRectElement;
     Object.entries({ x: -50000, y: -50000, width: 100000, height: 100000, fill: `url(#${pid})` }).forEach(([k, v]) => rect.setAttribute(k, String(v)));
     sc.paper = rect;
-    // The student can look around: the wheel pans the scene (ctrl / pinch zooms), and following stops.
+    // A pinch (ctrl / ⌘ + wheel) zooms the scene around the cursor, and following stops. A plain wheel
+    // is the board's: it scrolls past the scene and never pans it (a trackpad or touch-surface mouse
+    // sends small wheel deltas while the cursor merely moves; the drawing must not move under it).
     sec.el.addEventListener('wheel', (e) => this.onSceneWheel(sec, e), { passive: false });
   }
 
   private onSceneWheel(sec: Section, e: WheelEvent) {
     const sc = sec.scene!, box = this.boxOf(sec);
-    if (!box) return;
+    if (!box || !(e.ctrlKey || e.metaKey) || !e.deltaY) return;
+    e.preventDefault();
     const k = box.s * sc.cam.z;
-    const ext = sc.space.extent();
-    const view = this.camRect(sec);
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const rect = sec.el.getBoundingClientRect();
-      const px = (e.clientX - rect.left) / k + sc.cam.x, py = (e.clientY - rect.top) / k + sc.cam.y;
-      const z = Math.max(0.35, Math.min(1.6, sc.cam.z * Math.exp(-e.deltaY * 0.01)));
-      const k2 = box.s * z;
-      sc.cam = { x: px - (e.clientX - rect.left) / k2, y: py - (e.clientY - rect.top) / k2, z };
-    } else {
-      // At the scene's edge the board scrolls on (earlier sections sit above a scene).
-      const room = 0.25 * view.h;
-      if (ext && ((e.deltaY < 0 && view.y <= ext.y - room) || (e.deltaY > 0 && view.y + view.h >= ext.y + ext.h + room)) && Math.abs(e.deltaY) > Math.abs(e.deltaX)) return;
-      e.preventDefault();
-      sc.cam = { ...sc.cam, x: sc.cam.x + e.deltaX / k, y: sc.cam.y + e.deltaY / k };
-    }
+    const rect = sec.el.getBoundingClientRect();
+    const px = (e.clientX - rect.left) / k + sc.cam.x, py = (e.clientY - rect.top) / k + sc.cam.y;
+    const z = Math.max(0.35, Math.min(1.6, sc.cam.z * Math.exp(-e.deltaY * 0.01)));
+    const k2 = box.s * z;
+    sc.cam = { x: px - (e.clientX - rect.left) / k2, y: py - (e.clientY - rect.top) / k2, z };
     sc.glide?.abort();
     this.follow.userTookOver();
     this.applyCam(sec);
@@ -872,7 +889,7 @@ export class Desk implements DeskApi {
   /** Brings a scene's window onto the board (it fills the board's visible height). */
   private async showScene(sec: Section, before?: BeforeMove) {
     const box = this.boxOf(sec), b = this.frame().board;
-    if (!box || !b || Math.abs(this.scroller.scrollTop - (box.y - BOARD_HEAD)) < 2) return;
+    if (!box || !b || this.landed(sec)) return;
     await before?.();
     await this.glideBoard(() => this.boardTop(sec, WHOLE_REGION));
   }
