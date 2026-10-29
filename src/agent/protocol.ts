@@ -88,6 +88,9 @@ export type SpendSummary = {
   phase?: string;
   /** The current phase's budget. */
   phaseCapUsd?: number;
+  /** The server's answer model, and which provider keys it has (never the keys themselves). */
+  model?: string;
+  keys?: { openai: boolean; anthropic: boolean };
   /** Set when the next answer would be refused: the refusal line. */
   blocked?: string;
   /** Which cap `blocked` names. */

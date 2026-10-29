@@ -43,9 +43,15 @@ export function runsDir(cwd = process.cwd()): string {
 export function loadRecording(dir: string, run = '', q = ''): Recording | null {
   const f = join(dir, 'result.json');
   if (!existsSync(f)) return null;
-  let r: { open?: { src: string; page: number }; turns?: Record<string, unknown>[] };
+  let r: StoredRun;
   try { r = JSON.parse(readFileSync(f, 'utf8')); } catch { return null; }
-  const t = r.turns?.[0] as { question?: string; chunks?: Chunk[]; events?: Record<string, unknown>[]; words?: RecWord[]; timings?: RecTiming[]; registry?: RecEntry[] } | undefined;
+  return recordingOf(r, 0, dir, run, q);
+}
+
+type StoredRun = { open?: { src: string; page: number }; turns?: Record<string, unknown>[] };
+/** One turn of a stored question (result.json) as a Recording; the judgement is read only for the last turn (the one judged). */
+export function recordingOf(r: StoredRun, turn: number, dir: string, run = '', q = ''): Recording | null {
+  const t = r.turns?.[turn] as { question?: string; chunks?: Chunk[]; events?: Record<string, unknown>[]; words?: RecWord[]; timings?: RecTiming[]; registry?: RecEntry[] } | undefined;
   if (!t?.chunks?.length) return null;
   const events = t.events ?? [];
   const handoff = events.find((e) => e.t === 'handoff') as { ms?: number } | undefined;
@@ -59,7 +65,7 @@ export function loadRecording(dir: string, run = '', q = ''): Recording | null {
   const stage2At = t.chunks.slice(0, s2).reduce((n, c) => n + c.d.length, 0);
   let judge: Recording['judge'];
   const jf = join(dir, 'judge.json');
-  if (existsSync(jf)) { try { judge = JSON.parse(readFileSync(jf, 'utf8')).judge; } catch { /* none */ } }
+  if (turn === (r.turns?.length ?? 1) - 1 && existsSync(jf)) { try { judge = JSON.parse(readFileSync(jf, 'utf8')).judge; } catch { /* none */ } }
   return {
     run, q, dir, question: t.question ?? '', src: r.open?.src, page: r.open?.page, scoutPages: scout?.pages, scoutPlan: scout?.plan,
     script, stage2At, chunks: t.chunks, stage2Chunk: s2, words: t.words ?? [], timings: t.timings ?? [], registry: t.registry ?? [],

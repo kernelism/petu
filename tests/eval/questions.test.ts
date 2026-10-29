@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Q1 as QUESTIONS, QSETS, QUESTIONS as DEFAULT, bySplit as bySplitOf, validateSet, qsetHash, qsetId, assertSplitAllowed, questionSet } from '../../scripts/eval/questions';
+import { Q1 as QUESTIONS, QSETS, QUESTIONS as DEFAULT, SHARED_PAGES_OK, bySplit as bySplitOf, validateSet, qsetHash, qsetId, assertSplitAllowed, questionSet } from '../../scripts/eval/questions';
 import { CORPUS_DECKS, DECK_FILES, FIXTURE_DECKS, knownDeck } from '../../scripts/eval/decks';
 import { EXCLUDED } from '../../scripts/eval/sample';
 import { Q2_ROWS, buildQ2 } from '../../scripts/eval/q2';
@@ -146,3 +146,20 @@ describe('question set fu (follow-ups)', () => {
   it('is frozen (pin below)', () => { expect(qsetId(fu, 'fu')).toBe(PINNED_FU); });
 });
 const PINNED_FU = 'fu-69a34e51';
+
+describe('question set draw (author benchmark)', () => {
+  const draw = QSETS.draw;
+  it('is all dev, valid with its two shared pages, follow-ups on D1 and D2, golden questions tagged', () => {
+    expect(questionSet('draw')).toBe(draw);
+    expect(draw).toHaveLength(11);
+    expect(bySplitOf('test', draw)).toHaveLength(0);
+    expect(validateSet(draw, { sharedPages: true })).toEqual([]);
+    expect(validateSet(draw).filter((e) => !/shares page/.test(e))).toEqual([]);
+    expect(SHARED_PAGES_OK.has('draw')).toBe(true);
+    expect(draw.filter((x) => x.followUp).map((x) => [x.id, x.followUp])).toEqual([['D1', 'improve the drawing'], ['D2', "explain like I'm 5"]]);
+    expect(draw.filter((x) => x.tags?.includes('golden')).map((x) => x.deck)).toEqual(['ost-econ', 'ax-conformal']);
+    expect(new Set(draw.map((x) => x.deck))).toEqual(new Set(['bio', 'econ', 'ost-stats', 'ost-calc', 'ost-physics', 'ax-resnet', 'ost-econ', 'ax-conformal']));
+  });
+  it('is frozen (pin below)', () => { expect(qsetId(draw, 'draw')).toBe(PINNED_DRAW); });
+});
+const PINNED_DRAW = 'draw-5b74be89';

@@ -18,7 +18,7 @@ import { buildJudgeRequest, buildJudgeRequestR3, estimateJudgeTokens, fakeJudgeF
 import { JUDGE_MAX_OUTPUT } from './configs.ts';
 import { worstCaseUsd } from '../../server/prices.ts';
 import { readCalibration } from './calibrate.ts';
-import { assertSplitAllowed, QSETS, qsetId, validateSet, freeze, type Question } from './questions.ts';
+import { assertSplitAllowed, QSETS, SHARED_PAGES_OK, qsetId, validateSet, freeze, type Question } from './questions.ts';
 import { boardProbeScript, boardScrollScript, boardSegments, downscaleScript, frameCaptions, frameSchedule, pagesTouched, pdfDigest, stitchScript } from './frames.ts';
 import { checkBudget, parseArgs, selectQuestions, wantsJudge, type Args } from './plan.ts';
 import { renderReport, type ReportItem } from './report.ts';
@@ -221,7 +221,7 @@ async function main(): Promise<void> {
   const QUESTIONS: Question[] = args.ask ? [...QSETS[args.qset], { id: 'X1', split: 'dev', deck: args.ask.deck, page: args.ask.page, pick: 'hand', type: 'narrow', question: args.ask.question }] : QSETS[args.qset];
   const QSET = qsetId(QSETS[args.qset], args.qset);
   const rubric = RUBRICS[args.rubric];
-  const errs = validateSet(QSETS[args.qset]);
+  const errs = validateSet(QSETS[args.qset], { sharedPages: SHARED_PAGES_OK.has(args.qset) });
   if (errs.length) throw new Error(`question set invalid: ${errs.join('; ')}`);
   await freeze(EVAL_DIR, args.qset);
   if (args.finish && args.replay) throw new Error('--finish and --replay are exclusive');
@@ -257,6 +257,8 @@ async function main(): Promise<void> {
     const budget = checkBudget(spend, cfg, planGenerates ? todo : [], args.n, judge && !args.fakeJudge, args.rubric);
     console.log(`budget: ${budget.message}`);
     if (!budget.ok) throw new Error(`refusing to start: ${budget.message}`);
+    if (planGenerates && cfg.model.startsWith('claude-') && spend.keys && !spend.keys.anthropic) throw new Error('refusing to start: the config is a Claude model and the server found no Anthropic key in .env (PETU_ANTHROPIC_KEY or ANTHROPIC_API_KEY)');
+    if (planGenerates && spend.model && spend.model !== cfg.model) throw new Error(`refusing to start: the server answers with ${spend.model}, not ${cfg.model}`);
     if (!args.finish && todo.some((q) => q.split === 'test')) noteTestUse(runId, args.qset);
 
     for (let i = 0; i < (args.finish ? 1 : Math.min(args.parallel, todo.length * args.n)); i++) chromes.push(await Chrome.launch({ dir: join(EVAL_DIR, 'tmp') }));
@@ -360,7 +362,7 @@ async function main(): Promise<void> {
     writeJson(join(dir, 'summary.json'), summary);
     writeJson(join(dir, 'run.json'), { args, config: cfg, phase, replayOf: args.replay, ...(args.finish ? { finishedAt: new Date().toISOString() } : {}) });
     writeFileSync(join(dir, 'report.html'), renderReport(summary, items, readCalibration(dir, args.fakeJudge)));
-    console.log(`run ${runId}\n  skipped ${summary.run.sum.skippedTotal}  malformed ${summary.run.sum.malformed}  skip defects ${summary.run.skipDefects}/${summary.run.n}  first word p50 ${summary.run.firstWordMs.p50?.toFixed(0) ?? '-'} p90 ${summary.run.firstWordMs.p90?.toFixed(0) ?? '-'} ms\n  answers ${summary.run.n}  judge mean ${summary.judge.mean?.toFixed(2) ?? '-'}  fatal ${summary.judge.fatal}  gen $${summary.genUsd.toFixed(3)}  judge $${summary.judge.usd.toFixed(3)}\n  open ${join(dir, 'report.html')}`);
+    console.log(`run ${runId}\n  skipped ${summary.run.sum.skippedTotal}  malformed ${summary.run.sum.malformed}  skip defects ${summary.run.skipDefects}/${summary.run.n}  first word p50 ${summary.run.firstWordMs.p50?.toFixed(0) ?? '-'} p90 ${summary.run.firstWordMs.p90?.toFixed(0) ?? '-'} ms  spoken mean ${summary.run.meanSpokenMs != null ? (summary.run.meanSpokenMs / 1000).toFixed(1) : '-'} s\n  answers ${summary.run.n}  judge mean ${summary.judge.mean?.toFixed(2) ?? '-'}  fatal ${summary.judge.fatal}  gen $${summary.genUsd.toFixed(3)}  judge $${summary.judge.usd.toFixed(3)}\n  open ${join(dir, 'report.html')}`);
   } finally {
     for (const c of chromes) await c.close();
     server.stop();
