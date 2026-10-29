@@ -41,7 +41,8 @@ import type { Ledger, Phase } from './ledger';
 import { SseParser, ResponseEvents } from './sse';
 import { ScriptFilter } from './scriptFilter';
 import { Lint } from './lint';
-import { systemPrompt, PROMPT_VERSION } from './prompt/system';
+import { systemPrompt, PROMPT_VERSION, promptVersionOf } from './prompt/system';
+import { BoardFirst } from './boardFirst';
 import { SCOUT_SYSTEM, SCOUT_VERSION } from './prompt/scout';
 import { SCOUT_SCHEMA, fallbackScout, parseScout, type ScoutEvent, type ScoutRequest, type ScoutResult } from '../src/agent/scout';
 import { OpenerGate, ScoutJson } from './scoutStream';
@@ -56,7 +57,9 @@ export type ModelConfig = { model: string; effort: Effort; maxOutput: number; fa
   /** Vision detail for the scout's other pages (the visible page is always high). Default high. */
   pageDetail?: 'low' | 'high';
   /** A deadline for the whole call (the storyboard: PETU_STORYBOARD_TIMEOUT_MS; default STORYBOARD_TIMEOUT_MS). */
-  timeoutMs?: number };
+  timeoutMs?: number;
+  /** EXPERIMENT (PETU_PROMPT_VARIANT): a prompt variant from server/prompt/variants; absent = the default prompt. */
+  promptVariant?: string };
 export type Deps = {
   key: string; ledger: Ledger; phase: Phase; fetch: typeof fetch;
   /** PETU_ANTHROPIC_KEY (server/env.ts): used only when the answer model is a Claude model (server/anthropic.ts). */
@@ -82,7 +85,9 @@ export type AnswerBody = ReturnType<typeof buildRequest>;
 export type CacheKey = { model: string; version: string; docHash: string; page: number };
 export type AnswerRecord = { at: string; phase: string; model: string; effort: string; page: number; question: string; script: string; lint: string[]; usd: number; error?: string;
   /** The storyboard stage 2 performed (or why it ran on the scout's plan alone), its latency and cost. */
-  storyboard?: { model: string; effort: string; version: string; ms: number; usd: number; board?: Storyboard; fallback?: string } };
+  storyboard?: { model: string; effort: string; version: string; ms: number; usd: number; board?: Storyboard; fallback?: string };
+  /** EXPERIMENT (boardfirst): the model's script before the board-first reveal, and what it declared and revealed. */
+  raw?: string; boardFirst?: { declared: number; revealed: number; hidden: string[]; immediate: number; noId: number } };
 /**
  * `headersMs`: no response headers → the attempt is abandoned (retried once, before any text).
  * `idleMs`: a streamed answer that sends nothing for this long is ended (cut_off after text).
@@ -96,7 +101,7 @@ export const JUDGE_MODEL = 'gpt-6.1-sol';
 import { JUDGE_MAX_OUTPUT } from './limits';
 
 /** Shared by every document: the system block's cache is reused across PDFs. */
-export const cacheKey = () => `petu-${PROMPT_VERSION}`;
+export const cacheKey = (variant?: string) => `petu-${promptVersionOf(variant)}`;
 /** A lower bound on the system block's tokens (≈ 3.3 chars/token measured; 4 keeps it low). */
 export const systemTokensLow = () => Math.floor(systemPrompt().length / 4);
 
@@ -122,10 +127,10 @@ export function buildAnswerRequest(r: Parameters<typeof buildRequest>[0], cfg: M
   const oa = buildRequest(r, cfg, prewarm);
   return isAnthropicModel(cfg.model) ? toAnthropicRequest(oa as never, cfg, prewarm) : oa;
 }
-const developer = (cfg: ModelConfig) => ({ role: 'developer', content: [{ type: 'input_text', text: systemPrompt(), ...bp(cfg.explicitCache, '12h') }] });
+const developer = (cfg: ModelConfig) => ({ role: 'developer', content: [{ type: 'input_text', text: systemPrompt(cfg.promptVariant), ...bp(cfg.explicitCache, '12h') }] });
 const common = (cfg: ModelConfig) => ({
   model: cfg.model, store: false, max_output_tokens: cfg.maxOutput, reasoning: { effort: cfg.effort },
-  prompt_cache_key: cacheKey(),
+  prompt_cache_key: cacheKey(cfg.promptVariant),
 });
 
 /**
@@ -584,8 +589,11 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const filter = new ScriptFilter(), lint = new Lint();
   const read = newRead();
   let outChars = 0, ttft = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
-  let sent = false, terminal = false, complete = false, idle = false, script = '';
-  const send = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; script += s; if (Number.isNaN(ttft)) ttft = now() - t0; emit({ t: 'text', d: s }); };
+  let sent = false, terminal = false, complete = false, idle = false, script = '', raw = '';
+  // EXPERIMENT: a board-first script's declared elements are held until the narration names them.
+  const bf = cfg.promptVariant === 'boardfirst' ? new BoardFirst() : null;
+  const send = (s: string) => { if (bf) { raw += s; s = bf.push(s); } emitText(s); };
+  const emitText = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; script += s; if (Number.isNaN(ttft)) ttft = now() - t0; emit({ t: 'text', d: s }); };
   try {
     let res: Response | null = null;
     let live: AbortController | null = null;
@@ -626,6 +634,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
       if (r.failed) failed = { t: 'error', code: 'upstream', message: r.failed, retryable: true };
       if (signal.aborted) up.abort();
       send(lint.push(filter.end()) + lint.end());
+      if (bf) emitText(bf.end());
       // Stalled, cut short upstream (response.incomplete), or ended without a terminal event: what
       // arrived plays, then the client hears cut_off; with no text at all it is an error.
       if (!signal.aborted && !failed && (idle || !terminal || !complete)) {
@@ -647,7 +656,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const u: Usage = usage ?? estimatedUsage(est, cachedGuess, Math.ceil(Math.max(read.rawChars, outChars) / 3.2));
   const usd = costUsd(cfg.model, u, '12h', cfg.fast);
   d.ledger.settle({ id: reqId, phase: d.phase, kind: 'answer', model: cfg.model, usd, estimated, tokens: tokens(u) });
-  try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
+  try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
   if (signal.aborted) return;
   if (failed && failed.code !== 'cut_off' && !outChars) { emit(failed); return; }
   const s = d.ledger.summary();
