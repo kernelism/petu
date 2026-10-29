@@ -115,6 +115,8 @@ if (styleParam === 'live' || styleParam === 'hand' || styleParam === 'clean') se
 // audit for dev scripts), &gatefail=K[:mode] (injected faults), &repair=fake|off, &repairms= (the fake's delay).
 const GATE_PARAM = ((p) => (p === 'off' || p === 'shadow' || p === 'live' || p === 'audit' ? p : null))(params.get('gate')) as GateSetting | null;
 const GATE_FAULTS = parseFaults(params.get('gatefail'));
+/** `&gatelog`: every gate and repair event to the console. */
+const GATE_LOG = params.has('gatelog');
 const REPAIR_PARAM = params.get('repair');
 const REPAIR_MS = Number(params.get('repairms')) || 1500;
 /** `&repair=fake`: the replacement is the beat said plainly (no tags), after REPAIR_MS. The real client is src/agent/repair.ts. */
@@ -695,6 +697,7 @@ export default function App() {
       log.event(e as never);
       run.rec?.event(e as never);
       if (DEBUG) setDebug((d) => ({ ...d, gate: [...(d.gate ?? []), e] }));
+      if (GATE_LOG) console.info('[gate]', JSON.stringify(e));
     };
     if (setting !== 'off') {
       shadow = new ShadowStage({ desk: () => deskRef.current, viewer: () => viewerRef.current, settings: getSettings, grounding: () => groundingRef.current ?? NO_MARKS });

@@ -65,6 +65,8 @@ export type PreflightEnv = {
   grounding?: () => Grounding | undefined;
   /** A page's text lines in target space (annotations covering page text). */
   lines?: (page: number) => Rect[] | undefined;
+  /** Checks that only note here (a stricter or looser gate; default: the design's severity in verdict.ts). */
+  noteChecks?: Set<string>;
   /** Offline: a recorded board's skip reason for a tag (by its body), standing in for the shadow board. */
   recorded?: (body: string) => string | undefined;
 };
@@ -167,6 +169,8 @@ export class GatePreflight implements Preflight {
     });
     this.last = { u, acts: kept, added, consts: unitConsts };
     const scene = board?.scene?.();
+    const nc = this.env.noteChecks;
+    if (nc) { v.notes.push(...v.flags.filter((f) => nc.has(f.check)).map((f) => `${f.check}: ${f.detail}`)); v.flags = v.flags.filter((f) => !nc.has(f.check)); }
     return {
       flags: v.flags.map((f) => ({ check: f.check, detail: f.detail })),
       notes: v.notes,

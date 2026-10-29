@@ -41,7 +41,10 @@ export class ShadowDesk implements DeskApi {
   /** A new answer: ids are freed, the sections stay (a scene tag with the same id continues its scene). */
   forgetIds(): void { this.secs.clear(); }
 
-  metrics() { return this.live()?.metrics?.() ?? { boardPx: 666, bodyPx: () => 14 }; }
+  metrics() {
+    const m = this.live()?.metrics?.();
+    return m && m.boardPx > 0 ? m : { boardPx: 666, bodyPx: m?.bodyPx ?? (() => 14) };
+  }
 
   async addRegion(spec: RegionSpec): Promise<RegionInfo | string> {
     const prev = this.secs.get(spec.id);
