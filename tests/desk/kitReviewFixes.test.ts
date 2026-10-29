@@ -47,4 +47,12 @@ describe('kit review fixes', () => {
     expect(maxY(e, 'inv')).toBeLessThan(16);
     expect(ys(e, 'inv').filter(Number.isFinite).length).toBeGreaterThan(140);
   });
+
+  it('pi in a column formula is π, not the row above\'s column i', async () => {
+    const { e } = env();
+    await tag(e, 'table on=s id=t cols=r vals=1;2;3');
+    await tag(e, 'col id=t fn="pi*a^2" "area"');
+    const t = kitStore(e.registry).get('t')!;
+    expect(t.full!.map((r) => r[1])).toEqual([Math.PI, 4 * Math.PI, 9 * Math.PI]);
+  });
 });
