@@ -200,10 +200,10 @@ export function substitute(src: string, env: Record<string, number>, dp?: number
   return out.join('');
 }
 
-export type Reduce = 'sum' | 'mean' | 'max' | 'min' | 'norm' | 'count' | 'dot' | 'cos';
-export const REDUCES: readonly Reduce[] = ['sum', 'mean', 'max', 'min', 'norm', 'count', 'dot', 'cos'];
-/** Reductions over one block; dot and cos take two. */
-export const PAIR_REDUCES = new Set<Reduce>(['dot', 'cos']);
+export type Reduce = 'sum' | 'mean' | 'max' | 'min' | 'norm' | 'count' | 'dot' | 'cos' | 'wavg' | 'argmax';
+export const REDUCES: readonly Reduce[] = ['sum', 'mean', 'max', 'min', 'norm', 'count', 'dot', 'cos', 'wavg', 'argmax'];
+/** Reductions over one block; dot, cos and wavg (weights, values) take two. */
+export const PAIR_REDUCES = new Set<Reduce>(['dot', 'cos', 'wavg']);
 
 /**
  * A reduction with its expansion. `xs` (and `ys` for dot/cos) are the values in reading order;
@@ -223,6 +223,18 @@ export function reduce(op: Reduce, xs: number[], ys?: number[], dp?: number, sho
     case 'norm': { const v = Math.sqrt(X.reduce((s, x) => s + x * x, 0)); return done(['√(', ...joinTerms(X.map((x) => `${term(x, dp)}²`)), ') = '], v); }
     case 'count': { const v = X.filter((x) => x !== 0).length; return { parts: [], result: `${v}/${n}`, value: v }; }
     case 'dot': { const v = X.reduce((s, x, i) => s + x * Y![i], 0); return done([...joinTerms(X.map((x, i) => `${term(x, dp)}·${term(Y![i], dp)}`)), ' = '], v); }
+    case 'wavg': {
+      // Weights first: 0.58·10 + 0.13·20 + … (divided by the weights' sum unless it is 1).
+      const sw = X.reduce((a, x) => a + x, 0), d = X.reduce((s, x, i) => s + x * Y![i], 0);
+      const one = Math.abs(sw - 1) < 1e-9;
+      const terms = joinTerms(X.map((x, i) => `${term(x, dp)}·${term(Y![i], dp)}`));
+      return done(one ? [...terms, ' = '] : ['(', ...terms, `) / ${fmt(sw, dp)} = `], sw ? d / sw : NaN);
+    }
+    case 'argmax': {
+      let best = -1;
+      X.forEach((x, i) => { if (best < 0 || x > X[best]) best = i; });
+      return { parts: ['argmax(', ...joinTerms(T, ', '), ') = '], result: best < 0 ? '' : String(xs.indexOf(X[best]) + 1), value: best < 0 ? NaN : xs.indexOf(X[best]) + 1 };
+    }
     case 'cos': {
       const d = X.reduce((s, x, i) => s + x * Y![i], 0);
       const na = Math.sqrt(X.reduce((s, x) => s + x * x, 0)), nb = Math.sqrt(Y!.reduce((s, y) => s + y * y, 0));

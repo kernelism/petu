@@ -59,4 +59,55 @@ describe('routeGutter (split layout)', () => {
     const run = s.filter((p) => p.x > anchor.x + 40 && p.x < page.x + page.w);
     for (const p of run) expect(p.y).toBeGreaterThanOrEqual(250);
   });
+
+  describe('board leg', () => {
+    const board = { x: 740, y: 40, w: 600, h: 800 };
+    const target = { x: 1100, y: 400, w: 80, h: 40 };
+    const boardPart = (s: SPt[]) => s.filter((p) => p.x > gutterX + 1);
+    /** Dense polyline test: does any sampled segment pass through r? */
+    const crosses = (s: SPt[], r: R) => {
+      for (let i = 1; i < s.length; i++) {
+        for (let k = 0; k <= 10; k++) {
+          const p = { x: s[i - 1].x + (s[i].x - s[i - 1].x) * (k / 10), y: s[i - 1].y + (s[i].y - s[i - 1].y) * (k / 10) };
+          if (inside(p, r)) return true;
+        }
+      }
+      return false;
+    };
+
+    it('clear straight access: unchanged straight arrival at the centre', () => {
+      const far = { x: 800, y: 100, w: 100, h: 60 }; // board content nowhere near the run
+      const base = routeGutter(anchor, target, { page, gutterX })!;
+      const s = routeGutter(anchor, target, { page, gutterX, board, boardBlocked: blocker([far]) })!;
+      expect(s).toEqual(base);
+      expect(s[s.length - 1]).toEqual({ x: target.x - END_GAP, y: target.y + target.h / 2 });
+    });
+
+    it('an obstacle at the centre height: arrives at another height in the span, clear of it', () => {
+      const bars = { x: 900, y: 405, w: 120, h: 20 }; // covers 405–425; target span 400–440
+      const s = routeGutter(anchor, target, { page, gutterX, board, boardBlocked: blocker([bars]) })!;
+      expect(crosses(boardPart(s), bars)).toBe(false);
+      const end = s[s.length - 1];
+      expect(end.x).toBeCloseTo(target.x - END_GAP);
+      expect(end.y).toBeGreaterThanOrEqual(target.y);
+      expect(end.y).toBeLessThanOrEqual(target.y + target.h);
+    });
+
+    it('a fully blocked span: arrives from above (or below) and stays clear', () => {
+      const chart = { x: 900, y: 300, w: 150, h: 250 }; // left of the target, taller than it
+      const s = routeGutter(anchor, target, { page, gutterX, board, boardBlocked: blocker([chart]) })!;
+      expect(crosses(boardPart(s), chart)).toBe(false);
+      const end = s[s.length - 1];
+      expect(end.x).toBeGreaterThan(target.x);
+      expect(end.x).toBeLessThan(target.x + target.w / 2);
+      expect([target.y - END_GAP, target.y + target.h + END_GAP]).toContainEqual(end.y);
+      expect(end.y).toBe(target.y - END_GAP); // above is the shorter detour here
+    });
+
+    it('nothing clear: falls back to the straight arrival, never null', () => {
+      const s = routeGutter(anchor, target, { page, gutterX, board, boardBlocked: () => true })!;
+      expect(s).not.toBeNull();
+      expect(s[s.length - 1]).toEqual({ x: target.x - END_GAP, y: target.y + target.h / 2 });
+    });
+  });
 });

@@ -1,3 +1,4 @@
+import { SCENE_KINDS } from '../script/types';
 // src/geometry/resolve.ts
 import { REGION_H, type Action, type End, type Pt, type RawAction, type RawEnd, type Target } from '../script/types';
 import { isBlockRef, isLiteral, type PtArg } from '../script/pointExpr';
@@ -59,7 +60,7 @@ export class Figures {
     if (a.kind === 'sketch') { if (a.fit) this.fitted.add(`r:${a.id}`); return; }
     if (a.kind === 'let') { const f = this.figure(tgt(a)); for (const [n, p] of a.defs) f.define(n, p); return; }
     if (!('page' in a) && !('region' in a)) return;
-    if (a.kind === 'scroll' || 'ref' in a || 'mark' in a) return;
+    if (a.kind === 'scroll' || 'ref' in a || 'mark' in a || SCENE_KINDS.has(a.kind)) return;
     const f = this.figure(tgt(a as { page?: number; region?: string }));
     const x = a as Record<string, unknown>;
     for (const k of [...ptFields, 'through'] as const) if (x[k]) f.note(x[k] as PtArg);
@@ -81,7 +82,7 @@ export class Figures {
 
   resolve(a: RawAction): Action | null | string {
     if (a.kind === 'let') return null;
-    if (a.kind === 'sketch' || a.kind === 'scroll' || a.kind === 'clear' || 'ref' in a) return a as Action;
+    if (a.kind === 'sketch' || a.kind === 'scroll' || a.kind === 'clear' || 'ref' in a || SCENE_KINDS.has(a.kind)) return a as Action;
     if (a.kind === 'connect') {
       // Page marks resolve here; quotes, ids and coords resolve in the toolkit.
       const named = (e: RawEnd) => 'ref' in e && !this.elements.has(`r:${e.region}:${e.ref}`) && this.figure({ region: e.region }).has(e.ref);

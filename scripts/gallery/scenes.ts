@@ -17,6 +17,9 @@ export const SCENES: Scene[] = [
   { name: 'relational', query: 'script=relational', moments: [mid(8000), END] },
   // Flow across the document: a unit highlight on p9, the journey to p2 (route chip, parts), the return.
   { name: 'flow', query: 'script=flow', moments: [mid(3000), mid(9000), mid(15000), mid(24000), END] },
+  { name: 'scene', query: 'script=scene', moments: [mid(20000), END] },
+  { name: 'scene-econ', query: 'script=scene-econ', moments: [mid(20000), END] },
+  { name: 'scene-bio', query: 'script=scene-bio', moments: [mid(20000), END] },
   { name: 'lec09', query: 'script=lec09', moments: [mid(14000), END], needs: 'public/dev/lec09_optical_flow.pdf' },
 ];
 

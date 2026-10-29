@@ -2,7 +2,8 @@
 import { REGION_H, type Compass, type RawEnd, type Pt, type RawAction, type Target, type Weight } from './types';
 import { tokenize, unquote } from './tokenize';
 import { NAME, normName, parsePtArg, worldPt, isBlockRef, type PtArg } from './pointExpr';
-import { parseKitBlock, parseKitVerb } from './parseKit';
+import { parseKitBlock, parseKitVerb, sceneRel } from './parseKit';
+import { parseScene, parseSplit, SCENE_TAGS } from './parseScene';
 
 /** Region and element ids: a letter, then letters, digits, - or _. Case-insensitive (stored lowercased). */
 const ID = /^[a-z][a-z0-9_-]{0,23}$/;
@@ -108,6 +109,7 @@ export function parseTag(body: string): RawAction | null {
   // Tags without a target.
   switch (name) {
     case 'clear': return { kind: 'clear' };
+    case 'scene':
     case 'sketch': {
       // A section on the board. `near=pN` names the slide it explains (optional: the visible one);
       // `place=` is accepted and ignored (the board has one place); `size=l` widens the board.
@@ -117,6 +119,7 @@ export function parseTag(body: string): RawAction | null {
       const size = (args.size ?? 'm').toLowerCase();
       if (!sid) return null;
       if (size !== 's' && size !== 'm' && size !== 'l') return null;
+      if (name === 'scene') return { kind: 'sketch', id: sid, ...(page != null ? { page } : {}), size: 'm', scene: true };
       return { kind: 'sketch', id: sid, ...(page != null ? { page } : {}), size, ...(flags.has('fit') ? { fit: true } : {}) };
     }
     case 'emph':
@@ -133,9 +136,12 @@ export function parseTag(body: string): RawAction | null {
     case 'col':
     case 'level':
       return parseKitVerb(name, args, quotes, flags);
+    case 'split': return parseSplit(args, quotes);
     case 'move': {
       const ref = eid(args.id), to = pt(args.to, 1000); // clamped to the element's own space when it runs
-      return ref && to ? { kind: 'move', ref, to } : null;
+      const rel = sceneRel(args);
+      if (rel) return ref && args.to == null ? { kind: 'move', ref, place: rel } : null;
+      return ref && to && rel === undefined ? { kind: 'move', ref, to } : null;
     }
     case 'connect': {
       const near = pt(args.near, 1000);
@@ -173,7 +179,12 @@ export function parseTag(body: string): RawAction | null {
     const out = s.trim().split(/\s+/).map((x) => P(x));
     return out.length >= min && out.every(Boolean) ? (out as PtArg[]) : undefined;
   };
-  if (name === 'grid' || name === 'bars' || name === 'scatter' || name === 'table' || name === 'calc' || name === 'fit') {
+  if (SCENE_TAGS.has(name)) {
+    if (!inRegion) return null;
+    const s = parseScene(name, args, quotes, flags);
+    return s ? ({ ...s, ...target, ...mark } as RawAction) : null;
+  }
+  if (name === 'grid' || name === 'bars' || name === 'scatter' || name === 'table' || name === 'calc' || name === 'fit' || name === 'shares' || name === 'blend') {
     if (!inRegion) return null;
     const b = parseKitBlock(name, args, quotes, flags, P);
     return b ? ({ ...b, ...target, ...mark } as RawAction) : null;

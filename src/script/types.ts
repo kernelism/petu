@@ -88,14 +88,42 @@ export type Shape<P = Pt> =
   | ({ kind: 'plot'; fn?: string; x?: string; y?: string; t?: [string, string]; domain?: [number, number]; domainSrc?: [string, string]; range?: [number, number]; axes?: string; dash?: boolean; label?: string; labelAt?: 'end' | 'top'; xLabel?: string; yLabel?: string } & W)
   /** Region only. KaTeX. at = left edge, vertical middle (or the centre with `centered`). */
   | { kind: 'math'; at: P; tex: string; size: TextSize; centered?: boolean }
-  | KitBlock<P>;
+  | KitBlock<P>
+  | SceneShape;
+
+// ------------------------------------------------------------------------------------------------
+// Board v2 (spec "Board v2: one connected scene"): things placed by relation in a scene, and the
+// connections between them. src/desk/scene/scene.ts draws them.
+
+/** Placement by relation: beside/under/… another element or part (the engine picks the offset). */
+export type SceneRel = 'right' | 'left' | 'above' | 'below' | 'beside' | 'near';
+export const SCENE_RELS: readonly SceneRel[] = ['right', 'left', 'above', 'below', 'beside', 'near'];
+export type ScenePlace = { rel: SceneRel; of: string };
+/** A value shown on a thing: a literal number, or a part of a block with values (live: it follows set). */
+export type ValueRef = number | string;
+export type SceneShape =
+  /** A labelled thing (a chip), with an optional small value under it. */
+  | { kind: 'node'; text: string; value?: ValueRef; place?: ScenePlace }
+  /** A sequence of chips (parts f[1]…), with arrows between them when `arrows`; `values=` shows a block's values under them. */
+  | { kind: 'flow'; items: string[]; arrows?: boolean; down?: boolean; values?: string; place?: ScenePlace }
+  /** A relation from one thing (or part) to another. Weight (0–1, or a part with a value) sets thickness and strength; a whole flow as `to` with a vector weight fans out. */
+  | { kind: 'link'; from: string; to: string; strength?: ValueRef; text?: string; plain?: boolean; dash?: boolean; showWeight?: boolean }
+  /** Text placed by relation; with `annotate`, a callout with a leader line to that thing or part. */
+  | { kind: 'note'; text: string; place?: ScenePlace; annotate?: string }
+  /** A loose outline around a set of things (a system boundary, a category), labelled on its edge; it follows them when they move. */
+  | { kind: 'group'; of: string[]; text?: string }
+  /** A bracket joining two things or parts (a pair: "equal and opposite"), labelled at its spine. */
+  | { kind: 'pair'; from: string; to: string; text?: string }
+  /** Things that become one: they glide together into a new chip (links to them follow it). */
+  | { kind: 'merge'; of: string[]; text: string; place?: ScenePlace };
+export const SCENE_KINDS = new Set(['node', 'flow', 'link', 'note', 'group', 'pair', 'merge']);
 
 // ------------------------------------------------------------------------------------------------
 // Visual kit v1: engine-rendered blocks and the verbs that animate them (src/desk/kit/). The model
 // names data and operations; the engine lays out, computes every number and animates.
 
 /** Where a block goes: right of / below another block (the engine picks the spacing), or at a top-left point. `op` is a glyph drawn between it and its neighbour. */
-export type KitPlace<P = Pt> = { right?: string; below?: string; op?: string; at?: P };
+export type KitPlace<P = Pt> = { right?: string; below?: string; op?: string; at?: P; /** In a scene: placed by relation (left, above, beside, near too). */ rel?: ScenePlace };
 export type WinReduce = 'sum' | 'mean' | 'max' | 'min';
 /** Where a block's values come from: literals, or an operation the engine computes. */
 export type KitSource =
@@ -109,10 +137,12 @@ export type KitSource =
   /** An R×C grid whose cells are fn(r, c) (1-based row and column). */
   | { gen: [number, number]; fn: string }
   /** A table's column (0-based index) as a vector: it follows the table as rows fill. */
-  | { col: ColRef };
+  | { col: ColRef }
+  /** A standard operation the engine computes (src/desk/kit/ops.ts): softmax (t = temperature), normalize, l2, cumsum, rank, scale (t = factor), matmul (two blocks). */
+  | { op: 'softmax' | 'normalize' | 'l2' | 'cumsum' | 'rank' | 'matmul' | 'scale'; of: string[]; t?: number };
 /** A table column: [table, index] by letter, or [table, -1, header] by its header (resolved when the table is known). */
 export type ColRef = [string, number, string?];
-export type KitReduce = 'sum' | 'mean' | 'max' | 'min' | 'norm' | 'count' | 'dot' | 'cos';
+export type KitReduce = 'sum' | 'mean' | 'max' | 'min' | 'norm' | 'count' | 'dot' | 'cos' | 'wavg' | 'argmax';
 export type KitBlock<P = Pt> =
   /** view=image: cells as shaded pixels, no numerals (implied past 12 rows or columns). */
   | ({ kind: 'grid'; src: KitSource; rows?: string[]; cols?: string[]; shade?: 'heat' | 'image'; view?: 'image'; dp?: number; caption?: string } & KitPlace<P>)
@@ -125,8 +155,10 @@ export type KitBlock<P = Pt> =
   /** A live calculation line: a reduction of one block (two for dot / cos), its expansion and result. */
   | ({ kind: 'calc'; of: string[]; reduce: KitReduce; fn?: string; label?: string; dp?: number } & KitPlace<P>)
   /** A line through a scatter's data: least squares, or through two of its points (`pick`, 1-based). */
-  | { kind: 'fit'; of: string; pick?: [number, number] };
-export const KIT_BLOCKS = new Set(['grid', 'bars', 'scatter', 'table', 'calc', 'fit']);
+  | { kind: 'fit'; of: string; pick?: [number, number] }
+  /** Shares of a whole: one bar split into parts that sum to 1 (any source; the engine normalises). `mix`: a blend, the values mixed in those shares, with its result. */
+  | ({ kind: 'shares'; src: KitSource; labels?: string[]; mix?: string; dp?: number; caption?: string } & KitPlace<P>);
+export const KIT_BLOCKS = new Set(['grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'shares']);
 
 export type DrawAction<P = Pt> = Shape<P> & Target & Mark;
 
@@ -135,8 +167,11 @@ export type RefAction =
   | { kind: 'label'; ref: string; text: string; dir?: Compass; em?: boolean }
   /** `where` (a kit grid or table): every cell whose value makes the fn true, x being the cell. */
   | { kind: 'emph'; ref: string; where?: string }
-  | { kind: 'move'; ref: string; to: Pt }
+  /** Moves a point or label to `to`; in a scene, any thing to a new place by relation (links follow). */
+  | { kind: 'move'; ref: string; to?: Pt; place?: ScenePlace }
   | { kind: 'fade'; ref: string }
+  /** A scene chip that becomes several (parts ref[1]…), spreading from where it was. */
+  | { kind: 'split'; ref: string; items: string[] }
   | KitVerb;
 
 /**
@@ -149,7 +184,7 @@ export type RefAction =
 export type KitVerb =
   | { kind: 'step'; ref: string }
   | { kind: 'sweep'; ref: string; dur?: number }
-  | { kind: 'set'; ref: string; fn?: string; to?: number; vals?: number[][] }
+  | { kind: 'set'; ref: string; fn?: string; to?: number; vals?: number[][]; /** scene things: a new label, value or link weight */ text?: string; value?: ValueRef; weight?: ValueRef }
   | { kind: 'band'; ref: string; w: number; label?: string }
   | { kind: 'dist'; ref: string; from: string }
   /** A computed column added to a table, filled row by row over `dur` seconds (a b c… this row's cells, pa pb… the row above's, i the row number). */
@@ -166,7 +201,7 @@ export type LayoutAction =
    * Appends section `id` to the board. `page` (from `near=pN`) is the slide it explains (default: the
    * one in view); its body text sets the section's type size. `place=` is accepted and ignored.
    */
-  | { kind: 'sketch'; id: string; page?: number; size: RegionSize; fit?: boolean }
+  | { kind: 'sketch'; id: string; page?: number; size: RegionSize; fit?: boolean; /** Board v2: one 2-D scene with a camera ({{scene}}). */ scene?: boolean }
   | { kind: 'clear' };
 
 export type Action = LayoutAction | DrawAction | RefAction | ConnectAction;

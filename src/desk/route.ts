@@ -53,7 +53,56 @@ export type GutterOpts = {
   blocked?: (r: Rect) => boolean;
   /** The slides' visible band: the run along the page stays inside it. */
   band?: { y0: number; y1: number };
+  /** Whether board content (other than the target) touches a rect (view px). Absent: the board is clear. */
+  boardBlocked?: (r: Rect) => boolean;
+  /** The board's visible rect (view px): the arrival stays inside it. */
+  board?: Rect;
 };
+
+/** Half-width of the corridor a board run must keep clear. */
+const BOARD_CLEAR = 4;
+/** The farthest a top/bottom arrival runs above/below the target (view px). */
+const BOARD_DETOUR_MAX = 600;
+
+type Arrival = { kind: 'side'; y: number } | { kind: 'top' | 'bottom'; y: number; x: number; edge: number };
+
+/**
+ * How the connector enters the board to reach `to` from the gutter at `gx`: level into the
+ * target's left edge at a clear height within its span (centre first, then outward); else level at
+ * a clear height above (below) the target to over its left part, then down (up) into it; else
+ * straight in at the centre (the old route).
+ */
+function boardArrival(to: Rect, gx: number, blocked: (r: Rect) => boolean, board?: Rect): Arrival {
+  const c = BOARD_CLEAR, tx = to.x - END_GAP, cy = to.y + to.h / 2;
+  const yMin = board ? board.y + c : -Infinity, yMax = board ? board.y + board.h - c : Infinity;
+  const side = (y: number): Rect => ({ x: gx, y: y - c, w: Math.max(0, tx - gx), h: 2 * c });
+  const half = Math.max(0, to.h / 2 - 2);
+  for (let d = 0; d <= half; d += 2) {
+    for (const y of d ? [cy - d, cy + d] : [cy]) if (y >= yMin && y <= yMax && !blocked(side(y))) return { kind: 'side', y };
+  }
+  // Over the target's left part first, then further right along its top (bottom).
+  const x0 = to.x + Math.min(to.w * 0.25, 24);
+  const xs = [x0];
+  for (let x = to.x + 4; x <= to.x + to.w - 4; x += 8) if (Math.abs(x - x0) > 1) xs.push(x);
+  let best: Arrival | null = null, bestCost = Infinity;
+  for (const kind of ['top', 'bottom'] as const) {
+    const sg = kind === 'top' ? -1 : 1;
+    const edge = kind === 'top' ? to.y - END_GAP : to.y + to.h + END_GAP;
+    for (const x of xs) {
+      for (let k = 0; ; k++) {
+        const h = edge + sg * (RADIUS + 2 + 2 * k);
+        if (h < yMin || h > yMax || Math.abs(h - edge) > BOARD_DETOUR_MAX) break;
+        // The drop only grows as the level run moves away: once blocked, it stays blocked.
+        if (blocked({ x: x - c, y: Math.min(h, edge), w: 2 * c, h: Math.abs(edge - h) })) break;
+        if (blocked({ x: gx, y: h - c, w: Math.max(0, x + c - gx), h: 2 * c })) continue;
+        const cost = Math.abs(h - edge) + 0.5 * Math.abs(x - x0);
+        if (cost < bestCost) { bestCost = cost; best = { kind, y: h, x, edge }; }
+        break;
+      }
+    }
+  }
+  return best ?? { kind: 'side', y: cy };
+}
 
 /** The short vertical exit from an anchor to its run may pass the anchor's own figure, never further than this share of the page height. */
 const HOOK_MAX = 0.3;
@@ -66,7 +115,8 @@ const RADIUS = 10;
  * A connector in the split layout: from the page anchor (`from`) to a board element (`to`), view px.
  * It leaves the anchor (straight out at its height, or by a short vertical exit), runs level to the
  * page's right edge along a band clear of page content, turns into the gutter, runs vertically there
- * to the element's height, and turns into the board to the element — rounded corners, no diagonal
+ * to the element's height, and turns into the board to the element (clear of `boardBlocked`: into its
+ * side at a clear height, else over/under other board content into its top/bottom) — rounded corners, no diagonal
  * across the slide. Null when no level run to the page edge is clear of content (the caller drops it).
  */
 export function routeGutter(from: Rect, to: Rect, o: GutterOpts): Stroke | null {
@@ -110,17 +160,28 @@ export function routeGutter(from: Rect, to: Rect, o: GutterOpts): Stroke | null 
     p = { x: cx + R, y: v };
     if (R > 0.5) segs.push(corner({ x: cx, y: v - sg * R }, { x: cx, y: v }, p));
   }
-  // 2. Level to the gutter, down (or up) the gutter, into the board.
-  const dy = T.y - v;
-  if (Math.abs(dy) < 1.5) { line(p, T); }
+  // 2. Level to the gutter, down (or up) the gutter, into the board: level into the target's side,
+  // or level over it and down (up) into its top (bottom) when the board between is in the way.
+  const arr: Arrival = o.boardBlocked ? boardArrival(to, gx, o.boardBlocked, o.board) : { kind: 'side', y: T.y };
+  const yA = arr.y;
+  const Rb = arr.kind === 'side' ? 0 : Math.max(0, Math.min(RADIUS, Math.abs(arr.edge - yA), (arr.x - gx) / 2));
+  const levelEnd: SPt = { x: (arr.kind === 'side' ? T.x : arr.x) - Rb, y: yA };
+  const dy = yA - v;
+  if (Math.abs(dy) < 1.5) { line(p, levelEnd); }
   else {
     const sg = Math.sign(dy);
-    const R = Math.max(0, Math.min(RADIUS, Math.abs(dy) / 2, gx - p.x, T.x - gx));
+    const R = Math.max(0, Math.min(RADIUS, Math.abs(dy) / 2, gx - p.x, levelEnd.x - gx));
     line(p, { x: gx - R, y: v });
     segs.push(corner({ x: gx - R, y: v }, { x: gx, y: v }, { x: gx, y: v + sg * R }));
-    line({ x: gx, y: v + sg * R }, { x: gx, y: T.y - sg * R });
-    segs.push(corner({ x: gx, y: T.y - sg * R }, { x: gx, y: T.y }, { x: gx + R, y: T.y }));
-    line({ x: gx + R, y: T.y }, T);
+    line({ x: gx, y: v + sg * R }, { x: gx, y: yA - sg * R });
+    segs.push(corner({ x: gx, y: yA - sg * R }, { x: gx, y: yA }, { x: gx + R, y: yA }));
+    line({ x: gx + R, y: yA }, levelEnd);
+  }
+  if (arr.kind !== 'side') {
+    const sg = arr.kind === 'top' ? 1 : -1;
+    const turn = { x: arr.x, y: yA + sg * Rb };
+    if (Rb > 0.5) segs.push(corner(levelEnd, { x: arr.x, y: yA }, turn));
+    line(Rb > 0.5 ? turn : levelEnd, { x: arr.x, y: arr.edge });
   }
   // 3. Sampled by length, so the trace runs at an even pace.
   const lens = segs.map(segLen), total = lens.reduce((s, x) => s + x, 0) || 1;

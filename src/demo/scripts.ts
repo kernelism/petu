@@ -175,4 +175,57 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number; deeper
       `then {{emph id=a}} emphasis, {{move id=a to=160,200}} a move, {{fade id=a}} a fade, ` +
       `{{label id=pl "1/z" dir=n}} and a label.`,
   },
+  /**
+   * Board v2 (spec "Board v2: one connected scene"), three subjects, one scene each: things placed
+   * by relation (no coordinates), linked to each other and to the page's words, grouped and
+   * bracketed, transformed rather than redrawn (split, merge, move, set), a chart only where a
+   * quantity is the point, and the whole scene shown at the end.
+   */
+  scene: {
+    src: '/fixtures/mechanics.pdf',
+    question: 'Where does the work done on the cart go?',
+    script:
+      `{{scroll p=12}} Here, {{highlight p=12 "A 3 kg cart from rest, pushed"}} every joule the push does on the cart turns into motion. ` +
+      `{{scene id=s near=p12}} Take {{const m=3}} the {{node on=s id=push "push, 20 N"}} push {{node on=s id=cart "cart, 3 kg" right=push}} on the cart: {{link on=s from=push to=cart "does work"}} it does work on it, ` +
+      `{{connect from=p12:"W = Fd cos θ" to=s:push}} force times distance, ` +
+      `{{bars on=s id=w size=1x5 fn="20*(c-1)*1.5" labels=0,1.5,3,4.5,6 below=cart "work done (J) after x metres"}} so the work climbs steadily as the cart rolls. ` +
+      `{{note on=s "20 N × 6 m" annotate=w[5]}} After six metres that is the slide's 120 joules. ` +
+      `{{node on=s id=ke "motion, ½mv²" right=w}} With nothing to stop it, {{link on=s from=w[5] to=ke strength=1 "all of it"}} all of it becomes motion. ` +
+      `{{bars on=s id=v map=w fn="sqrt(2*x/m)" below=ke "speed (m/s)"}} Solve one half m v squared for the speed {{link on=s from=ke to=v "solve for v"}} and it rises fast at first, {{emph id=v[5]}} then levels. ` +
+      `{{connect from=p12:"v = 8.9 m/s" to=s:v[5]}} That end value is the page's answer. ` +
+      `{{group on=s id=sys of=cart,ke "the cart"}} Draw a line around the cart: the work comes in from outside and stays inside as motion. ` +
+      `{{split id=ke "motion" "heat"}} Put a rough floor under it and that energy splits in two, {{pair on=s from=ke[1] to=ke[2] "still 120 J"}} the same 120 joules, {{note on=s "same work, less speed" below=sys}} so the same push buys less speed.`,
+  },
+  'scene-econ': {
+    src: '/fixtures/econ.pdf',
+    question: 'Who actually pays the tax?',
+    script:
+      `{{scroll p=12}} Here, {{highlight p=12 "Buyers and sellers split the tax"}} neither side pays the whole tax: it drives a wedge between the price buyers pay and the price sellers keep. ` +
+      `{{scene id=s near=p12}} On {{node on=s id=buyers "buyers"}} one side are the buyers, {{node on=s id=sellers "sellers" right=buyers}} on the other the sellers; {{link on=s from=buyers to=sellers plain dash "trade at 7"}} before the tax they trade at one price, seven. ` +
+      `{{table on=s id=tax cols=t vals=2 below=buyers "tax per unit"}} Now put a tax of two on each unit. ` +
+      `That is {{connect from=p12:"t = 2" to=s:tax}} the slide's t. ` +
+      `{{bars on=s id=pb map=tax fn="(70+5*x)/10" right=tax "buyers pay"}} Solving the slide's two lines, buyers now pay eight {{bars on=s id=ps map=tax fn="(70+5*x)/10-x" right=pb op=none "sellers keep"}} and sellers keep six. ` +
+      `{{pair on=s from=pb to=ps "the wedge: t"}} The gap between the two is the tax. ` +
+      `Buyers {{link on=s from=buyers to=pb "pay"}} pay one, sellers {{link on=s from=sellers to=ps "keep"}} keep the other. ` +
+      `{{connect from=p12:"Pb = 8, Ps = 6, Q = 20" to=s:pb}} The page's numbers agree. ` +
+      `{{shares on=s id=burden size=1x2 fn="(2-c)*((70+5*2)/10-7)+(c-1)*(7-((70+5*2)/10-2))" labels=buyers,sellers below=pb "who bears the tax"}} Against the old seven, the burden splits like this. ` +
+      `{{note on=s "equal slopes, equal shares" annotate=burden}} Because the two curves are equally steep, each side carries half. ` +
+      `{{set id=tax vals=4}} Double the tax and both prices move apart, {{emph id=burden}} but the split stays the same.`,
+  },
+  'scene-bio': {
+    src: '/fixtures/bio.pdf',
+    question: 'Why does a competitive inhibitor not change Vmax?',
+    script:
+      `{{scroll p=4}} Here, {{highlight p=4 "The inhibitor competes for the active site"}} the inhibitor never slows the enzyme's work itself: it only takes turns with the substrate for the same pocket. ` +
+      `{{scene id=s near=p4}} Take {{const Vmax=10 Km=2}} the {{node on=s id=enz "active site"}} enzyme's active site. {{node on=s id=sub "substrate S" left=enz}} The substrate {{link on=s from=sub to=enz "binds"}} binds there, ` +
+      `{{node on=s id=inh "inhibitor I" below=sub}} and the inhibitor {{link on=s from=inh to=enz dash "blocks"}} fits the same pocket. ` +
+      `{{pair on=s from=sub to=inh "one at a time"}} Only one of them can sit in it at a time, {{connect from=p4:"only one at a time" to=s:inh}} as the figure says. ` +
+      `{{bars on=s id=v0 size=1x5 fn="Vmax*2^(c-1)/(Km+2^(c-1))" labels=1,2,4,8,16 right=enz "rate v at [S] = 1 … 16"}} Without the inhibitor the rate climbs toward Vmax as substrate rises, ` +
+      `{{connect from=p4:"v = Vmax [S] / (Km + [S])" to=s:v0}} the slide's curve. ` +
+      `{{bars on=s id=v1 size=1x5 fn="Vmax*2^(c-1)/(2*Km+2^(c-1))" labels=1,2,4,8,16 ghost=v0 below=v0 "with inhibitor, [I]/Ki = 1"}} With the inhibitor, {{link on=s from=inh to=v1 "slows"}} every rate drops, ` +
+      `{{note on=s "Km doubles: 2 → 4" annotate=v1[2]}} most at low substrate, because Km doubles. ` +
+      `{{move id=v1 right=v0}} Side by side, {{emph id=v1[5]}} at high substrate the two nearly meet: S wins the pocket almost every time, ` +
+      `{{connect from=p4:"Vmax is unchanged" to=s:v1[5]}} so Vmax is unchanged. ` +
+      `{{merge on=s id=es of=sub,enz "ES, nearly always"}} Flood it with substrate and the enzyme is nearly always holding S.`,
+  },
 };

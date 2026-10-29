@@ -2,7 +2,7 @@
 import { EXAMPLES } from './examples.ts';
 
 /** Bump on any change: the eval records it with every run, and it is part of the cache prefix. */
-export const PROMPT_VERSION = 'p4.10';
+export const PROMPT_VERSION = 'p5.2';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -57,7 +57,12 @@ A ray on the page: {{line p=4 from=#d1 through=#d3}} stops at 1.5 times the dist
 To use another page, scroll to it first ({{scroll p=7}}), then mark it. The student's eyes follow the scroll, so say what the new page is for as you arrive.`;
 
 const BOARD = `THE BOARD (a panel beside the pages, for what the pages don't show: a worked case, another view, a what-if, a plot)
-{{sketch id=s near=p4 fit}} adds a section to the board; draw into it with on=s. near= names the page the section belongs to; the board places it. Sections stack top to bottom and stay for the whole answer, so you can return to an earlier section and add to it. size=l asks for a wider board when a figure needs the room.
+ONE SCENE. {{scene id=s near=p4}} opens the board as one open canvas for the whole answer (a follow-up continues the same scene). Build one connected explanation in it, the way a teacher fills a whiteboard:
+- Place each thing by what it explains: right=, left=, above=, below=, beside= or near= another thing or part. The engine picks the spacing and keeps everything clear; never give coordinates in a scene.
+- Connect everything: a link between things whose relation matters (a link with a few words saying what the relation is, strength= for how much), a note with a leader line on the exact part it explains, and connect from the page's own words, marks or equation parts to the thing on the board that works them out.
+- Transform rather than redraw: move a thing (a block too) beside what it now relates to, set a new value, label or strength, split a thing into its parts or merge things into one, and let what depends on it follow. Draw a line around things that belong together, and a bracket between two that match. The scene is the memory of the explanation; keep coming back to it.
+- The camera follows the newest ink, so the scene can grow in any direction.
+{{sketch id=s near=p4 fit}} adds a separate section instead, for an exact geometric figure; draw into it with on=s. near= names the page the section belongs to; the board places it. Sections stack top to bottom and stay for the whole answer, so you can return to an earlier section and add to it. size=l asks for a wider board when a figure needs the room.
 With fit, use any convenient coordinates (negatives are fine; y grows downward, so up is negative). The engine scales the whole section to fit and keeps angles and ratios: twice the number is twice the length on screen.
 Right after the sketch tag, declare the figure in ONE {{let on=s O=0,0 L=0,-400 P=200,0 M=mid(O,P)}}: the given points as simple numbers, and every point that follows from them as a construction. Then draw from the names. Text and math sit at a named point too (at = their left edge), with room to the right.
   mid(A,B)        the midpoint
@@ -90,6 +95,14 @@ const GRAMMAR = `TAGS (key=value, "quoted text", bare flags; A, B, C are x,y, a 
 {{plot on=s id=p fn="a*x^2" domain=0,T xlabel="x" ylabel="y" "a·x²"}}  {{plot on=s id=c x="a*cos(t)" y="a*sin(t)" t=0,2*pi axes=p "circle" label=top}} (axes= draws onto p's axes, one scale, and works for a scatter too; label=top puts the label at the curve's highest point)
 {{let on=s A=0,0 B=along(A,C,2)}}  {{sketch id=s near=p4 fit}}  {{sketch id=t near=p4 size=l fit}}
 {{connect from=p4:#d3 to=s:X}}  {{connect from=p4:"quote" to=s:ray}}  {{emph id=ray}}  {{fade id=ray}}
+SCENE (in {{scene id=s near=p4}}; P is right=, left=, above=, below=, beside= or near= a thing or a part)
+{{node on=s id=a "label" right=b}} a labelled thing, value=0.3 or value=p[2] shows a small value under it  {{flow on=s id=f "first" "second" "third" arrows below=a}} a sequence of things (parts f[1]…; values=p shows p's values under them; down stacks it)
+{{link on=s from=a to=f[2] strength=p[2] "what it does"}} a relation; strength 0 to 1 or a part's value sets its weight (show prints it, plain drops the head, dash)  {{link on=s from=f[3] to=f strength=p}} one link to every part of f, weighted by p
+{{note on=s "short words" annotate=f[2]}} a callout with a leader line  {{note on=s "short words" below=a}}  {{move id=a beside=c}}  {{set id=a "new label"}}  {{set id=l strength=0.2}}
+{{group on=s id=g of=a,b "what they are together"}} a loose line around things (a boundary; it follows them)  {{pair on=s from=a to=b "how they match"}} a bracket joining two  {{split id=a "one part" "another"}}  {{merge on=s id=m of=a,b "what they become"}}
+{{shares on=s id=p op=softmax of=v t=2 labels=a,b,c below=f}} parts of a whole that sum to 1 (vals=2,1,1 are normalised)  {{blend on=s id=m of=p,v right=p "label"}} v's values mixed in p's shares, with the result
+op= is a standard operation on any block: softmax (t= temperature), normalize, l2, cumsum, rank, scale (t= factor), matmul of=A,B  {{calc on=s of=p,v reduce=wavg}} (also argmax)
+Kit blocks take the same placement in a scene (right=, below=, left=, above=, beside=, near=).
 {{box on=s center=A size=200,120}}  {{write on=s center=A "label" size=m}} (centred on A)
 KIT (no fit or let needed; blocks place themselves; parts count from 1: g[2,3], g[1:2,1:3], v[4], t[3] is a table row)
 {{grid on=s id=g vals=0,0,9;0,0,9 shade cols=a,b,c "caption"}} (a value may be a fraction: 1/9)  {{bars on=s id=v vals=3,-1,2 labels=a,b,c}}
