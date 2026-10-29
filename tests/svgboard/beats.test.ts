@@ -188,3 +188,17 @@ describe('follow-ups remember the svg board', () => {
     expect(r.sections).toEqual([{ id: 'board', kind: 'svgboard' }]);
   });
 });
+
+describe('svg demos (gallery scenes)', () => {
+  it('every svg demo opens a board and draws groups that pass the gate checks at the board minimum', async () => {
+    const { SVG_DEMOS } = await import('../../src/demo/svg');
+    expect(Object.keys(SVG_DEMOS).sort()).toEqual(['svg-dough', 'svg-ferry', 'svg-rent', 'svg-sinx', 'svg-skater', 'svg-tunnel']);
+    for (const [k, d] of Object.entries(SVG_DEMOS)) {
+      const acts = actions(d.script);
+      expect(acts[0], k).toMatchObject({ kind: 'sketch', svgboard: {} });
+      const groups = acts.filter((x) => x.kind === 'svg');
+      expect(groups.length, k).toBeGreaterThanOrEqual(4);
+      for (const g of groups) expect(groupGeometry((g as { svg: string }).svg).error, k).toBeUndefined();
+    }
+  });
+});
