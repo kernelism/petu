@@ -328,7 +328,7 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number;
     question: 'Why does a spinning skater speed up when she pulls her arms in?',
     script:
       `{{scroll p=12}} Pulling the arms in changes how the mass is spread, not how much spin there is. ` +
-      `{{scene id=sk near=p12}} {{const I=4 w=2 I2=2 w2=I*w/I2}} {{bars on=sk id=L vals=I*w,I2*w2 labels=arms_out,arms_in "angular momentum"}} Her angular momentum is the same before and after: nothing outside twists her. ` +
+      `{{scene id=sk near=p12}} Take {{const I=4 w=2 I2=2 w2=I*w/I2}} her spin: {{bars on=sk id=L vals=I*w,I2*w2 labels=arms_out,arms_in "angular momentum"}} her angular momentum is the same before and after, since nothing outside twists her. ` +
       `Halve how far the mass sits from the axis and the spin rate doubles to keep it. ` +
       `{{bars on=sk id=K vals=0.5*I*w^2,0.5*I2*w2^2 labels=arms_out,arms_in below=L "rotational energy"}} Her energy of rotation, though, doubles. ` +
       `{{split id=K[2] vals=0.5*I2*w2^2-0.5*I*w^2 "start" "muscle work"}} The extra is the work her muscles do, ` +
