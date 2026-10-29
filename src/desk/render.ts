@@ -121,15 +121,46 @@ export function makeText(g: SVGGElement, at: SPt, text: string, o: TextOpts): SV
   return t;
 }
 
-/** A text's box in target units before it is shown: getBBox in a browser, an estimate in jsdom. */
-export function measureText(layer: SVGGElement, text: string, o: TextOpts): { w: number; h: number } {
+/** The font size a text's height is measured at (target units): large enough that rounding is noise. */
+const REF_SIZE = 100;
+/** Text height per unit of font size, per font setup (see measureText). */
+const heightPerSize = new Map<string, number>();
+/**
+ * What a text's box height depends on: its faces, weight and subscripts (the font's ascent and
+ * descent, never the glyphs: "Hxg" and "ace" measure the same).
+ */
+export const heightKey = (text: string, o: TextOpts): string =>
+  o.style === 'hand' ? 'hand' : `${o.weight ?? ''}|${textSegments(text).map((s) => (s.math ? (s.sub ? 'ms' : 'm') : 't')).join('')}`;
+
+function bbox(layer: SVGGElement, text: string, o: TextOpts): { width: number; height: number } | null {
   const probe = own(layer);
   probe.setAttribute('visibility', 'hidden');
   const t = makeText(probe, { x: 0, y: 0 }, text, o);
   let b: { width: number; height: number } | null = null;
   try { b = typeof t.getBBox === 'function' ? t.getBBox() : null; } catch { b = null; }
   probe.remove();
-  return b && b.width > 0 ? { w: b.width, h: b.height } : estimateTextBox(text, o.size);
+  return b && b.width > 0 ? b : null;
+}
+
+/**
+ * A text's box in target units before it is shown: getBBox in a browser, an estimate in jsdom.
+ * The height is the box at REF_SIZE scaled to the size: engines round a font's ascent and descent at
+ * the rendered pixel size, so a small label's measured height drifts (Gecko by up to +11% at board
+ * sizes, Blink by ±3%), and notes and wraps that hinge on it would land differently per browser.
+ */
+export function measureText(layer: SVGGElement, text: string, o: TextOpts): { w: number; h: number } {
+  const b = bbox(layer, text, o);
+  if (!b) return estimateTextBox(text, o.size);
+  const key = heightKey(text, o);
+  let per = heightPerSize.get(key);
+  if (per == null) {
+    const ref = bbox(layer, text, { ...o, size: REF_SIZE });
+    if (!ref) return { w: b.width, h: b.height };
+    per = ref.height / REF_SIZE;
+    // Cached only once the page's fonts have loaded (a fallback face measures differently).
+    if (typeof document === 'undefined' || !document.fonts || document.fonts.status === 'loaded') heightPerSize.set(key, per);
+  }
+  return { w: b.width, h: per * o.size };
 }
 
 /** Each glyph (or word) fades in over this, one after another: never half a glyph on screen. */

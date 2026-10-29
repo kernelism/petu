@@ -41,13 +41,15 @@ exit on failure, no API calls. Declare intended visual changes: `npm run gate --
 (a scene, `scene@moment`, `scene@moment.browser`, or `*` wildcards); review them in the contact sheet.
 
 ```bash
-npm run gallery                      # stills of every demo/script, Chromium + WebKit, 1440×900 + 2560×1440, diffed vs the baseline
+npm run gallery                      # stills of every demo/script, Chromium + WebKit (+ Firefox when installed), 1440×900 + 2560×1440, diffed vs the baseline
 npm run gallery -- --baseline        # make this run the baseline (do it on main)
 npm run gallery -- --only side,kit --browsers webkit --sizes 1440x900
+npx playwright-core install firefox  # once per machine: Gecko joins the default set (gallery and gate; else skipped with a note)
 ```
 
 The gallery (`scripts/gallery/`) starts its own dev server on a free port and drives Playwright
-(`playwright-core` looked up as the eval does; `PLAYWRIGHT_DIR` overrides, Chromium = system Chrome)
+(`playwright-core` looked up as the eval does; `PLAYWRIGHT_DIR` overrides, Chromium = system Chrome;
+`--browsers chromium,webkit,firefox` on gallery and gate)
 on a fake clock: time advances in 200ms steps and stands still while real-time work runs (fetches,
 the pdf.js worker, CSS transitions, smooth scrolls), so a moment (`scenes.ts`: ms after the answer
 starts, or after it ends) is the same frame every run. Runs land in `<main checkout>/.petu/gallery/<run>/`

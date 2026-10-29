@@ -31,6 +31,11 @@ describe('galleryStep', () => {
     expect(s.detail).toContain('error: kit.webkit.1440x900: timed out');
     expect(s.detail).not.toContain('HTTP 404');
   });
+  it('lists what the run left out without failing on it', () => {
+    const s = galleryStep([], [], { ...o, skipped: ['firefox (not installed)'] });
+    expect(s.ok).toBe(true);
+    expect(s.detail).toContain('skipped: firefox (not installed)');
+  });
 });
 
 describe('replay-stress', () => {

@@ -1,4 +1,4 @@
-// scripts/gate.ts — `npm run gate [-- --expect side,kit@end] [--skip-gallery]`
+// scripts/gate.ts — `npm run gate [-- --expect side,kit@end] [--skip-gallery] [--browsers chromium,firefox]`
 // The pre-merge check: typecheck, tests, build, the gallery diff against the baseline (fails only on
 // changes beyond tolerance that no --expect covers) and, when package.json has `replay-stress`, its
 // skip rate must not rise vs the last recorded value (<gallery root>/../gate/replay-stress.json).
@@ -34,9 +34,11 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const expect: string[] = [];
   let skipGallery = false;
+  let browsers: string[] | undefined;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--expect') expect.push(...(argv[++i] ?? '').split(',').map((s) => s.trim()).filter(Boolean));
     else if (argv[i] === '--skip-gallery') skipGallery = true;
+    else if (argv[i] === '--browsers') browsers = (argv[++i] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
     else { console.error(`unknown argument ${argv[i]}`); process.exit(2); }
   }
   const t0 = Date.now();
@@ -53,8 +55,8 @@ async function main(): Promise<void> {
     console.log('gate: gallery…');
     const g0 = Date.now();
     try {
-      const m = await runGallery({ label: 'gate', quiet: true });
-      steps.push(galleryStep(m.rows, expect, { ms: Date.now() - g0, baseline: m.baseline, sheet: join(m.dir, 'index.html'), errors: m.errors }));
+      const m = await runGallery({ label: 'gate', quiet: true, browsers });
+      steps.push(galleryStep(m.rows, expect, { ms: Date.now() - g0, baseline: m.baseline, sheet: join(m.dir, 'index.html'), errors: m.errors, skipped: m.skipped }));
     } catch (e) {
       steps.push({ name: 'gallery', ok: false, ms: Date.now() - g0, detail: String((e as Error).message ?? e) });
     }

@@ -6,7 +6,7 @@ export type StepResult = { name: string; ok: boolean; ms: number; detail?: strin
 
 /** The gallery step: fails on changed/missing/errored shots no `--expect` covers, with no baseline, or on a gate audit failure. */
 
-export function galleryStep(rows: ShotRow[], expect: string[], o: { ms: number; baseline: string | null; sheet: string; errors?: string[] }): StepResult {
+export function galleryStep(rows: ShotRow[], expect: string[], o: { ms: number; baseline: string | null; sheet: string; errors?: string[]; /** Scenes or browsers the run left out. */ skipped?: string[] }): StepResult {
   if (!o.baseline) return { name: 'gallery', ok: false, ms: o.ms, detail: `no baseline: run \`npm run gallery -- --baseline\` on main first (sheet ${o.sheet})` };
   const bad = unexpectedChanges(rows, expect);
   const intended = rows.filter((r) => r.status !== 'same' && r.status !== 'new' && expectedBy(r.name, expect));
@@ -18,6 +18,7 @@ export function galleryStep(rows: ShotRow[], expect: string[], o: { ms: number; 
   if (fresh.length) lines.push(`${fresh.length} new shot(s) without a baseline`);
   if (unused.length) lines.push(`--expect matched no change: ${unused.join(', ')}`);
   for (const e of (o.errors ?? []).filter((e) => !e.includes('console:'))) lines.push(`error: ${e}`);
+  for (const s of o.skipped ?? []) lines.push(`skipped: ${s}`);
   const same = rows.filter((r) => r.status === 'same').length;
   lines.unshift(`${same}/${rows.length} shots unchanged vs ${o.baseline}`);
   lines.push(`sheet: ${o.sheet}`);

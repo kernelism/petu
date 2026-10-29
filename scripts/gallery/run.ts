@@ -1,7 +1,7 @@
-// scripts/gallery/run.ts — `npm run gallery [-- --baseline] [--only side,kit] [--browsers webkit] [--sizes 1440x900]`
-// Starts its own dev server, renders every scene (scenes.ts) at fixed moments in Chromium and WebKit
-// at each size, saves stills to <gallery root>/<run>/shots/, diffs them against the baseline run and
-// writes <run>/index.html (the contact sheet). The page clock is Playwright's fake clock, stepped in
+// scripts/gallery/run.ts — `npm run gallery [-- --baseline] [--only side,kit] [--browsers webkit,firefox] [--sizes 1440x900]`
+// Starts its own dev server, renders every scene (scenes.ts) at fixed moments in Chromium, WebKit and
+// Firefox (when its Playwright build is installed) at each size, saves stills to <gallery root>/<run>/shots/,
+// diffs them against the baseline run and writes <run>/index.html (the contact sheet). The page clock is Playwright's fake clock, stepped in
 // fixed increments: a moment is the same frame on every run. No API calls (demos and dev scripts only;
 // the server also gets a $0 cap).
 //
@@ -17,7 +17,7 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { decodePng, encodePng } from './png.ts';
 import { diffImages, shotName, DEFAULT_DIFF, type ShotRow } from './diff.ts';
-import { SCENES, SIZES, BROWSERS, audited, type Scene } from './scenes.ts';
+import { SCENES, SIZES, audited, pickBrowsers, type Scene } from './scenes.ts';
 import { auditGate } from './audit.ts';
 import { renderSheet } from './sheet.ts';
 
@@ -28,7 +28,10 @@ const STEP_MS = 200;
 /** Real time the page gets, clock paused, before a screenshot (pdf.js workers and paint catch up). */
 const SETTLE_MS = 350;
 const FAKE_EPOCH = Date.UTC(2026, 0, 1);
-const PER_BROWSER = Number(process.env.PETU_GALLERY_CONCURRENCY ?? 6);
+/** Browser processes at once, per browser: 12 in all by default (6 each for two browsers, 4 for three). */
+const perBrowser = (n: number) => Number(process.env.PETU_GALLERY_CONCURRENCY ?? Math.max(2, Math.round(12 / n)));
+/** The paused clock's start, ahead of install: real time passes between the calls (seconds when a busy machine launches Firefox). */
+const PAUSE_LEAD_MS = 60_000;
 
 export function galleryRoot(): string {
   if (process.env.PETU_GALLERY_DIR) return resolve(process.env.PETU_GALLERY_DIR);
@@ -81,20 +84,25 @@ function playwrightDirs(): string[] {
   return [MAC_PLAYWRIGHT, ...found];
 }
 
+type Playwright = { chromium: any; webkit: any; firefox: any };
+
 /** playwright-core, from the first candidate that loads and (unless `own` is false) has browser `name` downloaded. */
-function playwright(name: string, own: boolean): { chromium: any; webkit: any } {
+function playwright(name: string, own: boolean): Playwright {
   // playwright-core is looked up, not installed (as the eval's --webkit does); PLAYWRIGHT_DIR overrides.
   const dirs = playwrightDirs();
   for (const dir of dirs) {
-    let pw: { chromium: any; webkit: any };
+    let pw: Playwright;
     try { pw = createRequire(dir)('playwright-core'); } catch { continue; }
-    if (!own || existsSync(pw[name as 'chromium' | 'webkit'].executablePath())) return pw;
+    if (!own || existsSync(pw[name as keyof Playwright].executablePath())) return pw;
   }
   throw new Error(`playwright-core with ${name} not found under ${dirs.join(', ')}: run \`npx playwright-core install ${name}\` once or set PLAYWRIGHT_DIR`);
 }
 
+const installed = (name: string): boolean => { try { playwright(name, true); return true; } catch { return false; } };
+
 async function launch(name: string): Promise<any> {
   if (name === 'webkit') return playwright('webkit', true).webkit.launch();
+  if (name === 'firefox') return playwright('firefox', true).firefox.launch();
   // System Chrome (CHROME overrides); without one (Linux), Playwright's own Chromium.
   const chrome = process.env.CHROME ?? (existsSync(MAC_CHROME) ? MAC_CHROME : undefined);
   return playwright('chromium', !chrome).chromium.launch({ ...(chrome ? { executablePath: chrome } : {}), args: ['--hide-scrollbars'] });
@@ -137,7 +145,7 @@ async function renderScene(browser: any, browserName: string, base: string, scen
     page.on('requestfailed', () => { inflight--; });
     await page.addInitScript(WORKER_COUNTER);
     await page.clock.install({ time: FAKE_EPOCH });
-    await page.clock.pauseAt(FAKE_EPOCH + 1000); // a moment ahead: real ms pass between the two calls
+    await page.clock.pauseAt(FAKE_EPOCH + PAUSE_LEAD_MS);
     await page.goto(`${base}/?${scene.query}`, { waitUntil: 'commit' });
     let msgs = 0, scroll = '';
     let fake = 0, start: number | null = null, done: number | null = null;
@@ -227,9 +235,10 @@ export async function runGallery(o: GalleryOptions = {}): Promise<Manifest & { d
   const dir = join(root, id);
   mkdirSync(join(dir, 'shots'), { recursive: true });
   mkdirSync(join(dir, 'diff'), { recursive: true });
-  const browsers = (o.browsers?.length ? o.browsers : [...BROWSERS]);
+  const picked = pickBrowsers(o.browsers, installed);
+  const browsers = picked.browsers;
   const sizes = (o.sizes?.length ? o.sizes : [...SIZES]);
-  const skipped: string[] = [];
+  const skipped: string[] = [...picked.skipped];
   const scenes = SCENES.filter((s) => !o.only?.length || o.only.includes(s.name)).filter((s) => {
     if (s.needs && !existsSync(join(ROOT, s.needs))) { skipped.push(`${s.name} (needs ${s.needs})`); return false; }
     return true;
@@ -251,7 +260,7 @@ export async function runGallery(o: GalleryOptions = {}): Promise<Manifest & { d
       await warm.waitForFunction('!!window.__desk', null, { timeout: 30_000 }).catch(() => {});
     } finally { await warmB.close(); }
     // One browser process per job: several pages in one WebKit process stall each other's clocks.
-    const perBrowser = await Promise.all(browsers.map(async (bn) => {
+    const byBrowser = await Promise.all(browsers.map(async (bn) => {
       const jobs = scenes.flatMap((sc) => sizes.map((sz) => async () => {
         const browser = await launch(bn);
         try {
@@ -260,9 +269,9 @@ export async function runGallery(o: GalleryOptions = {}): Promise<Manifest & { d
           return got;
         } finally { await browser.close(); }
       }));
-      return (await pool(jobs, PER_BROWSER)).flat();
+      return (await pool(jobs, perBrowser(browsers.length))).flat();
     }));
-    shots = perBrowser.flat().sort((a, b) => a.name.localeCompare(b.name));
+    shots = byBrowser.flat().sort((a, b) => a.name.localeCompare(b.name));
   } finally { server.stop(); }
   const renderMs = Date.now() - t0;
 
