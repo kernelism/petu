@@ -6,12 +6,19 @@
  * Values are matrices (number[][]): a grid is R×C, a vector (bars, a one-row grid) is 1×N.
  * Blank output cells (a window op not yet swept) are NaN.
  */
-import { compileVars, lex, ExprError, type VarFn } from '../expr';
+import { compileVars, freeNames, lex, ExprError, MAX_EXPR_CHARS, type VarFn } from '../expr';
 
 export type Mat = number[][];
 export const MAX_DIM = 12;
 /** A generated grid (size=RxC fn=…) or one computed from it may be this large; past MAX_DIM it shows as an image. */
 export const MAX_IMG = 48;
+/** Literal values the model writes (vals=, a table's rows, labels): at most this many rows and columns. */
+export const MAX_LIT = 40;
+/**
+ * The hard memory limit for computed data (size=RxC, a window's output): cells. Past it the block is
+ * a skip whose reason names this limit; below it everything is computed in full (images show decimated).
+ */
+export const MAX_CELLS = 200_000;
 
 /** A seeded uniform generator (mulberry32 over a hash of `seed`): a block's noise is the same on every replay. */
 export function seededRand(seed: string): () => number {
@@ -26,20 +33,57 @@ export function seededRand(seed: string): () => number {
   };
 }
 
-/** "1,2,3;4,5,6" or "1 2 3; 4 5 6" → rows. Null unless every row has the same length (≤ 12×12) and every cell is a finite number. */
+/** "1,2,3;4,5,6" or "1 2 3; 4 5 6" → rows. Null unless every row has the same length (≤ MAX_LIT each way) and every cell is a finite number. */
 export function parseVals(s: string | undefined): Mat | null {
+  const got = parseCells(s);
+  return got && !got.cells ? got.vals : null;
+}
+
+/**
+ * Like parseVals, but a cell may also be a formula over names bound later ({{const}}: `z*sigma/sqrt(n10)`,
+ * `a`): its value is NaN here and its source is kept in `cells` (null for the literal cells), for
+ * `resolveCells` when the block builds. Null when malformed.
+ */
+export function parseCells(s: string | undefined): { vals: Mat; cells?: (string | null)[][] } | null {
   if (!s) return null;
-  const rows = s.split(';').map((r) => r.trim()).filter(Boolean).map((r) => r.split(/[\s,]+/).filter(Boolean).map(cellValue));
-  if (!rows.length || rows.length > MAX_DIM) return null;
-  const n = rows[0].length;
-  if (!n || n > MAX_DIM || rows.some((r) => r.length !== n || r.some((v) => !Number.isFinite(v)))) return null;
-  return rows;
+  const raw = s.split(';').map((r) => r.trim()).filter(Boolean).map((r) => r.split(/[\s,]+/).filter(Boolean));
+  if (!raw.length || raw.length > MAX_LIT) return null;
+  const n = raw[0].length;
+  if (!n || n > MAX_LIT || raw.some((r) => r.length !== n)) return null;
+  let named = false;
+  const cells = raw.map((r) => r.map((v) => {
+    if (Number.isFinite(cellValue(v))) return null;
+    const names = v.length <= MAX_EXPR_CHARS ? freeNames(v) : null;
+    if (!names?.length) return undefined;
+    try { compileVars(v, names); } catch { return undefined; }
+    named = true;
+    return v;
+  }));
+  if (cells.some((r) => r.some((c) => c === undefined))) return null;
+  const vals = raw.map((r) => r.map((v) => cellValue(v)));
+  return named ? { vals, cells: cells as (string | null)[][] } : { vals };
+}
+
+/** A block's literal values with its formula cells evaluated with the constants; a string names a missing one. */
+export function resolveCells(vals: Mat, cells: (string | null)[][] | undefined, consts: Record<string, number>): Mat | string {
+  if (!cells) return vals.map((r) => r.slice());
+  const out = vals.map((r) => r.slice());
+  for (let r = 0; r < out.length; r++) for (let c = 0; c < out[r].length; c++) {
+    const src = cells[r]?.[c];
+    if (src == null) continue;
+    const missing = (freeNames(src) ?? []).find((k) => !(k in consts));
+    if (missing) return `vals: no constant ${missing}`;
+    const v = compileVars(src, Object.keys(consts))(consts);
+    if (!Number.isFinite(v)) return `vals: ${src} is not a number`;
+    out[r][c] = v;
+  }
+  return out;
 }
 
 /** One literal cell: a number, or a constant written as arithmetic (1/9, -1/4, 2^3, sqrt(2)). */
 function cellValue(v: string): number {
   const n = Number(v.replace(/−/g, '-'));
-  if (Number.isFinite(n) || v.length > 16) return n;
+  if (Number.isFinite(n) || v.length > MAX_EXPR_CHARS) return n;
   try { return compileVars(v, [])({}); } catch { return NaN; }
 }
 
@@ -128,7 +172,7 @@ export function divisionStep(src: string, env: Record<string, number>, names: re
   // The divisor must be one term (a number, a name, or one parenthesised group): in (A)/B*C the
   // division is not the last step, so there is no "sum / n" to show.
   const d = rest.slice(1).trim();
-  if (!/^(\d+(\.\d+)?|[A-Za-z]+)$/.test(d)) {
+  if (!/^(\d+(\.\d+)?|[A-Za-z][A-Za-z0-9_]*)$/.test(d)) {
     if (d[0] !== '(') return null;
     let k = 0, end = -1;
     for (let i = 0; i < d.length; i++) { if (d[i] === '(') k++; else if (d[i] === ')' && --k === 0) { end = i; break; } }
@@ -200,16 +244,18 @@ export function substitute(src: string, env: Record<string, number>, dp?: number
   return out.join('');
 }
 
-export type Reduce = 'sum' | 'mean' | 'max' | 'min' | 'norm' | 'count' | 'dot' | 'cos' | 'wavg' | 'argmax';
-export const REDUCES: readonly Reduce[] = ['sum', 'mean', 'max', 'min', 'norm', 'count', 'dot', 'cos', 'wavg', 'argmax'];
+export type Reduce = 'sum' | 'mean' | 'max' | 'min' | 'norm' | 'count' | 'dot' | 'cos' | 'wavg' | 'argmax' | 'quantile';
+export const REDUCES: readonly Reduce[] = ['sum', 'mean', 'max', 'min', 'norm', 'count', 'dot', 'cos', 'wavg', 'argmax', 'quantile'];
 /** Reductions over one block; dot, cos and wavg (weights, values) take two. */
 export const PAIR_REDUCES = new Set<Reduce>(['dot', 'cos', 'wavg']);
 
 /**
  * A reduction with its expansion. `xs` (and `ys` for dot/cos) are the values in reading order;
  * `shown` (optional) are the terms as written (a fn substituted per cell) for sum/mean.
+ * quantile (level `q` in [0, 1], default 0.5): the k-th smallest value, k = ceil(q·n) (at least 1) —
+ * always a value of the data, as a conformal q̂ or a percentile read off sorted data is.
  */
-export function reduce(op: Reduce, xs: number[], ys?: number[], dp?: number, shown?: string[]): Expansion {
+export function reduce(op: Reduce, xs: number[], ys?: number[], dp?: number, shown?: string[], q = 0.5): Expansion {
   const ok = xs.map((x, i) => Number.isFinite(x) && (!ys || Number.isFinite(ys[i])));
   const X = xs.filter((_, i) => ok[i]), Y = ys?.filter((_, i) => ok[i]);
   const T = shown?.filter((_, i) => ok[i]) ?? X.map((x) => term(x, dp));
@@ -234,6 +280,12 @@ export function reduce(op: Reduce, xs: number[], ys?: number[], dp?: number, sho
       let best = -1;
       X.forEach((x, i) => { if (best < 0 || x > X[best]) best = i; });
       return { parts: ['argmax(', ...joinTerms(T, ', '), ') = '], result: best < 0 ? '' : String(xs.indexOf(X[best]) + 1), value: best < 0 ? NaN : xs.indexOf(X[best]) + 1 };
+    }
+    case 'quantile': {
+      if (!n) return done([], NaN);
+      const s = [...X].sort((a, b) => a - b);
+      const k = Math.min(n, Math.max(1, Math.ceil(Math.min(1, Math.max(0, q)) * n - 1e-9)));
+      return done([`sorted: `, ...joinTerms(s.map((x) => term(x, dp)), ' ≤ ', 12), `; #${k} of ${n} (⌈${fmt(q)}·${n}⌉) = `], s[k - 1]);
     }
     case 'cos': {
       const d = X.reduce((s, x, i) => s + x * Y![i], 0);

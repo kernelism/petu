@@ -7,7 +7,6 @@ import { weightOf, weightStyle } from '../ink/agent/weights';
 import { token, tokenNum } from '../ink/agent/tokens';
 import { drawHighlight } from '../ink/agent/marks';
 import { locateQuote } from '../locate/locateQuote';
-import { compile } from './expr';
 import { plotStrokes } from './plot';
 import { nudge, placeClear, placeLabel, type Seg } from './nudge';
 import { boxOf, strokeBoxes, union, type ElementEntry } from './registry';
@@ -23,7 +22,7 @@ import { anchorBox, sceneStore } from './scene/store';
 
 /** Waits briefly for a scene thing (or block) named by a ref. */
 async function sceneWait(ref: string, env: BuildEnv) { await anchorBox(ref, env.registry, REF_WAIT_MS); }
-import { buildBlock, buildKitPlot, buildKitRef, buildReadoutPoint, isKitRef, isReadoutPoint, kitEndBox, kitStore, resolveKitPoints, samplePlot } from './kit/kit';
+import { buildBlock, buildKitPlot, buildKitRef, buildReadoutPoint, formula, isKitRef, isReadoutPoint, kitEndBox, kitStore, resolveKitPoints, samplePlot } from './kit/kit';
 import { withConsts } from '../values/readout';
 import { chartToPage } from '../agent/context/charts';
 import { placeNote } from './annotate';
@@ -332,8 +331,10 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       // strokes as before. Otherwise the engine draws the graph with its own axes (kit line view).
       const ax = a.axes ? await env.registry.wait(a.axes, REF_WAIT_MS) : env.registry.latest(ctx.target, 'axes');
       if (!ax || ax.kind !== 'axes' || !a.fn || !a.domain) return buildKitPlot(a as Parameters<typeof buildKitPlot>[0], ctx, env);
-      let fn;
-      try { fn = compile(a.fn); } catch (e) { console.warn('[desk] plot: bad fn', a.fn, e); return 'bad fn'; }
+      // The answer's constants ({{const}}, a contrast's overrides), as on every other formula path.
+      const f = formula(a.fn, ['x'], withConsts(kitStore(env.registry).consts, a.with));
+      if (!f) { console.warn('[desk] plot: bad fn', a.fn); return 'bad fn'; }
+      const fn = (x: number) => f({ x });
       const strokes = plotStrokes(fn, a.domain, { x: ax.bbox.x, y: ax.bbox.y + ax.bbox.h, w: ax.bbox.w, h: ax.bbox.h }, a.range);
       if (!strokes.length) return 'nothing to plot';
       return strokePlan(a, ctx, env, { strokes, dash: a.dash });

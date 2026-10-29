@@ -11,7 +11,16 @@ describe('values', () => {
     expect(C.parseVals('1,2;3')).toBeNull();
     expect(C.parseVals('1,x')).toBeNull();
     expect(C.parseVals('1/9,1/9;-1/4,2^3')).toEqual([[1 / 9, 1 / 9], [-0.25, 8]]);
-    expect(C.parseVals(Array(13).fill('1').join(','))).toBeNull();
+    expect(C.parseVals(Array(C.MAX_LIT + 1).fill('1').join(','))).toBeNull();
+    expect(C.parseVals(Array(22).fill('1').join(';'))).toHaveLength(22); // a 22-row table (sol D7)
+  });
+  it('a cell may be a formula over constants bound later (terra D6, D7: C4)', () => {
+    const got = C.parseCells('z*sigma/sqrt(n10),z*sigma/sqrt(n40),1/4')!;
+    expect(got.cells).toEqual([['z*sigma/sqrt(n10)', 'z*sigma/sqrt(n40)', null]]);
+    expect(C.parseVals('a')).toBeNull(); // not a literal
+    expect(C.resolveCells(got.vals, got.cells, { z: 2, sigma: 1, n10: 4, n40: 16 })).toEqual([[1, 0.5, 0.25]]);
+    expect(C.resolveCells(got.vals, got.cells, { z: 2 })).toMatch(/no constant sigma/);
+    expect(C.parseCells('1,2+')).toBeNull();
   });
   it('formats with a true minus, no trailing zeros, ~2 decimals', () => {
     expect(C.fmt(-27)).toBe('−27');
