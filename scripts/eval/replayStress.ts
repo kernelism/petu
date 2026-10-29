@@ -24,10 +24,9 @@ import type { RawAction } from '../../src/script/types.ts';
 import { Figures } from '../../src/geometry/resolve.ts';
 import { locateQuote, type TextRun } from '../../src/locate/locateQuote.ts';
 import { groundingOf, type PageGround } from '../../src/agent/context/types.ts';
-import { computeSource, samplePlot } from '../../src/desk/kit/kit.ts';
+import { computeSource, formula, samplePlot } from '../../src/desk/kit/kit.ts';
 import { compileFn } from '../../src/desk/kit/compute.ts';
 import { withConsts } from '../../src/values/readout.ts';
-import { compile } from '../../src/desk/expr.ts';
 import { answerPages } from '../../src/agent/scout.ts';
 
 // ------------------------------------------------------------------------------------------------
@@ -75,7 +74,7 @@ type PlotTag = Extract<RawAction, { kind: 'plot' }> & { with?: Record<string, nu
  */
 export function plotFate(r: PlotTag, id: string | undefined, s: { consts: Record<string, number>; handAxes: (id: string | undefined) => boolean; block: (id: string) => Block | undefined }): { by: 'strokes' | 'kit' } | { skip: string } {
   if (s.handAxes(r.axes) && r.fn && r.domain) {
-    try { compile(r.fn); } catch { return { skip: 'bad fn' }; }
+    if (!formula(r.fn, ['x'], withConsts(s.consts, r.with))) return { skip: 'bad fn' }; // with the constants, as elements.ts
     return { by: 'strokes' };
   }
   if (id && s.block(id)) return { skip: 'duplicate id' };

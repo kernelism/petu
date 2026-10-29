@@ -15,13 +15,13 @@
 import { SCENE_RELS, type ColRef, type KitBlock, type KitReduce, type KitSource, type KitVerb, type ScenePlace, type WinReduce, type Pt } from './types';
 import type { PtArg } from './pointExpr';
 import { isBlockRef, NAME, normName } from './pointExpr';
-import { parseVals, MAX_DIM, MAX_IMG } from '../desk/kit/compute';
+import { parseCells, parseVals, MAX_LIT } from '../desk/kit/compute';
 import { valueRef } from './parseScene';
 
 const MAX_FN = 120;
 const MAX_LABEL = 40;
 const MAX_POINTS = 40;
-const REDUCES = new Set<KitReduce>(['sum', 'mean', 'max', 'min', 'norm', 'count', 'dot', 'cos', 'wavg', 'argmax']);
+const REDUCES = new Set<KitReduce>(['sum', 'mean', 'max', 'min', 'norm', 'count', 'dot', 'cos', 'wavg', 'argmax', 'quantile']);
 const OPS = new Set(['softmax', 'normalize', 'l2', 'cumsum', 'rank', 'matmul', 'scale']);
 const WIN_REDUCES = new Set<WinReduce>(['sum', 'mean', 'max', 'min']);
 /** Operator glyphs between blocks; ASCII spellings map to the glyph. */
@@ -35,7 +35,7 @@ const num = (s?: string) => (s === undefined || s === '' ? undefined : Number.is
 const list = (s?: string) => {
   if (s == null) return undefined;
   const xs = s.split(',').map((x) => x.trim());
-  return xs.length && xs.length <= MAX_DIM && xs.every((x) => x.length && x.length <= MAX_LABEL) ? xs : null;
+  return xs.length && xs.length <= MAX_LIT && xs.every((x) => x.length && x.length <= MAX_LABEL) ? xs : null;
 };
 const fnOk = (s?: string) => (s && s.length <= MAX_FN ? s : undefined);
 
@@ -116,12 +116,13 @@ function source(args: Args, flags: Set<string>): KitSource | null {
   const given = ['vals', 'map', 'zip', 'over', 'size'].filter((k) => args[k] != null);
   if (given.length !== 1) return null;
   if (args.size != null) {
-    const z = /^(\d{1,2})x(\d{1,2})$/i.exec(args.size), fn = fnOk(args.fn);
+    // Any size parses; the engine computes it in full, or skips it with a reason naming MAX_CELLS.
+    const z = /^(\d{1,6})x(\d{1,6})$/i.exec(args.size), fn = fnOk(args.fn);
     if (!z || !fn) return null;
     const R = Number(z[1]), C = Number(z[2]);
-    return R >= 1 && C >= 1 && R <= MAX_IMG && C <= MAX_IMG ? { gen: [R, C], fn } : null;
+    return R >= 1 && C >= 1 ? { gen: [R, C], fn } : null;
   }
-  if (args.vals != null) { const cr = colRef(args.vals); if (cr) return { col: cr }; const v = parseVals(args.vals); return v ? { vals: v, ...(args.vals.includes('/') ? { frac: true } : {}) } : null; }
+  if (args.vals != null) { const cr = colRef(args.vals); if (cr) return { col: cr }; const v = parseCells(args.vals); return v ? { vals: v.vals, ...(v.cells ? { cells: v.cells } : {}), ...(args.vals.includes('/') ? { frac: true } : {}) } : null; }
   if (args.map != null) { const m = srcRef(args.map), fn = fnOk(args.fn); return m && fn ? { map: m, fn } : null; }
   if (args.zip != null) {
     const ids = args.zip.split(',').map((x) => srcRef(x.trim()));
@@ -140,10 +141,11 @@ function source(args: Args, flags: Set<string>): KitSource | null {
     if (!k || args.win != null) return null;
     return { ...common, slide: k, ...(flip ? { flip: true } : {}) };
   }
-  const w = /^(\d{1,2})x(\d{1,2})$/i.exec(args.win ?? '');
+  // A window of any size parses (a fn window names its cells a…z: the engine says so past 26).
+  const w = /^(\d{1,4})x(\d{1,4})$/i.exec(args.win ?? '');
   if (!w) return null;
   const win: [number, number] = [Number(w[1]), Number(w[2])];
-  if (win[0] < 1 || win[1] < 1 || win[0] * win[1] > 26) return null;
+  if (win[0] < 1 || win[1] < 1) return null;
   const r = args.reduce?.toLowerCase() as WinReduce | undefined;
   const fn = fnOk(args.fn);
   if ((r == null) === (fn == null) || (r && !WIN_REDUCES.has(r))) return null;
@@ -186,10 +188,11 @@ export function parseKitBlock(name: string, args: Args, quotes: string[], flags:
       return { kind: 'grid', src, ...(rows ? { rows } : {}), ...(cols ? { cols } : {}), ...(sh ? { shade: sh as 'heat' | 'image' } : {}), ...(view === 'image' ? { view } : {}), ...dp, ...caption, ...pl } as KitBlock<PtArg>;
     }
     case 'table': {
-      const v = parseVals(args.vals);
+      const got = parseCells(args.vals);
+      const v = got?.vals;
       const heads = list(args.cols);
       if (!v || !heads || heads.length < v[0].length) return null;
-      return { kind: 'table', vals: v, heads, ...(args.vals!.includes('/') ? { frac: true } : {}), ...dp, ...caption, ...pl } as KitBlock<PtArg>;
+      return { kind: 'table', vals: v, ...(got!.cells ? { cells: got!.cells } : {}), heads, ...(args.vals!.includes('/') ? { frac: true } : {}), ...dp, ...caption, ...pl } as KitBlock<PtArg>;
     }
     case 'bars': {
       const src = source(args, flags);
@@ -224,7 +227,11 @@ export function parseKitBlock(name: string, args: Args, quotes: string[], flags:
       if (args.fn != null && !fn) return null;
       if (pair ? of.length !== 2 : of.length !== (fn ? of.length : 1)) return null;
       const label = quotes[0]?.trim() ? { label: quotes[0].trim().slice(0, MAX_LABEL) } : {};
-      return { kind: 'calc', of: of as string[], reduce: r, ...(fn ? { fn } : {}), ...label, ...dp, ...pl } as KitBlock<PtArg>;
+      // quantile: q= is its level in [0, 1] (a percent such as q=90 reads as 0.9); median by default.
+      let q = num(args.q);
+      if (q != null && q > 1 && q <= 100) q /= 100;
+      if (args.q != null && (r !== 'quantile' || q == null || q < 0 || q > 1)) return null;
+      return { kind: 'calc', of: of as string[], reduce: r, ...(fn ? { fn } : {}), ...(r === 'quantile' ? { q: q ?? 0.5 } : {}), ...label, ...dp, ...pl } as KitBlock<PtArg>;
     }
     case 'shares':
     case 'blend': {

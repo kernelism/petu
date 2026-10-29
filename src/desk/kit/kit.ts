@@ -23,6 +23,7 @@ import { token } from '../../ink/agent/tokens';
 import { prefersReducedMotion } from '../../ink/agent/animate';
 import { MIN_TEXT_PX } from '../layout';
 import * as C from './compute';
+import { breakPoles } from '../plot';
 import type { VarFn } from '../expr';
 import { Animations, tween, pause, easeOut, type Ctl } from './anim';
 import { place, wrapPieces, type Box, type Pad, type Placed } from './layout';
@@ -106,7 +107,7 @@ export type Block = {
   of?: string;
   pick?: [number, number];
   // calc
-  calc?: { of: string[]; reduce: C.Reduce; fn?: string; label?: string; win?: string; live?: boolean; lines: number; maxW: number };
+  calc?: { of: string[]; reduce: C.Reduce; fn?: string; q?: number; label?: string; win?: string; live?: boolean; lines: number; maxW: number };
   /** Rendering handles. */
   el: Record<string, unknown>;
 };
@@ -245,8 +246,16 @@ export function computeSource(src: KitSource, get: (id: string) => Block | undef
     return b?.vals ? b.vals : null;
   };
   const dep = (id: string) => colRef(id)?.[0] ?? id;
-  if ('vals' in src) return { full: src.vals.map((r) => r.slice()), deps: [] };
+  if ('vals' in src) {
+    const full = C.resolveCells(src.vals, src.cells, consts);
+    // A cell naming a block, not a constant: say what to write instead.
+    const blk = typeof full === 'string' ? src.cells?.flat().find((c) => c != null && get(c)) : undefined;
+    if (blk) return `vals=${blk} names a block, not a constant: use map=${blk} fn="x"`;
+    return typeof full === 'string' ? full : { full, deps: [] };
+  }
   if ('gen' in src) {
+    const cells = src.gen[0] * src.gen[1];
+    if (cells > C.MAX_CELLS) return `size=${src.gen[0]}x${src.gen[1]} is ${cells} cells; the limit is ${C.MAX_CELLS}`;
     const fn = formula(src.fn, ['r', 'c'], consts, rand);
     if (!fn) return 'bad fn';
     return { full: Array.from({ length: src.gen[0] }, (_, r) => Array.from({ length: src.gen[1] }, (_, c) => fn({ r: r + 1, c: c + 1 }))), deps: [] };
@@ -292,10 +301,13 @@ export function computeSource(src: KitSource, get: (id: string) => Block | undef
   } else if (src.reduce) spec = { kind: 'reduce', kr: src.win![0], kc: src.win![1], op: src.reduce, ...extra };
   else {
     const n = src.win![0] * src.win![1];
+    if (n > C.WIN_LETTERS.length) return `win=${src.win![0]}x${src.win![1]} with fn= names its cells a…z: at most ${C.WIN_LETTERS.length} cells (use reduce=)`;
     const fn = formula(src.fn!, C.WIN_LETTERS.slice(0, n), consts);
     if (!fn) return 'bad fn';
     spec = { kind: 'fn', kr: src.win![0], kc: src.win![1], src: src.fn!, fn, ...extra };
   }
+  const geo = C.winGeometry(input.length, input[0]?.length ?? 0, spec);
+  if (geo && geo.R * geo.C * C.winSize(spec)[0] * C.winSize(spec)[1] > C.MAX_CELLS * 40) return `window work over ${C.MAX_CELLS * 40} cells; the limit is ${C.MAX_CELLS * 40}`;
   const full = C.winApply(input, spec);
   if (!full) return 'window larger than the grid';
   return { full, deps: [src.over, ...(src.slide ? [src.slide] : [])], win: { spec, over: src.over, kernel: src.slide } };
@@ -532,8 +544,10 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
       b.win = { over: got.win.over, kernel: got.win.kernel, spec: got.win.spec, geo, filled: filled!, pos: null, calc: null, rect: null, cur: null };
     }
   } else if (a.kind === 'table') {
-    const R = a.vals.length, Cn = a.heads.length;
-    const vals = a.vals.map((r) => [...r, ...Array(Cn - r.length).fill(NaN)]);
+    const lit = C.resolveCells(a.vals, a.cells, withConsts(store.consts, a.with));
+    if (typeof lit === 'string') return lit;
+    const R = lit.length, Cn = a.heads.length;
+    const vals = lit.map((r) => [...r, ...Array(Cn - r.length).fill(NaN)]);
     const rh = m.num * 2, hh = m.label * 2.2;
     const ws = a.heads.map((h, j) => m.u(Math.max(textWidth(h, m.labelPx), ...vals.map((r) => textWidth(C.fmt(r[j], a.dp), m.numPx)), m.numPx * 2.2) + m.numPx * 1.8));
     const placed = P(ws.reduce((x, y) => x + y, 0), R * rh, { l: 0, t: hh, r: 0, b: a.caption ? m.label * 2 : m.label * 0.3 });
@@ -594,7 +608,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     if (srcs.some((x) => !x?.vals)) return `unknown block ${a.of.find((x, i) => !srcs[i]?.vals)}`;
     const left = Math.min(...srcs.map((s) => s!.placed.body.x));
     const at = a.at ?? (a.right || a.below ? undefined : { x: left, y: (others.length ? Math.max(...others.map((o) => o.rect.y + o.rect.h)) + m.gap * 0.8 : m.top) });
-    const exp = calcExpansion({ of: a.of, reduce: a.reduce, fn: a.fn, label: a.label }, store, a.dp);
+    const exp = calcExpansion({ of: a.of, reduce: a.reduce, fn: a.fn, q: a.q, label: a.label }, store, a.dp);
     if (typeof exp === 'string') return exp;
     const W = (x: string) => m.u(textWidth(x, m.numPx));
     const pieces = piecesOf(exp, a.label);
@@ -611,7 +625,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     const body = { x: first.body.x, y, w: textW, h };
     const placed: Placed = { body, rect: { ...body }, ...(first.op ? { op: first.op } : {}) };
     b = newBlock(id, 'calc', region, placed, m, [...a.of]);
-    b.calc = { of: a.of, reduce: a.reduce, fn: a.fn, label: a.label, lines, maxW };
+    b.calc = { of: a.of, reduce: a.reduce, fn: a.fn, q: a.q, label: a.label, lines, maxW };
     b.dp = a.dp; b.em = a.em;
   }
   if (sceneOp) b.el.sceneOp = sceneOp;
@@ -689,7 +703,7 @@ function drawOp(g: SVGGElement, b: Block, c: ReturnType<typeof col>) {
 // ------------------------------------------------------------------------------------------------
 // grid
 
-type GridEls = { cells: SVGRectElement[][]; texts: SVGTextElement[][]; over: SVGGElement; emph?: SVGRectElement; emCells?: [number, number][] };
+type GridEls = { cells: SVGRectElement[][]; texts: SVGTextElement[][]; over: SVGGElement; emph?: SVGRectElement; emCells?: [number, number][]; /** a decimated image: br×bc cells share one square, shaded by their mean */ bin?: { br: number; bc: number } };
 
 function rangeOf(b: Block): [number, number] {
   const xs = (b.win ? b.full! : b.vals!).flat().filter(Number.isFinite);
@@ -753,19 +767,35 @@ async function drawImage(b: Block, c: ReturnType<typeof col>, k: Pace) {
   const [lo, hi] = rangeOf(b);
   const ov = px(b, 0.5);
   const cells: SVGRectElement[][] = [], texts: SVGTextElement[][] = [];
+  // Computed in full, shown decimated: past MAX_IMG a side, a square shows the mean of br×bc cells.
+  const br = Math.ceil(R / C.MAX_IMG), bc = Math.ceil(Cn / C.MAX_IMG);
+  const bin = br > 1 || bc > 1 ? { br, bc } : undefined;
+  const squares: SVGRectElement[][] = [], numerals: SVGTextElement[][] = [];
+  for (let i = 0; i < Math.ceil(R / br); i++) {
+    squares.push([]); numerals.push([]);
+    for (let j = 0; j < Math.ceil(Cn / bc); j++) {
+      const h = Math.min(br, R - i * br) * cs, w = Math.min(bc, Cn - j * bc) * cs;
+      squares[i].push(svg(frame, 'rect', { x: body.x + j * bc * cs, y: body.y + i * br * cs, width: w + ov, height: h + ov, fill: shadeOf(binMean(b.vals!, i, j, br, bc), b.shade, lo, hi, c).fill }));
+      numerals[i].push(document.createElementNS('http://www.w3.org/2000/svg', 'text'));
+    }
+  }
   for (let r = 0; r < R; r++) {
     cells.push([]); texts.push([]);
-    for (let q = 0; q < Cn; q++) {
-      cells[r].push(svg(frame, 'rect', { x: body.x + q * cs, y: body.y + r * cs, width: cs + ov, height: cs + ov, fill: shadeOf(b.vals![r][q], b.shade, lo, hi, c).fill }));
-      texts[r].push(document.createElementNS('http://www.w3.org/2000/svg', 'text'));
-    }
+    for (let q = 0; q < Cn; q++) { cells[r].push(squares[Math.floor(r / br)][Math.floor(q / bc)]); texts[r].push(numerals[Math.floor(r / br)][Math.floor(q / bc)]); }
   }
   svg(frame, 'rect', { x: body.x, y: body.y, width: body.w, height: body.h, fill: 'none', stroke: c.edge, ...hair(1) });
   const cap = b.el.caption as string | undefined;
   if (cap) caption(frame, body.x + body.w / 2, body.y + body.h + m.label * 1.2, cap, m, c);
   const over = svg(g, 'g', { class: 'kit-over' });
-  b.el.grid = { cells, texts, over } satisfies GridEls;
+  b.el.grid = { cells, texts, over, ...(bin ? { bin } : {}) } satisfies GridEls;
   await appear(frame, 320, k);
+}
+
+/** The mean of the finite values in bin (i, j) of br×bc cells; NaN when it has none. */
+function binMean(v: C.Mat, i: number, j: number, br: number, bc: number): number {
+  let s = 0, n = 0;
+  for (let r = i * br; r < Math.min(v.length, (i + 1) * br); r++) for (let q = j * bc; q < Math.min(v[r].length, (j + 1) * bc); q++) if (Number.isFinite(v[r][q])) { s += v[r][q]; n++; }
+  return n ? s / n : NaN;
 }
 
 /** Shows grid values (tweened from what is shown now over `ms`). Blank (NaN) cells stay empty. */
@@ -790,6 +820,12 @@ async function setGridVals(b: Block, next: C.Mat, ms: number, ctl: Ctl | undefin
       tx.setAttribute('font-weight', em ? '600' : '400');
       if (!Number.isFinite(p) && !blank) tx.setAttribute('opacity', String(t));
     }));
+    // A decimated image: each square shows its cells' mean as they are now.
+    if (els.bin) {
+      const { br, bc } = els.bin;
+      const cur = next.map((row, r) => row.map((v, q) => { const p = prev[r][q]; return !Number.isFinite(v) ? NaN : Number.isFinite(p) ? p + (v - p) * t : v; }));
+      for (let i = 0; i * br < cur.length; i++) for (let j = 0; j * bc < cur[0].length; j++) els.cells[i * br][j * bc].setAttribute('fill', shadeOf(binMean(cur, i, j, br, bc), b.shade, lo, hi, c).fill);
+    }
   }, ctl);
 }
 /** A numeral's resting look: emphasized cells keep the accent, others their shade's ink. */
@@ -1039,10 +1075,10 @@ export function samplePlot(a: Pick<Extract<DrawAction, { kind: 'plot' }>, 'fn' |
     if (!f) return `bad fn ${a.fn}`;
     for (let i = 0; i <= N; i++) { const x = d0 + ((d1 - d0) * i) / N; xs.push(x); ys.push(f({ x })); }
   }
-  const fin = ys.filter(Number.isFinite).map(Math.abs).sort((p, q) => p - q);
-  const cap = a.range ? null : Math.max((fin[Math.floor(fin.length / 2)] ?? 1) * 20, 1e-9);
+  // A pole breaks the curve (found between neighbours: a narrow peak is kept whole); range= clips.
+  if (!a.range && !(a.x && a.y && a.t)) { const f = formula(a.fn ?? '', ['x'], K)!; breakPoles((x) => f({ x }), xs, ys); }
   for (let i = 0; i < ys.length; i++) {
-    const bad = !Number.isFinite(xs[i]) || !Number.isFinite(ys[i]) || (a.range ? ys[i] < a.range[0] || ys[i] > a.range[1] : Math.abs(ys[i]) > cap!);
+    const bad = !Number.isFinite(xs[i]) || !Number.isFinite(ys[i]) || (a.range ? ys[i] < a.range[0] || ys[i] > a.range[1] : false);
     if (bad) { ys[i] = NaN; if (!Number.isFinite(xs[i])) xs[i] = i > 0 ? xs[i - 1] : 0; }
   }
   return { xs, ys };
@@ -1413,7 +1449,7 @@ async function dist(v: Extract<KitVerb, { kind: 'dist' }>, env: BuildEnv, store:
 // calc lines
 
 /** A calc's expansion now, from its blocks' shown values. */
-function calcExpansion(cd: { of: string[]; reduce: C.Reduce; fn?: string; label?: string }, store: KitStore, dp?: number): C.Expansion | string {
+function calcExpansion(cd: { of: string[]; reduce: C.Reduce; fn?: string; q?: number; label?: string }, store: KitStore, dp?: number): C.Expansion | string {
   const vs = cd.of.map((id) => store.get(id)?.vals);
   if (vs.some((v) => !v)) return 'unknown block';
   const xs = vs[0]!.flat(), ys = vs[1]?.flat();
@@ -1425,9 +1461,9 @@ function calcExpansion(cd: { of: string[]; reduce: C.Reduce; fn?: string; label?
     const env = (i: number) => ({ x: xs[i], ...(ys ? { y: ys[i] } : {}), mean: st.mean, sum: st.sum, min: st.min, max: st.max, norm: st.norm, std: st.std, n: st.n, i: i + 1 });
     const vals = xs.map((_, i) => f(env(i)));
     const shown = xs.map((_, i) => C.substitute(cd.fn!, env(i), dp));
-    return C.reduce(cd.reduce === 'dot' || cd.reduce === 'cos' ? 'sum' : cd.reduce, vals, undefined, dp, cd.reduce === 'sum' || cd.reduce === 'mean' ? shown.map((s) => (/[+−·/ ]/.test(s) ? s : s)) : undefined);
+    return C.reduce(cd.reduce === 'dot' || cd.reduce === 'cos' ? 'sum' : cd.reduce, vals, undefined, dp, cd.reduce === 'sum' || cd.reduce === 'mean' ? shown.map((s) => (/[+−·/ ]/.test(s) ? s : s)) : undefined, cd.q);
   }
-  return C.reduce(cd.reduce, xs, ys, dp);
+  return C.reduce(cd.reduce, xs, ys, dp, undefined, cd.q);
 }
 
 const piecesOf = (e: C.Expansion, label?: string) => [...(label ? [`${label} = `] : []), ...e.parts, e.result];

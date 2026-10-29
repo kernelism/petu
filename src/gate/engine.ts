@@ -143,7 +143,9 @@ export class GateState {
       return;
     }
     if (a.kind === 'table') {
-      const vals = (k.vals as number[][]).map((r) => r.slice());
+      const lit = C.resolveCells(k.vals as number[][], k.cells as (string | null)[][] | undefined, this.consts);
+      if (typeof lit === 'string') return lit;
+      const vals = lit;
       this.blocks.set(id, { id, kind: 'table', vals, full: vals, tab: { heads: [...(k.heads as string[])] }, computedCols: new Set(), region: k.region, dp: k.dp as number | undefined });
       this.addValues(vals.flat(), 'literal', id, beat);
       return;
@@ -160,9 +162,9 @@ export class GateState {
         if (!f) return 'bad fn';
         const st = C.stats(vs[0]!);
         const per = xs.map((x, i) => f({ x, ...(ys ? { y: ys[i] } : {}), mean: st.mean, sum: st.sum, min: st.min, max: st.max, norm: st.norm, std: st.std, n: st.n, i: i + 1 }));
-        v = C.reduce(op === 'dot' || op === 'cos' ? 'sum' : op, per).value;
+        v = C.reduce(op === 'dot' || op === 'cos' ? 'sum' : op, per, undefined, undefined, undefined, k.q as number | undefined).value;
         this.addValues(per, 'computed', id, beat);
-      } else v = C.reduce(op, xs, ys).value;
+      } else v = C.reduce(op, xs, ys, undefined, undefined, k.q as number | undefined).value;
       this.blocks.set(id, { id, kind: 'calc', full: [[v]], vals: [[v]], region: k.region, dp: k.dp as number | undefined });
       this.addValues([v], 'computed', id, beat);
       // A mean shows its sum too.
