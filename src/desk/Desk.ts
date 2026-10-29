@@ -90,6 +90,15 @@ export class Desk implements DeskApi {
   private owner = new ScrollOwner();
   private boardGlide: AbortController | null = null;
   private frameReq = 0;
+  /**
+   * Session trail and asides (spec "v1 learner UX"): a head above a section, `h` px tall (an answer's
+   * question header, or an aside's title row whose element also frames the inset). A collapsed aside
+   * shows only its head (the marker); its section takes no height until it is reopened.
+   */
+  private heads = new Map<Section, { el: HTMLElement; h: number; aside: boolean; collapsed: boolean }>();
+  private nextHead: { el: HTMLElement; h: number; aside: boolean } | null = null;
+  /** An aside is playing: its sections are tinted, the rest of the board steps back, nothing is cropped. */
+  private asideOpen = false;
 
   constructor(private host: DeskHost, private stage: HTMLDivElement, private opts: { onClose?: () => void } = {}) {
     this.board = document.createElement('div');
@@ -179,8 +188,17 @@ export class Desk implements DeskApi {
       return ep === this.epoch ? this.region(spec.id) ?? 'desk reset' : 'desk reset';
     }
     // The sections above are finished: each keeps just its ink, so the board has no dead space between them.
-    this.sections.forEach((s) => this.crop(s));
+    // An aside leaves the paused answer's sections as they are (it draws on in them when it resumes).
+    if (!this.asideOpen) this.sections.forEach((s) => this.crop(s));
     const sec = this.makeSection(spec);
+    if (this.asideOpen) sec.el.classList.add('is-aside');
+    if (this.nextHead) {
+      const h = this.nextHead;
+      this.nextHead = null;
+      this.heads.set(sec, { ...h, collapsed: false });
+      h.el.classList.toggle('is-aside', this.asideOpen);
+      this.content.appendChild(h.el);
+    }
     this.sections.push(sec);
     this.ids.set(spec.id, sec);
     this.content.appendChild(sec.el);
@@ -364,6 +382,41 @@ export class Desk implements DeskApi {
     this.emit();
   }
 
+  /** The next section added gets `el` as its head, `h` px tall (null: none). Consumed by that section. */
+  headNext(el: HTMLElement | null, h = 0): void {
+    this.nextHead = el ? { el, h, aside: this.asideOpen } : null;
+  }
+
+  /**
+   * An aside opens (true) or ends (false). Open: sections added are its inset; the board around it
+   * steps back. Ended: every open aside collapses to its marker (its head), and the board re-lays.
+   */
+  setAside(on: boolean): void {
+    this.asideOpen = on;
+    this.board.classList.toggle('has-aside', on);
+    if (!on) for (const [sec, hd] of this.heads) if (hd.aside && !hd.collapsed) this.collapse(sec, hd, true);
+    if (!on && this.nextHead?.aside) this.nextHead = null;
+    this.position();
+  }
+
+  /** A collapsed aside's marker was clicked: it opens again in place (and closes when clicked again). */
+  toggleAside(el: HTMLElement): void {
+    for (const [sec, hd] of this.heads) if (hd.el === el && hd.aside) { this.collapse(sec, hd, !hd.collapsed); this.position(); return; }
+  }
+
+  private collapse(sec: Section, hd: { el: HTMLElement; collapsed: boolean }, on: boolean) {
+    hd.collapsed = on;
+    hd.el.classList.toggle('is-collapsed', on);
+    sec.el.classList.toggle('is-collapsed', on);
+  }
+
+  /** Scrolls the board so the head `el` sits at its top (the trail: a question clicked or replayed). */
+  async showHead(el: HTMLElement): Promise<void> {
+    if (!this.open) return;
+    const top = parseFloat(el.style.top) || 0;
+    await this.glideBoard(() => Math.max(0, top - 8));
+  }
+
   /** "Back to answer": follow again and return to where the answer was. */
   async resume(): Promise<void> {
     this.follow.resume();
@@ -380,7 +433,11 @@ export class Desk implements DeskApi {
     this.ids.clear();
     this.last = null;
     const gone = this.sections;
+    const goneHeads = [...this.heads.values()].map((h) => h.el);
     this.sections = [];
+    this.heads.clear();
+    this.nextHead = null;
+    void wait(GLIDE_MS).then(() => goneHeads.forEach((e) => e.remove()));
     this.open = false;
     this.split = 'none';
     this.board.classList.remove('is-open');
@@ -527,7 +584,15 @@ export class Desk implements DeskApi {
       Object.assign(this.board.style, { left: `${b.x}px`, top: `${b.y}px`, width: `${b.w}px`, height: `${b.h}px` });
       this.board.classList.toggle('is-stacked', f.stacked);
       const lay = boardLayout(b.w, this.specs(f));
-      lay.boxes.forEach((x, i) => Object.assign(this.sections[i].el.style, { left: `${x.x}px`, top: `${x.y}px`, width: `${x.w}px`, height: `${x.h}px` }));
+      lay.boxes.forEach((x, i) => {
+        const sec = this.sections[i];
+        Object.assign(sec.el.style, { left: `${x.x}px`, top: `${x.y}px`, width: `${x.w}px`, height: `${x.h}px` });
+        const hd = this.heads.get(sec);
+        if (!hd) return;
+        // The head spans the board's content width above its section; an open aside's frame wraps its section too.
+        const frame = hd.aside && !hd.collapsed ? x.h + lay.pad / 2 : 0;
+        Object.assign(hd.el.style, { left: `${lay.pad / 2}px`, top: `${x.y - hd.h}px`, width: `${b.w - lay.pad}px`, height: `${hd.h + frame}px` });
+      });
       this.sections.forEach((s) => { if (s.scene) this.applyCam(s); });
       this.content.style.height = `${lay.height}px`;
     }
@@ -624,7 +689,10 @@ export class Desk implements DeskApi {
   /** Layout specs for every section: a scene fills the board's visible height under its head row. */
   private specs(f: Frame) {
     const fill = f.board ? f.board.h - BOARD_HEAD - boardPad(f.board.w) : 0;
-    return this.sections.map((s) => ({ body: bodyPx(s.body, f.page.pageW), span: s.y1 - s.y0, ...(s.scene ? { fill } : {}) }));
+    return this.sections.map((s) => {
+      const hd = this.heads.get(s);
+      return { body: bodyPx(s.body, f.page.pageW), span: s.y1 - s.y0, ...(s.scene ? { fill } : {}), ...(hd ? { head: hd.h, hidden: hd.collapsed } : {}) };
+    });
   }
 
   private makeScene(sec: Section, paper: SVGGElement) {

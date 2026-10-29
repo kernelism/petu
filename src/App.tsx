@@ -10,18 +10,21 @@ import { AnswerSession, type ParsedScript, type SessionState } from './playback/
 import { deriveParts, nextSentence, partAt, partProgress, partText, partTitle, replayTarget, returnTarget, type Part } from './playback/parts';
 import { SectionLabels } from './pdf/sections';
 import { RouteChip, type Route } from './ui/RouteChip';
-import { DeeperInset, type Deeper } from './ui/DeeperInset';
 import type { PartsView } from './ui/PartsBar';
+import { barMode, closingQuestion } from './ui/barMode';
+import { answerHead, asideHead, clockOf, trailTitle, type TrailHead } from './ui/trail';
+import { aboutContext, asideContext, bboxOf, isLoop, pointedLabel, type Pointed } from './agent/moment';
 import { playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
 import { PacedClock } from './playback/clock';
 import { getSettings, setSettings, SPEEDS, stepSpeed, useSettings } from './settings/settings';
 import { DEMOS, DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
+import type { DevStep } from './demo/learner';
 import { Desk, GLIDE_MS } from './desk/Desk';
 import type { DeskState } from './desk/types';
 import './desk/desk.css';
 import { StudentInkLayer } from './ink/student/StudentInkLayer';
-import { ink, PEN_COLORS } from './ink/student/store';
+import { ink, PEN_COLORS, useInk } from './ink/student/store';
 import { EmptyState } from './ui/EmptyState';
 import { TopBar } from './ui/TopBar';
 import { SettingsPopover } from './ui/SettingsPopover';
@@ -314,6 +317,25 @@ function registryRows(reg: Registry): RegistryRow[] {
   return reg.entries().map((e) => ({ id: e.id, kind: e.kind, target: e.target, bbox: e.bbox, boxes: e.boxes, strokes: e.strokes ?? [] }));
 }
 
+/** An aside's state in the dock: its question, words so far, and how it stands. */
+type Aside = { question: string; words: string[]; state: 'thinking' | 'playing' | 'done' | 'error'; paused: boolean };
+/** One answer on the session trail: its header on the board and what replays it. */
+type TrailEntry = { num: string; question: string; title: string; page: number; script: string; grounding?: Grounding; head: TrailHead; check?: string };
+/** A dev script's aside when it has none of its own (no API call on the demo path). */
+const asideFallback = (q: string) => `Here the side answer to "${q}" would play, with its own small drawing. Press Return to go back to the answer.`;
+
+/** The desk as the aside's director sees it: it never aborts the desk, so the paused answer's moves stay valid. */
+const asideDesks = new WeakMap<Desk, Desk>();
+function asideDeskOf(d: Desk | null): Desk | null {
+  if (!d) return null;
+  let p = asideDesks.get(d);
+  if (!p) {
+    p = new Proxy(d, { get: (t, k) => (k === 'abort' ? () => {} : ((v) => (typeof v === 'function' ? v.bind(t) : v))(Reflect.get(t, k))) });
+    asideDesks.set(d, p);
+  }
+  return p;
+}
+
 // ------------------------------------------------------------------------------------------------
 
 export default function App() {
@@ -370,11 +392,31 @@ export default function App() {
   /** Words spoken so far (the current part's progress). */
   const [spokenN, setSpokenN] = useState(0);
   const { speed } = useSettings();
-  /** Go deeper: the inset (one level) and its own narration-only session. */
-  const [deeper, setDeeper] = useState<Deeper | null>(null);
-  const deeperRef = useRef<Deeper | null>(null);
-  deeperRef.current = deeper;
-  const deeperSession = useRef<AnswerSession | null>(null);
+  /** The aside (one level): a question asked mid-answer, with its own session and ink lane; the answer waits paused. */
+  const [aside, setAside] = useState<Aside | null>(null);
+  const asideRef = useRef<Aside | null>(null);
+  asideRef.current = aside;
+  const asideSession = useRef<AnswerSession | null>(null);
+  const asideGrounding = useRef<Grounding | undefined>();
+  const asideDirRef = useRef<Director>();
+  /** The answer was paused because the student started typing in the bar (it resumes if they clear it). */
+  const typingPaused = useRef(false);
+  /** The bar's moment (src/ui/barMode.ts): an answer has played; the last one closed on this question. */
+  const [answered, setAnswered] = useState(false);
+  const [check, setCheck] = useState<string | null>(null);
+  const checkRef = useRef<string | null>(null);
+  checkRef.current = check;
+  /** Point-to-ask: what the next question is about (a selection, a circled region). */
+  const [pointed, setPointed] = useState<Pointed | null>(null);
+  const pointedRef = useRef<Pointed | null>(null);
+  pointedRef.current = pointed;
+  /** The current answer: its question, scout plan and whether it came from the agent (an aside's context). */
+  const answerRef = useRef<{ question: string; plan: string; toAgent: boolean; head: TrailHead | null }>({ question: '', plan: '', toAgent: false, head: null });
+  /** The session trail: every answer this session, with its recorded script (replayed with no new call). */
+  const trailRef = useRef<TrailEntry[]>([]);
+  const trailN = useRef(0);
+  /** The shortcuts card (?). */
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const labelsRef = useRef<SectionLabels | null>(null);
   const [, setLabelTick] = useState(0);
   const journeyRef = useRef<(j: Journey) => void>(() => {});
@@ -434,6 +476,19 @@ export default function App() {
   // Free the old document's worker resources when it is replaced or closed.
   useEffect(() => () => { void doc?.destroy(); }, [doc]);
 
+  /** Ends the aside, if one is open: its session and ink stop, its inset collapses to its marker. */
+  const endAside = () => {
+    const sess = asideSession.current;
+    asideSession.current = null;
+    sess?.stop();
+    asideDirRef.current?.stop();
+    if (asideRef.current) deskRef.current?.setAside(false);
+    asideRef.current = null;
+    setAside(null);
+    // The answer's header waited behind the aside's (no section yet): it goes back in line.
+    const h = answerRef.current.head;
+    if (h && !h.el.isConnected) deskRef.current?.headNext(h.el, h.h);
+  };
   const clearHide = () => window.clearTimeout(hideTimer.current);
   const clearThink = () => { window.clearTimeout(thinkTimer.current); setHint(undefined); };
   const clearPause = () => { window.clearTimeout(pauseTimer.current); setPausing(false); };
@@ -518,9 +573,7 @@ export default function App() {
     const s = sessionRef.current;
     sessionRef.current = null;
     s?.stop();
-    deeperSession.current?.stop();
-    deeperSession.current = null;
-    setDeeper(null);
+    endAside();
     setUserPaused(false);
     director.stop();
     deskRef.current?.follow.setAnswering(false);
@@ -621,11 +674,15 @@ export default function App() {
     rec?: Recorder;
     /** Eval: plays recorded chunks (at their recorded offsets) instead of generating. */
     replay?: { chunks: { t: number; d: string }[]; events?: AskEvent[] };
+    /** The session trail: plays an earlier answer's recorded script again (no new call), under its number. */
+    again?: TrailEntry;
+    /** The last answer closed on this question; `q` is the student's reply (judged on the board). */
+    check?: string;
   };
 
   /** Plays one answer. Resolves when it is done, stopped or failed. */
   const runAnswer = useCallback((q: string, run: Run = {}): Promise<void> => new Promise<void>((settle) => {
-    const toAgent = !DEMO_PATH || !!run.replay || !!run.rec;
+    const toAgent = (!DEMO_PATH || !!run.replay || !!run.rec) && !run.again;
     const t0 = performance.now();
     const old = sessionRef.current;
     sessionRef.current = null;
@@ -637,10 +694,23 @@ export default function App() {
     setTranscript(null);
     setAnswerError(null);
     // Flow: a new answer starts where the student is; its parts and route start over.
-    deeperSession.current?.stop();
-    deeperSession.current = null;
-    setDeeper(null);
+    endAside();
+    typingPaused.current = false;
     setUserPaused(false);
+    // The moment it is asked in: what the student pointed at, the check question it replies to.
+    const point = run.again ? null : pointedRef.current;
+    setPointed(null);
+    setCheck(null);
+    const moment = { ...(point ? { about: aboutContext(point) } : {}), ...(run.check ? { check: run.check } : {}) };
+    // The session trail: this answer's header goes above its first section on the board.
+    const kindCheck = run.again ? !!run.again.check : !!run.check;
+    const title = run.again?.title ?? trailTitle(kindCheck ? 'check' : 'answer', kindCheck ? run.check! : q, point ? pointedLabel(point) : null);
+    const entry: TrailEntry = { num: run.again?.num ?? (kindCheck ? '✓' : String(++trailN.current)), question: q, title, page: pageRef.current, script: '', head: null as unknown as TrailHead, ...(kindCheck ? { check: run.again?.check ?? run.check } : {}) };
+    entry.head = answerHead({ num: entry.num, question: title, check: kindCheck, onReplay: () => replayRef.current(entry) });
+    // Eval runs keep the board as the judge has always seen it (no trail headers).
+    if (!EVAL) deskRef.current?.headNext(entry.head.el, entry.head.h);
+    answerRef.current = { question: q, plan: '', toAgent, head: EVAL ? null : entry.head };
+    if (!run.rec && !run.replay) trailRef.current.push(entry);
     originRef.current = pageRef.current;
     window.clearTimeout(routeTimer.current);
     setRoute(null);
@@ -658,7 +728,7 @@ export default function App() {
     if (toAgent && ag.blocked && !run.replay) { flash(ag.blocked, CAP_CAPTION_MS); settle(); return; }
 
     setCaptionWords([]);
-    setQuestion(q);
+    setQuestion(kindCheck ? `Check · ${run.again?.check ?? run.check}` : q);
     setWaiting(true);
     setCaptionVisible(true);
     setBusy(true);
@@ -727,7 +797,7 @@ export default function App() {
         if (gate) { gate.setReq(e.reqId); if (/opus/i.test(e.model)) gate.setHeadroom(HEADROOM_OPUS_MS); }
         if (DEBUG) setDebug((d) => ({ ...d, meta: e }));
       },
-      onScout: (e) => { if (DEBUG) setDebug((d) => ({ ...d, scout: e })); },
+      onScout: (e) => { if (answerRef.current.question === q) answerRef.current.plan = e.plan ?? ''; if (DEBUG) setDebug((d) => ({ ...d, scout: e })); },
       onStoryboard: (e) => { if (DEBUG) setDebug((d) => ({ ...d, storyboard: e })); },
       onHandoff: (e) => {
         gate?.handoff();
@@ -767,12 +837,21 @@ export default function App() {
           question: q, page, ink: () => ink.get().strokes, handlers, onGrounding: (g) => { groundingRef.current = g; },
           onGrounds: (gs) => { for (const g of gs) pageTexts.set(g.page, g.lines.map((l) => l.text).join('\n')); },
           ...(gate ? { released: () => gate!.releasedText() } : {}),
+          moment,
         })
-        : async function* (signal) {
+        : run.again
+          ? async function* (signal) {
+            // The trail: the recorded script again, resolved against the grounding it had.
+            gate?.handoff();
+            groundingRef.current = run.again!.grounding;
+            yield* streamDemo(signal, run.again!.script);
+          }
+          : async function* (signal) {
           gate?.handoff(); // dev scripts have no opener
           // checkpoint 1: demos play the closest script. A dev script that points with page marks
           // (?script=relational) resolves them against the pages' own grounding, as an answer would.
-          const script = (DEV_SCRIPT ?? pickDemo(q)).script;
+          // A dev script's later questions (a follow-up, a check reply) play their own canned scripts.
+          const script = DEV_SCRIPT?.answers?.[q] ?? (DEV_SCRIPT ?? pickDemo(q)).script;
           if (DEV_SCRIPT && docRef.current) groundingRef.current = await devGrounding(docRef.current, script);
           yield* streamDemo(signal, script);
         };
@@ -783,6 +862,7 @@ export default function App() {
           if (firstChunk && DEBUG) { firstChunk = false; const t = performance.now(); setDebug((d) => ({ ...d, chunk: t })); }
           run.rec?.chunk(c);
           log.chunk(c);
+          entry.script += c;
           yield c;
         }
       } catch (e) {
@@ -847,7 +927,13 @@ export default function App() {
         deskRef.current?.follow.setAnswering(false);
         if (spoken.length) setTranscript({ question: q, answer: joinWords(spoken) });
         sessionRef.current = null;
+        // The trail: where it was asked and how long it played; what replays it resolves as it did.
+        entry.head.setMeta(`p.${page} · ${clockOf(performance.now() - t0)}`);
+        entry.grounding = groundingRef.current;
+        if (spoken.length) setAnswered(true);
         if (st === 'done') {
+          // An answer that closes on a question to the student: the bar asks for their answer.
+          setCheck(cutOff == null ? closingQuestion(joinWords(spoken)) : null);
           speak(spoken, true);
           if (toAgent && spoken.length) ag.history.push(q, spoken, page);
           if (cutOff != null || !spoken.length) {
@@ -892,7 +978,15 @@ export default function App() {
     void session.start(gate ? gate.wrap(source) : source).finally(finishGate);
   }), [director, flash]);
 
-  const onAsk = useCallback((q: string) => { void runAnswer(q); }, [runAnswer]);
+  /** The bar's Enter: mid-answer (or in an aside) an aside; after a check question, the reply; else a new answer. */
+  const askAsideRef = useRef<(q: string) => void>(() => {});
+  const onAsk = useCallback((q: string) => {
+    if (asideRef.current || sessionRef.current) { askAsideRef.current(q); return; }
+    const c = checkRef.current;
+    void runAnswer(q, c ? { check: c } : {});
+  }, [runAnswer]);
+  /** The trail: a header clicked replays its answer from the recorded script (no new call). */
+  const replayRef = useRef<(e: TrailEntry) => void>(() => {});
 
   const onStop = useCallback(() => {
     stopAll(); // the ink stays until the next answer starts
@@ -925,8 +1019,16 @@ export default function App() {
   }, [backTo]);
 
   const togglePause = useCallback(() => {
+    // During an aside, Space pauses the aside (the answer under it stays paused).
+    const a = asideSession.current;
+    if (a && asideRef.current) {
+      if (a.isPaused()) { if (a.resume()) setAside((d) => d && { ...d, paused: false }); }
+      else if (a.pause()) setAside((d) => d && { ...d, paused: true });
+      return;
+    }
     const s = sessionRef.current;
-    if (!s || deeperRef.current) return;
+    if (!s) return;
+    typingPaused.current = false;
     if (s.isPaused()) { if (s.resume()) setUserPaused(false); return; }
     if (s.pause()) { setUserPaused(true); clearPause(); }
   }, []);
@@ -934,7 +1036,7 @@ export default function App() {
   /** Plays on from part i: forward fast-forwards the board, back repeats the narration (its ink stays) and returns to its page. */
   const jumpTo = useCallback((i: number) => {
     const s = sessionRef.current, p = partsRef.current[i];
-    if (!s || !p || deeperRef.current) return;
+    if (!s || !p || asideRef.current) return;
     const back = p.start < s.position();
     if (!s.seek(p.start)) return;
     setUserPaused(false);
@@ -946,30 +1048,32 @@ export default function App() {
 
   const stepPart = useCallback((dir: -1 | 1) => {
     const s = sessionRef.current, ps = partsRef.current;
-    if (!s || ps.length < 2) return;
+    if (!s || ps.length < 2 || asideRef.current) return;
     const pos = s.position();
     const i = partAt(ps, Math.max(0, pos - 1));
     if (dir > 0) { if (i + 1 < ps.length) jumpTo(i + 1); return; }
     jumpTo(pos - ps[i].start > PART_RESTART_WORDS || i === 0 ? i : i - 1);
   }, [jumpTo]);
 
-  /** Seeks the narration to word `w` (replay a sentence, skip one): plays on from there. */
+  /** Seeks the narration to word `w` (replay a sentence, skip one): plays on from there. The aside's while one is open. */
   const seekWord = useCallback((w: number | null) => {
-    const s = sessionRef.current;
-    if (!s || w == null || deeperRef.current) return;
+    const s = asideRef.current ? asideSession.current : sessionRef.current;
+    if (!s || w == null) return;
     if (!s.seek(w)) return;
+    if (asideRef.current) { setAside((d) => d && { ...d, paused: false }); return; }
+    typingPaused.current = false;
     setUserPaused(false);
     clearPause();
     deskRef.current?.follow.resume();
   }, []);
   /** R (and Shift+←): the sentence being spoken again; pressed again at once, the one before. */
   const replaySentence = useCallback(() => {
-    const s = sessionRef.current;
+    const s = asideRef.current ? asideSession.current : sessionRef.current;
     if (s) seekWord(replayTarget(s.script().words, s.position()));
   }, [seekWord]);
   /** Shift+→: on to the next sentence (once it has streamed in). */
   const skipSentence = useCallback(() => {
-    const s = sessionRef.current;
+    const s = asideRef.current ? asideSession.current : sessionRef.current;
     if (s) seekWord(nextSentence(s.script().words, s.position()));
   }, [seekWord]);
 
@@ -978,7 +1082,7 @@ export default function App() {
     if (next === getSettings().speed) return;
     setSettings({ speed: next });
     sessionRef.current?.respeed();
-    deeperSession.current?.respeed();
+    asideSession.current?.respeed();
   }, []);
   const cycleSpeed = useCallback(() => {
     const i = SPEEDS.findIndex((v) => v === getSettings().speed);
@@ -987,63 +1091,109 @@ export default function App() {
 
   const titleOf = (p: Part) => partTitle(p, originRef.current, labelsRef.current?.get(p.page));
 
-  const openDeeper = useCallback(() => {
-    const s = sessionRef.current;
-    if (!s || deeperRef.current) return;
-    if (!s.isPaused() && !s.pause()) return;
-    setUserPaused(true);
-    clearPause();
-    const p = partsRef.current[partIdxRef.current];
-    setDeeper({ title: p ? partTitle(p, originRef.current, labelsRef.current?.get(p.page)) : 'this answer', words: [], state: 'ask' });
-  }, []);
+  /** The aside's own ink lane: a second director on the same desk (one that never aborts or resets it). */
+  const asideDirector = () => {
+    if (!asideDirRef.current) {
+      asideDirRef.current = new Director({
+        viewer: () => viewerRef.current,
+        desk: () => asideDeskOf(deskRef.current),
+        grounding: () => asideGrounding.current ?? NO_MARKS,
+        settings: getSettings,
+        onScrolledTo: () => setPageTick((n) => n + 1),
+        hold: (at, ms) => asideSession.current?.hold(at, ms),
+        spoken: (at) => asideSession.current?.wordsBefore(at) ?? 0,
+      });
+    }
+    return asideDirRef.current;
+  };
 
   /**
-   * The follow-up plays in the inset, narration only (its drawings would land on the paused answer's
-   * board). Agent answers go through the normal ask flow with the part as context; dev scripts play
-   * their canned `deeper` text.
+   * An aside (v1 learner UX): a question asked while an answer plays. The answer pauses on its word;
+   * the side answer plays with its own small drawing in a warm-grey inset on the board (the rest of
+   * the board steps back); Return or "Resume answer" collapses the inset to a marker and the answer
+   * goes on from the word it paused on. One level: asking again replaces the aside. Agent answers ask
+   * /api/ask with the paused answer as context (`aside`); dev scripts play their canned `answers`.
    */
-  const askDeeper = useCallback((q: string) => {
-    const cur = deeperRef.current;
-    if (!cur) return;
-    const said = scriptRef.current ? partText(scriptRef.current, partsRef.current, partIdxRef.current) : '';
-    setDeeper({ ...cur, question: q, state: 'thinking', words: [] });
-    const question = `${q}\n\n(A follow-up while the answer is paused, about its part "${cur.title}", which said: "${said.slice(-1200)}". Answer just this; the answer resumes after.)`;
-    const source: (signal: AbortSignal) => AsyncIterable<string> = DEMO_PATH
-      ? (signal) => streamDemo(signal, DEV_SCRIPT?.deeper ?? `Here the follow-up about ${q} would play, with this part as its context. Close this to go back to the answer.`)
-      : agentRef.current.source({ question, page: pageRef.current, ink: () => ink.get().strokes, handlers: {}, onGrounding: () => {} });
-    deeperSession.current?.stop();
+  const askAside = (q: string) => {
+    const s = sessionRef.current;
+    if (!s) return;
+    if (!s.isPaused()) s.pause();
+    typingPaused.current = false;
+    setUserPaused(true);
+    clearPause();
+    endAside();
+    const desk = deskRef.current;
+    const head = asideHead({
+      question: q,
+      onBack: () => (asideRef.current ? closeAsideRef.current() : desk?.toggleAside(head.el)),
+      onToggle: () => desk?.toggleAside(head.el),
+    });
+    desk?.setAside(true);
+    desk?.headNext(head.el, head.h);
+    const dir = asideDirector();
+    dir.stop();
+    dir.registry.clear();
+    dir.figures.clear();
+    asideGrounding.current = undefined;
+    const point = pointedRef.current;
+    setPointed(null);
+    const next: Aside = { question: q, words: [], state: 'thinking', paused: false };
+    asideRef.current = next;
+    setAside(next);
+    const cur = answerRef.current;
+    const said = joinWords(s.script().words.slice(0, s.position()));
+    const board = director.registry.entries().map((e) => `${e.kind}${e.id ? ` #${e.id}` : ''}${e.target.region ? ` on ${e.target.region}` : e.target.page ? ` on p${e.target.page}` : ''}`);
+    const moment = { aside: asideContext({ question: cur.question, plan: cur.plan, said, board }), ...(point ? { about: aboutContext(point) } : {}) };
+    const source: (signal: AbortSignal) => AsyncIterable<string> = cur.toAgent
+      ? agentRef.current.source({ question: q, page: pageRef.current, ink: () => ink.get().strokes, handlers: {}, onGrounding: (g) => { asideGrounding.current = g; }, moment })
+      : async function* (signal) {
+        const script = DEV_SCRIPT?.answers?.[q] ?? asideFallback(q);
+        if (DEV_SCRIPT && docRef.current) asideGrounding.current = await devGrounding(docRef.current, script);
+        yield* streamDemo(signal, script);
+      };
     const sess: AnswerSession = new AnswerSession({
       clock: narrationClock(),
-      onAction: () => {},
-      onWord: (words) => { if (deeperSession.current === sess) setDeeper((d) => d && { ...d, words, state: 'playing' }); },
+      onParsed: (a) => dir.prefetch(a),
+      onAction: (a, at, live) => { if (asideSession.current === sess) dir.run(a, at, live); },
+      idle: () => dir.finale(),
+      onWord: (words) => { if (asideSession.current === sess) setAside((d) => d && { ...d, words, state: 'playing' }); },
       onState: (st) => {
-        if (deeperSession.current !== sess) return;
-        if (st === 'done') setDeeper((d) => d && { ...d, state: 'done' });
-        else if (st === 'error') setDeeper((d) => d && { ...d, state: 'error', error: "That follow-up couldn't be answered. Close this to go back to the answer." });
+        if (asideSession.current !== sess) return;
+        if (st === 'done') setAside((d) => d && { ...d, state: 'done' });
+        else if (st === 'error') setAside((d) => d && { ...d, state: 'error' });
       },
     });
-    deeperSession.current = sess;
+    asideSession.current = sess;
     void sess.start(source);
+  };
+  askAsideRef.current = askAside;
+
+  /** Return / "Resume answer": the inset collapses to its marker and the answer goes on from its word. */
+  const closeAside = useCallback(() => {
+    if (!asideRef.current) return;
+    endAside();
+    if (sessionRef.current?.resume()) setUserPaused(false);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const closeAsideRef = useRef(closeAside);
+  closeAsideRef.current = closeAside;
+
+  /** Typing in the bar mid-answer pauses it (the question will be an aside); clearing the bar resumes it. */
+  const onTyping = useCallback((typing: boolean) => {
+    const s = sessionRef.current;
+    if (!s || asideRef.current) return;
+    if (typing && !s.isPaused() && s.pause()) { typingPaused.current = true; setUserPaused(true); clearPause(); }
+    else if (!typing && typingPaused.current) { typingPaused.current = false; if (s.resume()) setUserPaused(false); }
   }, []);
 
-  /** Closes the inset; the answer resumes from the word where it paused, its board untouched. */
-  const closeDeeper = useCallback(() => {
-    deeperSession.current?.stop();
-    deeperSession.current = null;
-    setDeeper(null);
-    sessionRef.current?.resume();
-    setUserPaused(false);
-  }, []);
-
-  // Playback keys (src/ui/playbackKeys.ts): Space, R, ←/→, Shift+←/→, < >; Esc closes the inset.
+  // Playback keys (src/ui/playbackKeys.ts): Space, R, ←/→, Shift+←/→, < >; Esc / Return close an aside.
   // Capture phase, so the keys never also scroll the slides (follow mode would read that as the
   // student taking over) or stop the answer (Esc).
-  const keysRef = useRef<PlaybackHandlers>({ togglePause, stepPart, closeDeeper, replay: replaySentence, skip: skipSentence, speed: (d) => changeSpeed(stepSpeed(getSettings().speed, d)) });
-  keysRef.current = { togglePause, stepPart, closeDeeper, replay: replaySentence, skip: skipSentence, speed: (d) => changeSpeed(stepSpeed(getSettings().speed, d)) };
+  const keysRef = useRef<PlaybackHandlers>({ togglePause, stepPart, closeAside, replay: replaySentence, skip: skipSentence, speed: (d) => changeSpeed(stepSpeed(getSettings().speed, d)) });
+  keysRef.current = { togglePause, stepPart, closeAside, replay: replaySentence, skip: skipSentence, speed: (d) => changeSpeed(stepSpeed(getSettings().speed, d)) };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const handled = playbackKey(e, {
-        deeper: !!deeperRef.current,
+        aside: !!asideRef.current,
         playing: !!sessionRef.current,
         parts: partsRef.current.length,
         popover: !!document.querySelector('.popover'),
@@ -1090,6 +1240,97 @@ export default function App() {
     installEvalHooks(be);
   }, [director]);
 
+  /**
+   * Dev only: a simulated student (src/demo/learner.ts steps) after the first question of a dev
+   * script: waits on the answer's words, the aside, or quiet, then asks, types, resumes, circles…
+   */
+  const playSteps = async (steps: DevStep[]) => {
+    const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
+    const until = async (f: () => boolean) => { while (!f()) await sleep(100); };
+    for (const st of steps) {
+      if (st.words != null) await until(() => (sessionRef.current?.position() ?? 0) >= st.words!);
+      if (st.asideDone != null) { await until(() => asideRef.current?.state === 'done'); await sleep(st.asideDone); }
+      if (st.idle != null) { await until(() => !busyRef.current && !asideRef.current); await sleep(st.idle); }
+      if (st.ms != null) await sleep(st.ms);
+      if (st.type != null || st.ask != null) {
+        // Typed into the bar: mid-answer, the first character pauses the answer.
+        const text = (st.type ?? st.ask)!;
+        if (sessionRef.current && !asideRef.current) onTyping(true);
+        setRestore((r) => ({ text, seq: (r?.seq ?? 0) + 1 }));
+        if (st.ask != null) {
+          await sleep(700);
+          setRestore((r) => ({ text: '', seq: (r?.seq ?? 0) + 1 }));
+          onAsk(st.ask);
+        }
+      }
+      if (st.resume) closeAsideRef.current();
+      if (st.circle) {
+        const v = viewerRef.current, c = st.circle;
+        const H = v?.spaceHeight(c.page) || 1000;
+        const pts: [number, number, number][] = [];
+        for (let i = 0; i <= 40; i++) {
+          const a = -Math.PI / 2 + (i / 40) * Math.PI * 2.08;
+          pts.push([c.x + c.rx * Math.cos(a), ((c.y + c.ry * Math.sin(a)) * H) / 1000, 0.5]);
+        }
+        ink.setTool('pen');
+        ink.add({ page: c.page, tool: 'pen', color: PEN_COLORS[0], points: pts });
+      }
+      if (st.zoom) deskRef.current?.setZoom(st.zoom);
+      if (st.shortcuts) setShortcutsOpen(true);
+    }
+  };
+  const playStepsRef = useRef(playSteps);
+  playStepsRef.current = playSteps;
+
+  replayRef.current = (e: TrailEntry) => {
+    if (!e.script.trim()) return;
+    stopAll();
+    void runRef.current(e.question, { again: e });
+  };
+
+  // Point-to-ask: selecting text on a slide (or the board) attaches "about: …" to the bar.
+  const clearPointed = useCallback(() => setPointed(null), []);
+  useEffect(() => {
+    if (!hasDoc) return;
+    const onUp = () => window.setTimeout(() => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) return;
+      const text = sel.toString().replace(/\s+/g, ' ').trim();
+      if (text.length < 2) return;
+      const n = sel.anchorNode;
+      const el = n instanceof Element ? n : n?.parentElement;
+      if (!el || el.closest('.dock, .popover, .toolbar, .topbar, .keys')) return;
+      const pageEl = el.closest<HTMLElement>('[data-page]');
+      if (pageEl) setPointed({ kind: 'selection', page: Number(pageEl.dataset.page), text: text.slice(0, 1200) });
+      else if (el.closest('[data-petu-board]')) setPointed({ kind: 'selection', board: true, text: text.slice(0, 1200) });
+    }, 0);
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('keyup', onUp);
+    return () => { document.removeEventListener('mouseup', onUp); document.removeEventListener('keyup', onUp); };
+  }, [hasDoc]);
+  // …and circling something with the pen on a slide: the region, with the text inside it.
+  const inkState = useInk();
+  const lastStroke = useRef(0);
+  useEffect(() => {
+    const st = inkState.strokes[inkState.strokes.length - 1];
+    if (!st || st.id <= lastStroke.current) return;
+    lastStroke.current = st.id;
+    const v = viewerRef.current;
+    if (st.tool !== 'pen' || !v) return;
+    const H = v.spaceHeight(st.page) || 1000;
+    const pts = st.points.map(([x, y]) => ({ x, y: (y * 1000) / H }));
+    if (!isLoop(pts)) return;
+    const bbox = bboxOf(pts);
+    const inside = (r: { x: number; y: number; w: number; h: number }) => {
+      const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+      return cx >= bbox.x && cx <= bbox.x + bbox.w && cy >= bbox.y && cy <= bbox.y + bbox.h;
+    };
+    void v.textRuns(st.page).catch(() => []).then((runs) => {
+      const text = runs.filter((r) => inside(r.rect)).map((r) => r.text).join(' ');
+      setPointed({ kind: 'circle', page: st.page, bbox, text });
+    });
+  }, [inkState.strokes]);
+
   const onRetry = useCallback(() => {
     setRestore((r) => ({ text: '', seq: (r?.seq ?? 0) + 1 }));
     if (lastQuestion.current) onAsk(lastQuestion.current);
@@ -1120,7 +1361,7 @@ export default function App() {
       window.clearTimeout(autoplayTimer.current);
       // A dev script may be asked from a given page (?script=flow: p9).
       const at = DEV_SCRIPT?.page;
-      const play = () => { autoplayTimer.current = window.setTimeout(() => onAsk(autoplay), 800); };
+      const play = () => { autoplayTimer.current = window.setTimeout(() => { onAsk(autoplay); if (DEV_SCRIPT?.steps) void playStepsRef.current(DEV_SCRIPT.steps); }, 800); };
       if (at && at <= api.numPages()) void api.scrollToPage(at).then(() => { pageRef.current = at; play(); });
       else play();
     }
@@ -1194,11 +1435,14 @@ export default function App() {
       label: question,
       current: curPart,
       progress: partProgress(parts, curPart, spokenN, scriptRef.current?.words.length ?? spokenN),
-      paused: userPaused,
+      paused: aside ? aside.paused : userPaused,
       speed,
-      onJump: jumpTo, onTogglePause: togglePause, onReplay: replaySentence, onSpeed: cycleSpeed, onDeeper: openDeeper,
+      onJump: jumpTo, onTogglePause: togglePause, onReplay: replaySentence, onSpeed: cycleSpeed, onStop,
+      ...(aside ? { aside: { title: parts.length > 1 ? `Answer paused at ${curPart + 1}/${parts.length}` : 'Answer paused', onResume: closeAside } } : {}),
     }
     : undefined;
+  const mode = barMode({ busy, aside: !!aside, answered, check });
+  const about = pointed ? { label: pointedLabel(pointed), ...(pointed.page != null ? { page: pointed.page } : {}) } : null;
 
   if (!doc) return <EmptyState onFile={openFile} onSample={openSample} error={loadError} />;
 
@@ -1236,14 +1480,13 @@ export default function App() {
           depends on var() invalidation (suspected in a Safari report of the dock staying left; not
           reproduced in Playwright WebKit). */}
       <div ref={dockRef} className="dock" style={{ left: `${dock.x}px`, width: `${dock.w}px`, '--glide': `${GLIDE_MS}ms` } as CSSProperties}>
-        {deeper && <DeeperInset deeper={deeper} onAsk={askDeeper} onClose={closeDeeper} />}
         <Caption
-          words={captionWords}
-          visible={captionVisible && !deeper}
-          question={question}
-          waiting={waiting}
-          hint={hint}
-          pausing={pausing && !userPaused}
+          words={aside ? aside.words : captionWords}
+          visible={captionVisible || !!aside}
+          question={aside ? aside.question : question}
+          waiting={aside ? aside.state === 'thinking' : waiting}
+          hint={aside ? (aside.state === 'error' ? "That couldn't be answered. Press Return to go back to the answer." : undefined) : hint}
+          pausing={!aside && pausing && !userPaused}
           parts={partsView}
           error={answerError ? { message: answerError.message, onRetry: answerError.retry ? onRetry : undefined } : undefined}
         />
@@ -1251,6 +1494,12 @@ export default function App() {
           onAsk={onAsk}
           onStop={onStop}
           busy={busy}
+          mode={mode}
+          showStop={busy && !partsView}
+          about={about}
+          onClearAbout={clearPointed}
+          onTyping={onTyping}
+          onResume={closeAside}
           suggestions={(isSample || DEV_SCRIPT) && !captionVisible ? SUGGESTIONS : undefined}
           restore={restore}
           transcript={captionVisible ? null : transcript}

@@ -138,6 +138,7 @@ export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { con
   const c = r.context;
   const tail: unknown[] = groundingTail(c, cfg);
   if (r.storyboard) tail.push({ type: 'input_text', text: storyboardText(r.storyboard) });
+  tail.push(...momentNotes(c).map((text) => ({ type: 'input_text', text })));
   tail.push({ type: 'input_text', text: `QUESTION (the student is looking at page ${c.page}): ${r.question}` });
   if (c.opener) tail.push({ type: 'input_text', text: openerNote(c.opener) });
   const input = [
@@ -315,6 +316,18 @@ export async function storyboard(r: Pick<AskRequest, 'question' | 'history'> & {
   if (!complete) return out({ usd, fallback: usage ? 'storyboard cut short upstream' : 'storyboard ended early', ...(usage ? { usage } : { estimated: true }) });
   const p = parseStoryboard(text);
   return out({ usd, usage, ...('board' in p ? { board: p.board } : { fallback: p.fallback }) });
+}
+
+/**
+ * The moment a question is asked in (v1 learner UX), as per-turn notes before the question: one short
+ * general sentence each, true of any subject and any phrasing (the cached system block is untouched).
+ */
+export function momentNotes(c: Pick<AskContext, 'aside' | 'about' | 'check'>): string[] {
+  const out: string[] = [];
+  if (c.aside) out.push(`ASIDE: the student paused your answer mid-way to ask the question below. Answer just that, briefly, with a small drawing of its own in a new section with new ids; then the paused answer resumes on its own, so neither continue nor repeat it.\n${c.aside}`);
+  if (c.about) out.push(`POINTED AT: the question is about this.\n${c.about}`);
+  if (c.check) out.push(`CHECK REPLY: your last answer ended on the question "${c.check}", and the question below is the student's reply. Judge it on the board: draw their answer and the engine-computed correct one side by side, then say what the difference shows.`);
+  return out;
 }
 
 /**

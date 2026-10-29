@@ -71,6 +71,117 @@
 .desk-region.is-scene { overflow: hidden; background: var(--board-paper, #fff); border-radius: 6px; }
 .desk-region.is-scene .desk-region-layer { transition: none; overflow: hidden; }
 
+/* An aside (v1 learner UX): its inset is tinted warm grey (violet stays tutor ink); while it plays the
+   rest of the board steps back. Once it ends it collapses to its head, a marker that reopens it. */
+.desk-board.has-aside .desk-region:not(.is-aside),
+.desk-board.has-aside .trail-head:not(.is-aside) { opacity: .42; }
+.desk-region.is-collapsed { visibility: hidden; opacity: 0; }
+
+/* The session trail: each answer's question header above its first section (src/ui/trail.ts). */
+.trail-head { position: absolute; box-sizing: border-box; font-family: var(--font); transition: opacity 180ms var(--ease-out, ease-out); }
+.trail-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font: 600 14px/1.2 var(--font);
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out, ease-out), box-shadow 120ms var(--ease-out, ease-out);
+}
+.trail-row:hover { background: #fff; box-shadow: 0 0 0 .5px rgba(0,0,0,.14), 0 4px 14px rgba(0,0,0,.10); }
+.trail-row:active { background: #F5F5F3; }
+.trail-row:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+.trail-num {
+  flex: none;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: rgba(0,0,0,.06);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.trail-q { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.trail-meta { flex: none; font-size: 12px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+.trail-replay {
+  flex: none;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 7px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+}
+.trail-row:hover .trail-replay, .trail-row:focus-visible .trail-replay { display: inline-flex; }
+.trail-row:hover .trail-meta, .trail-row:focus-visible .trail-meta { display: none; }
+
+/* An aside's head: a warm-grey frame around its inset (the element spans the title row and the section). */
+.trail-head.is-aside {
+  margin-left: 0;
+  border-radius: 12px;
+  background: rgba(120,108,88,.06);
+  box-shadow: inset 0 0 0 1px rgba(120,108,88,.22);
+}
+.trail-aside-row { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 10px 0 14px; }
+.trail-aside-tag {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(120,108,88,.14);
+  color: #5E5546;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.trail-aside-q { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.trail-aside-back, .trail-aside-marker {
+  flex: none;
+  border: 0;
+  font: 500 12px/1 var(--font);
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out, ease-out), color 120ms var(--ease-out, ease-out);
+}
+.trail-aside-back { height: 26px; padding: 0 8px; border-radius: 7px; background: transparent; color: var(--muted); }
+.trail-aside-back:hover { background: rgba(120,108,88,.12); color: var(--ink); }
+.trail-aside-back:active { background: rgba(120,108,88,.2); }
+.trail-aside-back:focus-visible, .trail-aside-marker:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+.trail-aside-marker { display: none; }
+/* Collapsed: just the marker, indented, small. */
+.trail-head.is-aside.is-collapsed { background: transparent; box-shadow: none; }
+.trail-head.is-aside.is-collapsed .trail-aside-row { display: none; }
+.trail-head.is-aside.is-collapsed .trail-aside-marker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+  height: 26px;
+  margin: 4px 0 0 24px;
+  padding: 0 12px;
+  border-radius: 13px;
+  background: rgba(120,108,88,.08);
+  box-shadow: inset 0 0 0 1px rgba(120,108,88,.28);
+  color: #5E5546;
+}
+.trail-aside-marker:hover { background: rgba(120,108,88,.14); }
+.trail-aside-marker:active { background: rgba(120,108,88,.2); }
+.trail-aside-mq { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.trail-aside-arrow { opacity: .7; }
+
 /* Connectors run from a page anchor to a board element, above both. A wire whose end is out of view fades out. */
 .desk-wires { position: absolute; inset: 0; pointer-events: none; }
 .desk-wire { position: absolute; overflow: visible; pointer-events: none; transition: opacity 160ms var(--ease-out, ease-out); }

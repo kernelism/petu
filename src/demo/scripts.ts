@@ -1,30 +1,38 @@
 // src/demo/scripts.ts
 import type { Demo } from './demoScript';
 import { GATE_SCRIPT } from './gate';
+import { LEARNER_SCRIPT, type DevStep } from './learner';
 
 /**
  * Dev-only named scripts for real PDFs: `?script=<name>` (optionally `&src=<pdf url>`) opens the
  * PDF and plays the script. Anchored quotes are written against the PDF's actual text runs.
  * public/dev/ is git-ignored: the lecture PDFs are the user's course files and are never committed.
  */
-export const SCRIPTS: Record<string, Demo & { src: string; page?: number; deeper?: string;
+export const SCRIPTS: Record<string, Demo & { src: string; page?: number;
+  /** Later questions of a simulated session (an aside, a follow-up, a check reply): each plays its canned script. */
+  answers?: Record<string, string>;
+  /** A simulated student (src/demo/learner.ts): what they do and when, after the first question. */
+  steps?: DevStep[];
   /** The fake repair's replacement per stage-2 unit index (`&repair=fake`; src/agent/repair.ts fakeRepair `text`). */
   repairs?: Record<number, string> }> = {
   /** The live commit gate's demo (src/demo/gate.ts): beat 3 names a point nothing carries. */
   gate: GATE_SCRIPT,
+  /** The v1 learner UX storyboard as one simulated session on econ.pdf p12 (src/demo/learner.ts). */
+  learner: LEARNER_SCRIPT,
   /**
    * Flow across the document (econ.pdf, asked on p9): a lead-in on p9, a journey to p2 (the demand
    * line's equation) and back. Exercises the route chip, the arrival beat, answer parts (three:
    * p9 · The Law of Demand · Back to p9), "Back to p9", and highlight units: "slope is constant"
    * grows to its sentence, "a higher price" to its two-line bullet, "P/Q is not" stays inside its
-   * sentence. `page` is where the question is asked; `deeper` plays in the go-deeper inset.
+   * sentence. `page` is where the question is asked; a question asked mid-answer plays as an aside
+   * (its script in `answers`).
    */
   flow: {
     src: '/fixtures/econ.pdf',
     page: 9,
     question: 'Why does elasticity change along a straight demand line?',
-    deeper: 'Take two points on the line. At a price of 10, a one dollar cut is a ten percent cut, and the five extra units are a fifty percent rise on ten. ' +
-      'At a price of 2, the same dollar is half the price, and five more units on fifty is only ten percent. Same step, very different percentages.',
+    answers: { 'what is a percentage change?': 'Take two points on the line. At a price of 10, a one dollar cut is a ten percent cut, and the five extra units are a fifty percent rise on ten. ' +
+      'At a price of 2, the same dollar is half the price, and five more units on fifty is only ten percent. Same step, very different percentages.' },
     script:
       `Along a straight demand line {{highlight p=9 "slope is constant"}} the slope never changes, but elasticity is a ratio of percentages, so it keeps changing as you slide down the line. ` +
       `To see why, go back to where this line comes from. {{scroll p=2}} ` +

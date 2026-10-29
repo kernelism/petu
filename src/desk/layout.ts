@@ -189,14 +189,17 @@ export type SectionBox = { x: number; y: number; w: number; h: number; s: number
  * one even gap. `body`: the section's slide body text in px; `span`: the height it shows, in section
  * units (all 700 while it is being drawn; a finished section is cropped to its ink).
  */
-export function boardLayout(boardW: number, secs: { body: number; span?: number; fill?: number }[]): { boxes: SectionBox[]; height: number; pad: number } {
+export function boardLayout(boardW: number, secs: { body: number; span?: number; fill?: number; head?: number; hidden?: boolean }[]): { boxes: SectionBox[]; height: number; pad: number } {
   const pad = boardPad(boardW);
   const cw = Math.max(1, boardW - 2 * pad);
   let y = BOARD_HEAD;
-  const boxes = secs.map(({ body: b, span = SECTION_H, fill }) => {
+  const boxes = secs.map(({ body: b, span = SECTION_H, fill, head = 0, hidden }) => {
+    // A head (the session trail's question header, an aside's title row) takes `head` px above its section.
+    y += head;
     const s = Math.min(cw / SECTION_W, Math.max(b, MIN_TEXT_PX) / TEXT_UNITS);
     // A scene fills the board's content width and `fill` px of height: a window onto its world.
-    const w = fill != null ? cw : SECTION_W * s, h = fill != null ? Math.max(1, fill) : span * s;
+    // A collapsed aside keeps only its head (the marker): its section takes no height.
+    const w = fill != null ? cw : SECTION_W * s, h = hidden ? 0 : fill != null ? Math.max(1, fill) : span * s;
     const box = { x: pad + (cw - w) / 2, y, w, h, s };
     y += h + pad;
     return box;

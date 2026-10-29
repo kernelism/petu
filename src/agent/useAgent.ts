@@ -42,6 +42,8 @@ export type AgentAsk = {
   onGrounds?(pages: PageGround[]): void;
   /** The text the live gate released (what played): memory records it rather than the raw stream. */
   released?(): string;
+  /** The moment the question is asked in (an aside, what the student points at, a check reply): sent with stage 2. */
+  moment?: Pick<AskContext, 'aside' | 'about' | 'check'>;
 };
 
 export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
@@ -143,7 +145,7 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
           relation = sc.relation;
           // A follow-up: stage 2 gets the MEMORY block and how this question relates to the last answer.
           const scout = r.context.scout && relation ? { scout: { ...r.context.scout, relation } } : {};
-          return { ...r, context: { ...r.context, ...scout, ...(mem ? { memory: mem } : {}) } };
+          return { ...r, context: { ...r.context, ...scout, ...(mem ? { memory: mem } : {}), ...a.moment } };
         },
         ask: (context) => askStream({ question: a.question, history: hist, context, ...(phase ? { phase } : {}) }, signal, handlers),
         onGrounding: (pages) => { a.onGrounding(groundingOf(pages)); a.onGrounds?.(pages); },
