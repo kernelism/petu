@@ -14,8 +14,8 @@
  * Narration passes through as it streams (only a possible marker start, `<…`, is held), so the student
  * hears beat 1 while its group is still being written: no silence waiting for the whole board.
  */
-import { ScriptFilter } from './scriptFilter';
-import { escapeSvg } from '../src/svgboard/wire';
+import { ScriptFilter } from './scriptFilter.ts';
+import { escapeSvg } from '../src/svgboard/wire.ts';
 
 /** A group longer than this is dropped (the client sanitizer caps it again). */
 export const GROUP_MAX = 20000;
@@ -57,7 +57,8 @@ export class SvgBeatFilter extends ScriptFilter {
   readonly notes: string[] = [];
   /** Timings (ms, the caller's clock) of the first group and the board's opening. */
   firstGroupMs = NaN;
-  constructor(private now: () => number = () => performance.now()) { super(); }
+  private now: () => number;
+  constructor(now: () => number = () => performance.now()) { super(); this.now = now; }
 
   override push(chunk: string): string { this.sbuf += chunk; return super.push(this.lift(false)); }
   override end(): string { const s = this.lift(true); return super.push(s) + super.end(); }

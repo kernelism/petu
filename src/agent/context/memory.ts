@@ -9,6 +9,7 @@
 // written once and never changes, so turn N+1's block starts with turn N's and a cache breakpoint at
 // its end reads the earlier turns from cache. Past FULL_TURNS entries the oldest half is rolled into
 // one short line each (the only time the block's prefix changes).
+import { svgTextWords } from '../../svgboard/check';
 import type { Storyboard } from '../storyboard';
 
 /** How a question stands to the answer before it (the scout decides; see server/prompt/scout.ts). */
@@ -24,7 +25,7 @@ export type BoardThing = { id?: string; kind: string; on?: string; label?: strin
   data?: string;
   /** The narration it was drawn on: what it stood for. */
   means?: string };
-export type BoardSection = { id: string; kind: 'scene' | 'sketch'; near?: string };
+export type BoardSection = { id: string; kind: 'scene' | 'sketch' | 'svgboard'; near?: string };
 export type TurnRecord = {
   question: string;
   /** The page the student was on. */
@@ -44,9 +45,12 @@ export type TurnRecord = {
   check?: string;
   /** The student stopped it part-way. */
   stopped?: boolean;
+  /** The svg board: its BOARD layout from the answer's plan (canvas, regions, groups), for a follow-up that extends it. */
+  layout?: string;
 };
 
 export const FULL_TURNS = 8;
+const LAYOUT_CHARS = 500;
 const Q_CHARS = 160, PLAN_CHARS = 600, CLAIM_CHARS = 170, MEANS_WORDS = 9, MAX_THINGS = 24, MAX_CLAIMS = 8;
 const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
 const clip = (s: string, n: number) => { const t = squash(s); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
@@ -104,7 +108,16 @@ const DATA_KEYS = ['fn', 'vals', 'of', 'op', 'pts', 'x', 'y', 'map', 'zip', 'ove
 export function boardOf(script: string): Pick<TurnRecord, 'sections' | 'things' | 'constants' | 'changes'> {
   const sections: BoardSection[] = [], things: BoardThing[] = [], constants: string[] = [], changes: string[] = [];
   for (const t of tagsOf(script)) {
+    // The svg board: its section, and each group by id with the words written in it.
+    if (/^\s*svg\s*</.test(t.inner)) {
+      const id = /^\s*svg\s*<g\b[^>]*?\bid="([^"]+)"/.exec(t.inner)?.[1];
+      const words = svgTextWords(t.inner).join(' ');
+      const after = sentences(narrationOf(script.slice(Math.max(0, t.start - 300), t.start))).slice(-1)[0] ?? '';
+      if (things.length < MAX_THINGS) things.push({ kind: 'svg group', ...(id ? { id } : {}), ...(words ? { label: clip(words, 60) } : {}), ...(after ? { means: clip(after.split(' ').slice(0, MEANS_WORDS).join(' '), 80) } : {}) });
+      continue;
+    }
     const g = readTag(t.inner);
+    if (g.kind === 'svgboard') { sections.push({ id: 'board', kind: 'svgboard' }); continue; }
     if (!g.kind || PAGE_ONLY.has(g.kind) || g.kind === 'let') continue;
     if ((g.kind === 'scene' || g.kind === 'sketch') && g.args.id) { sections.push({ id: g.args.id, kind: g.kind, ...(g.args.near ? { near: g.args.near } : {}) }); continue; }
     if (g.kind === 'const') { for (const [k, v] of Object.entries(g.args)) constants.push(`${k}=${v}`); continue; }
@@ -151,9 +164,17 @@ export function planOf(plan: string, story?: Storyboard): string {
   return clip(parts.filter(Boolean).join(' | '), PLAN_CHARS);
 }
 
+/** The svg board's layout from an answer's own <plan>: from its BOARD line on (canvas, regions, groups). */
+export function layoutOf(plan: string): string | undefined {
+  const i = plan.search(/\bBOARD\b/);
+  return i < 0 ? undefined : clip(squash(plan.slice(i)), LAYOUT_CHARS);
+}
+
 /** A finished answer → its record. */
-export function recordOf(t: { question: string; page: number; pages: number[]; plan: string; script: string; relation?: Relation; storyboard?: Storyboard; stopped?: boolean }): TurnRecord {
+export function recordOf(t: { question: string; page: number; pages: number[]; plan: string; script: string; relation?: Relation; storyboard?: Storyboard; stopped?: boolean; answerPlan?: string }): TurnRecord {
+  const layout = layoutOf(t.answerPlan ?? '');
   return {
+    ...(layout ? { layout } : {}),
     question: t.question, page: t.page, pages: [...new Set([t.page, ...t.pages])],
     ...(t.relation ? { relation: t.relation } : {}),
     plan: planOf(t.plan, t.storyboard), ...boardOf(t.script), ...claimsOf(t.script),
@@ -172,6 +193,7 @@ export function entryText(n: number, r: TurnRecord): string {
     const secs = r.sections.map((s) => `${s.kind} ${s.id}${s.near ? ` near ${s.near}` : ''}`).join(', ');
     lines.push(`  board${secs ? ` (${secs})` : ''}: ${r.things.length ? r.things.map(thingLine).join('; ') : 'nothing drawn'}`);
   } else lines.push('  board: nothing drawn');
+  if (r.layout) lines.push(`  board layout: ${r.layout}`);
   if (r.constants.length) lines.push(`  constants: ${r.constants.join(' ')}`);
   if (r.changes.length) lines.push(`  changed: ${r.changes.join('; ')}`);
   if (r.claims.length) lines.push(`  said: ${r.claims.join(' | ')}`);

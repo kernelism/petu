@@ -83,6 +83,8 @@ export function units(script: string, toks = tokenize(script)): Unit[] {
       if (cur) cur.tags.push(t);
       // The svg board's group follows its beat's sentences: it belongs to the sentence before it.
       else if (t.action?.kind === 'svg' && !pendingTags.length && out.length) { const last = out[out.length - 1]; last.tags.push(t); last.end = t.end; }
+      // A group with no sentence before it in this text (its words went out already): a unit of its own.
+      else if (t.action?.kind === 'svg' && !pendingTags.length) out.push({ words: [], tags: [t], start: t.start, end: t.end, text: '', paraBefore: para });
       else pendingTags.push(t);
       continue;
     }
@@ -187,9 +189,7 @@ export class BeatSplitter {
   /** Text not yet closed into a unit (the gate's look-ahead: later ids it names). */
   pending(): string { return this.cur.map((s) => s.raw).join('') + this.buf; }
 
-  /** The stream is an svg-board answer (it opened one): a sentence waits to see whether its beat's group follows. */
-  private svg = false;
-  push(chunk: string): SplitUnit[] { this.buf += chunk; if (!this.svg && /\{\{svg(board\b|\s*<)/.test(this.buf)) this.svg = true; return this.take(false); }
+  push(chunk: string): SplitUnit[] { this.buf += chunk; return this.take(false); }
   /** The stream ended: the rest is one or more units. */
   end(): SplitUnit[] { const out = this.take(true); out.push(...this.flush()); return out; }
   /** Everything buffered as units now, whole sentences or not (the opener's text is complete as sent). */
@@ -238,6 +238,13 @@ export class BeatSplitter {
       let end = u.end;
       if (i === us.length - 1 && !final) {
         const lw = u.words[u.words.length - 1];
+        // A beat's svg group that arrives after its sentences went out is a unit of its own (its words
+        // are already playing; the scheduler draws it on the word that named it, if still to come).
+        if (!lw && u.tags.length && u.tags.every((t) => t.action?.kind === 'svg')) {
+          sents.push({ raw: this.buf.slice(consumed, u.end), u, para: false });
+          consumed = u.end;
+          continue;
+        }
         if (!lw) break;
         const done = endsSentence(lw.text) || /\n/.test(prefix.slice(lw.end));
         if (!done) break;
@@ -245,11 +252,6 @@ export class BeatSplitter {
         // except the svg board's groups right after it, which close its beat (units()).
         end = lw.end;
         for (const t of u.tags) if (t.start >= end && t.action?.kind === 'svg' && !/\S/.test(this.buf.slice(end, t.start))) end = t.end;
-        if (this.svg) {
-          // A beat's group may still follow: wait for the first thing after the sentence to show.
-          const rest = this.buf.slice(end);
-          if (!/\S/.test(rest) || /^\s*\{(\{(s(v(g\s*)?)?)?)?$/.test(rest) || (/^\s*\{\{svg\s*</.test(rest) && !/\}\}/.test(rest))) break;
-        }
         if (u.tags.some((t) => t.start >= end)) u.tags = u.tags.filter((t) => t.start < end);
         u.end = end;
       }
@@ -278,6 +280,7 @@ export class BeatSplitter {
 
   private split(s: Sent, n: number): boolean {
     const o = this.o;
+    if (!s.u.words.length && s.u.tags.every((t) => t.action?.kind === 'svg')) return false; // a group closes its beat, never opens one
     if (o.rule === 'sentence') return true;
     if (o.rule === 'para') return s.para;
     if (o.rule === 'ink') return leadsWithInk(s.u) || s.para;

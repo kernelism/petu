@@ -105,6 +105,9 @@ const buildsEarly = (a: InkAction) => a.kind !== 'connect' && !('ref' in a) && a
  * - concurrent ink: each ink action waits only for the most recent layout action queued before it
  *   (until its target is on screen), then starts on its word, whatever earlier ink is doing.
  */
+/** Svg board sections opened in this page (their ids stay unique on the board: answers, asides, the shadow). */
+let svgBoardN = 0;
+
 export class Director {
   private ctrl = new AbortController();
   private lane: Promise<void> = Promise.resolve();
@@ -136,7 +139,7 @@ export class Director {
   run(raw: RawAction, at: number = now(), live?: () => number | null): void {
     // The svg board: a board section gets its id here (in order, before layout runs), and each group
     // draws into the latest board.
-    if (raw.kind === 'sketch' && raw.svgboard) raw = { ...raw, id: raw.svgboard.extend && this.svgBoard ? this.svgBoard : (this.svgBoard = `svgb${++this.svgBoards}`) };
+    if (raw.kind === 'sketch' && raw.svgboard) raw = { ...raw, id: raw.svgboard.extend && this.svgBoard ? this.svgBoard : (this.svgBoard = `svgb${++svgBoardN}`) };
     if (raw.kind === 'svg') {
       if (!this.svgBoard) { this.report({ action: raw as Action, firedAt: at, queuedAt: now(), startedAt: now(), endedAt: now() }, { skipped: 'no svg board' }); return; }
       raw = { ...raw, region: this.svgBoard };
@@ -156,9 +159,8 @@ export class Director {
     this.runResolved(a, raw, at, live);
   }
 
-  /** The svg board this answer draws into (a section id), and how many were opened (ids stay unique on the board). */
+  /** The svg board this answer draws into (a section id; numbered across directors, so an aside's never collides). */
   private svgBoard: string | null = null;
-  private svgBoards = 0;
 
   private seen = new WeakSet<object>();
   /** Section ids some parsed tag of this answer declares (a connector may name one a moment before its tag). */

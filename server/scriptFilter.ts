@@ -1,5 +1,5 @@
 // server/scriptFilter.ts
-import { tagLimit } from '../src/svgboard/wire';
+import { tagLimit } from '../src/svgboard/wire.ts';
 /**
  * Streaming clean-up between the model and the client parser, applied identically by the dev
  * server and the eval runner:

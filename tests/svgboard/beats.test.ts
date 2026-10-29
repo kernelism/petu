@@ -99,8 +99,8 @@ describe('svg beats: the gate splitter keeps a beat\'s group with its sentences'
         for (let i = 0; i < text.length; i += step) out.push(...s.push(text.slice(i, i + step)).map((u) => u.text));
         out.push(...s.end().map((u) => u.text));
         expect(out.join('')).toBe(text);
-        // A unit never starts with a group (it belongs to the unit before).
-        for (const u of out.slice(1)) expect(u.trimStart().startsWith('{{svg <')).toBe(false);
+        // A unit that starts with a group is that group alone (its sentences went out before it).
+        for (const u of out.slice(1)) if (u.trimStart().startsWith('{{svg <')) expect(u.replace(/\{\{svg <[^}]*\}\}/g, '').trim()).toBe('');
         if (mode === 'beat') {
           const withGroups = out.filter((u) => /\{\{svg </.test(u));
           // Each beat unit ends with its group.
@@ -109,13 +109,13 @@ describe('svg beats: the gate splitter keeps a beat\'s group with its sentences'
       }
     });
   }
-  it('a sentence waits for the group that may follow it', () => {
+  it('a sentence never waits for its group; the group goes out alone as soon as it closes', () => {
     const s = new BeatSplitter('sentence');
-    expect(s.push('{{svgboard h=700}} The arm swings out. ')).toEqual([]);
-    expect(s.push('{{svg <g id="arm"><line x1="0" y1="0" x2="9" y2="9" stroke="#000"/></g>}}')).toEqual([]);
-    const u = s.push(' Next');
-    expect(u.length).toBe(1);
-    expect(u[0].text).toMatch(/swings out\. \{\{svg <g id="arm">.*\}\}$/);
+    expect(s.push('{{svgboard h=700}} The arm swings out.')).toEqual([]);
+    expect(s.push(' ')).toHaveLength(1);
+    expect(s.push('\n{{svg <g id="arm"><line x1="0" y1="0" x2="9" y2="9"')).toEqual([]);
+    const u = s.push(' stroke="#000"/></g>}}');
+    expect(u.map((x) => x.text)).toEqual([' \n{{svg <g id="arm"><line x1="0" y1="0" x2="9" y2="9" stroke="#000"/></g>}}']);
   });
 });
 
@@ -168,4 +168,17 @@ describe('a group is drawn on the word that names it', () => {
 it('tokenize sees a wire group as one tag', () => {
   const t = tokenize('Look. {{svg <g id="a"><text x="1" y="2">5" wide</text></g>}} Next.');
   expect(t.filter((x) => x.kind === 'tag').length).toBe(1);
+});
+
+describe('follow-ups remember the svg board', () => {
+  it('MEMORY lists the groups by id with their words, and the BOARD layout', async () => {
+    const { recordOf, entryText } = await import('../../src/agent/context/memory');
+    const ex = SVG_EXAMPLES[0];
+    const { out, f } = wire(ex.script, 1e6);
+    const r = recordOf({ question: ex.question, page: ex.page, pages: ex.pages, plan: ex.plan, script: out, answerPlan: f.plan });
+    const t = entryText(1, r);
+    expect(t).toMatch(/board layout: BOARD viewBox="0 0 1000 \d+"/);
+    for (const id of f.groups) expect(t).toContain(`svg group ${id}`);
+    expect(r.sections).toEqual([{ id: 'board', kind: 'svgboard' }]);
+  });
 });
