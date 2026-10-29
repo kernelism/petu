@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { stressScript, normReason, summarise, formatSummary, collectEval, collectSmoke, collectScratch, dedupe, type ReplayEnv } from '../../scripts/eval/replayStress';
+import { stressScript, plotFate, normReason, summarise, formatSummary, collectEval, collectSmoke, collectScratch, dedupe, type ReplayEnv } from '../../scripts/eval/replayStress';
 import type { PageGround } from '../../src/agent/context/types';
 import type { TextRun } from '../../src/locate/locateQuote';
 
@@ -42,6 +42,38 @@ describe('replay stress: the offline engine', () => {
   it('without the PDF, page marks and quotes are unverified, never skips', () => {
     expect(statuses('{{circle p=4 mark=#d1}} {{highlight p=4 "x y z"}} {{sketch id=s}} {{line on=s from=1,2 to=3,4}}', {}))
       .toEqual(['circle:unverified', 'highlight:unverified', 'sketch:ok', 'line:ok']);
+  });
+  it('plots as the live engine builds them: engine axes, shared axes, constants, contrast copies', () => {
+    // No hand-drawn axes: the engine's own (it used to be "no axes").
+    expect(statuses('{{sketch id=s}} {{plot on=s id=f fn="x^2" domain=0,3}}', {})).toEqual(['sketch:ok', 'plot:ok']);
+    // Constants (const, or a let of plain numbers) in fn, domain and parametric plots; the engine reads them as parsed.
+    expect(statuses('{{sketch id=s}} {{const v=20 g=9.8 T=2*v/g}} {{plot on=s id=h fn="v*x-g*x^2/2" domain=0,T}} {{plot on=s id=p x="v*t" y="v*t-g*t^2/2" t=0,T}}', {}))
+      .toEqual(['sketch:ok', 'const:ok', 'plot:ok', 'plot:ok']);
+    expect(statuses('{{sketch id=s}} {{let k=3}} {{plot on=s fn="k*x" domain=0,1}}', {})).toEqual(['sketch:ok', 'const:ok', 'plot:ok']);
+    // axes= another plot or a line-view bars block; a scatter or an unknown id hosts nothing.
+    const s = '{{sketch id=s}} {{plot on=s id=d fn="10-x" domain=0,10}} {{plot on=s id=u fn="2+x" domain=0,10 axes=d}} ' +
+      '{{bars on=s id=v vals="1 2 3 4" view=line}} {{plot on=s fn="x" domain=1,4 axes=v}} {{scatter on=s id=c pts="1,2 2,3 3,5"}} ' +
+      '{{plot on=s fn="x" domain=0,1 axes=c}} {{plot on=s fn="x" domain=0,1 axes=nope}} {{scatter on=s pts="1,2 2,3" axes=d}} {{bars on=s vals="1 2 3" view=line axes=c}}';
+    expect(statuses(s, {})).toEqual(['sketch:ok', 'plot:ok', 'plot:ok', 'bars:ok', 'plot:ok', 'scatter:ok', 'plot:no line or plot to share axes with', 'plot:no line or plot to share axes with', 'scatter:ok', 'bars:no line or plot to share axes with']);
+    // Hand-drawn axes (named, or the section's latest) take fn= over a numeric domain as strokes.
+    expect(statuses('{{sketch id=s}} {{axes on=s id=a at=100,600 size=600,400}} {{plot on=s fn="x^2" domain=0,2 axes=a}} {{plot on=s fn="x" domain=0,1}} {{plot on=s fn="x+" domain=0,1}}', {}))
+      .toEqual(['sketch:ok', 'axes:ok', 'plot:ok', 'plot:ok', 'plot:bad fn']);
+    // What the engine can't sample is skipped with its reason; a duplicate id too.
+    expect(statuses('{{sketch id=s}} {{plot on=s id=f fn="q*x" domain=0,1}} {{plot on=s id=g fn="x" domain=0,w}} {{plot on=s id=g fn="x" domain=0,1}} {{plot on=s id=g fn="x" domain=0,1}}', {}))
+      .toEqual(['sketch:ok', 'plot:bad fn', 'plot:bad domain', 'plot:ok', 'plot:duplicate id']);
+    // A contrast copy is a plot on its original's axes (the parser expands it); bound numbers resolve.
+    expect(statuses('{{sketch id=s}} {{const k=2}} {{plot on=s id=f fn="k*x" domain=0,1}} {{contrast of=f k=4}} {{val id=k}} {{val id=zz}}', {}))
+      .toEqual(['sketch:ok', 'const:ok', 'plot:ok', 'plot:ok', 'val:ok', 'val:unbound value']);
+  });
+  it('plotFate: strokes on hand axes, the engine otherwise', () => {
+    const tag = (o: Record<string, unknown>) => ({ kind: 'plot', region: 's', fn: 'x', domain: [0, 1], domainSrc: ['0', '1'], ...o }) as never;
+    const none = { consts: {}, handAxes: () => false, block: () => undefined };
+    expect(plotFate(tag({}), undefined, { ...none, handAxes: () => true })).toEqual({ by: 'strokes' });
+    expect(plotFate(tag({}), 'f', none)).toEqual({ by: 'kit' });
+    expect(plotFate(tag({ fn: 'a*x' }), 'f', { ...none, consts: { a: 2 } })).toEqual({ by: 'kit' });
+    expect(plotFate(tag({ fn: 'a*x', with: { a: 3 } }), 'f', none)).toEqual({ by: 'kit' });
+    expect(plotFate(tag({ axes: 'd' }), 'f', { ...none, block: (id) => (id === 'd' ? { id, kind: 'plot', plot: true } : undefined) })).toEqual({ by: 'kit' });
+    expect(plotFate(tag({ axes: 'd' }), 'f', { ...none, block: (id) => (id === 'd' ? { id, kind: 'scatter' } : undefined) })).toEqual({ skip: 'no line or plot d to share axes with' });
   });
   it('normalises reasons', () => {
     expect(normReason('unknown point Z')).toBe('unknown point');
