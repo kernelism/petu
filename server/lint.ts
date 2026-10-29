@@ -9,7 +9,7 @@ export const TAG_NAMES = new Set(['scroll', 'highlight', 'underline', 'circle', 
   // amounts, counts and distributions (a count as marks)
   'tokens',
   // bound numbers, readouts, demonstration moves (src/script/parseValues.ts)
-  'val', 'find', 'contrast', 'limit', 'beforeafter',
+  'val', 'find', 'contrast', 'limit', 'beforeafter', 'tween',
   // the slide as canvas: a page region onto the board
   'lift',
   // slips the parser reads as another tag ({{arc center= from= to=}} is an angle's arc when exact)

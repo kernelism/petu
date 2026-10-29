@@ -448,3 +448,23 @@ export function sweepStepMs(n: number, durS?: number): number {
   const total = durS != null ? Math.max(0, durS) * 1000 : Math.min(8000, Math.max(1500, n * 450));
   return total / n;
 }
+
+/**
+ * Constants written as formulas (`omega=L/(I0+2*m*r^2)`) follow the constants they read: after `key`
+ * changed, every formula constant that reads it (directly or through another one) is evaluated again,
+ * in definition order. `derived` holds them (lowercase name, source). A formula that no longer
+ * evaluates keeps its last value.
+ */
+export function rederive(consts: Record<string, number>, derived: readonly [string, string][], key: string): void {
+  const changed = new Set([key]);
+  for (const [k, src] of derived) {
+    if (k === key) continue;
+    const names = freeNames(src);
+    if (!names?.some((n) => changed.has(n))) continue;
+    const f = compileFn(src, Object.keys(consts));
+    const v = f ? f(consts) : NaN;
+    if (Number.isFinite(v)) { consts[k] = v; changed.add(k); }
+  }
+}
+/** A constant written as a plain number (not a formula over others). */
+export const isPlainNumber = (src: string) => /^[-−+]?\d*\.?\d+(e[-+]?\d+)?$/i.test(src.trim());

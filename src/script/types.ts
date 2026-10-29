@@ -41,6 +41,13 @@ export type Mark = { id?: string; em?: boolean };
  * (dash → faint; axes, angle, brace → secondary; everything else → primary).
  */
 export type Weight = 'primary' | 'secondary' | 'faint';
+/** Live geometry: lengths written as formulas over the answer's constants (`r=R`, `len=k`); the resolver evaluates them. */
+export type LiveNums = { r?: string; len?: string };
+/**
+ * A live readout on text (`value=omega fmt=1 unit=rad/s`): the words, then the formula's value now
+ * (and the unit). It follows the constants as they change; the resolver writes it into `text`.
+ */
+export type LiveValue = { value?: string; fmt?: number; unit?: string };
 type W = { weight?: Weight };
 
 /**
@@ -50,7 +57,7 @@ type W = { weight?: Weight };
 export type Shape<P = Pt> =
   | { kind: 'highlight'; quote: string; near?: P }
   | ({ kind: 'underline'; quote: string; near?: P } & W)
-  | ({ kind: 'circle'; at: P; rx: number; ry: number; dash?: boolean } & W)
+  | ({ kind: 'circle'; at: P; rx: number; ry: number; dash?: boolean; /** live: `r=R` a formula over constants (the resolver sets rx, ry) */ exprs?: LiveNums } & W)
   | ({ kind: 'circle'; quote: string; near?: P; dash?: boolean } & W)
   /** `text`: the line's own label (`{{arrow … "gravity"}}`), placed beside its middle, clear of every stroke. */
   | ({ kind: 'line'; from: P; to: P; dash?: boolean; text?: string } & W)
@@ -61,11 +68,11 @@ export type Shape<P = Pt> =
    */
   | ({ kind: 'box'; at: P; w: number; h: number; centered?: boolean } & W)
   | ({ kind: 'box'; quote: string; near?: P } & W)
-  | { kind: 'label'; at: P; text: string }
+  | ({ kind: 'label'; at: P; text: string } & LiveValue)
   /** Region only. at = left edge, vertical middle (or the centre with `centered`). */
-  | { kind: 'write'; at: P; text: string; size: TextSize; centered?: boolean }
-  /** A dot, plus an optional label placed toward `dir` (default ne) and nudged off other elements. */
-  | { kind: 'point'; at: P; text?: string; dir?: Compass }
+  | ({ kind: 'write'; at: P; text: string; size: TextSize; centered?: boolean } & LiveValue)
+  /** A dot, plus an optional label placed toward `dir` (default ne) and nudged off other elements. `trace`: as it moves (live geometry), a faint path stays behind it. */
+  | { kind: 'point'; at: P; text?: string; dir?: Compass; trace?: boolean }
   /** Catmull-Rom curve through 2+ points. */
   | ({ kind: 'curve'; pts: P[]; dash?: boolean } & W)
   /**
@@ -75,10 +82,10 @@ export type Shape<P = Pt> =
    * multiply tint, so the slide shows through.
    */
   | { kind: 'shade'; pts: P[]; outline?: boolean }
-  | { kind: 'shade'; at: P; rx: number; ry: number; outline?: boolean }
+  | { kind: 'shade'; at: P; rx: number; ry: number; outline?: boolean; exprs?: LiveNums }
   /** Arc between the rays at→from and at→to (the smaller sweep). r in x units, default 30. */
   /** `arc`: written as {{arc center= from= to=}}: the resolver draws it only when from and to are equally far from the centre (r = that distance). */
-  | ({ kind: 'angle'; at: P; from: P; to: P; r?: number; text?: string; arc?: boolean } & W)
+  | ({ kind: 'angle'; at: P; from: P; to: P; r?: number; text?: string; arc?: boolean; exprs?: LiveNums } & W)
   /** Curly brace from `from` to `to`; its tip points to the left of the direction from → to. */
   | ({ kind: 'brace'; from: P; to: P; text?: string } & W)
   /** Region only. at = origin (bottom-left); the x axis runs w right, the y axis h up. */
@@ -208,7 +215,18 @@ export type RefAction =
   /** A scene chip that becomes several (parts ref[1]…), spreading from where it was. */
   | { kind: 'split'; ref: string; items: string[] }
   | KitVerb
-  | MoveAction;
+  | MoveAction
+  | TweenAction;
+
+/**
+ * {{tween th=2*pi dur=6 ease=linear repeat=2 yoyo}}: constants glide to new values (formulas over the
+ * constants as they stand) over `dur` seconds (one leg; default 3). Everything drawn from them follows
+ * each frame: live geometry (points, lines, circles, labels, readouts), plots and computed blocks.
+ * `ease` linear | inout (default: a cosine in-out, so a yoyo is a true oscillation) | out. `repeat=n`
+ * runs it n times; `yoyo` makes each run go there and back (it ends where it started).
+ * `ref` is the first constant's name (routing only).
+ */
+export type TweenAction = { kind: 'tween'; ref: string; sets: [string, string][]; dur?: number; ease?: 'linear' | 'inout' | 'out'; repeat?: number; yoyo?: boolean };
 
 /**
  * Kit verbs on a block drawn earlier (ref = its id, or a part: `g[2,3]`, `g[1:2,1:3]`, `v[4]`, 1-based).
@@ -271,7 +289,7 @@ export type LetAction = { kind: 'let'; defs: [string, PtArg][]; /** names of dat
 /** A shape on a page mark: `{{circle p=4 mark=#d3}}`, `{{line p=4 mark=#s2}}`, `{{box p=4 mark=#t12}}`. */
 export type MarkShape = { kind: 'circle' | 'box' | 'highlight' | 'underline' | 'line' | 'arrow'; page: number; region?: never; mark: string } & Ink;
 /** A ray: from A through B, to the frame edge (regions) or `len` × |AB| (pages default 1.5). */
-export type RayShape = { kind: 'line' | 'arrow'; from: PtArg; through: PtArg; len?: number; text?: string } & Target & Ink;
+export type RayShape = { kind: 'line' | 'arrow'; from: PtArg; through: PtArg; len?: number; text?: string; exprs?: LiveNums } & Target & Ink;
 /** A connector end as written: also a page mark (`p4:#d3`, `p4:#s2.a`), resolved by the resolver. */
 /** Before resolving: a page mark, or a section point named by a construction (`w:mid(A,B)`). */
 export type RawEnd = End | { page: number; mark: string } | { region: string; at: PtExpr };

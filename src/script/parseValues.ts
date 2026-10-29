@@ -5,7 +5,7 @@
 //   {{find id=E of=demand,supply}} They meet at a price of {{val id=E}}.
 //   {{find id=top of=path max}} {{point on=s at=top "highest"}}
 //   {{contrast of=path v=30 "faster"}}  {{limit of=path k=0 dur=4 show=top}}  {{beforeafter of=v rate=0.1}}
-import type { FindAction, FindMode, MoveAction, ValAction } from './types';
+import type { FindAction, FindMode, MoveAction, TweenAction, ValAction } from './types';
 import { normName, NAME } from './pointExpr';
 
 /** A value reference: an id, optionally a part (`[2]`, `[1,2]`), optionally a field (`.x`, `.c`, `.price`). */
@@ -93,4 +93,31 @@ export function parseMove(name: 'contrast' | 'limit' | 'beforeafter', rawArgs: R
     return { kind: 'limit', ref: r, set, ...(dur != null ? { dur } : {}), ...(show ? { show } : {}) };
   }
   return { kind: 'beforeafter', ref: r, set, ...(text ? { text } : {}) };
+}
+
+const TWEEN_KEYS = new Set(['dur', 'ease', 'repeat']);
+const EASES = new Set(['linear', 'inout', 'out']);
+
+/**
+ * {{tween th=2*pi s=1 dur=6 ease=linear repeat=2 yoyo}}: constants glide to new values (see TweenAction).
+ * Every key but dur/ease/repeat is a constant and its target (a formula over the constants).
+ */
+export function parseTween(rawArgs: Record<string, string>, flags: Set<string>): TweenAction | null {
+  const sets: [string, string][] = [];
+  for (const [k, v] of Object.entries(rawArgs)) {
+    if (TWEEN_KEYS.has(k.toLowerCase())) continue;
+    const val = formula(v);
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,15}$/.test(k) || !val) return null;
+    sets.push([k, val]);
+  }
+  if (!sets.length || sets.length > 6) return null;
+  const dur = num(rawArgs.dur), rep = num(rawArgs.repeat), ease = rawArgs.ease?.toLowerCase();
+  if (rawArgs.dur != null && !(dur != null && dur > 0 && dur <= 30)) return null;
+  if (rawArgs.repeat != null && !(rep != null && Number.isInteger(rep) && rep >= 1 && rep <= 12)) return null;
+  if (ease != null && !EASES.has(ease)) return null;
+  if ([...flags].some((f) => f.toLowerCase() !== 'yoyo')) return null;
+  return {
+    kind: 'tween', ref: sets[0][0], sets,
+    ...(dur != null ? { dur } : {}), ...(ease ? { ease: ease as TweenAction['ease'] } : {}), ...(rep != null ? { repeat: rep } : {}), ...(flags.has('yoyo') ? { yoyo: true } : {}),
+  };
 }

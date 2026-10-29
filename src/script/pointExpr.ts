@@ -11,13 +11,19 @@ import type { Pt } from './types';
  *   along(A,B,t)   A + t·(B−A): t=0.5 is mid, t=2 doubles the distance from A, t<0 goes backwards
  *   meet(A,B,C,D)  where line AB crosses line CD (both infinite)
  *   foot(P,A,B)    the foot of the perpendicular from P to line AB
+ * Live geometry: coordinates and `along`'s t may be formulas over the answer's {{const}} names
+ * (src/desk/expr.ts grammar), re-evaluated whenever a constant changes:
+ *   R*cos(th),R*sin(th)   a point whose coordinates are formulas (`xy`)
+ *   along(A,B,s)          t = the constant s (or any formula over constants)
  */
 export type PtExpr =
   | { ref: string }
   | { fn: 'mid'; args: [PtExpr, PtExpr] }
-  | { fn: 'along'; args: [PtExpr, PtExpr]; t: number }
+  | { fn: 'along'; args: [PtExpr, PtExpr]; t: number; /** a formula over constants (live) instead of t */ tSrc?: string }
   | { fn: 'meet'; args: [PtExpr, PtExpr, PtExpr, PtExpr] }
-  | { fn: 'foot'; args: [PtExpr, PtExpr, PtExpr] };
+  | { fn: 'foot'; args: [PtExpr, PtExpr, PtExpr] }
+  /** Coordinates written as formulas over constants: `R*cos(th),R*sin(th)`. */
+  | { fn: 'xy'; ex: string; ey: string };
 export type PtArg = Pt | PtExpr;
 
 export const isLiteral = (p: PtArg): p is Pt => 'x' in p;
@@ -60,7 +66,19 @@ export function parsePtArg(s: string | undefined, lit: (s: string) => Pt | undef
   const paren = /^\((-?\d*\.?\d+,-?\d*\.?\d+)\)$/.exec(t);
   if (paren) return lit(paren[1]);
   const e = expr(t, 0);
-  return e ? e : undefined;
+  return e ? e : formulaPair(t) ?? undefined;
+}
+
+/** A formula over constants: the expression grammar's characters, at least one name, no point syntax. */
+const FORMULA = /^[A-Za-z0-9_.+\-*/^() ]{1,120}$/;
+export const isFormula = (s: string) => FORMULA.test(s.trim()) && /[A-Za-z]/.test(s);
+/** Two formulas `a,b` split at the top-level comma (a coordinate pair over constants); null otherwise. */
+function formulaPair(s: string): PtExpr | null {
+  const parts = splitArgs(s);
+  if (!parts || parts.length !== 2 || parts.some((p) => !p || !FORMULA.test(p))) return null;
+  // At least one name (a pair of plain numbers is a literal, handled before).
+  if (!parts.some((p) => /[A-Za-z]/.test(p))) return null;
+  return { fn: 'xy', ex: parts[0], ey: parts[1] };
 }
 
 function ref(s: string): PtExpr | null {
@@ -98,7 +116,10 @@ function expr(s: string, depth: number): PtExpr | null {
     if (parts.length !== 3) return null;
     const t = Number(parts[2]);
     const a = expr(parts[0], depth + 1), b = expr(parts[1], depth + 1);
-    return a && b && Number.isFinite(t) && Math.abs(t) <= 20 ? { fn, args: [a, b], t } : null;
+    if (!a || !b) return null;
+    // t a formula over constants (`along(M,B,s)`): live, evaluated when resolved.
+    if (!Number.isFinite(t) && isFormula(parts[2])) return { fn, args: [a, b], t: NaN, tSrc: parts[2] };
+    return Number.isFinite(t) && Math.abs(t) <= 20 ? { fn, args: [a, b], t } : null;
   }
   if (parts.length !== ARITY[fn]) return null;
   const args = parts.map((p) => expr(p, depth + 1));

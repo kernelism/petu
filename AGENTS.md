@@ -111,6 +111,8 @@ Dev URLs (append to the dev server URL):
   circle + "about:" chip, check reply judged on the board, trail + zoom + shortcuts); src/demo/learner.ts
 - `?script=lec09`, `?script=toolkit`, `?script=relational` — dev scripts, no API call (lec09 needs a
   local, gitignored PDF; relational shows the `let`/construction grammar on the fixture)
+- `?script=moving-tunnel|moving-skater|moving-market|moving-pendulum` — live geometry: figures built from
+  constants that move under `{{tween}}` (docs/briefs/board-engine.md "Live geometry")
 - `?src=<pdf url>` — open a PDF by URL (e.g. `/api/dev-pdf/<name>.pdf` from `PETU_PDF_DIRS`)
 - `&page=N` (with `&eval`) · `&debug` latency/cost/plan panel · `&noplay` no autoplay · `&style=hand|clean`
 - `&eval` installs `window.__petu` (eval hooks) · `&nogen` replay only · `&fail=N` cut the stream after N chunks

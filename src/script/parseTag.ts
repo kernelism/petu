@@ -1,10 +1,10 @@
 // src/script/parseTag.ts
 import { REGION_H, type Compass, type RawEnd, type Pt, type RawAction, type Target, type Weight } from './types';
 import { tokenize, unquote } from './tokenize';
-import { NAME, normName, parsePtArg, worldPt, isBlockRef, type PtArg } from './pointExpr';
+import { NAME, normName, parsePtArg, worldPt, isBlockRef, isFormula, type PtArg } from './pointExpr';
 import { parseKitBlock, parseKitVerb, parseSplitBar, sceneRel, type ParseCtx } from './parseKit';
 import { parseScene, parseSplit, SCENE_TAGS } from './parseScene';
-import { parseFind, parseMove, parseVal } from './parseValues';
+import { parseFind, parseMove, parseTween, parseVal } from './parseValues';
 
 /** Region and element ids: a letter, then letters, digits, - or _. Case-insensitive (stored lowercased). */
 const ID = /^[a-z][a-z0-9_-]{0,23}$/;
@@ -130,6 +130,7 @@ export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
   if (name === 'val') return parseVal(args);
   if (name === 'find') return parseFind(args, flags);
   if (name === 'contrast' || name === 'limit' || name === 'beforeafter') return parseMove(name, rawArgs, quotes);
+  if (name === 'tween') return parseTween(rawArgs, flags);
 
   // Tags without a target.
   switch (name) {
@@ -248,9 +249,17 @@ export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
   const at = P(args.at);
   const size = (args.size ?? 'm').toLowerCase();
   const textSize = size === 's' || size === 'm' || size === 'l' ? size : null;
-  const radii = () => {
+  const radii = (): { rx: number; ry: number; exprs?: { r: string } } | null => {
+    // Live: `r=R` (a formula over constants, in a section or on a chart) is evaluated when resolved.
+    if (args.r != null && num(args.r) === undefined && args.rx == null && args.ry == null && (inRegion || chart) && isFormula(args.r)) return { rx: 1, ry: 1, exprs: { r: args.r.trim() } };
     const r = num(args.r), rx = num(args.rx) ?? r, ry = num(args.ry) ?? r;
     return rx && ry && rx > 0 && ry > 0 ? { rx: Math.min(rx, MAX_R), ry: Math.min(ry, MAX_R) } : null;
+  };
+  // A readout on text: `value=<formula over constants>` (fmt= decimals, unit=), live as they change.
+  const liveValue = () => {
+    const v = args.value?.trim(), f = num(args.fmt);
+    if (v == null || !inRegion || !/^[A-Za-z0-9_.+\-*/^() ]{1,120}$/.test(v)) return {};
+    return { value: v, ...(f != null && Number.isInteger(f) && f >= 0 && f <= 6 ? { fmt: f } : {}), ...(args.unit ? { unit: args.unit.slice(0, 16) } : {}) };
   };
 
   const out = drawTag();
@@ -285,8 +294,10 @@ export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
       const from = P(args.from), to = P(args.to), through = P(args.through), len = num(args.len);
       const text = quote ? { text: quote } : {}; // its own label, beside it
       if (from && through && !to) {
-        if (args.len !== undefined && !(len! > 0 && len! <= 20)) return null;
-        return { kind: name, ...target, from, through, ...(len ? { len } : {}), ...text, ...dash, ...weight, ...mark } as RawAction;
+        // len= a formula over constants (live): evaluated when resolved.
+        const lenExpr = args.len !== undefined && len === undefined && isFormula(args.len) ? { exprs: { len: args.len.trim() } } : {};
+        if (args.len !== undefined && !lenExpr.exprs && !(len! > 0 && len! <= 20)) return null;
+        return { kind: name, ...target, from, through, ...(len ? { len } : {}), ...lenExpr, ...text, ...dash, ...weight, ...mark } as RawAction;
       }
       return from && to && !through ? ({ kind: name, ...target, from, to, ...text, ...dash, ...weight, ...mark } as RawAction) : null;
     }
@@ -306,16 +317,16 @@ export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
       return { kind: 'box', ...target, at, w: lit ? Math.min(s[0], 1000 - (at as Pt).x) : s[0], h: lit ? Math.min(s[1], Y - (at as Pt).y) : s[1], ...weight, ...mark };
     }
     case 'label':
-      return at && quote ? { kind: 'label', ...target, at, text: quote, ...mark } : null;
+      return at && quote ? { kind: 'label', ...target, at, text: quote, ...liveValue(), ...mark } : null;
     case 'write': {
       const c = args.at ? undefined : P(args.center);
       const p0 = at ?? c;
-      return inRegion && p0 && quote && textSize ? { kind: 'write', ...target, at: p0, text: quote, size: textSize, ...(c ? { centered: true } : {}), ...mark } : null;
+      return inRegion && p0 && quote && textSize ? { kind: 'write', ...target, at: p0, text: quote, size: textSize, ...(c ? { centered: true } : {}), ...liveValue(), ...mark } : null;
     }
     case 'point': {
       const dir = args.dir?.toLowerCase();
       if (!at || (dir && !COMPASS.has(dir))) return null;
-      return { kind: 'point', ...target, at, ...(quote ? { text: quote } : {}), ...(dir ? { dir: dir as Compass } : {}), ...mark };
+      return { kind: 'point', ...target, at, ...(quote ? { text: quote } : {}), ...(dir ? { dir: dir as Compass } : {}), ...(flags.has('trace') ? { trace: true } : {}), ...mark };
     }
     case 'curve': {
       const p = PS(args.pts, 2);
@@ -329,8 +340,9 @@ export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
     }
     case 'angle': {
       const from = P(args.from), to = P(args.to), r = num(args.r);
-      if (!at || !from || !to || (r !== undefined && !(r > 0))) return null;
-      return { kind: 'angle', ...target, at, from, to, ...(r ? { r: Math.min(r, MAX_R) } : {}), ...(quote ? { text: quote } : {}), ...weight, ...mark };
+      const rExpr = args.r != null && r === undefined && inRegion && isFormula(args.r) ? { exprs: { r: args.r.trim() } } : {};
+      if (!at || !from || !to || (args.r != null && !rExpr.exprs && !(r! > 0))) return null;
+      return { kind: 'angle', ...target, at, from, to, ...(r ? { r: Math.min(r, MAX_R) } : {}), ...rExpr, ...(quote ? { text: quote } : {}), ...weight, ...mark };
     }
     case 'arc': {
       // Not a tag: read as an angle whose radius reaches from and to (the resolver checks it is exact).

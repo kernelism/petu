@@ -130,6 +130,31 @@ Prevention by construction: the narration never types a number the engine comput
   colony, limit on a falling stone with drag; every number in its narration is a val.
 - Tests: `tests/values/values.test.ts`, `tests/gate/bound.test.ts`.
 
+## Live geometry: figures that move (`src/geometry/live.ts`, `src/desk/live.ts`)
+
+A figure's numbers may be formulas over the answer's `{{const}}` names (expr.ts grammar); when a
+constant changes, everything built from it is re-resolved and its ink updated in place, each frame.
+- Grammar: a `let` (or any point arg) `S=R*cos(th),-R*sin(th)` (`xy` PtExpr: two formulas), `along(M,B,s)`
+  (t a formula: `tSrc`); `circle`/`shade at= r=R`, `angle r=`, ray `len=` (`exprs` on the raw action,
+  evaluated by the resolver); `write`/`label … "spin:" value=w fmt=1 unit=rad/s` (a live readout: the
+  words, the formula's value, the unit); `point … trace` (a faint solid path stays behind it).
+- `{{tween th=2*pi s=1 dur=6 ease=linear|inout|out repeat=n yoyo}}` (`TweenAction`, kit `tweenMove`):
+  constants glide to formula targets over `dur` s per leg (default 3, cosine in-out: a yoyo is a true
+  oscillation); `repeat` runs it n times, `yoyo` makes each run there-and-back (ends where it started).
+  Plots and computed blocks repaint, live geometry follows. `limit` and `beforeafter` move geometry too.
+- Formula constants follow: `{{const t=0 r=1.4-0.9*t I=3+4*r^2 w=L/I}}` — `KitStore.setConst` (and the
+  value model) re-derive every formula constant reading a changed one (`C.rederive`, definition order).
+  A constant set directly becomes an input. So a readout of `w` climbs while a tween drives `t`.
+- Engine: `Figure` never caches a live name and reads constants on every resolve; `Figures.isLive(raw)`
+  marks an element live; the director gives it an id (`_liveN`), draws it as usual, then `LiveGeo.add`.
+  `KitStore.constsChanged()` → `LiveGeo.refresh()`: same paths get new `d`, dots new centres, text
+  groups translate; labels keep their first side while clear, else their current side, else
+  `placeClear` (never on a stroke); registry boxes/strokes/anchor follow. A frame that doesn't resolve
+  keeps the last state. Reduced motion / fast-forward: the end state at once. The fit freezes from the
+  initial values: keep the motion's reach inside the drawn figure (a reach circle, the orbit).
+- Demos: `?script=moving-tunnel|moving-skater|moving-market|moving-pendulum` (gallery scenes of the same
+  names). Tests: `tests/geometry/live.test.ts`, `tests/desk/live.test.ts`.
+
 ## Amounts, counts and distributions (teaching moves, design 3.2–3.7)
 
 - **Chart plots are kit lines** (`buildChartPlot`): `{{plot p=N on=#c1}}` on a linear calibrated chart is

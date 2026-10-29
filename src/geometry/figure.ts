@@ -2,6 +2,7 @@
 import type { Pt } from '../script/types';
 import { REGION_H, REGION_W } from '../script/types';
 import { isLiteral, MAX_ABS, type PtArg, type PtExpr } from '../script/pointExpr';
+import { evalConst } from './live';
 
 /** Room kept around a fitted figure for labels (region units). */
 export const FIT_MX = 80;
@@ -38,8 +39,26 @@ export class Figure {
   private data = false;
   /** Points that landed outside the frozen frame and were clamped (eval metric). */
   outOfFrame = 0;
-  constructor(readonly fitted: boolean, private marks: (id: string) => Pt | undefined = () => undefined) {
+  /**
+   * `consts`: the answer's named numbers right now. Live geometry (coordinates or `along`'s t written as
+   * formulas over them) re-evaluates on every call, so a changed constant moves every point built from it.
+   */
+  constructor(readonly fitted: boolean, private marks: (id: string) => Pt | undefined = () => undefined, private consts: () => Record<string, number> = () => ({})) {
     this.fit = fitted ? null : IDENTITY;
+  }
+  /** Whether `p` depends on a constant (directly, or through the names and constructions it uses). */
+  isLive(p: PtArg, seen = new Set<string>()): boolean {
+    if (isLiteral(p)) return false;
+    if ('ref' in p) {
+      if (p.ref.startsWith('#') || seen.has(p.ref)) return false;
+      const d = this.defs.get(p.ref);
+      if (!d) return false;
+      seen.add(p.ref);
+      return this.isLive(d, seen);
+    }
+    if (p.fn === 'xy') return true;
+    if (p.fn === 'along' && p.tSrc != null) return true;
+    return p.args.some((a) => this.isLive(a, seen));
   }
 
   /** Declares `name` (no-op, with a warning result, when it exists). */
@@ -74,8 +93,16 @@ export class Figure {
       seen.add(e.ref);
       const r = this.world(d, seen);
       seen.delete(e.ref);
-      if ('x' in r) this.resolved.set(e.ref, r);
+      // A live name is never cached: its place follows the constants.
+      if ('x' in r && !this.isLive(d)) this.resolved.set(e.ref, r);
       return r;
+    }
+    if (e.fn === 'xy') {
+      const x = evalConst(e.ex, this.consts()), y = evalConst(e.ey, this.consts());
+      if (typeof x === 'string') return { degenerate: x };
+      if (typeof y === 'string') return { degenerate: y };
+      const p = { x, y };
+      return inRange(p) ? p : { degenerate: `${e.ex},${e.ey} lands too far out` };
     }
     const pts: Pt[] = [];
     for (const a of e.args) {
@@ -87,10 +114,14 @@ export class Figure {
     return 'x' in r && !inRange(r) ? { degenerate: `${e.fn}() lands too far out` } : r;
   }
 
-  private construct(e: Exclude<PtExpr, { ref: string }>, pts: Pt[]): Pt | Unresolved {
+  private construct(e: Exclude<PtExpr, { ref: string } | { fn: 'xy' }>, pts: Pt[]): Pt | Unresolved {
     switch (e.fn) {
       case 'mid': return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
-      case 'along': return { x: pts[0].x + e.t * (pts[1].x - pts[0].x), y: pts[0].y + e.t * (pts[1].y - pts[0].y) };
+      case 'along': {
+        const t = e.tSrc != null ? evalConst(e.tSrc, this.consts()) : e.t;
+        if (typeof t === 'string') return { degenerate: t };
+        return { x: pts[0].x + t * (pts[1].x - pts[0].x), y: pts[0].y + t * (pts[1].y - pts[0].y) };
+      }
       case 'meet': return meet(pts[0], pts[1], pts[2], pts[3]) ?? { degenerate: 'parallel lines in meet()' };
       case 'foot': return foot(pts[0], pts[1], pts[2]) ?? { degenerate: 'zero-length line in foot()' };
     }
