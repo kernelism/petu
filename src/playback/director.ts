@@ -79,6 +79,11 @@ type Deps = {
   spoken?(at: number): number;
   /** Highlights and underlines grow to meaningful units (src/locate/unit.ts). Default on. */
   units?: boolean;
+  /**
+   * The live gate's shadow board: no waiting on words, layout or pans; ink lands in its final state
+   * at once (drawn with a pre-aborted signal) and skips are reported as usual.
+   */
+  instant?: boolean;
 };
 const NO_GROUNDING: Grounding = { mark: () => undefined };
 
@@ -148,7 +153,7 @@ export class Director {
 
   /** Waits (bounded) until every section a connector names that a later tag declares is on the desk. */
   private async sectionsFor(a: InkAction, desk: DeskApi, signal: AbortSignal): Promise<void> {
-    if (a.kind !== 'connect') return;
+    if (a.kind !== 'connect' || this.d.instant) return;
     const ids = [a.from, a.to].flatMap((e) => ('region' in e && this.declared.has(e.region) ? [e.region] : []));
     const t0 = now();
     while (ids.some((id) => !desk.region(id)) && now() - t0 < REGION_WAIT_MS && !signal.aborted) await wait(50);
@@ -358,7 +363,7 @@ export class Director {
     if (!desk.following()) return 'student is driving'; // rule 6
     // A journey: the route is shown, the narration holds at the move's word, and ink waits for the arrival.
     const from = v.currentPage();
-    const journey = journeyBeat(from, a.page, this.d.spoken?.(at) ?? Infinity) && now() - at < LATE_MS;
+    const journey = !this.d.instant && journeyBeat(from, a.page, this.d.spoken?.(at) ?? Infinity) && now() - at < LATE_MS;
     if (journey && entry) entry.journey = true;
     if (journey) {
       this.d.onJourney?.({ from, to: a.page, at });
@@ -460,6 +465,7 @@ export class Director {
 
   /** Waits until ink may start relative to the layout queued before it: the step is over, or its target is already on screen. */
   private async afterLayout(dep: LaneEntry, desk: DeskApi, t: Target | null, r: SRect | null, signal: AbortSignal) {
+    if (this.d.instant) { await dep.done; return; } // the shadow's layout lane has no pans to wait out, only order
     if (!desk.following() && (dep.kind === 'scroll' || dep.kind === 'reveal' || dep.kind === 'frame')) return; // rule 6: no view to wait for
     if (t && r && desk.following() && (dep.kind === 'scroll' || dep.kind === 'reveal')) {
       // A journey's ink waits for the arrival beat, not just for its target to come into view.
@@ -469,6 +475,7 @@ export class Director {
 
   /** Rule 1/2: pans through the layout lane when the box is off screen; resolves once it shows. Not while the student drives (rule 6). */
   private async reveal(desk: DeskApi, t: Target, r: SRect, signal: AbortSignal, anchor?: SRect) {
+    if (this.d.instant) return;
     if (!desk.following() || desk.isVisible(t, r)) return;
     // Visibility is re-checked by the desk when the step runs, and ink lands only if the view then moves.
     const e = this.enqueueLayout('reveal', async () => { await desk.reveal(t, r, this.land, anchor); }, signal);
@@ -500,6 +507,7 @@ export class Director {
    * Returns the word's start as it stood when the wait ended.
    */
   private async untilWord(fixed: number, offset: number, live: (() => number | null) | undefined, signal: AbortSignal): Promise<number> {
+    if (this.d.instant) return fixed;
     if (!live) { await wait(fixed + offset - now()); return fixed; }
     for (;;) {
       const w = live();
@@ -550,7 +558,7 @@ export class Director {
       if (plan.also) {
         const p = plan;
         const e = this.enqueueLayout('frame', async () => { await desk.frameBoth({ t: p.target, r: p.bbox }, { t: p.also!.target, r: p.also!.bbox }, this.land); }, signal);
-        if (desk.following()) await e.done;
+        if (desk.following() && !this.d.instant) await e.done;
       } else await this.reveal(desk, plan.target, plan.bbox, signal, this.anchorOf(a));
       if (signal.aborted) return;
     }
@@ -561,6 +569,7 @@ export class Director {
     const k = backlog(now() - Math.max(word, dep?.arrivedAt ?? -Infinity));
     this.report(t, { startedAt: now() });
     const own = new AbortController();
+    if (this.d.instant) own.abort(); // final state at once (an aborted draw completes immediately)
     const onAbort = () => own.abort();
     signal.addEventListener('abort', onAbort);
     const drawing: Promise<string | void | 'timeout'> = this.guarded((sig) => { sig.addEventListener('abort', () => own.abort()); return p.draw(own.signal, k); }, signal);
