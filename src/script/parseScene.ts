@@ -7,7 +7,7 @@
  *   {{flow on=s id=f "A" "B" "C" arrows}}      a sequence of chips (parts f[1]…); values=p shows p's values under them; down stacks it
  *   {{link on=s from=a to=b strength=0.6 "label"}}   a relation; strength (0–1, or a part p[2]) sets its weight; plain = no head
  *   {{link on=s from=f[3] to=f strength=p}}    one to every part of f, each weighted by p's value
- *   {{note on=s "text" annotate=f[2]}}         a callout with a leader line;  {{note on=s "text" below=a}} plain text by relation
+ *   {{note on=s "text" annotate=f[2]}}         a callout with a leader line;  {{note on=s "text" below=a}} plain text by relation; value=p[2] adds p[2]'s live value
  *   {{group on=s id=g of=a,b,c "System 1"}}    a loose outline around things (follows them when they move)
  *   {{pair on=s from=a to=b "equal and opposite"}}   a bracket joining two things or parts
  *   {{merge on=s id=m of=a,b "both"}}          things glide together into one new chip
@@ -56,8 +56,9 @@ export function parseScene(name: string, args: Record<string, string>, quotes: s
     }
     case 'note': {
       const annotate = args.annotate != null ? ref(args.annotate) : undefined;
-      if (!text || (args.annotate != null && !annotate) || (annotate && rel)) return null;
-      return { kind: 'note', text, ...(annotate ? { annotate } : {}), ...place };
+      const value = valueRef(args.value);
+      if (!text || (args.annotate != null && !annotate) || (annotate && rel) || value === null) return null;
+      return { kind: 'note', text, ...(annotate ? { annotate } : {}), ...(value != null ? { value } : {}), ...place };
     }
     case 'group': {
       const of = refs(args.of);

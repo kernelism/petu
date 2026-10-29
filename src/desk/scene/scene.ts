@@ -10,9 +10,9 @@
  * values come from the kit (a part's value), so they are never hand-written and they follow `set`.
  */
 import type { DrawAction, RefAction, SceneShape, ValueRef } from '../../script/types';
-import type { BuildEnv, ElementPlan, Pace, SceneClaim, TargetCtx } from '../types';
+import type { BuildEnv, ElementPlan, Pace, SceneClaim, SceneSpace, TargetCtx } from '../types';
 import { blockPart, isBlockRef } from '../../script/pointExpr';
-import { kitNumber, kitStore, metrics, type Block, type Metrics } from '../kit/kit';
+import { kitNumber, kitStore, metrics, setCaption, type Block, type Metrics } from '../kit/kit';
 import { kitText, svg, setAttrs, textWidth } from '../kit/text';
 import { tween, easeOut } from '../kit/anim';
 import { token } from '../../ink/agent/tokens';
@@ -124,19 +124,22 @@ function drawChip(parent: Element, p: Box, text: string, em: boolean, accent: st
 
 /** Builds a scene thing into a plan. A string is a skip reason. */
 export async function buildScene(a: S, ctx: TargetCtx, env: BuildEnv): Promise<ElementPlan | string> {
-  if (!ctx.scene) return `${a.kind} lives in a scene ({{scene}})`;
+  // A callout or a bracket reads in any section: in a plain sketch it is placed inside the section,
+  // clear of the ink already there. Chips, links and groups make a scene ({{scene}}).
+  if (!ctx.scene && a.kind !== 'note' && a.kind !== 'pair') return `${a.kind} lives in a scene ({{scene}})`;
   const m = metrics(ctx.scale(), ctx.body?.() ?? 16);
   const store = sceneStore(env.registry);
   const id = a.id ?? `_s${++anon}`;
   if (a.id && (store.get(a.id) || env.registry.get(a.id))) return 'duplicate id';
   const c = colors(), accent = env.settings.inkColor;
-  const scene = ctx.scene;
+  const scene = ctx.scene ?? flatSpace(ctx);
+  const inside = ctx.scene ? undefined : scene.view();
   const taken = () => [...scene.rects(), ...env.registry.obstacles(ctx.target)];
   // Things sit a link's length apart (room for an arrow and its word); text sits closer.
   const placeBox = async (w: number, h: number, place?: { rel: string; of: string }, gapK = 1.25) => {
     const anchor = place ? await anchorBox(place.of, env.registry) : null;
     if (place && !anchor) console.warn('[scene] unknown anchor, placed after the last thing:', place.of);
-    return placeRel(w, h, (anchor ? place!.rel : null) as never, anchor, taken(), { gap: m.gap * gapK, seed: id, view: scene.view(), last: scene.last() });
+    return placeRel(w, h, (anchor ? place!.rel : null) as never, anchor, taken(), { gap: m.gap * gapK, seed: id, view: scene.view(), last: scene.last(), ...(inside ? { inside } : {}) });
   };
   const { chipH, chipW } = chipKit(m);
 
@@ -192,7 +195,12 @@ export async function buildScene(a: S, ctx: TargetCtx, env: BuildEnv): Promise<E
 
   if (a.kind === 'note') {
     const lines = wrap(a.text, 15);
-    const w = Math.max(...lines.map((l) => m.u(textWidth(l, m.labelPx)))), h = lines.length * m.label * 1.35;
+    // value=: a live number after the words (a part's value, as the kit shows it); it follows set.
+    const shown = a.value != null ? await valueOf(a.value, env) : null;
+    if (shown && !Number.isFinite(shown.get())) return `unknown ${String(a.value)}`;
+    const lineW = (l: string) => m.u(textWidth(l, m.labelPx));
+    const valW = shown ? Math.max(lineW(valueText(shown, env)), lineW('100%')) + lineW(' ') : 0;
+    const w = Math.max(...lines.map((l, i) => lineW(l) + (i === lines.length - 1 ? valW : 0))), h = lines.length * m.label * 1.35;
     const target = a.annotate ? await anchorBox(a.annotate, env.registry) : null;
     if (a.annotate && !target) return `unknown ${a.annotate}`;
     // A callout sits near what it annotates, where its leader crosses nothing (placeRel scores that).
@@ -216,7 +224,33 @@ export async function buildScene(a: S, ctx: TargetCtx, env: BuildEnv): Promise<E
           svg(g, 'circle', { cx: q.x, cy: q.y, r: m.u(2.2), fill: a.em ? accent : c.ink2 });
           strokes = [samples(leader, 12)];
         }
-        lines.forEach((l, i) => kitText(g, r.x, r.y + m.label * (0.68 + i * 1.35), l, { size: m.label, fill: a.em ? accent : c.ink2, anchor: 'start' }));
+        const ink = a.em ? accent : c.ink2;
+        const write = (ls: string[], fill = ink) => ls.map((l, i) => kitText(g, r.x, r.y + m.label * (0.68 + i * 1.35), l, { size: m.label, fill, anchor: 'start' }));
+        let tx = write(lines);
+        let last = lines;
+        const vt = shown ? kitText(g, 0, 0, valueText(shown, env), { size: m.label, fill: a.em ? accent : c.ink, anchor: 'start' }) : null;
+        const placeValue = () => { if (vt) vt.parentNode?.appendChild(vt); if (vt) setAttrs(vt, { x: r.x + lineW(last[last.length - 1]) + lineW(' '), y: r.y + m.label * (0.68 + (last.length - 1) * 1.35) }); };
+        placeValue();
+        if (shown?.src && vt) kitStore(env.registry).listen(shown.src, () => { vt.textContent = valueText(shown, env); });
+        // set id=n "…": the words cross-fade in place (the note keeps its corner; its room follows the new size).
+        note.data!.relabel = async (next: string, k: Pace) => {
+          const still = k.fadeMs != null || prefersReducedMotion();
+          const old = tx;
+          await tween(still ? 0 : 160 * k.speed, (x) => old.forEach((t) => t.setAttribute('opacity', String(1 - x))));
+          old.forEach((t) => t.remove());
+          const ls = wrap(next, 15);
+          const nw = Math.max(...ls.map((l, i) => lineW(l) + (i === ls.length - 1 ? valW : 0))), nh = ls.length * m.label * 1.35;
+          tx = write(ls, accent);
+          last = ls;
+          placeValue();
+          tx.forEach((t) => t.setAttribute('opacity', '0'));
+          note.rect = { x: note.rect.x, y: note.rect.y, w: nw, h: nh };
+          claim.move(note.rect);
+          if (a.id && env.registry.get(a.id)) env.registry.update(a.id, { bbox: note.rect, boxes: [note.rect] });
+          await tween(still ? 0 : 240 * k.speed, (x) => tx.forEach((t) => t.setAttribute('opacity', String(x))), undefined, easeOut);
+          await new Promise((res) => setTimeout(res, still ? 0 : 500 * k.speed));
+          tx.forEach((t) => t.setAttribute('fill', ink));
+        };
         env.registry.define({ id: a.id, kind: 'scene-note', target: ctx.target, bbox: r, boxes: [r], anchor: { x: r.x, y: r.y + h / 2 }, group: g, strokes });
         // A callout goes where its thing goes (it moves with it, leader and all).
         if (a.annotate && target) {
@@ -390,6 +424,18 @@ export async function buildScene(a: S, ctx: TargetCtx, env: BuildEnv): Promise<E
   return planLink(a as LinkSpec, ctx, env, id, a.id);
 }
 
+/** A plain sketch's stand-in for a scene's world: its fixed frame, claims for this one thing only (earlier ink is in the registry). */
+function flatSpace(ctx: TargetCtx): SceneSpace {
+  const claims: SceneClaim[] = [];
+  return {
+    claim: (r, minor) => { const c: SceneClaim = { r: { ...r }, move: (n) => { c.r = { ...n }; }, drop: () => { const i = claims.indexOf(c); if (i >= 0) claims.splice(i, 1); }, ...(minor ? { minor } : {}) }; claims.push(c); return c; },
+    rects: (o) => (o?.lines === false ? claims.filter((c) => c.minor !== 'line') : claims).map((c) => c.r),
+    view: () => ({ x: 0, y: 0, w: 1000, h: ctx.h }),
+    last: () => null,
+    extent: () => null,
+  };
+}
+
 /** Whether p lies inside the polygon (even-odd). */
 function inPoly(p: P, poly: P[]): boolean {
   let inside = false;
@@ -414,7 +460,7 @@ function claimCorridor(scene: NonNullable<TargetCtx['scene']>, q: Route, m: Metr
 /** The part of a route up to t (de Casteljau). */
 const partial = (q: Route, t: number): Route => ({ a: q.a, c: { x: q.a.x + (q.c.x - q.a.x) * t, y: q.a.y + (q.c.y - q.a.y) * t }, b: at(q, t) });
 
-type LinkState = { routes: Route[]; strengths: ({ get(): number; norm(): number; src?: string } | null)[]; paint(tr?: number): void; from: string; targets: string[] };
+type LinkState = { routes: Route[]; strengths: ({ get(): number; norm(): number; src?: string } | null)[]; paint(tr?: number): void; from: string; targets: string[]; relabel(text: string, k: Pace): Promise<void> };
 
 /** A link (or a fan of links from one thing to every part of a flow) as a plan. */
 async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, aid?: string): Promise<ElementPlan | string> {
@@ -457,7 +503,11 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
     draw: async (_signal, k) => {
       const g = svg(ctx.layers.agent, 'g', { class: 'scene-link' });
       const els = routes.map(() => ({ path: svg(g, 'path', { 'stroke-linecap': 'round' }), head: L.plain ? null : svg(g, 'path', { stroke: 'none' }) }));
-      const label = txt0 ? kitText(g, 0, 0, '', { size: m.label, fill: L.em ? accent : c.ink2, halo: c.paper, haloW: m.label * 0.35 }) : null;
+      const labelCol = L.em ? accent : c.ink2;
+      const newLabel = () => kitText(g, 0, 0, '', { size: m.label, fill: labelCol, halo: c.paper, haloW: m.label * 0.35 });
+      let label = txt0 ? newLabel() : null;
+      let text = L.text;
+      const said = () => [text, L.showWeight && strengths[0] ? fmtW(strengths[0]!, env) : ''].filter(Boolean).join(' ');
       const paint = (tr = 1) => {
         routes.forEach((q, i) => {
           const s = strengths[i]?.norm();
@@ -476,7 +526,7 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
           }
         });
         if (label && lbox) {
-          label.textContent = [L.text, L.showWeight && strengths[0] ? fmtW(strengths[0]!, env) : ''].filter(Boolean).join(' ');
+          label.textContent = said();
           setAttrs(label, { x: lbox.x + lbox.w / 2, y: lbox.y + lbox.h / 2, opacity: tr >= 1 && !sameBox(...endsNow(0)) ? 1 : 0 });
         }
       };
@@ -491,7 +541,48 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
       paint(1);
       const boxes = () => routes.flatMap((q) => samples(q, 10).map((p) => ({ x: p.x - m.u(3), y: p.y - m.u(3), w: m.u(6), h: m.u(6) })));
       env.registry.define({ id: aid, kind: 'scene-link', target: ctx.target, bbox, boxes: [...boxes(), ...(lbox ? [lbox] : [])], anchor: at(routes[0], 1), group: g, strokes: routes.map((q) => samples(q, 16)) });
-      const link: LinkState = { routes, strengths, paint, from: fromKey, targets };
+      /**
+       * A new label (set id=l "…"): once drawn is drawn, so the old words fade out where they are, the
+       * new ones are measured and placed again (clear of things, labels and the curve) and fade in with
+       * an accent flash that settles back to the link's own colour.
+       */
+      const relabel = async (next: string, k: Pace) => {
+        const still = k.fadeMs != null || prefersReducedMotion();
+        const old = label;
+        if (old) await tween(still ? 0 : 160 * k.speed, (x) => old.setAttribute('opacity', String(1 - x)));
+        text = next;
+        lclaim?.drop();
+        const w = lw([next, L.showWeight ? '100%' : ''].filter(Boolean).join(' '));
+        const room = () => [...scene.rects(), ...env.registry.obstacles(ctx.target, aid)];
+        const hit = (b: Box) => solid().reduce((s, r) => s + (overlaps(b, r) ? 1 : 0), 0);
+        lbox = placeLabel(routes[0], w, lh, room(), m.u(5));
+        // Longer words with no clear spot beside a short straight link: the link bends up into an arc
+        // (a visible glide, as when it was first drawn with such a label) and the words sit over it.
+        if (!fan && hit(lbox)) {
+          const f = now.f, e = now.e[0];
+          const arc = routeLink(f, e, clear(solid(), f, e), m.u(4), m.u(3), others(), true);
+          const ab = placeLabel(arc, w, lh, room(), m.u(5));
+          if (hit(ab) < hit(lbox)) {
+            const q0 = routes[0], mix = (p: P, q: P, x: number) => ({ x: p.x + (q.x - p.x) * x, y: p.y + (q.y - p.y) * x });
+            await tween(still ? 0 : 320 * k.speed, (x) => { routes[0] = { a: mix(q0.a, arc.a, x), c: mix(q0.c, arc.c, x), b: mix(q0.b, arc.b, x) }; paint(); if (label) label.setAttribute('opacity', '0'); }, undefined, easeOut);
+            routes[0] = arc;
+            corridor.forEach((cl) => cl.drop());
+            corridor = routes.flatMap((q) => claimCorridor(scene, q, m));
+            lbox = ab;
+          }
+        }
+        lclaim = scene.claim(lbox, 'label');
+        if (!label) label = newLabel();
+        const el = label;
+        el.textContent = said();
+        setAttrs(el, { x: lbox.x + lbox.w / 2, y: lbox.y + lbox.h / 2, opacity: 0, fill: accent });
+        if (aid && env.registry.get(aid)) env.registry.update(aid, { boxes: [...boxes(), lbox], strokes: routes.map((q) => samples(q, 16)) });
+        await tween(still ? 0 : 240 * k.speed, (x) => el.setAttribute('opacity', String(x)), undefined, easeOut);
+        el.setAttribute('opacity', '1');
+        await new Promise((res) => setTimeout(res, still ? 0 : 500 * k.speed));
+        el.setAttribute('fill', labelCol);
+      };
+      const link: LinkState = { routes, strengths, paint, from: fromKey, targets, relabel };
       store.put(id, { rect: bbox, data: { kind: 'link', link } });
       // Re-weight when the values move (set), re-route when an end moves (move, split, merge).
       strengths.forEach((s) => s?.src && kitStore(env.registry).listen(s.src, () => paint()));
@@ -541,6 +632,18 @@ function wrap(t: string, n: number): string[] {
 // Verbs on scene things: emph / fade a part (a chip), move by relation (kit blocks too), split a chip,
 // set a label, value or strength.
 
+/** A link's strength tweens to a new value (a literal, or a part it follows from now on). */
+async function reweight(link: LinkState, weight: ValueRef, env: BuildEnv, k: Pace): Promise<void> {
+  const next = await valueOf(weight, env);
+  const from = link.strengths.map((s) => (s ? s.norm() : 0.5));
+  await tween(600 * k.speed, (x) => {
+    from.forEach((f, i) => { const v = f + (next.norm() - f) * x; link.strengths[i] = { get: () => (typeof weight === 'number' ? v : next.get()), norm: () => v }; });
+    link.paint();
+  });
+  link.strengths.forEach((_, i) => { link.strengths[i] = next; });
+  link.paint();
+}
+
 /** Whether a ref action is the scene's. */
 export function isSceneRef(a: RefAction, env: BuildEnv): boolean {
   const id = isBlockRef(a.ref) ? blockPart(a.ref)?.id : a.ref;
@@ -585,6 +688,22 @@ export async function buildSceneRef(a: RefAction, env: BuildEnv): Promise<Elemen
     // The chips it names: a node's (or a merged chip's) one chip, or a flow's parts f[2] / f[1:3].
     const chips = (t.data!.chips as SVGRectElement[] | undefined) ?? [];
     const kind = t.data!.kind;
+    // A kit block placed in the scene: its caption is its label.
+    if (kind === 'kit') return a.text != null && a.value == null && a.weight == null ? setCaption(id, a.text, env) : `${id} is a kit block: set its values with vals= or fn=`;
+    const link = t.data!.link as LinkState | undefined;
+    if (link || kind === 'note') {
+      if (part) return `${a.ref}: a ${kind} has no parts`;
+      if (a.value != null) return `${id} is a ${kind}: it has no value to set`;
+      if (kind === 'note' && a.text == null) return `${id} is a note: set its "words"`;
+      const r = t.rect;
+      return {
+        target, bbox: grow(r, m.u(10)),
+        draw: async (_s, k) => {
+          if (a.text != null) await (link ? link.relabel(a.text, k) : (t.data!.relabel as (s: string, k: Pace) => Promise<void>)(a.text, k));
+          if (link && a.weight != null) await reweight(link, a.weight, env, k);
+        },
+      };
+    }
     const idx = part ? range(part.c0, part.c1) : kind === 'node' ? [0] : [];
     if ((a.text != null || a.value != null) && !chips.length) return `${id} has no label to set`;
     if ((a.text != null || a.value != null) && !idx.length) return `set a label on a part of ${id}, as ${id}[2]`;
@@ -615,17 +734,6 @@ export async function buildSceneRef(a: RefAction, env: BuildEnv): Promise<Elemen
           (t.data!.paint as () => void)();
           if (next.src) kitStore(env.registry).listen(next.src, t.data!.paint as () => void);
           await tween(200 * k.speed, (x) => vt.forEach((v) => v.setAttribute('opacity', String(x))));
-        }
-        const link = t.data!.link as LinkState | undefined;
-        if (link && a.weight != null) {
-          const next = await valueOf(a.weight, env);
-          const from = link.strengths.map((s) => (s ? s.norm() : 0.5));
-          await tween(600 * k.speed, (x) => {
-            from.forEach((f, i) => { const v = f + (next.norm() - f) * x; link.strengths[i] = { get: () => (typeof a.weight === 'number' ? v : next.get()), norm: () => v }; });
-            link.paint();
-          });
-          link.strengths.forEach((_, i) => { link.strengths[i] = next; });
-          link.paint();
         }
       },
     };

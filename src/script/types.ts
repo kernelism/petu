@@ -126,7 +126,7 @@ export type SceneShape =
   /** A relation from one thing (or part) to another. Weight (0–1, or a part with a value) sets thickness and strength; a whole flow as `to` with a vector weight fans out. */
   | { kind: 'link'; from: string; to: string; strength?: ValueRef; text?: string; plain?: boolean; dash?: boolean; showWeight?: boolean }
   /** Text placed by relation; with `annotate`, a callout with a leader line to that thing or part. */
-  | { kind: 'note'; text: string; place?: ScenePlace; annotate?: string }
+  | { kind: 'note'; text: string; place?: ScenePlace; annotate?: string; /** a live value after the words (a block's part): it follows set */ value?: ValueRef }
   /** A loose outline around a set of things (a system boundary, a category), labelled on its edge; it follows them when they move. */
   | { kind: 'group'; of: string[]; text?: string }
   /** A bracket joining two things or parts (a pair: "equal and opposite"), labelled at its spine. */

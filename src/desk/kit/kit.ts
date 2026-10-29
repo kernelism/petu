@@ -676,8 +676,55 @@ async function appear(el: SVGElement, ms: number, k: Pace) {
 function caption(g: Element, x: number, y: number, cap: string, m: Metrics, c: ReturnType<typeof col>) {
   const v = isVarName(cap);
   const t = kitText(g, x, y, cap, { size: v ? m.label * 1.2 : m.label, fill: v ? c.ink2 : c.muted });
+  t.setAttribute('data-kit-caption', '');
   if (v) { t.setAttribute('font-style', 'italic'); t.setAttribute('font-family', 'KaTeX_Math, "STIX Two Math", "Cambria Math", "Times New Roman", serif'); }
   return t;
+}
+
+/**
+ * set id=b "…" on a block: its caption takes the new words. Once drawn is drawn: the old caption fades
+ * out where it is and the new one fades in on the same spot with an accent flash (a line's name at its
+ * end likewise). Words wider than the block squeeze to its room when a neighbour sits beside it.
+ */
+export async function setCaption(id: string, text: string, env: BuildEnv): Promise<ElementPlan | string> {
+  const store = kitStore(env.registry);
+  const b = await store.wait(id);
+  if (!b) return `unknown block ${id}`;
+  if (!b.el.caption) return `${id} has no caption to set (name it with "…" on its tag)`;
+  const accent = env.settings.inkColor;
+  return {
+    target: { region: b.region }, bbox: pad(b.placed.rect, b.m.u(8)),
+    draw: async (_signal, k) => {
+      await b.ready;
+      const c = col(), m = b.m;
+      const still = k.fadeMs != null || prefersReducedMotion();
+      b.el.caption = text;
+      const olds = b.g ? [...b.g.querySelectorAll('[data-kit-caption]')] as SVGTextElement[] : [];
+      const line = (b.el.line as LineEls | undefined)?.label ?? null;
+      await tween(still ? 0 : 160 * k.speed, (x) => { olds.forEach((t) => t.setAttribute('opacity', String(1 - x))); line?.setAttribute('opacity', String(1 - x)); });
+      // Room: the block's own width, or more where nothing else sits beside it.
+      const r = b.placed.rect, w = m.u(textWidth(text, m.labelPx));
+      const room = (cx: number, y: number) => {
+        const want = { x: cx - w / 2, y: y - m.label, w, h: m.label * 2 };
+        const others = [...store.inRegion(b.region).filter((o) => o !== b).map((o) => o.placed.rect), ...env.registry.obstacles({ region: b.region }, id, true).filter((o) => !(o.x >= r.x - 1 && o.y >= r.y - 1 && o.x + o.w <= r.x + r.w + 1 && o.y + o.h <= r.y + r.h + 1))];
+        return others.some((o) => o.x < want.x + want.w && want.x < o.x + o.w && o.y < want.y + want.h && want.y < o.y + o.h) ? Math.max(r.w, 1) : Infinity;
+      };
+      const news = olds.map((o) => {
+        const x = Number(o.getAttribute('x')), y = Number(o.getAttribute('y'));
+        const t = caption(o.parentElement!, x, y, text, m, c);
+        const fit = room(x, y);
+        if (w > fit) setAttrs(t, { textLength: fit, lengthAdjust: 'spacingAndGlyphs' });
+        setAttrs(t, { opacity: 0, fill: accent });
+        o.remove();
+        return { t, fill: isVarName(text) ? c.ink2 : c.muted };
+      });
+      if (line) { line.textContent = text; line.setAttribute('fill', accent); }
+      await tween(still ? 0 : 240 * k.speed, (x) => { news.forEach((n) => n.t.setAttribute('opacity', String(x))); line?.setAttribute('opacity', String(x)); }, undefined, easeOut);
+      await pause(still ? 0 : 500 * k.speed);
+      news.forEach((n) => n.t.setAttribute('fill', n.fill));
+      if (line) line.setAttribute('fill', lineColor(b, c, accent));
+    },
+  };
 }
 
 function drawOp(g: SVGGElement, b: Block, c: ReturnType<typeof col>) {
@@ -1003,7 +1050,14 @@ export async function buildKitPlot(a: Extract<DrawAction, { kind: 'plot' }> & { 
   if (ys.filter(Number.isFinite).length < 2) return 'nothing to plot';
   const others = store.inRegion(region).map((b) => b.placed);
   const spacing = { gap: m.gap, opW: m.opW, margin: m.margin, top: m.top, width: 1000 };
-  const P = (w: number, h: number, pad: Pad) => place(w, h, pad, {}, undefined, others, spacing);
+  const scene = ctx.scene;
+  // In a scene a new chart is placed as every other thing is: by the scene, clear of all its claims
+  // (chips, labels, links), flowing on from the last thing; never stacked from the section's top.
+  const P = (w: number, h: number, pad: Pad): Placed => {
+    if (!scene) return place(w, h, pad, {}, undefined, others, spacing);
+    const r = placeRel(pad.l + w + pad.r, pad.t + h + pad.b, null, null, [...scene.rects(), ...env.registry.obstacles(ctx.target)], { gap: m.gap * 1.3, seed: id, view: scene.view(), last: scene.last() });
+    return { body: { x: r.x + pad.l, y: r.y + pad.t, w, h }, rect: r };
+  };
   const b = await makeLineXY(id, region, m, P, store, xs, ys, a.axes, [], false, { x: a.xLabel, y: a.yLabel });
   if (typeof b === 'string') return b;
   b.em = a.em;
@@ -1653,6 +1707,7 @@ async function stepOrSweep(v: Extract<KitVerb, { kind: 'step' | 'sweep' }>, env:
 // set: an input changes; everything computed from it follows.
 
 async function setVerb(v: Extract<KitVerb, { kind: 'set' }>, env: BuildEnv, store: KitStore): Promise<ElementPlan | string> {
+  if (v.text != null && v.vals == null && v.fn == null && v.to == null) return v.value != null || v.weight != null || blockPart(v.ref) ? `${v.ref}: a block takes a "caption" or new values` : setCaption(v.ref, v.text, env);
   const part = blockPart(v.ref);
   const id = part ? part.id : v.ref;
   const b = await store.wait(id);
@@ -2150,16 +2205,34 @@ async function levelVerb(v: Extract<KitVerb, { kind: 'level' }>, env: BuildEnv, 
   };
 }
 
-/** emph where="x==7": every matching cell of a grid or table, counted out one by one. */
+/**
+ * Names a where= condition may use besides x (the value), r, c and i (its row, column, index): the
+ * answer's constants, its readouts ({{find}} E is its value) and one-value blocks (a calc's result),
+ * so a highlight selects by the engine's own threshold (`where="x<=q"`), never by hand.
+ */
+function whereVars(store: KitStore): Record<string, number> {
+  const out: Record<string, number> = { ...store.consts };
+  for (const id of store.finds.keys()) { const r = store.reading(id); if (typeof r !== 'string' && Number.isFinite(r.v)) out[id.toLowerCase()] = r.v; }
+  for (const b of store.all()) {
+    const e = b.kind === 'calc' && b.calc && !b.calc.win && !b.calc.live ? calcExpansion(b.calc, store, b.dp) : null;
+    const xs = e && typeof e !== 'string' ? [e.value] : b.vals?.flat();
+    if (b.kind !== 'table' && xs?.length === 1 && Number.isFinite(xs[0])) out[b.id.toLowerCase()] = xs[0];
+  }
+  for (const k of ['x', 'r', 'c', 'i']) delete out[k];
+  return out;
+}
+
+/** emph where="x==7": every matching cell of a grid or table (counted out one by one), bar or share part. */
 async function emphWhere(a: Extract<RefAction, { kind: 'emph' }>, env: BuildEnv, store: KitStore): Promise<ElementPlan | string> {
   const b = await store.wait(a.ref);
-  if (!b || (b.kind !== 'grid' && b.kind !== 'table')) return 'where: a grid or a table';
-  const fn = C.compileFn(a.where!, ['x', 'r', 'c']);
+  if (!b || (b.kind !== 'grid' && b.kind !== 'table' && b.kind !== 'bars' && b.kind !== 'shares')) return 'where: a grid, a table, bars or shares';
+  const fn = formula(a.where!, ['x', 'r', 'c', 'i'], whereVars(store));
   if (!fn) return 'bad where';
   const hits: [number, number][] = [];
-  b.vals!.forEach((row, r) => row.forEach((x, q) => { if (Number.isFinite(x) && fn({ x, r: r + 1, c: q + 1 })) hits.push([r, q]); }));
+  b.vals!.forEach((row, r) => row.forEach((x, q) => { if (Number.isFinite(x) && fn({ x, r: r + 1, c: q + 1, i: q + 1 })) hits.push([r, q]); }));
   if (!hits.length) return 'no cell matches';
   const accent = env.settings.inkColor;
+  if (b.kind === 'bars' || b.kind === 'shares') return emphWhereVector(b, hits.map(([, q]) => q), accent);
   return {
     target: { region: b.region }, bbox: b.placed.rect,
     draw: async (_s, k) => {
@@ -2183,6 +2256,44 @@ async function emphWhere(a: Extract<RefAction, { kind: 'emph' }>, env: BuildEnv,
         setAttrs(tx, { fill: accent, 'font-weight': 600 });
         await pause(each);
       }
+    },
+  };
+}
+
+/** where= on a vector: exactly the matching bars (points on a line, parts of a share) take the accent; an earlier where's marks go. */
+function emphWhereVector(b: Block, hits: number[], accent: string): ElementPlan {
+  return {
+    target: { region: b.region }, bbox: b.placed.rect,
+    draw: async (_s, k) => {
+      await b.ready;
+      const c = col();
+      const prev = (b.el.whereIdx as number[] | undefined) ?? [];
+      b.el.whereIdx = hits;
+      const each = k.fadeMs != null || prefersReducedMotion() ? 0 : Math.min(120, 1400 / hits.length) * k.speed;
+      if (b.kind === 'shares') {
+        const e = b.el.shares as ShareEls;
+        prev.forEach((i) => e.em.delete(i));
+        for (const i of hits) { e.em.add(i); paintShares(b, c, accent); await pause(each); }
+        paintShares(b, c, accent);
+        return;
+      }
+      if (b.view === 'line') {
+        const e = b.el.line as LineEls;
+        (b.el.whereRings as SVGGElement | undefined)?.remove();
+        const g = svg(e.rings, 'g');
+        b.el.whereRings = g;
+        prev.forEach((i) => e.dots[i]?.setAttribute('fill', lineColor(b, c, accent)));
+        for (const i of hits) {
+          const q = linePt(b.plot!, b.xs![i], b.vals![0][i]);
+          svg(g, 'circle', { cx: q.x, cy: q.y, r: px(b, 7), fill: 'none', stroke: accent, ...hair(1.6) });
+          e.dots[i]?.setAttribute('fill', accent);
+          await pause(each);
+        }
+        return;
+      }
+      const e = b.el.bars as BarEls;
+      for (const i of prev) { e.emBars.delete(i); e.bars[i]?.setAttribute('fill', c.bar); e.vals[i]?.setAttribute('fill', c.ink); }
+      for (const i of hits) { e.emBars.add(i); e.bars[i]?.setAttribute('fill', accent); e.vals[i]?.setAttribute('fill', accent); await pause(each); }
     },
   };
 }
