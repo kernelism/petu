@@ -953,9 +953,11 @@ export default function App() {
             // Cut off (what arrived has played), or nothing came back: say so and offer Retry.
             clearHide();
             setCaptionWords([]);
-            setAnswerError({ message: cutOff != null ? askErrorLine('cut_off', null).message : NO_ANSWER, retry: true });
+            // A cut-off with its own reason (a spending cap) shows that reason; Retry wouldn't help.
+            const why = cutOff != null && cutOff !== 'The answer was cut off.' ? cutOff : null;
+            setAnswerError({ message: why ?? (cutOff != null ? askErrorLine('cut_off', null).message : NO_ANSWER), retry: why == null });
             setCaptionVisible(true);
-            setLiveText(`${cutOff != null ? 'The answer was cut off.' : NO_ANSWER} Retry is available.`);
+            setLiveText(why ?? `${cutOff != null ? 'The answer was cut off.' : NO_ANSWER} Retry is available.`);
           } else {
             hideTimer.current = window.setTimeout(() => setCaptionVisible(false), drew ? CAPTION_LINGER_MS : CAPTION_LINGER_TEXT_MS);
           }

@@ -509,7 +509,10 @@ export function buildSystemPrewarm(cfg: ModelConfig) {
  * (accents, CJK, math symbols), images by the 32-px patch rule × 1.2.
  */
 export function estimateInputTokens(body: { input: unknown }, images: { w: number; h: number }[]): number {
-  const text = JSON.stringify(body.input).replace(/data:image\/jpeg;base64,[A-Za-z0-9+/=]+/g, '');
+  // Images are counted as patches, never as their bytes: OpenAI carries them as data: URLs, Anthropic
+  // as raw base64 in an image block's source.data.
+  const text = JSON.stringify(body.input).replace(/data:image\/jpeg;base64,[A-Za-z0-9+/=]+/g, '')
+    .replace(/"data":"[A-Za-z0-9+/=]{64,}"/g, '"data":""');
   const wide = text.match(/[^\x00-\x7f]/g)?.length ?? 0;
   const patches = images.reduce((n, i) => n + Math.ceil(i.w / 32) * Math.ceil(i.h / 32), 0);
   return Math.ceil((text.length - wide) / 3.2 + wide + patches * 1.2) + 50;
