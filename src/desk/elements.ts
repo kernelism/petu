@@ -583,8 +583,33 @@ function compassOf(v: SPt): 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw' {
   return dirs[(Math.round(a / (Math.PI / 4)) + 8) % 8];
 }
 
+/**
+ * emph on a section's id: a brief accent pass around everything drawn in it (the whole section when
+ * it is empty). fade has no one meaning on a section (which of its elements?): skipped, with what to write.
+ */
+async function sectionRef(kind: 'emph' | 'fade', id: string, env: BuildEnv): Promise<ElementPlan | string> {
+  if (kind === 'fade') return `${id} is a section: fade the elements inside it by their ids`;
+  const target: Target = { region: id };
+  const ctx = await env.ctx(target);
+  if (typeof ctx === 'string') return ctx;
+  const ink = env.registry.obstacles(target);
+  const pad = 12;
+  const r = ink.length ? union(ink) : { x: 0, y: 0, w: 1000, h: ctx.h };
+  const bbox = { x: r.x - pad, y: r.y - pad, w: r.w + 2 * pad, h: r.h + 2 * pad };
+  return {
+    target, bbox,
+    draw: async (signal) => {
+      const g = own(ctx.layers.agent);
+      const e: ElementEntry = { id: `_${id}`, kind: 'section', target, bbox, boxes: [], anchor: { x: bbox.x, y: bbox.y }, group: g, strokes: [boxStroke(bbox.x, bbox.y, bbox.w, bbox.h, env.rng())] };
+      await emphPass(e, env.settings.inkColor, ctx.scale(), signal);
+      g.remove();
+    },
+  };
+}
+
 async function ref(a: RefAction, env: BuildEnv): Promise<ElementPlan | string> {
   const e = await env.registry.wait(a.ref, REF_WAIT_MS);
+  if (!e && (a.kind === 'emph' || a.kind === 'fade') && env.desk.region?.(a.ref.toLowerCase())) return sectionRef(a.kind, a.ref.toLowerCase(), env);
   if (!e) { console.warn('[desk] unknown id', a.ref); return 'unknown id'; }
   const ctx = await env.ctx(e.target);
   if (typeof ctx === 'string') return ctx;

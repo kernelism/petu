@@ -121,6 +121,24 @@ describe('buildElement', () => {
     expect(await p).toBe('unknown id');
     expect(warn).toHaveBeenCalled();
   });
+  it('emph on a section id flashes a frame around its ink; fade on it skips with what to write (C12k)', async () => {
+    const desk = { region: (id: string) => (id === 's' ? ({ id: 's' } as never) : null) } as unknown as DeskApi;
+    const { e, layers } = env({ desk });
+    await run(await buildElement({ kind: 'line', region: 's', from: { x: 100, y: 100 }, to: { x: 300, y: 200 }, id: 'l' }, e));
+    const p = buildElement({ kind: 'emph', ref: 's' }, e);
+    await vi.advanceTimersByTimeAsync(REF_WAIT_MS);
+    const plan = await p;
+    expect(typeof plan).toBe('object');
+    const b = (plan as ElementPlan).bbox;
+    expect(b.x).toBeLessThan(100); expect(b.x + b.w).toBeGreaterThan(300);
+    expect((plan as ElementPlan).target).toEqual({ region: 's' });
+    const n = layers.agent.childElementCount;
+    await run(plan);
+    expect(layers.agent.childElementCount).toBe(n); // the flash leaves nothing behind
+    const f = buildElement({ kind: 'fade', ref: 's' }, e);
+    await vi.advanceTimersByTimeAsync(REF_WAIT_MS);
+    expect(await f).toBe('s is a section: fade the elements inside it by their ids');
+  });
   it('move translates a point and updates its anchor; lines do not move', async () => {
     const { e } = env();
     await run(await buildElement({ kind: 'point', region: 'side', at: { x: 100, y: 100 }, id: 'p' }, e));
