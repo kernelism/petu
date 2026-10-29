@@ -248,6 +248,18 @@ describe('kit blocks on the board', () => {
     expect(calc).not.toMatch(/\d+\/3\b/);
   });
 
+  it('bars axes=<another bar chart>: drawn as bars on one y scale with it (C12m)', async () => {
+    const { e } = env();
+    await tag(e, 'bars on=toy id=kid vals=7,8 labels=before,after "coins the kid pays"');
+    expect(typeof (await tag(e, 'bars on=toy id=shop vals=7,6 labels=before,after axes=kid right=kid "coins the shop keeps"'))).not.toBe('string');
+    // one scale even when the ranges differ a lot (axes= says so; plain right= would not share past 4×)
+    await tag(e, 'bars on=toy id=big vals=70,1 axes=kid right=shop');
+    const st = kitStore(e.registry);
+    expect(st.get('shop')!.view).toBeUndefined();
+    expect(st.get('shop')!.group).toBe(st.get('kid')!.group);
+    expect(st.get('big')!.group).toBe(st.get('kid')!.group);
+    expect(st.get('kid')!.group!.pos).toBe(70);
+  });
   it('view=line: a vector as a curve; a second line shares its axes; set moves it and leaves a ghost', async () => {
     const { e, layers } = env();
     await tag(e, 'bars on=s id=y size=1x40 fn="sin(c/5)+0.3*randn()" view=line "noisy"');
