@@ -174,8 +174,9 @@ async function main(): Promise<void> {
   const meta = { id, qset: `${a.qset} (${qlabel})`, createdAt: new Date().toISOString(), dry: a.dry, judge: a.judge, phase, promptVersion: PROMPT_VERSION, preflight: pf.table };
   writeFileSync(join(out, 'index.html'), renderBench(meta, a.configs, rows, sums));
   writeFileSync(join(out, 'bench.json'), JSON.stringify({ meta, runs: reuse, summaries: sums, rows }, null, 1));
-  console.log('\nconfig                 answers  judge  first-word p50  spoken mean  gen $    gate flagged');
-  for (const s of sums) console.log(`${s.config.padEnd(22)} ${String(s.answers).padStart(7)}  ${s.judgeMean == null ? '   – ' : s.judgeMean.toFixed(2).padStart(5)}  ${s.firstWordP50 == null ? '–' : `${(s.firstWordP50 / 1000).toFixed(2)} s`.padStart(14)}  ${s.spokenMeanS == null ? '–' : `${s.spokenMeanS.toFixed(0)} s`.padStart(11)}  ${s.genUsd.toFixed(3).padStart(6)}  ${s.gate.failing}/${s.gate.beats}${s.fake ? '  (fake)' : ''}`);
+  const s1 = (x: number | null) => (x == null ? '–' : `${(x / 1000).toFixed(2)} s`);
+  console.log(`\n${'config'.padEnd(22)} answers  judge  first-word p50  author-text p50  spoken mean   gen $  gate flagged`);
+  for (const s of sums) console.log(`${s.config.padEnd(22)} ${String(s.answers).padStart(7)}  ${s.judgeMean == null ? '    –' : s.judgeMean.toFixed(2).padStart(5)}  ${s1(s.firstWordP50).padStart(14)}  ${s1(s.stage2P50).padStart(15)}  ${(s.spokenMeanS == null ? '–' : `${s.spokenMeanS.toFixed(0)} s`).padStart(11)}  ${s.genUsd.toFixed(3).padStart(6)}  ${s.gate.failing}/${s.gate.beats}${s.fake ? '  (fake)' : ''}`);
   console.log(`\nopen ${join(out, 'index.html')}`);
 }
 

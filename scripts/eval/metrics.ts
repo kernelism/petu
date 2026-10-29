@@ -13,6 +13,13 @@ export type Metrics = {
    * the last word).
    */
   spokenMs: number | null;
+  /**
+   * When the author's (stage 2's) first text arrived, ms since Enter (the handoff; without an opener
+   * its first chunk), and the silence it left after the opener's last word (0 when it was in time).
+   * The first word itself is usually the scout's opener, the same for every author.
+   */
+  stage2Ms: number | null;
+  handoffGapMs: number | null;
   /** Stage 2's cost (the `done` event). */
   usd: number;
   /** The scout's cost (the `scout` event) and the storyboard's, when there was one. */
@@ -140,6 +147,7 @@ export function computeMetrics(r: EvalResult): Metrics {
   }).length;
   const labels = labelStats(r.registry);
   const scoutUsd = r.events.reduce((s, e) => s + ((e.t === 'scout' || e.t === 'storyboard') ? (e.usd ?? 0) : 0), 0);
+  const handoff = r.events.find((e) => e.t === 'handoff') as Extract<EvalResult['events'][number], { t: 'handoff' }> | undefined;
   const lastSpoken = r.sentences.length ? r.sentences[r.sentences.length - 1].endMs : r.words.length ? r.words[r.words.length - 1].t : null;
 
   return {
@@ -148,6 +156,8 @@ export function computeMetrics(r: EvalResult): Metrics {
     firstMarkMs: firstMark,
     totalMs: ends.length ? Math.max(...ends) : null,
     spokenMs: r.words.length && lastSpoken != null ? Math.max(0, lastSpoken - r.words[0].t) : null,
+    stage2Ms: handoff?.ms ?? r.chunks[0]?.t ?? null,
+    handoffGapMs: handoff?.openerEndMs != null ? Math.max(0, handoff.ms - handoff.openerEndMs) : null,
     usd: done?.usd ?? 0,
     scoutUsd,
     answerUsd: (done?.usd ?? 0) + scoutUsd,

@@ -152,6 +152,15 @@ describe('spoken length and the whole answer cost', () => {
     expect(a.meanSpokenMs).toBe((1800 + 4000) / 2);
     expect(a.answerUsd).toBeCloseTo(0.032, 10);
   });
+  it('the author\'s first text (handoff) and the pause after the opener, apart from the first word', () => {
+    const r = base();
+    r.events = [{ t: 'handoff', ms: 5200, openerEndMs: 4000 }, ...r.events];
+    const m = computeMetrics(r);
+    expect(m.stage2Ms).toBe(5200);
+    expect(m.handoffGapMs).toBe(1200);
+    expect(computeMetrics(base()).stage2Ms).toBe(420); // no opener: stage 2's first chunk
+    expect(computeMetrics(base()).handoffGapMs).toBeNull();
+  });
   it('no words: no spoken length', () => {
     const r = base(); r.words = []; r.sentences = [];
     expect(computeMetrics(r).spokenMs).toBeNull();

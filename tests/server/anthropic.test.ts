@@ -108,6 +108,12 @@ describe('Anthropic request (stage 2)', () => {
     expect(thinkingFor('claude-sonnet-5-5', 'medium')).toEqual({ thinking: { type: 'adaptive' }, output_config: { effort: 'medium' } });
     expect(() => thinkingFor('claude-opus-5-5', 'none')).toThrow(/thinking/);
   });
+  it('drops empty text blocks and messages left empty (the API rejects them)', () => {
+    const b = buildAnswerRequest(req({ history: [{ q: 'q0', a: '', page: 12 }] }), opus);
+    const all = b.messages.flatMap((m: any) => m.content);
+    expect(all.every((p: any) => p.type !== 'text' || p.text.trim())).toBe(true);
+    expect(b.messages.some((m: any) => m.role === 'assistant')).toBe(false);
+  });
   it('OpenAI configs are untouched by the provider switch', () => {
     const b = buildAnswerRequest(req(), { ...opus, model: 'gpt-6.1-terra', effort: 'none' });
     expect(b).toHaveProperty('input');

@@ -146,6 +146,7 @@ export type ConfigSummary = {
   answers: number; missing: number;
   judged: number; judgeMean: number | null; byCriterion: Record<string, number>; fatal: number; fakeJudge: boolean;
   firstWordP50: number | null; firstWordP90: number | null;
+  stage2P50: number | null; stage2P90: number | null; gapP50: number | null; gapP90: number | null;
   spokenMeanS: number | null; spokenP50S: number | null;
   genUsd: number; usdPerAnswer: number | null; judgeUsd: number;
   gate: GateCounts; skipped: number; malformed: number;
@@ -170,6 +171,8 @@ export function summarize(config: string, cells: BenchCell[]): ConfigSummary {
     fatal: judged.reduce((s, x) => s + x.judge!.fatal.length, 0),
     fakeJudge: judged.some((x) => x.fakeJudge),
     firstWordP50: percentile(ms.map((m) => m.firstWordMs), 0.5), firstWordP90: percentile(ms.map((m) => m.firstWordMs), 0.9),
+    stage2P50: percentile(ms.map((m) => m.stage2Ms ?? null), 0.5), stage2P90: percentile(ms.map((m) => m.stage2Ms ?? null), 0.9),
+    gapP50: percentile(ms.map((m) => m.handoffGapMs ?? null), 0.5), gapP90: percentile(ms.map((m) => m.handoffGapMs ?? null), 0.9),
     spokenMeanS: spoken.length ? spoken.reduce((a, b) => a + b, 0) / spoken.length / 1000 : null,
     spokenP50S: spoken.length ? percentile(spoken, 0.5)! / 1000 : null,
     genUsd, usdPerAnswer: ms.length ? genUsd / ms.length : null,
@@ -230,7 +233,7 @@ function cellHtml(c: BenchCell | undefined): string {
   const board = img ? `<div class="board"><a href="${esc(img)}"><img loading="lazy" src="${esc(img)}" alt="${esc(`${c.config} final board`)}"></a></div>` : `<div class="empty">${c.fake ? 'fake answer: no capture' : 'no board capture'}</div>`;
   const frames = c.frames.length ? `<div class="frames">${c.frames.map((f) => `<figure><a href="${esc(f.src)}"><img loading="lazy" src="${esc(f.src)}" alt="${esc(f.label)}"></a><figcaption>${esc(f.label)}</figcaption></figure>`).join('')}</div>` : '';
   return `<div class="cell">${board}${frames}
-<p class="stats"><span>first word <b>${sec(m.firstWordMs)}</b></span><span>spoken <b>${sec(m.spokenMs)}</b></span><span>cost <b>${usd(m.answerUsd ?? m.usd)}</b>${m.estimated ? ' (est.)' : ''}</span><span>${m.words} words</span><span>${m.elements} marks</span>${m.skippedTotal || m.malformed ? `<span class="fatal">skipped ${m.skippedTotal} · malformed ${m.malformed}</span>` : ''}</p>
+<p class="stats"><span>first word <b>${sec(m.firstWordMs)}</b></span><span>author text <b>${sec(m.stage2Ms)}</b>${m.handoffGapMs ? ` (pause ${sec(m.handoffGapMs)})` : ''}</span><span>spoken <b>${sec(m.spokenMs)}</b></span><span>cost <b>${usd(m.answerUsd ?? m.usd)}</b>${m.estimated ? ' (est.)' : ''}</span><span>${m.words} words</span><span>${m.elements} marks</span>${m.skippedTotal || m.malformed ? `<span class="fatal">skipped ${m.skippedTotal} · malformed ${m.malformed}</span>` : ''}</p>
 ${judgeHtml(c.judge, c.fakeJudge)}${gateHtml(c.gate)}
 ${c.fake ? '<p class="fatal">fake answer (dry run)</p>' : ''}
 <details><summary>Transcript</summary><div class="tr">${esc(c.transcript)}</div></details></div>`;
@@ -238,7 +241,7 @@ ${c.fake ? '<p class="fatal">fake answer (dry run)</p>' : ''}
 
 function summaryHtml(sums: ConfigSummary[]): string {
   const criteria = [...new Set(sums.flatMap((s) => Object.keys(s.byCriterion)))];
-  const head = ['config', 'model / effort', 'answers', 'judge', ...criteria.map((k) => ABBR[k] ?? k), 'fatal', 'first word p50 / p90', 'spoken mean / p50', 'gen $ (per answer)', 'judge $', 'gate flagged beats', ...GATE_KEYS, 'live skipped / malformed'];
+  const head = ['config', 'model / effort', 'answers', 'judge', ...criteria.map((k) => ABBR[k] ?? k), 'fatal', 'first word p50 / p90', 'author text p50 / p90', 'pause after opener p50 / p90', 'spoken mean / p50', 'gen $ (per answer)', 'judge $', 'gate flagged beats', ...GATE_KEYS, 'live skipped / malformed'];
   const rows = sums.map((s) => [
     `<b>${esc(s.config)}</b>${s.fake ? ' <span class="fatal">fake</span>' : ''}${s.runId ? `<br><span class="mute">${esc(s.runId)}</span>` : ''}`,
     `${esc(s.model)} / ${esc(s.effort)}`,
@@ -247,6 +250,8 @@ function summaryHtml(sums: ConfigSummary[]): string {
     ...criteria.map((k) => (s.byCriterion[k] == null ? '–' : s.byCriterion[k].toFixed(2))),
     String(s.fatal),
     `${sec(s.firstWordP50)} / ${sec(s.firstWordP90)}`,
+    `${sec(s.stage2P50)} / ${sec(s.stage2P90)}`,
+    `${sec(s.gapP50)} / ${sec(s.gapP90)}`,
     `${s.spokenMeanS == null ? '–' : `${s.spokenMeanS.toFixed(0)} s`} / ${s.spokenP50S == null ? '–' : `${s.spokenP50S.toFixed(0)} s`}`,
     `${usd(s.genUsd)} (${usd(s.usdPerAnswer)})`,
     usd(s.judgeUsd),
@@ -255,7 +260,7 @@ function summaryHtml(sums: ConfigSummary[]): string {
     `${s.skipped} / ${s.malformed}`,
   ]);
   return `<section><h2>Per config</h2><div class="wrap"><table class="sum"><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr>${rows.map((r) => `<tr>${r.map((v) => `<td>${v}</td>`).join('')}</tr>`).join('')}</table></div>
-<p class="mute">First word: Enter → first caption word (the scout's opener when it speaks). Spoken: first word → end of the last sentence. Cost: scout + stage 2 per answer. Judge: r3 (U understanding, I illustration, D deck, C craft, E economy; ~0.5 lenient, trust deltas). Gate (src/gate, offline over the recording, stage-2 beats only): numbers = stated numbers matching no page, literal or computed value (and threshold/direction claims); unbound = an engine-computed number typed instead of bound; collisions = layout overlaps; deixis = "this/here" with no ink nearby; skips = beats with a skipped or malformed tag; other = geometry (tangent/on-circle claims), erasure, and constants stated before they are declared.</p></section>`;
+<p class="mute">First word: Enter → first caption word (usually the scout's opener, the same model for every config). Author text: Enter → stage 2's first text (the handoff); pause: the silence between the opener's last word and it. Spoken: first word → end of the last sentence. Cost: scout + stage 2 per answer. Judge: r3 (U understanding, I illustration, D deck, C craft, E economy; ~0.5 lenient, trust deltas). Gate (src/gate, offline over the recording, stage-2 beats only): numbers = stated numbers matching no page, literal or computed value (and threshold/direction claims); unbound = an engine-computed number typed instead of bound; collisions = layout overlaps; deixis = "this/here" with no ink nearby; skips = beats with a skipped or malformed tag; other = geometry (tangent/on-circle claims), erasure, and constants stated before they are declared.</p></section>`;
 }
 
 export type BenchMeta = { id: string; qset: string; createdAt: string; dry: boolean; judge: boolean; phase: string; promptVersion: string; preflight?: string };

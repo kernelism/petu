@@ -67,8 +67,12 @@ function part(p: OaPart): Record<string, unknown> {
  * request layout in openai.ts carries over here unchanged.
  */
 export function toAnthropicRequest(oa: { input: OaMsg[]; stream?: boolean }, cfg: { model: string; effort: Effort; maxOutput: number }, prewarm = false) {
-  const system = oa.input.filter((m) => m.role === 'developer' || m.role === 'system').flatMap((m) => m.content.map(part));
-  const messages = oa.input.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content.map(part) }));
+  // The Messages API rejects empty text blocks (an empty earlier answer in history, say): they are
+  // dropped, and a message left with nothing is dropped too (consecutive user turns merge upstream).
+  const keep = (p: OaPart) => p.type !== 'input_text' && p.type !== 'output_text' ? true : !!p.text?.trim();
+  const system = oa.input.filter((m) => m.role === 'developer' || m.role === 'system').flatMap((m) => m.content.filter(keep).map(part));
+  const messages = oa.input.filter((m) => m.role === 'user' || m.role === 'assistant')
+    .map((m) => ({ role: m.role, content: m.content.filter(keep).map(part) })).filter((m) => m.content.length);
   // A system-only prewarm has no message: the API needs one; a fixed one-word user turn after the cached system block.
   if (!messages.length) messages.push({ role: 'user', content: [{ type: 'text', text: '.' }] });
   return {
