@@ -109,7 +109,10 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number; deeper
    * line; 5 a thrown ball: a table filling heights and speeds, points and bars following it; 6 two
    * dice: a 6×6 grid of sums, the cells of one sum counted; 7 at scale: a noisy 24×24 image (view=image,
    * seeded noise) smoothed by a 1/9 mean kernel into an output image; 8 a cooling cup: noisy readings as a
-   * line, their running average on the same axes, and the law plotted from named constants.
+   * line, their running average on the same axes, and the law plotted from named constants; 9 amounts as
+   * parts: a price split into seller + tax, a bill stacked as room + tax on one scale (a part set, the total
+   * follows); 10 the same payment as coins moving to the tax; 11 a histogram of single draws vs of sample
+   * means on shared bins (the means narrow).
    */
   kit: {
     src: '/fixtures/econ.pdf',
@@ -154,7 +157,16 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number; deeper
       `{{sketch id=c near=p1}} Last, a cup of tea cooling: {{const room=20 hot=90 k=0.1}} it starts at ninety degrees, in a room at twenty: ` +
       `{{bars on=c id=temp size=1x40 fn="room+(hot-room)*exp(-k*c)+3*randn()" view=line "thermometer"}} forty noisy readings, a minute apart, ` +
       `{{bars on=c id=avg over=temp win=1x5 reduce=mean axes=temp "5-minute average"}} and their running average on the same axes. ` +
-      `{{plot on=c id=law fn="room+(hot-room)*exp(-k*x)" domain=0,40 axes=temp "the law" em}} The cooling law runs right through it.`,
+      `{{plot on=c id=law fn="room+(hot-room)*exp(-k*x)" domain=0,40 axes=temp "the law" em}} The cooling law runs right through it. ` +
+      `{{sketch id=q near=p1}} Now amounts as parts. {{const t=2}} A buyer paid {{bars on=q id=pay vals=7,8 labels=before,after "price paid"}} seven before a tax and eight after. ` +
+      `{{split id=pay[2] vals=t "seller" "tax"}} Split the eight: {{val id=pay[2,2]}} is tax, so the seller keeps {{val id=pay[2,1]}}, less than before. ` +
+      `A hotel bill stacks the same way, {{bars on=q id=bill vals=100;90,20 labels=before,after parts=room,tax right=pay "a night's bill"}} room and tax on one scale. ` +
+      `{{set id=bill[2,1] to=85}} If the hotel cuts its rate, the room part shrinks and the total follows. ` +
+      `{{sketch id=k near=p1}} Count the same payment in coins: {{tokens on=k id=coins n=8 states=seller,tax "coins paid"}} eight of them, ` +
+      `{{set id=coins state=tax n=t}} and the tax takes {{val id=coins.tax}}, leaving the seller {{val id=coins.seller}}. ` +
+      `{{sketch id=h near=p1}} Last, why an average is steadier than one draw: {{grid on=h id=x size=10x200 fn="randn()" view=image "200 samples of 10 draws"}} two hundred samples of ten noisy draws, ` +
+      `{{grid on=h id=mx over=x win=10x1 reduce=mean below=x "each sample's mean"}} and each sample's mean. {{sweep id=mx dur=2}} Every column averages out. ` +
+      `{{bars on=h id=h1 hist=x bins=16 below=mx "single draws"}} Single draws spread wide; {{bars on=h id=h2 hist=mx axes=h1 below=h1 "means of 10"}} their means bunch in the middle, on the same scale.`,
   },
   /**
    * Demonstration moves and bound numbers (gated beats, step 2), in two unrelated subjects: a market
@@ -243,8 +255,10 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number; deeper
   },
   /**
    * The slide is part of the canvas (spec "The slide is part of the canvas"), on three slides of
-   * public/fixtures/canvas.pdf: 1 drawing on the slide's own chart in its data units (a doubled tax:
-   * supply lifted on the same axes, the new wedge and the grown lost-trade triangle), with a note by
+   * public/fixtures/canvas.pdf: 1 drawing on the slide's own chart in its data units (taxed supply and
+   * demand traced as engine plots, their crossing a readout; the tax doubled with beforeafter: the curve
+   * lifts, its ghost stays, the readout follows and is said by the engine; a bracket for the tax, the
+   * grown lost-trade triangle), with a note by
    * its equation; 2 the slide's enzyme, substrate and inhibitor lifted onto the board and moved to
    * act out the competition for the pocket; 3 notes in place beside a slope slide's equations, and a
    * tangent on its chart.
@@ -254,8 +268,9 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number; deeper
     question: 'Show me on the slides themselves',
     script:
       `{{scroll p=1}} On the slide's own graph, {{highlight p=1 "Buyers and sellers split the tax"}} a tax of two drives a wedge between what buyers pay and what sellers keep. ` +
-      `{{const t=4}} Double it to four, {{plot p=1 on=#c1 fn="2+t+x/5" domain=0,40 "S + 4"}} and the supply line lifts by four on these same axes. ` +
-      `{{point p=1 on=#c1 at=15,9 "9" dir=ne}} Buyers now pay nine, {{point p=1 on=#c1 at=15,5 "5" dir=sw}} sellers keep five, {{line p=1 on=#c1 from=15,9 to=15,5 em}} and the gap between them is the whole tax. ` +
+      `{{const t=2}} Trace the taxed supply {{plot p=1 on=#c1 id=sup fn="2+t+x/5"}} and the demand {{plot p=1 on=#c1 id=dem fn="12-x/5"}} it meets: {{find id=E of=sup,dem}} they cross {{point p=1 on=#c1 at=E "Pb"}} where buyers pay {{val id=E.y}}. ` +
+      `{{beforeafter of=sup t=4}} Double the tax to {{val id=t}}: the taxed supply lifts on these same axes, its old place stays as a ghost, and buyers now pay {{val id=E.y}} for {{val id=E.x}} units. ` +
+      `{{brace p=1 on=#c1 from=15,9 to=15,5 "t"}} Sellers keep five, so the gap between the two prices is the whole tax. ` +
       `{{shade p=1 on=#c1 pts=15,9 25,7 15,5}} The lost trades now run from fifteen to twenty-five, {{note p=1 "now Q = 15 to 25" annotate="Trades between Q = 20 and 25 vanish"}} so twice the tax loses four times as much. ` +
       `{{scroll p=2}} The enzyme slide is the same kind of story: {{note p=2 "one pocket, two keys" annotate=#g1}} one pocket, and two molecules that fit it. ` +
       `{{sketch id=e near=p2}} Take {{lift p=2 mark=#g1 on=e id=enz at=400,90 w=240}} the slide's own enzyme, ` +

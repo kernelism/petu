@@ -2,7 +2,7 @@
 import type { GroundMark, Grounding } from '../../geometry/resolve';
 import type { TextLine } from './textLines';
 import type { FigureMark } from './marks';
-import type { Chart } from './charts';
+import { noteCharts, type Chart } from './charts';
 
 /** Everything known about one page, built once per page (LRU) on scroll idle. */
 export type PageGround = {
@@ -21,7 +21,7 @@ export type PageGround = {
 /** The marks of the pages sent with the current question, by page: the director's Grounding. */
 export function groundingOf(pages: PageGround[]): Grounding {
   const by = new Map(pages.map((p) => [p.page, p]));
-  return {
+  const g: Grounding = {
     aspect: (page) => by.get(page)?.aspect,
     obstacles(page) {
       const g = by.get(page);
@@ -50,4 +50,7 @@ export function groundingOf(pages: PageGround[]): Grounding {
       return { kind: m.kind, rect: m.rect };
     },
   };
+  // The live parser's value model reads chart axes from the latest grounding (charts.ts latestCharts).
+  noteCharts(g);
+  return g;
 }

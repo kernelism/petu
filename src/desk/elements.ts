@@ -1,7 +1,7 @@
 // src/desk/elements.ts
 import type { SPt, SRect } from '../geometry/space';
 import type { DrawAction, End, InkAction, RefAction, Target, Weight } from '../script/types';
-import { circleStroke, lineStroke, arrowStrokes, boxStroke, curveStroke, crossesItself, arcStroke, bisector, braceStroke, type Stroke } from '../ink/agent/strokes';
+import { circleStroke, lineStroke, arrowStrokes, boxStroke, curveStroke, crossesItself, arcStroke, bisector, bracketStroke, bracketSide, sideNormal, type Stroke } from '../ink/agent/strokes';
 import { drawStrokes, prefersReducedMotion } from '../ink/agent/animate';
 import { weightOf, weightStyle } from '../ink/agent/weights';
 import { token, tokenNum } from '../ink/agent/tokens';
@@ -22,7 +22,7 @@ import { anchorBox, sceneStore } from './scene/store';
 
 /** Waits briefly for a scene thing (or block) named by a ref. */
 async function sceneWait(ref: string, env: BuildEnv) { await anchorBox(ref, env.registry, REF_WAIT_MS); }
-import { buildBlock, buildKitPlot, buildKitRef, buildReadoutPoint, formula, isKitRef, isReadoutPoint, kitEndBox, kitStore, resolveKitPoints, samplePlot } from './kit/kit';
+import { buildBlock, buildChartPlot, buildKitPlot, buildKitRef, buildReadoutPoint, formula, isKitRef, isReadoutPoint, kitEndBox, kitStore, resolveKitPoints, samplePlot } from './kit/kit';
 import { withConsts } from '../values/readout';
 import { chartToPage } from '../agent/context/charts';
 import { placeNote } from './annotate';
@@ -292,11 +292,18 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       });
     }
     case 'brace': {
+      // A bracket beside the measured segment, on its clear side (never drawn across what it measures).
       const f = P(a.from), t = P(a.to), L = Math.hypot(t.x - f.x, t.y - f.y);
-      const depth = Math.min(22, Math.max(10, L * 0.08));
-      const s = braceStroke(f, t, depth);
+      const o = { gap: px(5), tick: Math.min(px(7), L / 3), notch: px(4) };
+      const labH = a.text ? textPx(ctx, 'label') * 1.4 / Math.max(ctx.scale(), 1e-3) : 0;
+      const reach = o.gap + o.tick + o.notch + px(6) + labH;
+      // What sits beside it: drawn ink, and on a page its text lines.
+      const page = isRegion(ctx.target) ? [] : (await ctx.runs()).map((r) => ctx.rectToSpace(r.rect));
+      const side = bracketSide(f, t, reach, [...env.registry.obstacles(ctx.target), ...page], env.registry.segments(ctx.target));
+      const s = bracketStroke(f, t, { ...o, side });
       if (!a.text) return strokePlan(a, ctx, env, { strokes: [s] });
-      const n = { x: (t.y - f.y) / (L || 1), y: -(t.x - f.x) / (L || 1) };
+      const n = sideNormal(f, t, side);
+      const depth = o.gap + o.tick + o.notch;
       const tip = { x: (f.x + t.x) / 2 + n.x * (depth + px(4)), y: (f.y + t.y) / 2 + n.y * (depth + px(4)) };
       return strokePlan(a, ctx, env, { strokes: [s] }, [], async (g, sig, k) => {
         const o = textOpts(ctx, env, textPx(ctx, 'label'), a.em);
@@ -326,7 +333,8 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
     }
     case 'plot': {
       // On a slide's calibrated chart: the curve in its data coordinates, on the page itself.
-      if (a.onChart) return chartPlot(a, ctx, env);
+      // A kit line on the chart's own axes (readouts and moves follow it); a log axis: hand strokes.
+      if (a.onChart) return (await buildChartPlot(a, ctx, env)) ?? chartPlot(a, ctx, env);
       // On a hand-drawn {{axes}} (named, or the region's latest when none is named): sampled into
       // strokes as before. Otherwise the engine draws the graph with its own axes (kit line view).
       const ax = a.axes ? await env.registry.wait(a.axes, REF_WAIT_MS) : env.registry.latest(ctx.target, 'axes');

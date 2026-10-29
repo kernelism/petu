@@ -182,6 +182,37 @@ function source(args: Args, flags: Set<string>, kind = '', ctx?: ParseCtx): KitS
   return { ...common, win, ...(r ? { reduce: r } : { fn }) };
 }
 
+/**
+ * Stacked bars' parts: `100;90,20` (a row per bar; literal or formula cells). Undefined: not stacked
+ * (one row, or rectangular rows without the flag); null: malformed.
+ */
+function stackOf(s: string | undefined, flag: boolean): { vals: number[][]; cells?: (string | null)[][] } | null | undefined {
+  if (s == null) return flag ? null : undefined;
+  const rows = s.split(';').map((r) => r.trim()).filter(Boolean);
+  const got = rows.map((r) => parseCells(r));
+  if (got.some((g) => !g || g.vals.length !== 1)) return flag || rows.length > 1 ? null : undefined;
+  const lens = new Set(got.map((g) => g!.vals[0].length));
+  if (!flag && (rows.length < 2 || lens.size < 2)) return undefined;
+  const vals = got.map((g) => g!.vals[0]);
+  const named = got.some((g) => g!.cells);
+  return { vals, ...(named ? { cells: got.map((g) => g!.cells?.[0] ?? g!.vals[0].map(() => null)) } : {}) };
+}
+
+/** {{split id=v[2] vals=8-t,t "kept" "tax"}}: a bar into parts (formulas over constants, split at top-level commas). */
+export function parseSplitBar(args: Args, quotes: string[]): KitVerb | null {
+  const ref = args.id != null ? (isBlockRef(args.id) ? args.id : eid(args.id)) : undefined;
+  const raw = args.vals ?? '';
+  const vals: string[] = [];
+  let d = 0, cur = '';
+  for (const ch of raw) { if (ch === '(') d++; else if (ch === ')') d--; if (ch === ',' && d === 0) { vals.push(cur.trim()); cur = ''; } else cur += ch; }
+  vals.push(cur.trim());
+  const labels = quotes.map((q) => q.trim()).filter(Boolean).map((q) => q.slice(0, MAX_LABEL));
+  if (!ref || vals.some((v) => !v || v.length > MAX_FN) || labels.length > 8) return null;
+  const n = Math.max(vals.length, labels.length);
+  if (n < 2 || (labels.length && labels.length !== vals.length && labels.length !== vals.length + 1)) return null;
+  return { kind: 'splitBar', ref, vals, labels };
+}
+
 /** Scatter data: `pts=1,2 2,3.5 …` (any finite numbers, at least two points). */
 function data(s?: string): Pt[] | null {
   if (!s) return null;
@@ -225,6 +256,23 @@ export function parseKitBlock(name: string, args: Args, quotes: string[], flags:
       return { kind: 'table', vals: v, ...(got!.cells ? { cells: got!.cells } : {}), heads, ...(args.vals!.includes('/') ? { frac: true } : {}), ...dp, ...caption, ...pl } as KitBlock<PtArg>;
     }
     case 'bars': {
+      // Stacked: each bar the sum of its parts (rows of vals=, any lengths). Rows of different lengths
+      // can only be meant this way, so they imply `stack`.
+      const st = stackOf(args.vals, flags.has('stack'));
+      if (st === null) return null;
+      if (st) {
+        const labels = list(args.labels), parts = list(args.parts);
+        if (labels === null || parts === null || ['map', 'zip', 'over', 'size', 'axes', 'view'].some((k) => args[k] != null)) return null;
+        return { kind: 'bars', src: { vals: [st.vals.map(() => 0)] }, stack: st, ...(labels ? { labels } : {}), ...(parts ? { parts } : {}), ...dp, ...caption, ...pl } as KitBlock<PtArg>;
+      }
+      // A histogram of any block's values; axes= another histogram shares its bins (one x scale).
+      if (args.hist != null) {
+        const of = srcRef(args.hist), bins = args.bins != null ? num(args.bins) : 12, like = args.axes != null ? eid(args.axes) : undefined;
+        if (!of || bins == null || !Number.isInteger(bins) || bins < 2 || bins > 60 || (args.axes != null && !like) || ['vals', 'map', 'zip', 'over', 'size'].some((k) => args[k] != null)) return null;
+        const labels = list(args.labels);
+        if (labels) return null;
+        return { kind: 'bars', src: { hist: of, bins, ...(like ? { like } : {}) }, ...dp, ...caption, ...pl } as KitBlock<PtArg>;
+      }
       const src = source(args, flags, name, ctx);
       const view = args.view?.toLowerCase();
       if (view != null && view !== 'line' && view !== 'bars') return null;
@@ -277,6 +325,13 @@ export function parseKitBlock(name: string, args: Args, quotes: string[], flags:
       if (!src || labels === null) return null;
       return { kind: 'shares', src, ...(labels ? { labels } : {}), ...(mix ? { mix } : {}), ...dp, ...caption, ...pl } as KitBlock<PtArg>;
     }
+    case 'tokens': {
+      // n= a count (a number or a formula over constants); states= the clusters' names, the first holds every mark at the start.
+      const n = args.n?.trim();
+      const states = list(args.states ?? args.state);
+      if (!n || n.length > MAX_FN || states === null || (states && new Set(states).size !== states.length)) return null;
+      return { kind: 'tokens', n, states: states ?? [], ...caption, ...pl } as KitBlock<PtArg>;
+    }
     case 'fit': {
       const of = eid(args.of);
       if (!of) return null;
@@ -302,6 +357,12 @@ export function parseKitVerb(name: string, args: Args, quotes: string[], _flags:
     }
     case 'set': {
       if (!ref) return null;
+      // tokens: marks change state (the part names them, or n= how many).
+      if (args.state != null) {
+        const st = args.state.trim(), count = args.n?.trim();
+        if (!st || st.length > MAX_LABEL || args.to != null || args.fn != null || args.vals != null || (count != null && (!count || count.length > MAX_FN))) return null;
+        return { kind: 'set', ref, state: st, ...(count ? { count } : {}) };
+      }
       // Board v2: a scene thing changes in place: a new label ("text"), value= or a link's strength=.
       if (quotes[0]?.trim() || args.value != null || args.strength != null) {
         if (args.to != null || args.fn != null || args.vals != null) return null;

@@ -2,7 +2,7 @@
 import { REGION_H, type Compass, type RawEnd, type Pt, type RawAction, type Target, type Weight } from './types';
 import { tokenize, unquote } from './tokenize';
 import { NAME, normName, parsePtArg, worldPt, isBlockRef, type PtArg } from './pointExpr';
-import { parseKitBlock, parseKitVerb, sceneRel, type ParseCtx } from './parseKit';
+import { parseKitBlock, parseKitVerb, parseSplitBar, sceneRel, type ParseCtx } from './parseKit';
 import { parseScene, parseSplit, SCENE_TAGS } from './parseScene';
 import { parseFind, parseMove, parseVal } from './parseValues';
 
@@ -161,7 +161,8 @@ export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
     case 'col':
     case 'level':
       return parseKitVerb(name, args, quotes, flags);
-    case 'split': return parseSplit(args, quotes);
+    // vals=: a kit bar split into parts; otherwise a scene chip into several.
+    case 'split': return args.vals != null ? parseSplitBar(args, quotes) : parseSplit(args, quotes);
     case 'move': {
       const ref = eid(args.id), to = pt(args.to, 1000); // clamped to the element's own space when it runs
       const rel = sceneRel(args);
@@ -223,7 +224,7 @@ export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
     const s = parseScene(name, args, quotes, flags);
     return s ? ({ ...s, ...target, ...mark } as RawAction) : null;
   }
-  if (name === 'grid' || name === 'bars' || name === 'scatter' || name === 'table' || name === 'calc' || name === 'fit' || name === 'shares' || name === 'blend') {
+  if (name === 'grid' || name === 'bars' || name === 'scatter' || name === 'table' || name === 'calc' || name === 'fit' || name === 'shares' || name === 'blend' || name === 'tokens') {
     if (!inRegion) return null;
     const b = parseKitBlock(name, args, quotes, flags, P, ctx);
     return b ? ({ ...b, ...target, ...mark } as RawAction) : null;
