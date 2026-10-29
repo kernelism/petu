@@ -172,7 +172,8 @@ describe('demos through the resolver', () => {
   it('every demo and dev script resolves to the very objects it parsed (byte-identical playback)', async () => {
     const { Figures } = await import('../../src/geometry/resolve');
     // `relational` is literal-free by design (it shows the agent grammar): checked on its own below.
-    const all = { DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.fromEntries(Object.entries(SCRIPTS).filter(([k]) => k !== 'relational').map(([k, v]) => [k, v.script])) };
+    // `canvas` draws on its slides' own charts and lifts their marks: checked against its grounding in canvasDemo.test.ts.
+    const all = { DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.fromEntries(Object.entries(SCRIPTS).filter(([k]) => k !== 'relational' && k !== 'canvas').map(([k, v]) => [k, v.script])) };
     for (const [name, script] of Object.entries(all)) {
       const raw = parseAll(script);
       const f = new Figures({ mark: () => undefined });

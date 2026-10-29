@@ -87,14 +87,15 @@ t3 240 40–700: Single hot or cold days count for less.`,
     script: String.raw`{{highlight p=5 "replaces each day by the mean of it and its neighbours"}} Because each smoothed value is the mean of three days, one hot day gets shared with its neighbours. <plan>Seven days, one hot Thursday: 12 13 12 24 13 12 13. A 1×3 mean window under it. Step the first two windows, sweep the rest, then point at the three outputs that contain the hot day.</plan>{{sketch id=s near=p5}} Here's a week {{grid on=s id=t vals=12,13,12,24,13,12,13 cols=M,T,W,T,F,S,S "°C"}} with one hot Thursday. {{grid on=s id=a over=t win=1x3 reduce=mean below=t "3-day mean"}} Each smoothed value comes from one window of three days. {{step id=a[1]}} The first window takes Monday to Wednesday, {{step id=a[2]}} the next one catches the hot day, {{sweep id=a dur=3}} and the window carries on to Sunday. {{emph id=a[2:4]}} The spike is gone: the window around Thursday reads only {{val id=a[3]}}, the heat spread thinly over three days instead of standing out on one.`,
   },
   {
-    title: 'a formula on the board: named readings said by the engine, then a teaching move on its constant',
+    title: 'on the slide\'s own chart first, then a formula on the board: named readings said by the engine, a teaching move on its constant',
     question: 'Why does the last bit of charging take so long?',
     page: 2,
     pages: [2],
-    plan: 'The curve from the page formula; read where it reaches 80 and 99 so the slow tail is measured; then sweep the time constant down.',
+    plan: 'On the slide\'s chart: 80 percent comes early, the tail is flat. Then the curve from the page formula; read where it reaches 80 and 99; sweep the time constant down.',
     listing: String.raw`PAGE 2 (visible; 16:9 slide; image attached)
 t1 60 40–520: Charging a battery
-t2 170 40–900: The charge approaches full as 100 × (1 − e^(−t/τ)), in percent, with τ = 30 minutes.`,
-    script: String.raw`{{highlight p=2 "approaches full"}} Each minute adds a fixed share of what is still missing, so the fuller it is, the less it adds. <plan>Plot the page formula from tau; find and mark 80 and 99; limit tau to 10.</plan>{{sketch id=s near=p2}} {{const tau=30}} Here is the page's curve. {{plot on=s id=q fn="100*(1-exp(-x/tau))" domain=0,180 xlabel="minutes" ylabel="charge %" "charge"}} {{find id=a of=q level=80}} It passes eighty {{point on=s at=a "80%"}} after {{val id=a.x fmt=0}} minutes, {{find id=b of=q level=99}} {{point on=s at=b "99%"}} but ninety-nine takes {{val id=b.x fmt=0}}: notice how flat it has become. {{limit of=q tau=10 show=b}} A faster charger squeezes the curve left, yet the tail is still the slowest part.`,
+t2 170 40–900: The charge approaches full as 100 × (1 − e^(−t/τ)), in percent, with τ = 30 minutes.
+#c1 chart 540,330 400×560 x "minutes" 0–180, y "charge %" 0–100`,
+    script: String.raw`{{highlight p=2 "approaches full"}} Each minute adds a fixed share of what is still missing, so the fuller it is, the less it adds. <plan>Slide chart: a line at 80, a note on the tail. Board: plot the formula from tau; find and mark 80 and 99; limit tau to 10.</plan>{{line p=2 on=#c1 from=0,80 to=180,80 weight=faint}} On the slide's own graph, eighty percent comes early, {{note p=2 on=#c1 at=170,99 "the slow tail"}} and the last stretch is almost flat. {{sketch id=s near=p2}} {{const tau=30}} Here is the page's curve. {{plot on=s id=q fn="100*(1-exp(-x/tau))" domain=0,180 xlabel="minutes" ylabel="charge %" "charge"}} {{find id=a of=q level=80}} It passes eighty {{point on=s at=a "80%"}} after {{val id=a.x fmt=0}} minutes, {{find id=b of=q level=99}} {{point on=s at=b "99%"}} but ninety-nine takes {{val id=b.x fmt=0}}: notice how flat it has become. {{limit of=q tau=10 show=b}} A faster charger squeezes the curve left, yet the tail is still the slowest part.`,
   },
 ];

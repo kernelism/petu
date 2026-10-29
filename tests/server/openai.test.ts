@@ -203,8 +203,8 @@ describe('ask', () => {
   });
   it('an abort on a cached page books the cached share at the read rate (not all input as a 12h write)', async () => {
     const cache = new CacheStats(null);
-    // The first answer on this page: 4100 system tokens cached, 3000 page tokens written.
-    const first = { input_tokens: 7300, output_tokens: 300, input_tokens_details: { cached_tokens: 4100, cache_write_tokens: 3000, cache_write_tokens_details: { ttl_12h_tokens: 0, ttl_30m_tokens: 3000 } } };
+    // The first answer on this page: 8300 system tokens cached, 3000 page tokens written.
+    const first = { input_tokens: 11500, output_tokens: 300, input_tokens_details: { cached_tokens: 8300, cache_write_tokens: 3000, cache_write_tokens_details: { ttl_12h_tokens: 0, ttl_30m_tokens: 3000 } } };
     const chunks1 = [sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message' } }), ...textEvents('m1', ['Hi.']), sse({ type: 'response.completed', response: { usage: first } })];
     const { f } = fakeFetch([{ chunks: chunks1 }, { chunks: okBody(['One. ', 'Two. ', 'Three. ', 'Four.']) }, { chunks: okBody(['One. ', 'Two. ', 'Three. ', 'Four.']) }]);
     await run(req(), deps(f, { cache }));
@@ -213,8 +213,8 @@ describe('ask', () => {
     const file = JSON.parse(readFileSync(join(dir, 'spend.json'), 'utf8'));
     const aborted = file.entries[1];
     expect(aborted).toMatchObject({ estimated: true });
-    // What the last answer read + wrote (7100), capped at this request's input estimate.
-    expect(aborted.tokens.cached).toBe(Math.min(7100, estimateInputTokens(buildRequest(req(), cfg), [context.image])));
+    // What the last answer read + wrote (11300), capped at this request's input estimate.
+    expect(aborted.tokens.cached).toBe(Math.min(11300, estimateInputTokens(buildRequest(req(), cfg), [context.image])));
     // The same abort with nothing known about the cache (another page, fresh stats) costs far more.
     const ctl2 = new AbortController();
     await run(req({ context: { ...context, docHash: 'zzz' } }), deps(f, { cache: new CacheStats(null) }), (_e, all) => { if (all.filter((x) => x.t === 'text').length === 2) ctl2.abort(); }, ctl2.signal);

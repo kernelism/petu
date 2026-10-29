@@ -39,7 +39,7 @@ computes every coordinate and every number.
 | `src/desk/scene/camera.ts` | `camFor` (minimal pan / zoom ≥ `ZMIN` 0.62 to frame new ink), `overviewCam` (end of answer: the whole scene centred, zoom ≥ `ZOVER`). Pure. |
 | `src/desk/scene/store.ts` | `SceneStore` (things by id, `alias` after a merge, `ofKind`), `anchorBox` (thing / part / kit block / element → world box), hooks `setKitResolver`, `setSceneLink` (kit → scene without an import cycle). |
 | `src/desk/registry.ts` | Drawn elements of the answer (id → bbox/boxes/strokes), `ext()` for per-answer stores. |
-| `src/desk/render.ts`, `math.ts`, `expr.ts`, `plot.ts`, `nudge.ts`, `follow.ts`, `runs.ts` | SVG text/dots/shade/emph; lazy KaTeX; safe expression parser (no eval); plot sampling; label nudging (≤ 3); follow mode (rule 6); region text runs. |
+| `src/desk/render.ts`, `math.ts`, `expr.ts`, `plot.ts`, `nudge.ts`, `follow.ts`, `runs.ts` | SVG text/dots/shade/emph; lazy KaTeX; safe expression parser (no eval); plot sampling; label nudging (≤ 3; a point label goes outside a closed shape it sits on: registry `outline`s of circles, boxes, shades); follow mode (rule 6); region text runs. |
 | `src/ink/agent/*` | Stroke geometry (`strokes.ts`), pen motion (`animate.ts`, `PX_PER_SEC` 700), highlights/labels (`marks.ts`), CSS tokens (`tokens.ts`), line weights (`weights.ts`), pen cursor (`penCursor.ts`: a fixed nib on `document.body` placed via the stroke group's `getScreenCTM()`; `drawStrokes` and scene links call `penDown`/`penTo`/`penLift`; newest stroke wins, fades 400ms after the last lift; off under reduced motion, `?nopen`, or without `getScreenCTM`). |
 | `src/locate/locateQuote.ts` | Quote (+ `near=`) → rects on the page's text runs. |
 | `src/demo/demoScript.ts`, `src/demo/scripts.ts` | Hand-written scripts (`?demo=…`, `?script=kit|toolkit|relational|lec09|scene|scene-econ|scene-bio|moves`). |
@@ -125,6 +125,32 @@ Prevention by construction: the narration never types a number the engine comput
 - Demo: `?script=moves` (gallery scene `moves`): beforeafter on a market, contrast on a growing
   colony, limit on a falling stone with drag; every number in its narration is a val.
 - Tests: `tests/values/values.test.ts`, `tests/gate/bound.test.ts`.
+
+## The slide as canvas (spec "The slide is part of the canvas")
+
+Work on the slide and from it, rather than drawing a disconnected copy.
+
+- **Calibrated charts** (`src/agent/context/charts.ts`: `Chart`, `ChartAxis`, `chartToPage`): the grounding
+  lists `#c1 chart …` with its axes; `groundingOf` resolves `#cN` to `{kind:'chart', rect, x, y}`.
+  `p=N on=#cN` on line/arrow/point/circle/label/curve/shade/angle/brace/plot/note/let: points are data
+  values (parser: unclamped, `chart` on the action). The resolver keeps one figure per chart (world =
+  data; page marks read back through the inverse map) and maps every point to the page; an unknown
+  chart skips. A chart plot gets `onChart` (axes + rect), its domain defaults to the x axis and values
+  off the y axis are cut (`chartPlot` in elements.ts, sampled by the kit's `samplePlot` with `{{const}}`s).
+- **Lift** `{{lift p=4 mark=#g1|box=x,y,w,h on=s id=fig at= w=}}`: the resolver places it (`placeLift`:
+  page proportions, inside the 1000 × 700 section; plain sketches only, not `fit`) and records it; a
+  page mark used later in that section (`from=#d2`, `at=#b1`) resolves through the latest lift that
+  holds it (`onLift`). The board draws a crisp pdf.js crop (`DeskHost.crop` → `PageRenderer.crop`,
+  2.5 device px per CSS px, transparent ground) in a sheet slot behind later ink, fading in;
+  `move id=fig to=x,y` glides it (by its centre). Raster only (a vector copy is open).
+- **Page notes** `{{note p=4 "…" annotate=#e2|"quote"}}` (or `on=#c1 at=x,y`) → kind `annot`: the resolver
+  turns a mark into its rect and attaches `Grounding.obstacles(page)` (text lines + rect marks); the
+  board places it with `placeNote` (`src/desk/annotate.ts`, pure: right/left first, then around, then
+  the margins; never touching text, figures or earlier ink; a leader when apart; no room → skipped).
+- **Gate**: `checkPageText` (page annotations never cover page text lines), `lift-outside` in
+  `checkLayout`. Demo `?script=canvas` on `public/fixtures/canvas.pdf` (`make-decks.ts canvas`: econ p12,
+  bio p4, mechanics p2); gallery scene `canvas`. Tests: `tests/script/parseCanvas.test.ts`,
+  `tests/geometry/canvas.test.ts`, `tests/desk/annotate.test.ts`, `tests/gate/canvas.test.ts`.
 
 ## How a tag becomes ink
 

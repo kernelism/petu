@@ -1,4 +1,5 @@
 // src/script/types.ts
+import type { ChartAxis } from '../agent/context/charts';
 /**
  * Coordinates in scripts.
  * - On a page (`p=`): model coords, x 0–1000 across the page width, y 0–1000 down its height.
@@ -6,6 +7,8 @@
  *   y 0–700. These are already region space (no y scaling).
  */
 export type Pt = { x: number; y: number };
+/** A rect in a target's script coords (pages: model coords 0–1000 both axes). */
+export type LiftRect = { x: number; y: number; w: number; h: number };
 
 /** A sketch region is 1000 × 700 local units. */
 export const REGION_W = 1000;
@@ -85,9 +88,23 @@ export type Shape<P = Pt> =
    * parametric curve x= y= over t=; ranges may be expressions over {{const}} names; "label" sits at
    * the curve's end (label=top: at its highest point); xlabel=/ylabel= name the axes.
    */
-  | ({ kind: 'plot'; fn?: string; x?: string; y?: string; t?: [string, string]; domain?: [number, number]; domainSrc?: [string, string]; range?: [number, number]; axes?: string; dash?: boolean; label?: string; labelAt?: 'end' | 'top'; xLabel?: string; yLabel?: string; /** a contrast's copy: these constants differ */ with?: Record<string, number> } & W)
+  | ({ kind: 'plot'; fn?: string; x?: string; y?: string; t?: [string, string]; domain?: [number, number]; domainSrc?: [string, string]; range?: [number, number]; axes?: string; dash?: boolean; label?: string; labelAt?: 'end' | 'top'; xLabel?: string; yLabel?: string; /** a contrast's copy: these constants differ */ with?: Record<string, number>; /** On a page: drawn on this calibrated chart's own axes (set by the resolver from `on=#cN`). */ onChart?: { x: ChartAxis; y: ChartAxis; rect: { x: number; y: number; w: number; h: number } } } & W)
   /** Region only. KaTeX. at = left edge, vertical middle (or the centre with `centered`). */
   | { kind: 'math'; at: P; tex: string; size: TextSize; centered?: boolean }
+  /**
+   * Region only: the slide's own figure lifted onto the board, a base to draw over and around.
+   * `srcPage` + `src` (a page rect, model coords; or `srcMark`, a figure mark the resolver turns into
+   * its rect); `at` its top-left in the section and `w` its width (region units); `h` keeps the
+   * page's proportions (set by the resolver, which also fits it inside the section). Page marks
+   * inside it (`#d1`, `#b2`) are points of the section afterwards.
+   */
+  | { kind: 'lift'; srcPage: number; src?: LiftRect; srcMark?: string; at?: P; w?: number; h?: number }
+  /**
+   * Page only: a short note beside what it annotates — a page mark (`annotate`, resolved to `rect`),
+   * a quote (`quote`, `near`) or a point (`at`) — placed clear of the page's text and figures
+   * (`avoid`, page model coords, from the grounding), with a leader line when it sits apart.
+   */
+  | { kind: 'annot'; text: string; annotate?: string; rect?: LiftRect; quote?: string; near?: P; at?: P; avoid?: LiftRect[] }
   | KitBlock<P>
   | SceneShape;
 
@@ -160,7 +177,11 @@ export type KitBlock<P = Pt> =
   | ({ kind: 'shares'; src: KitSource; labels?: string[]; mix?: string; dp?: number; caption?: string } & KitPlace<P>);
 export const KIT_BLOCKS = new Set(['grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'shares']);
 
-export type DrawAction<P = Pt> = Shape<P> & Target & Mark;
+/**
+ * Page drawings on a calibrated chart (`p=12 on=#c1`): their points are data coordinates on that
+ * chart's axes; the resolver maps them onto the page (and drops `chart`).
+ */
+export type DrawAction<P = Pt> = Shape<P> & Target & Mark & { chart?: string };
 
 /** Actions on an element drawn earlier in this answer (by id). */
 export type RefAction =
@@ -226,7 +247,7 @@ export function targetOf(a: Action): Target | null {
 import type { PtArg } from './pointExpr';
 type Ink = { id?: string; em?: boolean; weight?: Weight; dash?: boolean };
 /** `{{let on=R A=x,y B=mid(A,C)}}`: names points without drawing anything. */
-export type LetAction = { kind: 'let'; defs: [string, PtArg][] } & Target;
+export type LetAction = { kind: 'let'; defs: [string, PtArg][]; /** names of data points on a page's calibrated chart */ chart?: string } & Target;
 /** A shape on a page mark: `{{circle p=4 mark=#d3}}`, `{{line p=4 mark=#s2}}`, `{{box p=4 mark=#t12}}`. */
 export type MarkShape = { kind: 'circle' | 'box' | 'highlight' | 'underline' | 'line' | 'arrow'; page: number; region?: never; mark: string } & Ink;
 /** A ray: from A through B, to the frame edge (regions) or `len` × |AB| (pages default 1.5). */

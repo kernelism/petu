@@ -16,7 +16,7 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 | `server/prices.ts` | `PRICES` per model (in/cached/out/write30m/write12h), `costUsd`, `worstCaseUsd`. A wrong price = a wrong ledger. |
 | `server/cacheStats.ts` | What the cache likely holds (`.petu/cache.json`): estimates for aborted calls, `systemFresh` (11.5h). |
 | `server/sse.ts`, `scriptFilter.ts`, `lint.ts` | SSE → `ResponseEvents`; strips `<plan>…</plan>` (kept for debug/eval) and markdown/TeX from narration; grammar notes (`TAG_NAMES`). |
-| `server/prompt/system.ts` | Stage-2 developer prompt, `PROMPT_VERSION` (p5.3). Sections: identity → teach (with the per-beat contract) → no-dup → timing → context → pointing → board (… NUMBERS YOU SAY, TEACHING MOVES) → tags → situations → examples (five). |
+| `server/prompt/system.ts` | Stage-2 developer prompt, `PROMPT_VERSION` (p5.4). Sections: identity → teach (with the per-beat contract) → no-dup → timing → context → pointing → board (… NUMBERS YOU SAY, TEACHING MOVES, WORK ON THE SLIDE AND FROM IT) → tags → situations → examples (five). |
 | `server/prompt/scout.ts` | `SCOUT_SYSTEM`, `SCOUT_VERSION` (s2.1): opener, ≤ 6 pages, ≤ 80-word plan, JSON order opener→pages→plan. |
 | `server/prompt/examples.ts` | Few-shot `EXAMPLES` on invented documents (music notation, shadows, levers…), each executable. |
 | `src/agent/protocol.ts` | `AskRequest`, `AskContext`, `AskEvent` (NDJSON), `SpendSummary`, `HARD_STOP_USD` 40. |
@@ -27,6 +27,7 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 | `src/agent/prewarm.ts` | Prewarm on ask-bar intent (focus or 3rd char), dedupe 25 min; system block on document open. |
 | `src/agent/context/build.ts` | `ContextBuilder`: `digest()`, `visible()`, `build()` (stage 2), `pagePrefix()` (prewarm), `groundPage()` (pdf.js → `PageGround`). |
 | `src/agent/context/*` | `textLines` (`t7 436 415–470: …`), `marks` (`#d #s #a #b #i #g #e`, ≤ 60/page), `operatorList`, `format` (listings), `digest` (≤ 48k chars), `search`, `outline`, `image` (JPEG, `MAX_PATCHES`), `ink` (student ink summary + crop). |
+| `src/agent/context/charts.ts` | Figure calibration: `chartMarks(paths, lines, aspect)` finds axes (long strokes, ticks, numeric tick labels below/left, least-squares fit, log when the labels are powers/geometric) → `#cN` charts (`PageGround.charts`, listed after the marks as `#c1 chart x,y w×h x "Q" 0–60, y "P" 0–14`); `chartToPage` maps data → page. Skips anything ambiguous. `scripts/corpus/charts.ts` validates (fixtures + corpus sample, `--render` dots on ticks). |
 | `src/agent/context/{tiers,docmap,labels,candidates,printed,memory}.ts` | The tiered scout context (`?ctx=new`, `PETU_CTX=new` for evals; default old). `tiers`: small ≤ 60 pages = digest; medium ≤ 400 = card + map + digest; huge = card + map + the visible section card. `docmap`: every bookmark with page ranges (6k-token cap, deepest level dropped from the back) or detected headings; `printed`: printed-vs-PDF page offset (page labels or running headers on a fixed sample); `labels`: Figure/Table/Example/Appendix/eq. (3.4)/section → page; `candidates`: per question ≤ 8 pages (named labels and printed pages, ±2 neighbours, BM25 top 5) and the scout's `find` resolver; `memory`: append-only SESSION block. `ContextBuilder.scout()` returns all of it; the cached blocks never depend on index progress. `npm run ctx-bench` measures it offline. |
 | `src/agent/evalHooks.ts` | `?eval` only: `window.__petu` for the runner. |
 | `scripts/ground.ts` | `npm run ground -- <pdf> <page…>`: prints exactly what the model sees. No API call. |
@@ -92,7 +93,7 @@ previous exchange, question. The scout may name any page and an optional `find` 
 2. Principles only: no modes, recipes, counts or caps (`prompt.test.ts` greps for them); keep section order.
 3. No eval vocabulary: `EVAL_VOCAB` in `tests/server/prompt.test.ts` (course terms + econ/mechanics
    decks). Extend it when a new deck term shows up.
-4. Size: `length/3.6` must stay < 8100 and > 1100 tokens (cache minimum).
+4. Size: `length/3.6` must stay < 8300 (raised from 8100 for the slide-as-canvas grammar, p5.4) and > 1100 tokens (cache minimum).
 5. Every `{{tag}}` in the prompt must parse; every grammar piece must appear.
 6. Examples: invented domains only; `tests/server/examples.test.ts` parses, resolves, lints each one
    and checks the board never copies page text or narration.

@@ -35,7 +35,11 @@ export function parseListing(page: number, listing: string) {
     } else if ((m = l.match(/^(#d\d+) dot (\d+,\d+)( "[^"]+")?$/))) { dots.set(m[1], P(m[2])); marks.set(m[1], { kind: 'dot', at: P(m[2]) }); }
     else if ((m = l.match(/^(#[sa]\d+) (line|arrow) (#d\d+|\d+,\d+)→(#d\d+|\d+,\d+)( "[^"]+")?$/))) marks.set(m[1], { kind: m[2] as 'line', from: P(m[3]), to: P(m[4]) });
     else if ((m = l.match(/^(#[gbie]\d+) (figure|box|image|equation) (\d+),(\d+) (\d+)×(\d+)( \(\d+ paths\))?( "[^"]+")?$/))) marks.set(m[1], { kind: m[2] as 'box', rect: { x: +m[3], y: +m[4], w: +m[5], h: +m[6] } });
-    else unknown.push(l);
+    else if ((m = l.match(/^(#c\d+) chart (\d+),(\d+) (\d+)×(\d+) x "[^"]*" (-?[\d.]+)–(-?[\d.]+), y "[^"]*" (-?[\d.]+)–(-?[\d.]+)$/))) {
+      // A calibrated chart: its axes run along the rect (x left → right, y bottom → top).
+      const [x, y, w, h, x0, x1, y0, y1] = m.slice(2).map(Number);
+      marks.set(m[1], { kind: 'chart', rect: { x, y, w, h }, x: { lo: x0, hi: x1, p0: x, p1: x + w }, y: { lo: y0, hi: y1, p0: y + h, p1: y } });
+    } else unknown.push(l);
   }
   return { mark: (p: number, id: string) => (p === page ? marks.get(id) : undefined), lines, unknown };
 }
@@ -143,10 +147,11 @@ describe('prompt examples', () => {
       it('copies quotes from the listing, with near= where a quote is short or repeated', () => {
         const { acts, ground } = run(ex);
         for (const a of acts) {
-          if (!('quote' in a) || a.page == null) continue;
-          const hits = ground.lines(a.page).filter((l) => l.text.includes(a.quote));
+          if (!('quote' in a) || !a.quote || a.page == null) continue;
+          const quote = a.quote;
+          const hits = ground.lines(a.page).filter((l) => l.text.includes(quote));
           expect(hits.length, a.quote).toBeGreaterThan(0);
-          const count = hits.reduce((n, l) => n + l.text.split(a.quote).length - 1, 0);
+          const count = hits.reduce((n, l) => n + l.text.split(quote).length - 1, 0);
           if (a.quote.length <= 2 || count > 1) {
             expect(a.near, `${a.quote} needs near=`).toBeDefined();
             const near = a.near as Pt;

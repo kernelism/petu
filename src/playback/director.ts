@@ -113,7 +113,8 @@ export class Director {
   /** Named points and fitted regions of the current answer (relational geometry). */
   readonly figures: Figures;
   constructor(private d: Deps) {
-    this.figures = new Figures({ mark: (p, id) => (this.d.grounding?.() ?? NO_GROUNDING).mark(p, id) });
+    const g = () => this.d.grounding?.() ?? NO_GROUNDING;
+    this.figures = new Figures({ mark: (p, id) => g().mark(p, id), aspect: (p) => g().aspect?.(p), obstacles: (p) => g().obstacles?.(p) ?? [] });
   }
   private desk(): DeskApi | null { return this.d.desk(); }
 

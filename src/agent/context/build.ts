@@ -12,6 +12,7 @@ import { fontLookup } from '../../pdf/mathGlyphs.ts';
 import { textLines } from './textLines.ts';
 import { figureMarks, glyphCount, GLYPH_FLOOD } from './marks.ts';
 import { paintedFromOperatorList } from './operatorList.ts';
+import { chartMarks } from './charts.ts';
 import { formatPage, formatVisible } from './format.ts';
 import { resolveOutline, type Bookmark } from './outline.ts';
 import { deckDigest } from './digest.ts';
@@ -66,7 +67,8 @@ export async function groundPage(page: PDFPageProxy, OPS: Record<string, number>
   const noText = (text.few && (largeImage || paths.length >= 20)) || (!text.few && !text.usable);
   const lines = noText ? [] : textLines(runs, aspect);
   const mathOutlines = !noText && glyphCount(paths, aspect) >= GLYPH_FLOOD;
-  return { page: page.pageNumber, aspect, lines, marks: figureMarks(paths, images, lines, aspect), noText, ...(mathOutlines ? { mathOutlines } : {}) };
+  const charts = noText ? [] : chartMarks(paths, lines, aspect);
+  return { page: page.pageNumber, aspect, lines, marks: figureMarks(paths, images, lines, aspect), noText, ...(mathOutlines ? { mathOutlines } : {}), ...(charts.length ? { charts } : {}) };
 }
 
 /** A page's text lines only (the search index, headings and outline first lines). */

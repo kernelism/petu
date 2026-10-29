@@ -42,7 +42,7 @@ export function segHitsRect(p: P, q: P, r: Rect): boolean {
 }
 const strokeHits = (s: P[], r: Rect) => s.some((p, i) => i > 0 && segHitsRect(s[i - 1], p, r));
 
-export type LayoutFlag = { kind: 'text-overlap' | 'text-on-stroke' | 'block-overlap' | 'outside' | 'small-text' | 'bar-labels' | 'label-far'; detail: string; ids: string[] };
+export type LayoutFlag = { kind: 'text-overlap' | 'text-on-stroke' | 'block-overlap' | 'outside' | 'small-text' | 'bar-labels' | 'label-far' | 'covers-page-text' | 'lift-outside'; detail: string; ids: string[] };
 
 const isKit = (e: El) => e.kind.startsWith('kit-');
 const textEstimatePx = (s: string, px: number) => s.length * px * 0.55;
@@ -61,6 +61,8 @@ export function checkLayout(added: El[], before: El[]): LayoutFlag[] {
     const others = all.filter((o) => o !== e && o.region === e.region);
     // Outside the section (x is the section's full width; y grows with tall content).
     if (e.bbox.x < -15 || e.bbox.x + e.bbox.w > 1015) once({ kind: 'outside', detail: `${e.kind} ${e.id} spans x ${Math.round(e.bbox.x)}–${Math.round(e.bbox.x + e.bbox.w)} of 0–1000`, ids: [e.id] });
+    // A lifted page region stays inside its section (the resolver fits it into 1000 × 700).
+    if (e.kind === 'lift' && (e.bbox.x < -1 || e.bbox.y < -1 || e.bbox.x + e.bbox.w > 1001 || e.bbox.y + e.bbox.h > 701)) once({ kind: 'lift-outside', detail: `lift ${e.id} spans ${Math.round(e.bbox.x)},${Math.round(e.bbox.y)}–${Math.round(e.bbox.x + e.bbox.w)},${Math.round(e.bbox.y + e.bbox.h)} of 1000 × 700`, ids: [e.id] });
     for (const t of e.text) {
       if (t.h * PX_PER_UNIT < MIN_TEXT_PX) once({ kind: 'small-text', detail: `${e.kind} ${e.id} text ${Math.round(t.h * PX_PER_UNIT)}px tall`, ids: [e.id] });
     }
@@ -94,6 +96,23 @@ export function checkLayout(added: El[], before: El[]): LayoutFlag[] {
         if (Math.hypot(dx, dy) > 60) once({ kind: 'label-far', detail: `label ${e.id} sits ${Math.round(Math.hypot(dx, dy))} units from ${ref.id}`, ids: [e.id, ref.id] });
       }
     }
+  }
+  return out;
+}
+
+/**
+ * Page annotations (notes, labels, point labels written on a page) must never cover the page's own
+ * text: each text box, its inner 70%, against the page's text lines (`lines(page)`: target space,
+ * x 0–1000, y scaled by the page's aspect, as the recorded registry is).
+ */
+export function checkPageText(added: El[], lines: (page: number) => Rect[] | undefined): LayoutFlag[] {
+  const out: LayoutFlag[] = [];
+  for (const e of added) {
+    if (e.page == null || !e.text.length) continue;
+    const ls = lines(e.page);
+    if (!ls?.length) continue;
+    const hit = ls.filter((l) => e.text.some((t) => inter(shrink(t, 0.15, 0.15), l) > 0));
+    if (hit.length) out.push({ kind: 'covers-page-text', detail: `${e.kind} ${e.id} covers ${hit.length} line${hit.length > 1 ? 's' : ''} of page ${e.page}'s text`, ids: [e.id] });
   }
   return out;
 }

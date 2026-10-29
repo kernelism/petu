@@ -91,7 +91,7 @@ const NO_MARKS: Grounding = { mark: () => undefined };
 
 /** The grounding of the pages a dev script names (p=N, pN:), when it points with page marks. */
 async function devGrounding(doc: PdfDoc, script: string): Promise<Grounding> {
-  if (!/mark=#|:#/.test(script)) return NO_MARKS;
+  if (!/mark=#|:#|on=#c|annotate=#|\{\{lift /.test(script)) return NO_MARKS;
   const pages = [...new Set([...script.matchAll(/\bp=?(\d+)\b/g)].map((m) => Number(m[1])))].filter((p) => p >= 1 && p <= doc.numPages);
   const OPS = (await import('pdfjs-dist')).OPS as unknown as Record<string, number>;
   return groundingOf(await Promise.all(pages.map(async (p) => groundPage(await doc.getPage(p), OPS))));
@@ -155,7 +155,7 @@ function describeAction(a: Action): string {
   if (a.kind === 'connect') return 'connect';
   if ('ref' in a) return `${a.kind} #${a.ref}`;
   const cut = (t: string) => ` "${t.length > 18 ? `${t.slice(0, 17)}…` : t}"`;
-  const q = 'quote' in a ? cut(a.quote) : 'text' in a && a.text ? cut(a.text) : a.kind === 'math' ? cut(a.tex) : '';
+  const q = 'quote' in a && a.quote ? cut(a.quote) : 'text' in a && a.text ? cut(a.text) : a.kind === 'math' ? cut(a.tex) : '';
   const where = a.kind === 'scroll' || a.page != null ? `p${a.page}` : a.region;
   return `${a.kind} ${where}${q}`;
 }

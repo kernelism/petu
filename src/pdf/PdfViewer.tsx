@@ -170,6 +170,34 @@ export class PageRenderer {
     }
   }
 
+  /**
+   * A crisp copy of a page region (model coords 0–1000 on both axes), rendered `pxW` device px wide on
+   * a transparent background, as a PNG data URL (a lift on the board). null if the page can't render.
+   */
+  async crop(p: number, r: { x: number; y: number; w: number; h: number }, pxW: number): Promise<string | null> {
+    if (this.dead || docGone(this.doc) || !(r.w > 0 && r.h > 0)) return null;
+    try {
+      const page = await pageOf(this.doc, p);
+      const base = page.getViewport({ scale: 1 });
+      let scale = pxW / ((r.w / 1000) * base.width);
+      const area = (r.w / 1000) * (r.h / 1000) * base.width * base.height * scale * scale;
+      if (area > MAX_CANVAS_PX) scale *= Math.sqrt(MAX_CANVAS_PX / area);
+      const vp = page.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.ceil((r.w / 1000) * vp.width));
+      canvas.height = Math.max(1, Math.ceil((r.h / 1000) * vp.height));
+      const ctx = canvas.getContext('2d')!;
+      const transform = [1, 0, 0, 1, -(r.x / 1000) * vp.width, -(r.y / 1000) * vp.height];
+      await page.render({ canvasContext: ctx, viewport: vp, transform, background: 'rgba(0,0,0,0)' }).promise;
+      const url = canvas.toDataURL('image/png');
+      zap(canvas);
+      return url;
+    } catch (err) {
+      console.warn(`page ${p} crop failed`, err);
+      return null;
+    }
+  }
+
   /** Where page `p` has content, from its rendered canvas; null until it has one. */
   mask(p: number): ContentMask | null {
     if (this.masks.has(p)) return this.masks.get(p)!;
@@ -591,6 +619,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       onScroll: sub(subs.scroll),
       onUserIntent: sub(subs.intent),
       contentMask: (page) => renderer.mask(clampPage(page)),
+      crop: (page, r, pxW) => renderer.crop(clampPage(page), r, pxW),
     };
     cbRef.current.onReady(api);
 

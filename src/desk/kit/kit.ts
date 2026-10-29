@@ -387,6 +387,16 @@ const fmtAll = (m: C.Mat, dp?: number, frac = false) => m.flat().map((v) => C.fm
 /** Fractions only for values the model wrote as fractions (literal 1/9 weights), never for computed ones. */
 const litFrac = (src?: KitSource) => !!src && 'vals' in src && !!src.frac;
 const fracOf = (b: Block) => litFrac(b.src) && !b.win && C.fractions((b.vals ?? []).flat());
+/**
+ * A number as the kit shows it, for anything that displays a value outside its block (a scene
+ * chip's value, a link's weight): the block's dp= and literal fractions when it comes from one,
+ * else the kit's decimals (100, 2.5, 133.3). Shares read as percentages; a value that isn't finite shows nothing.
+ */
+export function kitNumber(v: number, b?: Pick<Block, 'kind' | 'dp' | 'src' | 'win' | 'vals'>): string {
+  if (!Number.isFinite(v)) return '';
+  if (b?.kind === 'shares') return `${Math.round(v * 100)}%`;
+  return C.fmt(v, b?.dp, b ? fracOf(b as Block) : false);
+}
 
 function anchorOf(store: KitStore, a: { right?: string; below?: string }): Promise<Block | undefined> {
   const id = a.right ?? a.below;

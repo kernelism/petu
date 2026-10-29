@@ -23,7 +23,10 @@ import { anchorBox, sceneStore } from './scene/store';
 
 /** Waits briefly for a scene thing (or block) named by a ref. */
 async function sceneWait(ref: string, env: BuildEnv) { await anchorBox(ref, env.registry, REF_WAIT_MS); }
-import { buildBlock, buildKitPlot, buildKitRef, buildReadoutPoint, isKitRef, isReadoutPoint, kitEndBox, resolveKitPoints } from './kit/kit';
+import { buildBlock, buildKitPlot, buildKitRef, buildReadoutPoint, isKitRef, isReadoutPoint, kitEndBox, kitStore, resolveKitPoints, samplePlot } from './kit/kit';
+import { withConsts } from '../values/readout';
+import { chartToPage } from '../agent/context/charts';
+import { placeNote } from './annotate';
 
 /** Closed shapes (circle, box) read as rushed below this, however small… */
 export const CLOSED_MIN_MS = 400;
@@ -184,7 +187,7 @@ function strokePlan(a: DrawAction, ctx: TargetCtx, env: BuildEnv, ink: Ink, extr
     draw: async (signal, k) => {
       const g = own(ctx.layers.agent);
       const last = ink.strokes[ink.strokes.length - 1];
-      env.registry.define({ id: a.id, kind: a.kind, target: ctx.target, bbox, boxes: [...boxes, ...extra], anchor: last[last.length - 1], group: g, strokes: ink.strokes });
+      env.registry.define({ id: a.id, kind: a.kind, target: ctx.target, bbox, boxes: [...boxes, ...extra], anchor: last[last.length - 1], group: g, strokes: ink.strokes, ...(ink.closed ? { outline: ink.strokes[0] } : {}) });
       const fade = s.inkStyle === 'clean' || prefersReducedMotion();
       await drawStrokes(g, ink.strokes, {
         color: ws.color, width: ws.width, opacity: ws.opacity < 1 ? ws.opacity : undefined, scale: ctx.scale(), signal,
@@ -201,10 +204,11 @@ function strokePlan(a: DrawAction, ctx: TargetCtx, env: BuildEnv, ink: Ink, extr
  * Places a label box next to `anchor` toward `dir`, nudged off the target's other elements
  * (rule 5). Runs at draw time, so it sees everything drawn before it.
  */
-function placeText(ctx: TargetCtx, env: BuildEnv, layer: SVGGElement, text: string, o: TextOpts, anchor: SPt, dir: Parameters<typeof placeLabel>[3], clear: number, skip?: string): SRect {
+function placeText(ctx: TargetCtx, env: BuildEnv, layer: SVGGElement, text: string, o: TextOpts, anchor: SPt, dir: Parameters<typeof placeLabel>[3], clear: number, skip?: string, outside = false): SRect {
   const m = measureText(layer, text, o);
   const segs: Seg[] = env.registry.segments(ctx.target); // every stroke of the target, this element's own included
-  return placeClear(anchor, m.w, m.h, dir ?? 'ne', clear, segs, env.registry.obstacles(ctx.target, skip), bounds(ctx));
+  // outside: the anchor's label goes outside a closed shape it sits on (a point on a circle).
+  return placeClear(anchor, m.w, m.h, dir ?? 'ne', clear, segs, env.registry.obstacles(ctx.target, skip), bounds(ctx), outside ? env.registry.outlines(ctx.target) : []);
 }
 
 async function writeLabel(g: SVGGElement, box: SRect, text: string, o: TextOpts, env: BuildEnv, signal: AbortSignal, k: Pace) {
@@ -322,6 +326,8 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       };
     }
     case 'plot': {
+      // On a slide's calibrated chart: the curve in its data coordinates, on the page itself.
+      if (a.onChart) return chartPlot(a, ctx, env);
       // On a hand-drawn {{axes}} (named, or the region's latest when none is named): sampled into
       // strokes as before. Otherwise the engine draws the graph with its own axes (kit line view).
       const ax = a.axes ? await env.registry.wait(a.axes, REF_WAIT_MS) : env.registry.latest(ctx.target, 'axes');
@@ -344,7 +350,7 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
         draw: async (signal, k) => {
           const g = own(ctx.layers.agent);
           const od = textOpts(ctx, env, textPx(ctx, 'label'), a.em); // sized for the scale now (a column glide may have run since build)
-          const box = a.text ? placeText(ctx, env, g, a.text, od, c, a.dir ?? 'ne', rad) : null;
+          const box = a.text ? placeText(ctx, env, g, a.text, od, c, a.dir ?? 'ne', rad, undefined, true) : null;
           env.registry.define({ id: a.id, kind: 'point', target: ctx.target, bbox: union([dot, ...(box ? [box] : [])]), boxes: [dot, ...(box ? [box] : [])], anchor: c, group: g });
           await drawDot(g, c, rad, color, k, signal);
           if (box && a.text) await writeLabel(g, box, a.text, od, env, signal, k);
@@ -402,7 +408,9 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
           const region = isRegion(ctx.target);
           const g = region ? sheetSlot(ctx.layers.agent) : own(ctx.layers.highlight);
           // Shades are not obstacles: labels may sit inside a shaded area.
-          env.registry.define({ id: a.id, kind: 'shade', target: ctx.target, bbox, boxes: [], anchor: { x: bbox.x + bbox.w / 2, y: bbox.y + bbox.h / 2 }, group: g });
+          // Its outline still counts for a point on its edge: that point's label goes outside it.
+          const outline = 'pts' in shape ? shape.pts : Array.from({ length: 48 }, (_, i) => ({ x: shape.c.x + shape.rx * Math.cos((i / 48) * 2 * Math.PI), y: shape.c.y + shape.ry * Math.sin((i / 48) * 2 * Math.PI) }));
+          env.registry.define({ id: a.id, kind: 'shade', target: ctx.target, bbox, boxes: [], anchor: { x: bbox.x + bbox.w / 2, y: bbox.y + bbox.h / 2 }, group: g, outline });
           const accent = env.settings.inkColor, line = a.outline ? token('--shade-line') : undefined;
           const look: ShadeLook = a.em
             ? { fill: accent, fillOpacity: tokenNum('--shade-tint'), stroke: a.outline ? accent : undefined, strokeOpacity: 0.6 }
@@ -433,9 +441,139 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
         },
       };
     }
+    case 'annot':
+      return pageNote(a, ctx, env);
+    case 'lift':
+      return liftFigure(a, ctx, env);
     default:
       return 'not drawable here';
   }
+}
+
+/** A page note's widest line, CSS px (it wraps under itself past this): tried wide, then narrow. */
+const NOTE_WRAP_PX = [210, 110];
+/** Air between a page note and the page's own text and figures, CSS px. */
+const NOTE_GAP_PX = 5;
+
+/**
+ * A short note on a page beside what it annotates (a mark's rect, a quote, a point), placed where it
+ * covers none of the page's text lines or figures (nor earlier ink), with a thin leader when it sits
+ * apart. No free room: skipped, never drawn over the page.
+ */
+async function pageNote(a: Extract<DrawAction, { kind: 'annot' }>, ctx: TargetCtx, env: BuildEnv): Promise<ElementPlan | string> {
+  if (isRegion(ctx.target)) return 'not drawable here';
+  const runs = await ctx.runs();
+  let target: SRect;
+  if (a.rect) target = ctx.rectToSpace(a.rect);
+  else if (a.quote) {
+    const rs = locateQuote(runs, a.quote, a.near, { aspect: ctx.h / 1000 }).map((x) => ctx.rectToSpace(x));
+    if (!rs.length) return 'quote not found';
+    target = union(rs);
+  } else if (a.at) { const c = ctx.toSpace(a.at); target = { x: c.x - 2, y: c.y - 2, w: 4, h: 4 }; }
+  else return 'nothing to annotate';
+  await fontsFor(a.text);
+  const page = [...runs.map((r) => ctx.rectToSpace(r.rect)), ...(a.avoid ?? []).map((r) => ctx.rectToSpace(r))];
+  const px = (n: number) => n / Math.max(ctx.scale(), 1e-3);
+  // One line where it fits; wrapped narrower when that sits closer (a note in a tight margin).
+  const fit = (layer: SVGGElement) => {
+    const o = textOpts(ctx, env, textPx(ctx, 'label'), a.em);
+    let best: { o: TextOpts; lines: string[]; place: NonNullable<ReturnType<typeof placeNote>>; h0: number } | null = null;
+    for (const maxPx of NOTE_WRAP_PX) {
+      const lines = wrapLines(layer, a.text, o, px(maxPx));
+      const b = linesBox(layer, lines, o, { x: 0, y: 0 });
+      const place = placeNote(target, b.w, b.h, [...page, ...env.registry.obstacles(ctx.target)], bounds(ctx), px(NOTE_GAP_PX));
+      // A wrapped note must win clearly: one line reads better at the same distance.
+      if (place && (!best || place.score + (lines.length - best.lines.length) * b.h < best.place.score)) best = { o, lines, place, h0: -b.y * 2 };
+    }
+    return best;
+  };
+  const est = fit(ctx.layers.agent);
+  if (!est) return 'no free room for the note';
+  return {
+    target: ctx.target,
+    bbox: union([est.place.box, target]),
+    draw: async (signal, k) => {
+      const g = own(ctx.layers.agent);
+      const got = fit(g) ?? est; // placed again now: it sees every element drawn since it was built
+      const { box, leader } = got.place;
+      const strokes = leader ? [lineStroke(leader[0], leader[1], env.rng())] : [];
+      env.registry.define({ id: a.id, kind: 'annot', target: ctx.target, bbox: union([box, ...(leader ? [boxOf(leader)] : [])]), boxes: [box], anchor: { x: box.x, y: box.y + box.h / 2 }, group: g, strokes });
+      if (leader) {
+        const ws = weightStyle('secondary', env.settings.inkStyle === 'hand');
+        await drawStrokes(g, strokes, { color: env.settings.inkColor, width: ws.width, opacity: ws.opacity < 1 ? ws.opacity : undefined, scale: ctx.scale(), signal, mode: k.fadeMs != null || env.settings.inkStyle === 'clean' || prefersReducedMotion() ? 'fade' : 'trace', fadeMs: k.fadeMs, speed: k.speed });
+      }
+      await writeLines(g, { x: box.x, y: box.y + got.h0 / 2 }, got.lines, box, got.o, env, signal, k);
+    },
+  };
+}
+
+/** How long a lifted figure takes to appear (it fades in where it will stay: it never jumps). */
+const LIFT_MS = 520;
+/** Device px per CSS px a lift is rendered at (crisp on a 2× screen, and when the board grows). */
+const LIFT_DPR = 2.5;
+
+/**
+ * The slide's own figure on the board: a crisp copy of the page region (rendered by pdf.js, on a
+ * transparent ground), set in the section as a base for later ink. Later tags reach its parts through
+ * the page's marks (resolved by the resolver).
+ */
+function liftFigure(a: Extract<DrawAction, { kind: 'lift' }>, ctx: TargetCtx, env: BuildEnv): ElementPlan | string {
+  if (!isRegion(ctx.target)) return 'not drawable here';
+  if (!a.src || !a.at || a.w == null || a.h == null) return 'lift not placed';
+  if (!env.desk.pageImage) return 'no page image';
+  const box = { x: a.at.x, y: a.at.y, w: a.w, h: a.h };
+  const url = env.desk.pageImage(a.srcPage, a.src, Math.min(2400, Math.ceil(a.w * Math.max(ctx.scale(), 0.3) * LIFT_DPR)));
+  return {
+    target: ctx.target,
+    bbox: box,
+    draw: async (signal, k) => {
+      const href = await url;
+      if (!href) return 'no page image';
+      const g = sheetSlot(ctx.layers.agent); // behind every stroke: ink drawn later sits on it
+      const img = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+      Object.entries({ href, x: box.x, y: box.y, width: box.w, height: box.h, preserveAspectRatio: 'none' }).forEach(([key, v]) => img.setAttribute(key, String(v)));
+      g.setAttribute('data-lift', '');
+      g.appendChild(img);
+      env.registry.define({ id: a.id, kind: 'lift', target: ctx.target, bbox: box, boxes: [], anchor: { x: box.x + box.w / 2, y: box.y + box.h / 2 }, group: g });
+      if (prefersReducedMotion() || signal.aborted) return;
+      g.style.opacity = '0';
+      await fadeGroup(g, 1, k.fadeMs ?? LIFT_MS / Math.max(k.speed, 0.25), signal);
+    },
+  };
+}
+
+/**
+ * A curve on a slide's calibrated chart: fn= sampled over the domain (default: the chart's x axis),
+ * mapped through the chart's own axes, cut where it leaves the chart's y range. Constants come from
+ * {{const}} like every engine plot.
+ */
+function chartPlot(a: Extract<DrawAction, { kind: 'plot' }>, ctx: TargetCtx, env: BuildEnv): ElementPlan | string {
+  const c = a.onChart!;
+  const got = samplePlot(a, withConsts(kitStore(env.registry).consts, a.with));
+  if (typeof got === 'string') return got;
+  const strokes: Stroke[] = [];
+  let cur: SPt[] = [];
+  for (let i = 0; i < got.xs.length; i++) {
+    const q = Number.isFinite(got.ys[i]) ? chartToPage(c, { x: got.xs[i], y: got.ys[i] }) : null;
+    if (q) cur.push(ctx.toSpace(q));
+    else if (cur.length) { if (cur.length > 1) strokes.push(cur); cur = []; }
+  }
+  if (cur.length > 1) strokes.push(cur);
+  if (!strokes.length) return 'nothing to plot on the chart';
+  const label = a.label;
+  if (!label) return strokePlan(a, ctx, env, { strokes, dash: a.dash });
+  const last = strokes[strokes.length - 1];
+  const end = a.labelAt === 'top' ? strokes.flat().reduce((p, q) => (q.y < p.y ? q : p)) : last[last.length - 1];
+  return strokePlan(a, ctx, env, { strokes, dash: a.dash }, [], async (g, sig, k) => {
+    await fontsFor(label);
+    const o = textOpts(ctx, env, textPx(ctx, 'label'), a.em);
+    // Clear of the slide's own words too (its labels sit right where a new curve ends).
+    const air = 6 / Math.max(ctx.scale(), 1e-3);
+    const page = (await ctx.runs()).map((r) => ctx.rectToSpace(r.rect)).map((r) => ({ x: r.x - air, y: r.y - air, w: r.w + 2 * air, h: r.h + 2 * air }));
+    const m = measureText(g, label, o);
+    const box = placeClear(end, m.w, m.h, a.labelAt === 'top' ? 'n' : 'e', 4, env.registry.segments(ctx.target), [...env.registry.obstacles(ctx.target), ...page], bounds(ctx));
+    await writeLabel(g, box, label, o, env, sig, k);
+  });
 }
 
 /** The compass direction closest to a unit vector (y down). */
@@ -461,7 +599,8 @@ async function ref(a: RefAction, env: BuildEnv): Promise<ElementPlan | string> {
         draw: async (signal) => { env.registry.update(e.id, { faded: true }); await fadeGroup(e.group, FADE_TO, 300, signal); },
       };
     case 'move': {
-      if (e.kind !== 'point' && e.kind !== 'label') { console.warn('[desk] move: only points and labels move', a.ref); return 'not movable'; }
+      // A lift moves by its centre (a lifted piece of the slide slides into place).
+      if (e.kind !== 'point' && e.kind !== 'label' && e.kind !== 'lift') { console.warn('[desk] move: only points, labels and lifts move', a.ref); return 'not movable'; }
       if (!a.to) return 'move needs to=';
       const to = ctx.toSpace({ x: a.to.x, y: Math.min(a.to.y, isRegion(e.target) ? ctx.h : 1000) });
       const by = (from: SPt) => (b: SRect) => ({ ...b, x: b.x + to.x - from.x, y: b.y + to.y - from.y });

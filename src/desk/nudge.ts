@@ -90,14 +90,74 @@ const ORDER: Record<Compass, Compass[]> = {
   s: ['s', 'se', 'sw', 'e', 'w', 'ne', 'nw', 'n'], sw: ['sw', 's', 'w', 'se', 'nw', 'e', 'n', 'ne'],
   w: ['w', 'sw', 'nw', 's', 'n', 'se', 'ne', 'e'], nw: ['nw', 'w', 'n', 'sw', 'ne', 's', 'e', 'se'],
 };
+/** A closed shape's outline (a circle's or box's stroke, a shade's polygon), target space. */
+export type Outline = SPt[];
+
+/** Is p inside the closed polygon (even-odd)? */
+export function inPoly(p: SPt, poly: Outline): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+/** Distance from p to the polygon's boundary (its closing edge included). */
+export function distToOutline(p: SPt, poly: Outline): number {
+  let best = Infinity;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[j], b = poly[i], dx = b.x - a.x, dy = b.y - a.y, L = dx * dx + dy * dy;
+    const t = L ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / L)) : 0;
+    best = Math.min(best, Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)));
+  }
+  return best;
+}
+
+/** Does rect r reach into the polygon's interior (a corner or its centre inside, a vertex inside it, or an edge through it)? */
+export function rectInPoly(r: SRect, poly: Outline): boolean {
+  const pts = [{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x, y: r.y + r.h }, { x: r.x + r.w, y: r.y + r.h }, { x: r.x + r.w / 2, y: r.y + r.h / 2 }];
+  if (pts.some((p) => inPoly(p, poly))) return true;
+  if (poly.some((p) => p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h)) return true;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if (segHitsRect({ a: poly[j], b: poly[i] }, r, 0)) return true;
+  return false;
+}
+
+/**
+ * The closed shapes a point label is about: those the anchor sits on, or inside or outside of
+ * within `tol` of their edge (a point on a circle, a corner of a box). A point deep inside a shape
+ * (a centre) is not on it: its label may stay inside.
+ */
+export function shapesAt(anchor: SPt, outlines: Outline[], tol: number): Outline[] {
+  return outlines.filter((o) => o.length >= 3 && distToOutline(anchor, o) <= tol);
+}
+
+/** The compass direction closest to a vector (y down). */
+function compassOf(v: SPt): Compass {
+  const dirs: Compass[] = ['e', 'se', 's', 'sw', 'w', 'nw', 'n', 'ne'];
+  const a = Math.atan2(v.y, v.x);
+  return dirs[(Math.round(a / (Math.PI / 4)) + 8) % 8];
+}
+
 /**
  * The requested side if it is clear of every stroke and box; else the nearest clear compass side
  * (at 1× then 1.8× the offset); else the least-bad side, nudged. Labels stay inside `bounds`.
+ * `outlines`: closed shapes on the target. When the anchor sits on one (shapesAt), its label goes
+ * outside it: a side that reaches into the shape is not clear, and the fallback sides start from
+ * the one pointing away from the shape's interior.
  */
-export function placeClear(anchor: SPt, w: number, h: number, dir: Compass, clear: number, segs: Seg[], boxes: SRect[], bounds: SRect): SRect {
-  const cost = (r: SRect) => segs.filter((s) => segHitsRect(s, r)).length * 1e6 + boxes.reduce((n, o) => n + overlapArea(r, o), 0);
+export function placeClear(anchor: SPt, w: number, h: number, dir: Compass, clear: number, segs: Seg[], boxes: SRect[], bounds: SRect, outlines: Outline[] = []): SRect {
+  const on = shapesAt(anchor, outlines, LABEL_OFFSET + clear);
+  const cost = (r: SRect) => segs.filter((s) => segHitsRect(s, r)).length * 1e6 + on.filter((o) => rectInPoly(r, o)).length * 1e6 + boxes.reduce((n, o) => n + overlapArea(r, o), 0);
+  let order = ORDER[dir];
+  if (on.length) {
+    // Away from the interior: from the shapes' centre (their vertices' mean) through the anchor.
+    const pts = on.flat(), cx = pts.reduce((s, p) => s + p.x, 0) / pts.length, cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+    const out = Math.hypot(anchor.x - cx, anchor.y - cy) > 1e-6 ? compassOf({ x: anchor.x - cx, y: anchor.y - cy }) : dir;
+    order = [dir, ...ORDER[out].filter((d) => d !== dir)];
+  }
   let best: SRect | null = null, bestCost = Infinity;
-  for (const k of [1, 1.8]) for (const d of ORDER[dir]) {
+  for (const k of on.length ? [1, 1.8, 2.6] : [1, 1.8]) for (const d of order) {
     const r = clampTo(placeLabel(anchor, w, h, d, clear + (k - 1) * LABEL_OFFSET), bounds);
     const c = cost(r);
     if (c === 0) return r;

@@ -2,7 +2,7 @@
 import { EXAMPLES } from './examples.ts';
 
 /** Bump on any change: the eval records it with every run, and it is part of the cache prefix. */
-export const PROMPT_VERSION = 'p5.3';
+export const PROMPT_VERSION = 'p5.4';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -76,6 +76,7 @@ Just before a sketch tag, write a short plan inside <plan>…</plan>: the given 
 A graph of one quantity against another: a plot tag; the engine draws its axes and ticks. A curve's pts run in order along it (a wave through chosen points: left to right); a curve that doubles back on itself is skipped. One value per key: a bent path is several lines.
 Look: main shapes plain; rays and sight lines weight=secondary; construction lines dash; surfaces {{shade on=s pts=O L P outline}}. Label a point as you draw it, {{point on=s at=P "P" dir=s}}; a line by naming it aloud, or {{label id=ray "light" dir=n}} on a line drawn with id=ray. em is the accent colour: keep it for what the student should leave with. {{emph id=ray}} draws attention back to something already drawn; {{fade id=ray}} dims what no longer matters.
 When the board redraws or extends something on a page, tie them: {{connect from=p4:#d3 to=s:X}} from a page mark, or {{connect from=p4:"words on the page" to=s:ray}} from words.
+WORK ON THE SLIDE AND FROM IT, not on a disconnected copy. A chart its listing calibrates (#c1 chart x "time" 0–60, y "speed" 0–14) takes drawings in its data units, landing exactly on its axes. Lift a figure onto the board to extend it (its marks become points there). Put a short note in place, beside what it explains (it is kept off the page's text). Reuse the slide's notation.
 WORKED NUMBERS. When the idea is a computation (values in a table or matrix, a vector, data points, a rule applied case by case), use the kit blocks below instead of strokes: the engine lays them out and computes every number. Never write a computed number yourself, on the board, in a tag or in the narration; name the operation and let the engine show its result, and say what the result means (it jumps, it doubles, it stays put). Pick example values that make the effect visible; when the page gives values, use the page's. Show the input, the operation and the output side by side, then let the computation happen on the board: step through the first case or two while you explain them, then sweep the rest while you say what the pattern shows.
 Then show the picture at scale: after one worked case, show what the computation does across the whole set (as a picture, a curve or a plot), so the student sees the effect, not only the arithmetic. When the student asks to see or visualize something, that picture is the answer.
 When the confusion is about what changes when an input changes, change the input on the board (set) and let the student watch what follows and what stays put.
@@ -101,6 +102,8 @@ const GRAMMAR = `TAGS (key=value, "quoted text", bare flags; A, B, C are x,y, a 
 {{contrast of=p a=3 "a = 3"}}  {{limit of=p a=0 show=E}}  {{beforeafter of=p a=3}} change constant a under plot or block p
 {{let on=s A=0,0 B=along(A,C,2)}}  {{sketch id=s near=p4 fit}}  {{sketch id=t near=p4 size=l fit}}
 {{connect from=p4:#d3 to=s:X}}  {{connect from=p4:"quote" to=s:ray}}  {{emph id=ray}}  {{fade id=ray}}
+ON THE SLIDE: {{plot p=4 on=#c1 fn="k*x" "k = 3"}}  {{point p=4 on=#c1 at=20,8 "E"}}  {{shade p=4 on=#c1 pts=0,12 20,8 0,8}} in #c1's data units (also line, let, curve, arrow, label)
+{{note p=4 "short words" annotate=#e2}} (or annotate="quote", or on=#c1 at=20,8)  {{lift p=4 mark=#g1 on=s id=fig}} (or box=x,y,w,h; at= w=), then {{arrow on=s from=#d2 to=#b1}} uses its marks  {{move id=fig to=500,300}}
 SCENE (in {{scene id=s near=p4}}; P is right=, left=, above=, below=, beside= or near= a thing or a part)
 {{node on=s id=a "label" right=b}} a labelled thing, value=0.3 or value=p[2] shows a small value under it  {{flow on=s id=f "first" "second" "third" arrows below=a}} a sequence of things (parts f[1]…; values=p shows p's values under them; down stacks it)
 {{link on=s from=a to=f[2] strength=p[2] "what it does"}} a relation; strength 0 to 1 or a part's value sets its weight (show prints it, plain drops the head, dash)  {{link on=s from=f[3] to=f strength=p}} one link to every part of f, weighted by p

@@ -101,3 +101,64 @@ describe('placeClear', () => {
     expect(r.y + r.h).toBeLessThanOrEqual(700);
   });
 });
+
+import { inPoly, distToOutline, rectInPoly, shapesAt, type Outline } from '../../src/desk/nudge';
+import { estimateTextBox } from '../../src/desk/nudge';
+
+describe('placeClear: a point label goes outside the closed shape it sits on', () => {
+  const ring = (cx: number, cy: number, rx: number, ry = rx, n = 64): Outline => Array.from({ length: n }, (_, i) => ({ x: cx + rx * Math.cos((i / n) * 2 * Math.PI), y: cy + ry * Math.sin((i / n) * 2 * Math.PI) }));
+  const segsOf = (o: Outline): Seg[] => o.map((p, i) => ({ a: p, b: o[(i + 1) % o.length] }));
+  const circle = ring(500, 350, 200);
+  const { w, h } = estimateTextBox('A', 16);
+  it('geometry: inside, distance to the edge, a rect reaching in', () => {
+    expect(inPoly({ x: 500, y: 350 }, circle)).toBe(true);
+    expect(inPoly({ x: 750, y: 350 }, circle)).toBe(false);
+    expect(distToOutline({ x: 500, y: 350 }, circle)).toBeCloseTo(200, 0);
+    expect(distToOutline({ x: 500, y: 550 }, circle)).toBeLessThan(1);
+    expect(rectInPoly({ x: 490, y: 340, w: 20, h: 20 }, circle)).toBe(true); // fully inside
+    expect(rectInPoly({ x: 690, y: 340, w: 30, h: 20 }, circle)).toBe(true); // across the edge
+    expect(rectInPoly({ x: 720, y: 340, w: 30, h: 20 }, circle)).toBe(false);
+    expect(shapesAt({ x: 500, y: 550 }, [circle], 15)).toHaveLength(1);
+    expect(shapesAt({ x: 500, y: 350 }, [circle], 15)).toHaveLength(0); // the centre is not on it
+  });
+  it('a point at the bottom of a big circle: the NE label (inside, clear of the stroke) moves below it', () => {
+    const anchor = { x: 500, y: 550 }, segs = segsOf(circle);
+    const before = placeClear(anchor, w, h, 'ne', 3, segs, [], B); // without outlines: accepted inside
+    expect(rectInPoly(before, circle)).toBe(true);
+    const r = placeClear(anchor, w, h, 'ne', 3, segs, [], B, [circle]);
+    expect(rectInPoly(r, circle)).toBe(false);
+    expect(r.y).toBeGreaterThanOrEqual(550); // away from the interior: below
+    expect(Math.hypot(r.x + r.w / 2 - anchor.x, r.y + r.h / 2 - anchor.y)).toBeLessThan(45); // still near its point
+    expect(segs.some((s) => segHitsRect(s, r))).toBe(false);
+  });
+  it('around the circle, every label lands outside it and clear of its stroke', () => {
+    for (let i = 0; i < 16; i++) {
+      const t = (i / 16) * 2 * Math.PI, anchor = { x: 500 + 200 * Math.cos(t), y: 350 + 200 * Math.sin(t) };
+      for (const dir of ['ne', 'n', 'sw', 'e'] as const) {
+        const r = placeClear(anchor, w, h, dir, 3, segsOf(circle), [], B, [circle]);
+        expect(rectInPoly(r, circle), `${i} ${dir}`).toBe(false);
+      }
+    }
+  });
+  it('the requested side is kept when it is already outside (unchanged output)', () => {
+    const anchor = { x: 700, y: 350 };
+    expect(placeClear(anchor, w, h, 'e', 3, segsOf(circle), [], B, [circle])).toEqual(placeClear(anchor, w, h, 'e', 3, segsOf(circle), [], B));
+  });
+  it('a box corner and a shade polygon; still clear of other ink', () => {
+    const box: Outline = [{ x: 300, y: 200 }, { x: 600, y: 200 }, { x: 600, y: 450 }, { x: 300, y: 450 }];
+    const other = { x: 600, y: 140, w: 60, h: 50 }; // something already drawn up and to the right
+    const r = placeClear({ x: 600, y: 200 }, w, h, 'sw', 3, segsOf(box), [other], B, [box]);
+    expect(rectInPoly(r, box)).toBe(false);
+    expect(overlap(r, other)).toBe(0);
+    const tri: Outline = [{ x: 100, y: 600 }, { x: 400, y: 600 }, { x: 250, y: 350 }];
+    const r2 = placeClear({ x: 250, y: 600 }, w, h, 'n', 3, [], [], B, [tri]); // a shade has no strokes
+    expect(rectInPoly(r2, tri)).toBe(false);
+    expect(r2.y).toBeGreaterThanOrEqual(600);
+  });
+  it('a point deep inside (a centre) keeps its label inside', () => {
+    const r = placeClear({ x: 500, y: 350 }, w, h, 'ne', 3, segsOf(circle), [], B, [circle]);
+    expect(r).toEqual(placeLabel({ x: 500, y: 350 }, w, h, 'ne', 3));
+  });
+});
+const overlap = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) =>
+  Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));

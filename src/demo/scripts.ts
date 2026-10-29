@@ -236,6 +236,33 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number; deeper
       `{{note on=s "equal slopes, equal shares" annotate=burden}} Because the two curves are equally steep, each side carries half. ` +
       `{{set id=tax vals=4}} Double the tax and both prices move apart, {{emph id=burden}} but the split stays the same.`,
   },
+  /**
+   * The slide is part of the canvas (spec "The slide is part of the canvas"), on three slides of
+   * public/fixtures/canvas.pdf: 1 drawing on the slide's own chart in its data units (a doubled tax:
+   * supply lifted on the same axes, the new wedge and the grown lost-trade triangle), with a note by
+   * its equation; 2 the slide's enzyme, substrate and inhibitor lifted onto the board and moved to
+   * act out the competition for the pocket; 3 notes in place beside a slope slide's equations, and a
+   * tangent on its chart.
+   */
+  canvas: {
+    src: '/fixtures/canvas.pdf',
+    question: 'Show me on the slides themselves',
+    script:
+      `{{scroll p=1}} On the slide's own graph, {{highlight p=1 "Buyers and sellers split the tax"}} a tax of two drives a wedge between what buyers pay and what sellers keep. ` +
+      `{{const t=4}} Double it to four, {{plot p=1 on=#c1 fn="2+t+x/5" domain=0,40 "S + 4"}} and the supply line lifts by four on these same axes. ` +
+      `{{point p=1 on=#c1 at=15,9 "9" dir=ne}} Buyers now pay nine, {{point p=1 on=#c1 at=15,5 "5" dir=sw}} sellers keep five, {{line p=1 on=#c1 from=15,9 to=15,5 em}} and the gap between them is the whole tax. ` +
+      `{{shade p=1 on=#c1 pts=15,9 25,7 15,5}} The lost trades now run from fifteen to twenty-five, {{note p=1 "now Q = 15 to 25" annotate="Trades between Q = 20 and 25 vanish"}} so twice the tax loses four times as much. ` +
+      `{{scroll p=2}} The enzyme slide is the same kind of story: {{note p=2 "one pocket, two keys" annotate=#g1}} one pocket, and two molecules that fit it. ` +
+      `{{sketch id=e near=p2}} Take {{lift p=2 mark=#g1 on=e id=enz at=400,90 w=240}} the slide's own enzyme, ` +
+      `{{lift p=2 mark=#b1 on=e id=sub at=120,160 w=81}} its substrate {{lift p=2 mark=#b2 on=e id=inh at=760,160 w=81}} and the inhibitor. ` +
+      `{{move id=sub to=439,196}} The substrate slides into the pocket and is turned into product. ` +
+      `{{move id=sub to=160,192}} Once it leaves, {{move id=inh to=439,196}} the inhibitor can take the pocket instead, {{write on=e at=380,370 "while I sits here: no product" id=blocked}} and nothing is made while it sits there. ` +
+      `{{lift p=2 mark=#b1 on=e id=s2 at=60,330 w=81}} Now flood the enzyme with substrate, {{lift p=2 mark=#b1 on=e id=s3 at=170,330 w=81}} more and more of it: ` +
+      `{{move id=inh to=800,192}} the moment the inhibitor lets go {{fade id=blocked}} the pocket is free, {{move id=s2 to=439,196}} and a substrate is there first. ` +
+      `{{write on=e at=380,430 "enough S always wins: Vmax unchanged" em}} With enough substrate it nearly always wins, so the top speed does not change. ` +
+      `{{scroll p=3}} On the slope slide, {{note p=3 "average from second 1 to 3" annotate=#e1}} this is an average over two seconds, ` +
+      `{{line p=3 on=#c1 from=2,3 to=4,15}} while the tangent at three seconds {{point p=3 on=#c1 at=3,9 "t = 3" dir=nw}} has slope six: {{note p=3 "the limit of that average" annotate=#e2}} the exact rate is what the average becomes as the interval shrinks.`,
+  },
   'scene-bio': {
     src: '/fixtures/bio.pdf',
     question: 'Why does a competitive inhibitor not change Vmax?',

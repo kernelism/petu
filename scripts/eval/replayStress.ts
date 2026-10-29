@@ -15,7 +15,8 @@
 // marks and quotes count as `unverified`, never as skips.
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { ScriptParser } from '../../src/script/parser.ts';
 import { blockPart } from '../../src/script/pointExpr.ts';
 import { colRef } from '../../src/script/parseKit.ts';
@@ -23,7 +24,9 @@ import type { RawAction } from '../../src/script/types.ts';
 import { Figures } from '../../src/geometry/resolve.ts';
 import { locateQuote, type TextRun } from '../../src/locate/locateQuote.ts';
 import { groundingOf, type PageGround } from '../../src/agent/context/types.ts';
-import { computeSource } from '../../src/desk/kit/kit.ts';
+import { computeSource, samplePlot } from '../../src/desk/kit/kit.ts';
+import { compileFn } from '../../src/desk/kit/compute.ts';
+import { withConsts } from '../../src/values/readout.ts';
 import { compile } from '../../src/desk/expr.ts';
 import { answerPages } from '../../src/agent/scout.ts';
 
@@ -53,10 +56,35 @@ export function normReason(r: string): string {
     .replace(/^#\S+ is not (a line|text)$/, 'mark is not $1')
     .replace(/^no table .*/, 'no table')
     .replace(/^cycle at .*/, 'cycle in names')
+    .replace(/^no line or plot \S+ to (share axes with|put the points on)$/, 'no line or plot to $1')
+    .replace(/^bad (fn|formula|domain|t range) .*/, 'bad $1')
+    .replace(/^unbound value .*/, 'unbound value')
     .replace(/^\w+\(\) lands too far out$/, 'construction lands too far out');
 }
 
-type Block = { id: string; kind: string; vals?: number[][]; win?: unknown; tab?: { heads: string[] } };
+type Block = { id: string; kind: string; vals?: number[][]; win?: unknown; tab?: { heads: string[] }; /** Has a plot's axes (an engine plot, a line-view bars block). */ plot?: boolean };
+type PlotTag = Extract<RawAction, { kind: 'plot' }> & { with?: Record<string, number> };
+
+/**
+ * How the live engine builds a {{plot}} (src/desk/elements.ts `plot`, src/desk/kit/kit.ts
+ * `buildKitPlot`/`makeLineXY`): on hand-drawn {{axes}} (named by axes=, else the section's latest)
+ * a fn= over a numeric domain= is sampled into strokes; anything else is an engine plot: sampled with
+ * the answer's constants on its own axes, or on axes=' host, which must be an engine plot or a
+ * line-view bars block (a scatter hosts nothing). `handAxes(id)`: is `id` (or, with no id, the
+ * section's latest) a hand-drawn axes element; `block(id)`: the kit block of that id so far.
+ */
+export function plotFate(r: PlotTag, id: string | undefined, s: { consts: Record<string, number>; handAxes: (id: string | undefined) => boolean; block: (id: string) => Block | undefined }): { by: 'strokes' | 'kit' } | { skip: string } {
+  if (s.handAxes(r.axes) && r.fn && r.domain) {
+    try { compile(r.fn); } catch { return { skip: 'bad fn' }; }
+    return { by: 'strokes' };
+  }
+  if (id && s.block(id)) return { skip: 'duplicate id' };
+  const got = samplePlot(r, withConsts(s.consts, r.with));
+  if (typeof got === 'string') return { skip: got };
+  if (got.ys.filter(Number.isFinite).length < 2) return { skip: 'nothing to plot' };
+  if (r.axes && !s.block(r.axes)?.plot) return { skip: `no line or plot ${r.axes} to share axes with` };
+  return { by: 'kit' };
+}
 type Elem = { kind: string; region?: string };
 const KIT = new Set(['grid', 'bars', 'scatter', 'table', 'calc', 'fit']);
 const REGION_ONLY = new Set(['write', 'axes', 'plot', 'math']);
@@ -83,10 +111,21 @@ export function stressScript(script: string, env: ReplayEnv = {}): ScriptReport 
   } finally { console.warn = warn; }
 
   const figures = new Figures(env.grounds ? groundingOf([...env.grounds.values()]) : { mark: () => undefined });
+  // Named numbers ({{const}}, or a let of plain numbers), taken when parsed as the director does (prefetch).
+  const consts: Record<string, number> = {};
+  const defineConsts = (defs: [string, string][]) => {
+    for (const [k, v] of defs) { const f = compileFn(v, Object.keys(consts)); const n = f ? f(consts) : NaN; if (Number.isFinite(n)) consts[k.toLowerCase()] = n; }
+  };
   // Lookahead: definitions are taken as actions are parsed, a little ahead of the words being built.
   const ahead = env.lookahead === 'all' ? Infinity : env.lookahead ?? 3;
   let noted = 0;
-  const noteUpTo = (i: number) => { for (; noted < actions.length && noted <= i + ahead; noted++) figures.note(actions[noted]); };
+  const noteUpTo = (i: number) => {
+    for (; noted < actions.length && noted <= i + ahead; noted++) {
+      const n = actions[noted];
+      if (n.kind === 'const') defineConsts(n.defs);
+      figures.note(n);
+    }
+  };
   const regions = new Set<string>();
   const elems = new Map<string, Elem>();
   const blocks = new Map<string, Block>();
@@ -105,6 +144,8 @@ export function stressScript(script: string, env: ReplayEnv = {}): ScriptReport 
     if (a.kind === 'clear') { done(); continue; }
     if (a.kind === 'scroll') { done(pageBad(a.page) ? 'page out of range' : undefined); continue; }
 
+    // A bound number: the parser said it with the engine's value; unresolved, the director records a skip.
+    if (a.kind === 'val') { done(a.said == null ? `unbound value ${a.ref}` : undefined); continue; }
     // References to earlier elements and kit verbs.
     if ('ref' in a) {
       const ref = String((a as { ref: string }).ref);
@@ -160,18 +201,26 @@ export function stressScript(script: string, env: ReplayEnv = {}): ScriptReport 
       const id = x.id ?? `_${blocks.size}`;
       const k = a as unknown as Record<string, unknown>;
       if (a.kind === 'grid' || a.kind === 'bars') {
-        const got = computeSource(k.src as never, (i) => blocks.get(i) as never);
+        const got = computeSource(k.src as never, (i) => blocks.get(i) as never, id, withConsts(consts, k.with as Record<string, number> | undefined));
         if (typeof got === 'string') { done(got); continue; }
         let full = got.full;
         if (a.kind === 'bars' && !got.win && full.length > 1 && full.every((r) => r.length === 1)) full = [full.map((r) => r[0])];
         if (a.kind === 'bars' && full.length !== 1) { done('bars need one row'); continue; }
-        blocks.set(id, { id, kind: a.kind, vals: full, ...(got.win ? { win: got.win } : {}) });
+        // A vector shown as a line (view=line, or past 16 values) has a plot's axes: plots and scatters may share them.
+        const line = a.kind === 'bars' && (k.view === 'line' || (full[0]?.length ?? 0) > 16);
+        if (line) {
+          if (full[0].filter(Number.isFinite).length < 2) { done('a line needs two values'); continue; }
+          if (k.axes && !blocks.get(String(k.axes))?.plot) { done(`no line or plot ${k.axes} to share axes with`); continue; }
+        }
+        blocks.set(id, { id, kind: a.kind, vals: full, ...(got.win ? { win: got.win } : {}), ...(line ? { plot: true } : {}) });
       } else if (a.kind === 'table') {
         blocks.set(id, { id, kind: 'table', vals: (k.vals as number[][]).map((r) => r.slice()), tab: { heads: k.heads as string[] } });
       } else if (a.kind === 'scatter') {
         const cols = k.cols as { id: string; x: number; y: number } | undefined;
         if (cols) { const t = blocks.get(cols.id); if (t?.kind !== 'table') { done(`no table ${cols.id}`); continue; } const n = t.vals?.[0]?.length ?? 0; if (cols.x >= n || cols.y >= n) { done('no such column'); continue; } }
         else if (((k.data as unknown[]) ?? []).length < 2) { done('scatter needs two points'); continue; }
+        // axes=: onto a line's or plot's axes (a scatter has no axes another chart can share).
+        if (k.axes && !blocks.get(String(k.axes))?.plot) { done(`no line or plot ${k.axes} to put the points on`); continue; }
         blocks.set(id, { id, kind: 'scatter' });
       } else if (a.kind === 'calc') {
         if ((k.of as string[]).some((i) => !blocks.get(i)?.vals)) { done('unknown block'); continue; }
@@ -193,9 +242,14 @@ export function stressScript(script: string, env: ReplayEnv = {}): ScriptReport 
     }
     const r = res as Record<string, unknown> & { page?: number; region?: string };
     if (a.kind === 'plot') {
-      const axesId = r.axes as string | undefined;
-      if (axesId ? elems.get(axesId)?.kind !== 'axes' : !axes.has(String(r.region))) { done('no axes'); continue; }
-      try { compile(String(r.fn)); } catch { done('bad fn'); continue; }
+      const fate = plotFate(r as PlotTag, x.id, { consts, handAxes: (id) => (id != null ? elems.get(id)?.kind === 'axes' : axes.has(String(r.region))), block: (id) => blocks.get(id) });
+      if ('skip' in fate) { done(fate.skip); continue; }
+      if (fate.by === 'kit') {
+        // An engine plot is a kit block with axes of its own (or its host's): later plots, lines and scatters may share them.
+        const id = x.id ?? `_${blocks.size}`;
+        blocks.set(id, { id, kind: 'plot', plot: true });
+        done(); continue;
+      }
     }
     if (r.page != null && typeof r.quote === 'string') {
       const runs = env.runs?.(r.page);
@@ -389,14 +443,29 @@ export function formatSummary(s: StressSummary): string {
 // ------------------------------------------------------------------------------------------------
 // CLI
 
+/** Where `.petu/` lives: PETU_DATA_ROOT, else `cwd` when it has eval runs, else the main checkout (git common dir). */
+export function dataRoot(cwd: string): string {
+  if (process.env.PETU_DATA_ROOT) return process.env.PETU_DATA_ROOT;
+  if (isDir(join(cwd, '.petu/eval/runs'))) return cwd;
+  try {
+    const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd, encoding: 'utf8' }).trim();
+    const main = dirname(common);
+    if (isDir(join(main, '.petu'))) return main;
+  } catch { /* not a git checkout */ }
+  return cwd;
+}
+
 /** The lessons smoke ids → course deck (scratchpad smoke.ts). */
 export const SMOKE_DECKS: Record<string, string> = { ransac: 'lec08', corner: 'lec07', symbol: 'lec07', pinhole: 'lec02', handin: 'hw2' };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const argv = process.argv.slice(2);
   const opt = (k: string) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
-  const root = process.cwd();
-  const { deckPath, pathOfSrc, knownDeck } = await import('./decks.ts');
+  // Recordings and course PDFs are gitignored: in a worktree they live in the main checkout (as the gallery's runs do).
+  const root = dataRoot(process.cwd());
+  const { deckPath: deckAt, pathOfSrc: srcAt, knownDeck, pdfDirs } = await import('./decks.ts');
+  const deckPath = (d: string) => deckAt(d, pdfDirs(root), root);
+  const pathOfSrc = (s: string) => srcAt(s, pdfDirs(root), root);
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const { groundPage } = await import('../../src/agent/context/build.ts');
   const OPS = pdfjs.OPS as unknown as Record<string, number>;
