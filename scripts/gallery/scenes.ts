@@ -20,6 +20,8 @@ export const SCENES: Scene[] = [
   { name: 'scene', query: 'script=scene', moments: [mid(20000), END] },
   { name: 'scene-econ', query: 'script=scene-econ', moments: [mid(20000), END] },
   { name: 'scene-bio', query: 'script=scene-bio', moments: [mid(20000), END] },
+  // Demonstration moves and bound numbers: beforeafter (market), contrast (colony), limit (drag).
+  { name: 'moves', query: 'script=moves', moments: [mid(12000), mid(26000), END] },
   { name: 'lec09', query: 'script=lec09', moments: [mid(14000), END], needs: 'public/dev/lec09_optical_flow.pdf' },
 ];
 

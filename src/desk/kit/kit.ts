@@ -14,7 +14,7 @@
  * fixed when it is built: the section scales as one picture.
  */
 import type { SRect } from '../../geometry/space';
-import type { ColRef, DrawAction, InkAction, KitBlock, KitSource, KitVerb, Pt, RefAction, Target } from '../../script/types';
+import type { ColRef, DrawAction, FindAction, InkAction, KitBlock, KitSource, KitVerb, Pt, RefAction, Target } from '../../script/types';
 import { blockPart, isBlockRef, type BlockPart } from '../../script/pointExpr';
 import { colRef, colStr } from '../../script/parseKit';
 import type { BuildEnv, ElementPlan, Pace, TargetCtx } from '../types';
@@ -30,6 +30,7 @@ import { kitText, svg, setAttrs, textWidth } from './text';
 import { applyOp, normalize } from './ops';
 import { placeRel } from '../scene/place';
 import { anchorBox, sceneLink, sceneStore, setKitResolver } from '../scene/store';
+import { curveOf, read, withConsts, type Curve, type FitData, type Reading } from '../../values/readout';
 
 /** A reference waits this long for its block (still waiting on its own word) before it is skipped. */
 export const KIT_WAIT_MS = 600;
@@ -127,8 +128,26 @@ export class KitStore {
       else console.warn('[kit] const dropped:', `${k}=${v}`);
     }
   }
+  /** Named readouts ({{find}}) of this answer, computed when read. */
+  readonly finds = new Map<string, FindAction>();
+  /** A plot's curve with the current constants (readouts compute on it, exactly as the value model does). */
+  curve(id: string): Curve | undefined {
+    const src = this.blocks.get(id)?.el.plotSrc as Extract<DrawAction, { kind: 'plot' }> | undefined;
+    return src ? curveOf(src, this.consts) ?? undefined : undefined;
+  }
+  fitData(id: string): FitData | undefined {
+    const f = this.blocks.get(id);
+    const sc = f?.kind === 'fit' ? this.blocks.get(f.of!) : undefined;
+    return f?.line && sc?.data ? { line: f.line, pts: sc.data.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y)) } : undefined;
+  }
+  reading(id: string): Reading | string {
+    const a = this.finds.get(id);
+    return a ? read(a, (x) => this.curve(x), (x) => this.fitData(x), this.consts) : `no readout ${id}`;
+  }
   anonId(): string { return `_k${++this.n}`; }
   get(id: string): Block | undefined { return this.blocks.get(id); }
+  /** Every block, in creation order. */
+  all(): Block[] { return [...this.blocks.values()]; }
   add(b: Block): void {
     this.blocks.set(b.id, b);
     const w = this.waiters.get(b.id);
@@ -157,7 +176,7 @@ export class KitStore {
     return out;
   }
   settle(): void { this.anim.settle(); }
-  clear(): void { this.blocks.clear(); this.n = 0; this.consts = {}; this.subs.clear(); }
+  clear(): void { this.blocks.clear(); this.n = 0; this.consts = {}; this.subs.clear(); this.finds.clear(); }
   /** Board v2: things showing a block's values (a node's value, a link's weight) follow it. */
   private subs = new Map<string, Set<() => void>>();
   listen(id: string, f: () => void): void { const s = this.subs.get(id) ?? new Set(); s.add(f); this.subs.set(id, s); }
@@ -427,7 +446,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
   const c = col();
   let b: Block;
   if (a.kind === 'grid' || a.kind === 'bars') {
-    const got = computeSource(a.src, (x) => store.get(x), id, store.consts);
+    const got = computeSource(a.src, (x) => store.get(x), id, withConsts(store.consts, a.with));
     if (typeof got === 'string') return got;
     if (a.kind === 'bars' && !got.win) got.full = asRow(got.full);
     const [R, Cn] = C.shape(got.full);
@@ -545,7 +564,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     if (a.cols) b.deps = [a.cols.id];
     b.el.xLabel = a.xLabel; b.el.yLabel = a.yLabel; b.el.caption = a.caption;
   } else if (a.kind === 'shares') {
-    const got = computeSource(a.src, (x) => store.get(x), id, store.consts);
+    const got = computeSource(a.src, (x) => store.get(x), id, withConsts(store.consts, a.with));
     if (typeof got === 'string') return got;
     const raw = got.full.flat();
     if (raw.some((v) => v < 0)) return 'shares need values of 0 or more';
@@ -586,6 +605,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     b.dp = a.dp; b.em = a.em;
   }
   if (sceneOp) b.el.sceneOp = sceneOp;
+  if (a.with) b.el.with = a.with;
   return planFor(b, a.id, ctx, env, store, region, m, c);
 }
 
@@ -966,7 +986,32 @@ export async function buildKitPlot(a: Extract<DrawAction, { kind: 'plot' }> & { 
   const m = metrics(ctx.scale(), ctx.body?.() ?? 16);
   const id = a.id ?? store.anonId();
   if (a.id && store.get(a.id)) return 'duplicate id';
-  const K = store.consts;
+  const K = withConsts(store.consts, a.with);
+  const got = samplePlot(a, K);
+  if (typeof got === 'string') return got;
+  const { xs, ys } = got;
+  if (ys.filter(Number.isFinite).length < 2) return 'nothing to plot';
+  const others = store.inRegion(region).map((b) => b.placed);
+  const spacing = { gap: m.gap, opW: m.opW, margin: m.margin, top: m.top, width: 1000 };
+  const P = (w: number, h: number, pad: Pad) => place(w, h, pad, {}, undefined, others, spacing);
+  const b = await makeLineXY(id, region, m, P, store, xs, ys, a.axes, [], false, { x: a.xLabel, y: a.yLabel });
+  if (typeof b === 'string') return b;
+  b.em = a.em;
+  b.el.caption = a.label;
+  b.el.labelAt = a.labelAt;
+  b.el.curve = true;
+  // Its tag: readouts and moves recompute the curve from it with the current constants.
+  b.el.plotSrc = a;
+  b.el.store = store;
+  if (a.dash) b.el.dash = true;
+  return planFor(b, a.id, ctx, env, store, region, m, col());
+}
+
+/**
+ * A plot's samples with these constants: fn= over domain= (or x=, y= over t=); a pole or a value
+ * outside range= breaks the curve there (NaN). A string says why nothing can be drawn.
+ */
+export function samplePlot(a: Pick<Extract<DrawAction, { kind: 'plot' }>, 'fn' | 'x' | 'y' | 't' | 'domain' | 'domainSrc' | 'range'>, K: Record<string, number>): { xs: number[]; ys: number[] } | string {
   const val = (e: string) => { const f = formula(e, [], K); return f ? f({}) : NaN; };
   const N = 160;
   const xs: number[] = [], ys: number[] = [];
@@ -984,24 +1029,13 @@ export async function buildKitPlot(a: Extract<DrawAction, { kind: 'plot' }> & { 
     if (!f) return `bad fn ${a.fn}`;
     for (let i = 0; i <= N; i++) { const x = d0 + ((d1 - d0) * i) / N; xs.push(x); ys.push(f({ x })); }
   }
-  // A pole or a value outside range= breaks the curve there.
   const fin = ys.filter(Number.isFinite).map(Math.abs).sort((p, q) => p - q);
   const cap = a.range ? null : Math.max((fin[Math.floor(fin.length / 2)] ?? 1) * 20, 1e-9);
   for (let i = 0; i < ys.length; i++) {
     const bad = !Number.isFinite(xs[i]) || !Number.isFinite(ys[i]) || (a.range ? ys[i] < a.range[0] || ys[i] > a.range[1] : Math.abs(ys[i]) > cap!);
     if (bad) { ys[i] = NaN; if (!Number.isFinite(xs[i])) xs[i] = i > 0 ? xs[i - 1] : 0; }
   }
-  if (ys.filter(Number.isFinite).length < 2) return 'nothing to plot';
-  const others = store.inRegion(region).map((b) => b.placed);
-  const spacing = { gap: m.gap, opW: m.opW, margin: m.margin, top: m.top, width: 1000 };
-  const P = (w: number, h: number, pad: Pad) => place(w, h, pad, {}, undefined, others, spacing);
-  const b = await makeLineXY(id, region, m, P, store, xs, ys, a.axes, [], false, { x: a.xLabel, y: a.yLabel });
-  if (typeof b === 'string') return b;
-  b.em = a.em;
-  b.el.caption = a.label;
-  b.el.labelAt = a.labelAt;
-  b.el.curve = true;
-  return planFor(b, a.id, ctx, env, store, region, m, col());
+  return { xs, ys };
 }
 
 /** (Re)draws a plot's axes and ticks. */
@@ -1028,8 +1062,8 @@ function drawPlotAxes(pl: Plot, c: ReturnType<typeof col>) {
 }
 
 /** The path through a line's first `upto` values (fractional: the last segment partly drawn). */
-function linePath(b: Block, ys: number[], upto = ys.length): string {
-  const pl = b.plot!, xs = b.xs!;
+function linePath(b: Block, ys: number[], upto = ys.length, xs0?: number[]): string {
+  const pl = b.plot!, xs = xs0 ?? b.xs!;
   let d = '', pen = false;
   const whole = Math.floor(upto);
   for (let i = 0; i < Math.min(ys.length, Math.ceil(upto)); i++) {
@@ -1048,7 +1082,7 @@ function paintLine(b: Block, ys: number[], c: ReturnType<typeof col>, upto = ys.
   const e = b.el.line as LineEls | undefined;
   if (!e) return;
   e.path.setAttribute('d', linePath(b, ys, upto));
-  e.ghost.setAttribute('d', b.ghost ? linePath(b, b.ghost) : '');
+  e.ghost.setAttribute('d', b.ghost ? linePath(b, b.ghost, b.ghost.length, b.el.ghostXs as number[] | undefined) : '');
   e.dots.forEach((dot, i) => {
     const ok = Number.isFinite(ys[i]) && i < upto;
     const p = ok ? linePt(b.plot!, b.xs![i], ys[i]) : { x: 0, y: 0 };
@@ -1080,6 +1114,8 @@ function lineColor(b: Block, c: ReturnType<typeof col>, accent: string): string 
 
 /** End labels of a plot's lines never overlap: sorted by height, pushed apart by a line's height. */
 function spreadLabels(pl: Plot) {
+  const st = pl.host.el.store as KitStore | undefined;
+  if (st) void placeReadoutPts(pl, st);
   const ls = pl.members.map((x) => (x.el.line as LineEls | undefined)?.label).filter((l): l is SVGTextElement => !!l && l.getAttribute('text-anchor') !== 'middle');
   if (ls.length < 2) return;
   const h = pl.host.m.label * 1.25;
@@ -1097,7 +1133,7 @@ async function drawLine(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: P
   const ys = b.vals![0];
   const color = lineColor(b, c, accent);
   const ghost = svg(g, 'path', { d: '', fill: 'none', stroke: c.muted, 'stroke-dasharray': '4 4', ...hair(1.2) });
-  const path = svg(g, 'path', { d: '', fill: 'none', stroke: color, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', ...hair(1.8) });
+  const path = svg(g, 'path', { d: '', fill: 'none', stroke: color, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', ...(b.el.dash ? { 'stroke-dasharray': '6 5' } : {}), ...hair(1.8) });
   const dots = ys.length <= 24 && !b.el.curve ? ys.map(() => svg(g, 'circle', { r: px(b, 2.6), fill: color, opacity: 0 })) : [];
   const name = (b.el.caption as string | undefined) ?? idCaption(b.id);
   const label = name ? kitText(g, 0, 0, name, { size: m.label, fill: color, anchor: 'start', halo: c.halo, opacity: 0 }) : null;
@@ -1696,6 +1732,18 @@ export function partBox(b: Block, p: BlockPart | null): Box | null {
 /** Resolves a part reference (`g[2,3]`) to its block and box. */
 export async function resolvePart(ref: string, registry: Registry): Promise<{ b: Block; box: Box; part: BlockPart | null } | string> {
   const store = kitStore(registry);
+  const rd = store.finds.get(ref);
+  if (rd) {
+    // A readout: its point on the plot's axes (computed now, with the constants as they stand).
+    const pb = await store.wait(rd.of[0]);
+    if (!pb) return `unknown plot ${rd.of[0]}`;
+    await Promise.race([pb.ready, new Promise((r) => setTimeout(r, KIT_WAIT_MS))]);
+    const r = store.reading(ref);
+    if (typeof r === 'string') return r;
+    if (!r.point || !pb.plot) return `${ref} is a number, not a point`;
+    const p = linePt(pb.plot, r.x, r.y), d = px(pb, 4);
+    return { b: pb, box: { x: p.x - d, y: p.y - d, w: 2 * d, h: 2 * d }, part: null };
+  }
   const part = blockPart(ref);
   const b = await store.wait(part ? part.id : ref);
   if (!b) return `unknown block ${part ? part.id : ref}`;
@@ -1710,7 +1758,7 @@ export async function resolveKitPoints<A extends InkAction>(a: A, registry: Regi
   const out: Record<string, unknown> = { ...a };
   for (const k of ['at', 'from', 'to'] as const) {
     const v = out[k] as { ref?: string } | undefined;
-    if (!v || typeof v !== 'object' || !('ref' in v) || !v.ref || !isBlockRef(v.ref)) continue;
+    if (!v || typeof v !== 'object' || !('ref' in v) || !v.ref || !(isBlockRef(v.ref) || kitStore(registry).finds.has(v.ref))) continue;
     const r = await resolvePart(v.ref, registry);
     if (typeof r === 'string') return r;
     if (a.kind === 'box' && k === 'at' && out.w === 0) {
@@ -1737,6 +1785,7 @@ export async function resolveKitPoints<A extends InkAction>(a: A, registry: Regi
 /** Whether a ref action is the kit's: a kit verb, or emph / fade on a block or its part. */
 export function isKitRef(a: RefAction, registry: Registry): boolean {
   if (a.kind === 'step' || a.kind === 'sweep' || a.kind === 'set' || a.kind === 'band' || a.kind === 'dist' || a.kind === 'col' || a.kind === 'level') return true;
+  if (a.kind === 'limit' || a.kind === 'beforeafter' || a.kind === 'contrast') return true;
   if (a.kind === 'emph' && a.where) return true;
   if (a.kind !== 'emph' && a.kind !== 'fade') return false;
   if (isBlockRef(a.ref)) return true;
@@ -1751,6 +1800,9 @@ export async function buildKitRef(a: RefAction, env: BuildEnv): Promise<ElementP
     case 'step':
     case 'sweep': return stepOrSweep(a, env, store);
     case 'set': return setVerb(a, env, store);
+    case 'limit': return limitMove(a, env, store);
+    case 'beforeafter': return beforeAfter(a, env, store);
+    case 'contrast': return 'contrast: its copy is made when the script is parsed';
     case 'band': return band(a, env, store);
     case 'dist': return dist(a, env, store);
     case 'level': {
@@ -1914,12 +1966,16 @@ function paintTable(b: Block, c: ReturnType<typeof col>, accent: string, cur?: [
 /** Refreshes everything computed from `ids` (in creation order), over `ms`. */
 async function refreshDeps(ids: string[], store: KitStore, ms: number, ctl: Ctl | undefined, env: BuildEnv, c: ReturnType<typeof col>) {
   const seen = new Set<string>();
-  const deps = ids.flatMap((id) => store.dependents(id)).filter((d) => !seen.has(d.id) && seen.add(d.id));
+  return refreshBlocks(ids.flatMap((id) => store.dependents(id)).filter((d) => !seen.has(d.id) && seen.add(d.id)), store, ms, ctl, env, c);
+}
+
+/** Recomputes these blocks (in creation order) and tweens them to their new values over `ms`; calc lines follow. */
+async function refreshBlocks(deps: Block[], store: KitStore, ms: number, ctl: Ctl | undefined, env: BuildEnv, c: ReturnType<typeof col>) {
   const jobs: Promise<void>[] = [];
   for (const d of deps) {
     if (d.kind === 'scatter') { jobs.push(refreshScatter(d, store, ms, ctl, c, env.settings.inkColor)); continue; }
     if (d.kind === 'calc' || d.kind === 'fit' || !d.src) continue;
-    const got = computeSource(d.src, (x) => store.get(x), d.id, store.consts);
+    const got = computeSource(d.src, (x) => store.get(x), d.id, withConsts(store.consts, d.el.with as Record<string, number> | undefined));
     if (typeof got === 'string') continue;
     if (d.kind === 'shares') { const nv = [normalize(got.full.flat())]; if (nv[0].every(Number.isFinite)) jobs.push(setShares(d, nv, store, ms, ctl, c)); continue; }
     if (d.kind === 'bars' && !d.win) got.full = asRow(got.full);
@@ -2205,3 +2261,256 @@ setKitResolver(async (ref, r) => {
   const res = await resolvePart(ref, r);
   return typeof res === 'string' ? null : worldBox(res.b, res.box);
 });
+
+// ------------------------------------------------------------------------------------------------
+// Demonstration moves (gated beats, step 2): a constant changes and everything drawn from it follows.
+// contrast is expanded by the parser into a copy of the plot / block (src/gate/engine.ts expand).
+
+type MoveV = Extract<RefAction, { kind: 'limit' | 'beforeafter' }>;
+/** Default duration of a limit sweep (s). */
+export const LIMIT_S = 3;
+
+/** Plots drawn from the answer's constants that follow `key` (a contrast's copy that fixed it does not). */
+const constPlots = (store: KitStore, key: string) => store.all().filter((b) => {
+  const src = b.el.plotSrc as Extract<DrawAction, { kind: 'plot' }> | undefined;
+  return !!src && !(src.with && key in src.with);
+});
+/** Computed blocks (a contrast's copy that fixed `key` keeps its own). */
+const constBlocks = (store: KitStore, key: string) => store.all().filter((b) => b.src && !('vals' in b.src) && b.kind !== 'scatter' && (b.el.with as Record<string, number> | undefined)?.[key] == null);
+
+/** Resamples a plot with the current constants; null when it no longer evaluates. */
+function resample(b: Block, store: KitStore): { xs: number[]; ys: number[] } | null {
+  const src = b.el.plotSrc as Extract<DrawAction, { kind: 'plot' }>;
+  const got = samplePlot(src, withConsts(store.consts, src.with));
+  return typeof got === 'string' ? null : got;
+}
+
+/** The plot domain that holds every member's values (and ghosts) for the constant at each of `vs`. */
+function domFor(pl: Plot, store: KitStore, key: string, vs: number[]): Plot['dom'] {
+  const keep = store.consts[key];
+  const members: { xs: number[]; ys: number[] }[] = [];
+  for (const v of vs) {
+    store.consts[key] = v;
+    for (const b of pl.members) { const s = b.el.plotSrc ? resample(b, store) : null; members.push(s ?? { xs: b.xs!, ys: b.vals![0] }); }
+  }
+  store.consts[key] = keep;
+  for (const b of pl.members) if (b.ghost) members.push({ xs: (b.el.ghostXs as number[] | undefined) ?? b.xs!, ys: b.ghost });
+  return domOf(members.filter((m) => m.ys.some(Number.isFinite)));
+}
+
+const valueOf = (src: string, consts: Record<string, number>) => { const f = formula(src, [], consts); return f ? f({}) : NaN; };
+
+/** The readout above the watched block: the input's value (and a named readout's), live. */
+function moveReadout(w: Block, text: string, c: ReturnType<typeof col>, accent: string): SVGTextElement {
+  const host = w.plot?.host ?? w, m = host.m, { body } = host.placed;
+  (host.el.moveReadout as SVGElement | undefined)?.remove();
+  const t = kitText(host.g!, body.x + body.w, body.y - m.label * 1.0, text, { size: m.num, fill: accent, anchor: 'end', halo: c.halo });
+  host.el.moveReadout = t;
+  return t;
+}
+
+/** limit: the constant sweeps to its new value; every plot and computed block drawn from it follows, with a live readout. */
+async function limitMove(v: Extract<MoveV, { kind: 'limit' }>, env: BuildEnv, store: KitStore): Promise<ElementPlan | string> {
+  const [name, src] = v.set, key = name.toLowerCase();
+  if (!(key in store.consts)) return `no constant ${name}`;
+  const w = await store.wait(v.ref);
+  if (!w) return `unknown ${v.ref}`;
+  const from = store.consts[key], to = valueOf(src, store.consts);
+  if (!Number.isFinite(to)) return `bad value ${src}`;
+  const plots = constPlots(store, key), blocks = constBlocks(store, key);
+  if (!plots.length && !blocks.length) return `nothing is drawn from ${name}`;
+  const c = col(), accent = env.settings.inkColor;
+  const host = w.plot?.host ?? w;
+  const label = (x: number) => {
+    const r = v.show ? store.reading(v.show) : null;
+    return `${name} = ${C.fmt(x)}${r && typeof r !== 'string' ? ` · ${v.show} = ${C.fmt(r.v)}` : ''}`;
+  };
+  return {
+    target: { region: host.region }, bbox: host.placed.rect,
+    draw: async (signal) => {
+      await w.ready;
+      let first!: () => void;
+      const started = new Promise<void>((r) => { first = r; });
+      const ids = [...plots, ...blocks].map((b) => b.id);
+      void store.anim.run(ids, async (ctl) => {
+        if (signal.aborted) ctl.ff = true;
+        const t = moveReadout(w, label(from), c, accent);
+        // One frame for the whole sweep: the axes settle first, so the curves move on fixed axes.
+        const pls = [...new Set(plots.map((b) => b.plot!))];
+        const vs = Array.from({ length: 13 }, (_, i) => from + ((to - from) * i) / 12);
+        for (const pl of pls) {
+          const old = pl.dom, d = domFor(pl, store, key, vs);
+          await tween(prefersReducedMotion() ? 0 : 280, (k) => {
+            pl.dom = { x0: old.x0 + (d.x0 - old.x0) * k, x1: old.x1 + (d.x1 - old.x1) * k, y0: old.y0 + (d.y0 - old.y0) * k, y1: old.y1 + (d.y1 - old.y1) * k };
+            if (pl.axes) drawPlotAxes(pl, c);
+            for (const b of pl.members) paintLine(b, b.vals![0], c);
+          }, ctl);
+        }
+        first();
+        let last = 0;
+        const frame = (x: number, force = false) => {
+          store.consts[key] = x;
+          for (const b of plots) { const s = resample(b, store); if (s) { b.xs = s.xs; b.vals = [s.ys]; b.full = [s.ys.slice()]; paintLine(b, s.ys, c); } }
+          for (const pl of pls) void placeReadoutPts(pl, store);
+          const now = performance.now();
+          if (blocks.length && (force || now - last > 90)) { last = now; void refreshBlocks(blocks, store, 0, undefined, env, c); }
+          t.textContent = label(x);
+        };
+        await tween(ctl.ff ? 0 : (v.dur ?? LIMIT_S) * 1000, (k) => frame(from + (to - from) * k), ctl);
+        frame(to, true);
+        for (const pl of pls) spreadLabels(pl);
+        plots.forEach((b) => store.notify(b.id));
+      }).finally(() => first());
+      await Promise.race([started, new Promise((r) => setTimeout(r, 600))]);
+    },
+  };
+}
+
+/** beforeafter: the constant changes; the watched plot or block keeps its old state as a dashed ghost and the difference is marked. */
+async function beforeAfter(v: Extract<MoveV, { kind: 'beforeafter' }>, env: BuildEnv, store: KitStore): Promise<ElementPlan | string> {
+  const [name, src] = v.set, key = name.toLowerCase();
+  if (!(key in store.consts)) return `no constant ${name}`;
+  const w = await store.wait(v.ref);
+  if (!w) return `unknown ${v.ref}`;
+  const from = store.consts[key], to = valueOf(src, store.consts);
+  if (!Number.isFinite(to)) return `bad value ${src}`;
+  const plots = constPlots(store, key), blocks = constBlocks(store, key);
+  if (!plots.includes(w) && !blocks.includes(w)) return `${v.ref} is not drawn from ${name}`;
+  const c = col(), accent = env.settings.inkColor;
+  const host = w.plot?.host ?? w;
+  return {
+    target: { region: host.region }, bbox: host.placed.rect,
+    draw: async (signal, k) => {
+      await w.ready;
+      const ms = signal.aborted || k.fadeMs != null ? 0 : SET_MS * 1.4;
+      await store.anim.run([...plots, ...blocks].map((b) => b.id), async (ctl) => {
+        if (signal.aborted) ctl.ff = true;
+        const before = w.vals!.map((r) => r.slice()), beforeXs = w.xs?.slice();
+        // The snapshot: the watched thing's old state stays, dashed and muted.
+        w.ghost = before[0].slice();
+        if (beforeXs) w.el.ghostXs = beforeXs;
+        store.consts[key] = to;
+        const jobs: Promise<void>[] = [];
+        for (const b of plots) { const s = resample(b, store); if (s) { b.xs = s.xs; b.full = [s.ys.slice()]; jobs.push(setLineVals(b, [s.ys], ms, ctl, c)); } }
+        if (blocks.length) jobs.push(refreshBlocks(blocks, store, ms, ctl, env, c));
+        for (const pl of new Set(plots.map((b) => b.plot!))) jobs.push(Promise.resolve(placeReadoutPts(pl, store, ms, ctl)));
+        await Promise.all(jobs);
+        const m = host.m;
+        (w.el.diff as SVGElement | undefined)?.remove();
+        const g = svg(host.g!, 'g');
+        w.el.diff = g;
+        if (w.view === 'line' && w.plot) {
+          // The difference: the band between the old and the new curve.
+          const ys = w.vals![0], xs = w.xs!, gx = beforeXs ?? xs;
+          const same = gx.length === xs.length && gx.every((x, i) => Math.abs(x - xs[i]) < 1e-9);
+          if (same) {
+            const ok = xs.map((_, i) => Number.isFinite(ys[i]) && Number.isFinite(before[0][i]));
+            const top = xs.flatMap((x, i) => (ok[i] ? [linePt(w.plot!, x, ys[i])] : []));
+            const bot = xs.flatMap((x, i) => (ok[i] ? [linePt(w.plot!, x, before[0][i])] : []));
+            const pts = [...top, ...bot.reverse()];
+            if (pts.length > 3) {
+              const band = svg(g, 'polygon', { points: pts.map((p) => `${p.x},${p.y}`).join(' '), fill: accent, 'fill-opacity': 0, stroke: 'none' });
+              g.parentNode?.insertBefore(g, g.parentNode.firstChild);
+              await tween(ms ? 320 : 0, (t) => band.setAttribute('fill-opacity', String(0.13 * t)), ctl);
+            }
+          }
+          // The ghost is named by the old value, at its end.
+          let i = before[0].length - 1;
+          while (i > 0 && !Number.isFinite(before[0][i])) i--;
+          const p = linePt(w.plot, gx[i], before[0][i]);
+          kitText(host.g!, p.x + m.label * 0.5, p.y + m.label * 1.1, v.text ?? `${name} = ${C.fmt(from)}`, { size: m.label, fill: c.muted, anchor: 'start', halo: c.halo });
+          spreadLabels(w.plot);
+        } else if (w.kind === 'grid' && w.el.grid) {
+          // The cells that changed, tinted.
+          w.vals!.forEach((row, r) => row.forEach((x, q) => {
+            if (Math.abs(x - before[r]?.[q]) > 1e-9) { const b = cellBox(w, r, r, q, q); svg(g, 'rect', { x: b.x, y: b.y, width: b.w, height: b.h, fill: accent, 'fill-opacity': 0.16 }); }
+          }));
+        } else if (w.kind === 'bars' && w.el.bars) {
+          // Ghost bars show the old values; the changed ones are accented.
+          const e = w.el.bars as BarEls;
+          w.vals![0].forEach((x, i) => { if (Math.abs(x - before[0][i]) > 1e-9) e.emBars.add(i); });
+          await setBarVals(w, w.vals!, 0, ctl, c);
+        }
+        moveReadout(w, `${name}: ${C.fmt(from)} → ${C.fmt(to)}`, c, accent);
+      });
+    },
+  };
+}
+
+// ------------------------------------------------------------------------------------------------
+// Readout points: {{point on=s at=E "label"}} where E is a {{find}}. The kit draws them on the plot's
+// own layer (a dot, faint drop lines to both axes, the label beside it) and re-places them whenever
+// the plot redraws: a widened axis, a limit sweep, a beforeafter. They always sit where E is now.
+
+type ReadoutPt = { ref: string; dot: SVGCircleElement; drops: SVGPathElement; label: SVGTextElement | null; at: { x: number; y: number } | null };
+
+/** Whether a region point names a readout (`at=E`). */
+export function isReadoutPoint(a: InkAction, registry: Registry): boolean {
+  const at = (a as { at?: { ref?: string } }).at;
+  return a.kind === 'point' && (a as { region?: string }).region != null && !!at && typeof at === 'object' && 'ref' in at && !!at.ref && kitStore(registry).finds.has(at.ref);
+}
+
+function readoutXY(store: KitStore, ref: string): { pl: Plot; x: number; y: number } | null {
+  const rd = store.finds.get(ref), pb = rd ? store.get(rd.of[0]) : undefined;
+  const r = store.reading(ref);
+  if (!pb?.plot || typeof r === 'string' || !r.point) return null;
+  const p = linePt(pb.plot, r.x, r.y);
+  return { pl: pb.plot, x: p.x, y: p.y };
+}
+
+function paintReadoutPt(o: ReadoutPt, pl: Plot, x: number, y: number) {
+  const { body } = pl.host.placed, m = pl.host.m;
+  setAttrs(o.dot, { cx: x, cy: y });
+  // Drop lines to the axes: where the reading is on each scale.
+  const inside = x >= body.x - 1 && x <= body.x + body.w + 1 && y >= body.y - 1 && y <= body.y + body.h + 1;
+  o.drops.setAttribute('d', inside ? `M${body.x} ${y}H${x}V${body.y + body.h}` : '');
+  if (o.label) setAttrs(o.label, { x: x + m.label * 0.55, y: y - m.label * 0.75 });
+  o.at = { x, y };
+}
+
+/** Re-places a plot's readout points at their readouts now (over `ms`, from where they were). */
+function placeReadoutPts(pl: Plot, store: KitStore, ms = 0, ctl?: Ctl): Promise<void> | void {
+  const os = (pl.host.el.readoutPts as ReadoutPt[] | undefined) ?? [];
+  const moves = os.flatMap((o) => { const p = readoutXY(store, o.ref); return p ? [{ o, from: o.at ?? p, to: p }] : []; });
+  if (!moves.length) return;
+  if (ms <= 0) { moves.forEach(({ o, to }) => paintReadoutPt(o, pl, to.x, to.y)); return; }
+  return tween(ms, (t) => moves.forEach(({ o, from, to }) => paintReadoutPt(o, pl, from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)), ctl);
+}
+
+/** Builds a point at a readout on its plot's axes. */
+export async function buildReadoutPoint(a: Extract<InkAction, { kind: 'point' }>, env: BuildEnv): Promise<ElementPlan | string> {
+  const store = kitStore(env.registry);
+  const ref = (a.at as unknown as { ref: string }).ref;
+  const rd = store.finds.get(ref)!;
+  const pb = await store.wait(rd.of[0]);
+  if (!pb?.plot) return `unknown plot ${rd.of[0]}`;
+  await Promise.race([pb.ready, new Promise((r) => setTimeout(r, KIT_WAIT_MS))]);
+  const r = store.reading(ref);
+  if (typeof r === 'string') return r;
+  if (!r.point) return `${ref} is a number, not a point`;
+  const pl = pb.plot, host = pl.host, m = host.m;
+  const p = linePt(pl, r.x, r.y), rad = px(host, 3.6);
+  const text = a.text;
+  const lw = text ? m.u(textWidth(text, m.labelPx)) : 0;
+  const dot = { x: p.x - rad, y: p.y - rad, w: 2 * rad, h: 2 * rad };
+  const lab = text ? { x: p.x + m.label * 0.55, y: p.y - m.label * 1.3, w: lw, h: m.label * 1.1 } : null;
+  const c = col(), color = a.em ? env.settings.inkColor : c.ink;
+  return {
+    target: { region: host.region }, bbox: union([dot, ...(lab ? [lab] : [])]),
+    draw: async (_s, k) => {
+      await host.ready;
+      const g = svg(host.g!, 'g', { opacity: 0 });
+      const o: ReadoutPt = {
+        ref, at: null,
+        drops: svg(g, 'path', { d: '', fill: 'none', stroke: c.muted, 'stroke-dasharray': '3 3', ...hair(1) }),
+        dot: svg(g, 'circle', { r: rad, fill: color }),
+        label: text ? kitText(g, 0, 0, text, { size: m.label, fill: color, anchor: 'start', halo: c.halo }) : null,
+      };
+      if (o.label && isVarName(text!)) { o.label.setAttribute('font-style', 'italic'); o.label.setAttribute('font-family', 'KaTeX_Math, "STIX Two Math", "Cambria Math", "Times New Roman", serif'); }
+      paintReadoutPt(o, pl, p.x, p.y);
+      host.el.readoutPts = [...((host.el.readoutPts as ReadoutPt[] | undefined) ?? []), o];
+      env.registry.define({ id: a.id, kind: 'point', target: { region: host.region }, bbox: union([dot, ...(lab ? [lab] : [])]), boxes: [dot, ...(lab ? [lab] : [])], anchor: p, group: g });
+      await appear(g, 260, k);
+    },
+  };
+}

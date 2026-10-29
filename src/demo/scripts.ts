@@ -152,6 +152,30 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number; deeper
       `{{plot on=c id=law fn="room+(hot-room)*exp(-k*x)" domain=0,40 axes=temp "the law" em}} The cooling law runs right through it.`,
   },
   /**
+   * Demonstration moves and bound numbers (gated beats, step 2), in two unrelated subjects: a market
+   * (two plots, their crossing as a named readout, a tax as beforeafter), a growing colony (computed
+   * bars and a contrast copy beside them, one scale) and a falling object with drag (a limit sweep
+   * with a live readout). Every number in the narration is a {{val}}: none is typed.
+   */
+  moves: {
+    src: '/fixtures/econ.pdf',
+    question: 'Demonstration moves check',
+    script:
+      `{{scroll p=1}} Three moves, in three small pictures. ` +
+      `{{sketch id=m near=p1}} A market first, {{const tax=0}} with no tax yet. ` +
+      `{{plot on=m id=demand fn="12-x/5" domain=0,50 xlabel="quantity" ylabel="price" "demand"}} Buyers want less as the price climbs, ` +
+      `{{plot on=m id=supply fn="2+tax+x/10" domain=0,50 axes=demand "supply"}} and sellers offer more. ` +
+      `They meet {{find id=E of=demand,supply}} at a price of {{val id=E}}, {{point on=m at=E "E"}} with {{val id=E.x fmt=0}} units sold. ` +
+      `{{beforeafter of=supply tax=1.5}} Now tax every unit: supply lifts by the tax, its old place stays as a ghost, ` +
+      `and buyers now pay {{val id=E}}. ` +
+      `{{sketch id=b near=p1}} Next, a colony of cells {{const rate=0.3 start=10}} that grows by {{val id=rate as=percent}} an hour. ` +
+      `{{bars on=b id=pop size=1x6 fn="start*(1+rate)^(c-1)" labels=0,1,2,3,4,5 dp=0 "cells after each hour"}} After five hours there are {{val id=pop[6] fmt=0}}. ` +
+      `{{contrast of=pop rate=0.1 "at a third of the rate"}} At a third of that rate, the same five hours give only {{val id=pop_2[6] fmt=0}}. ` +
+      `{{sketch id=f near=p1}} Last, a falling stone {{const k=1 g=9.8}} with air drag. ` +
+      `{{plot on=f id=v fn="g/k*(1-exp(-k*x))" domain=0,6 xlabel="time (s)" ylabel="speed (m/s)" "speed"}} Its speed climbs {{find id=end of=v x=6}} and levels off near {{val id=end}}. ` +
+      `{{limit of=v k=0.05 dur=4 show=end}} Let the drag fade toward nothing, and the curve straightens into free fall: {{val id=end}} after six seconds.`,
+  },
+  /**
    * Toolkit check (not a teaching demo): every v2 element once, in one board section for the sample
    * deck's page 3, for screenshots and the timing audit. Also every look flag: the three weights
    * (primary default, secondary, faint), dash (faint by default), shade plain / outline / em.

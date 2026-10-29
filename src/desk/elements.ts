@@ -23,7 +23,7 @@ import { anchorBox, sceneStore } from './scene/store';
 
 /** Waits briefly for a scene thing (or block) named by a ref. */
 async function sceneWait(ref: string, env: BuildEnv) { await anchorBox(ref, env.registry, REF_WAIT_MS); }
-import { buildBlock, buildKitPlot, buildKitRef, isKitRef, kitEndBox, resolveKitPoints } from './kit/kit';
+import { buildBlock, buildKitPlot, buildKitRef, buildReadoutPoint, isKitRef, isReadoutPoint, kitEndBox, resolveKitPoints } from './kit/kit';
 
 /** Closed shapes (circle, box) read as rushed below this, however small… */
 export const CLOSED_MIN_MS = 400;
@@ -82,6 +82,8 @@ export const buildElement: BuildElement = async (a, env) => {
   if (typeof ctx === 'string') return ctx;
   if (SCENE_KINDS.has(a.kind)) return buildScene(a as SceneShape & DrawAction, ctx, env);
   if (KIT_BLOCKS.has(a.kind)) return buildBlock(a as KitBlock & DrawAction, ctx, env);
+  // A point at a readout ({{find}}) is the kit's: it sits on the plot's axes and follows the plot.
+  if (isReadoutPoint(a, env.registry)) return buildReadoutPoint(a as Extract<typeof a, { kind: 'point' }>, env);
   // Kit parts named as points (g[2,3]) resolve now that their blocks are laid out.
   const k = await resolveKitPoints(a, env.registry);
   if (typeof k === 'string') return k;

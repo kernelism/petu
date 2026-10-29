@@ -5,7 +5,9 @@ export const TAG_NAMES = new Set(['scroll', 'highlight', 'underline', 'circle', 
   // the visual kit (src/script/parseKit.ts)
   'grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'step', 'sweep', 'set', 'band', 'dist', 'col', 'level', 'const',
   // Board v2 (src/script/parseScene.ts)
-  'scene', 'node', 'flow', 'link', 'note', 'shares', 'blend', 'group', 'pair', 'merge', 'split']);
+  'scene', 'node', 'flow', 'link', 'note', 'shares', 'blend', 'group', 'pair', 'merge', 'split',
+  // bound numbers, readouts, demonstration moves (src/script/parseValues.ts)
+  'val', 'find', 'contrast', 'limit', 'beforeafter']);
 /** A curve through this many hand-placed points or more is probably something that follows from a formula. */
 const HAND_CURVE_PTS = 4;
 /** Kit tags whose values come from the engine: a literal result in them (`result=`, `=…` after an op) is the model computing by hand. */

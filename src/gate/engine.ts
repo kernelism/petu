@@ -1,37 +1,59 @@
-// src/gate/engine.ts — the engine state the commit gate checks a beat against, rebuilt headlessly
-// from the actions committed so far: every number the board shows (kit values computed with the
-// kit's own computeSource / formula / reduce), named constants, plot functions (for intersections),
-// region geometry from `let` names (resolved by the app's Figures), and the ids drawn so far.
-// No DOM. Layout boxes are not computed here (see layout.ts).
+// src/gate/engine.ts — the engine's numbers, rebuilt headlessly from the actions so far: every
+// number the board shows (kit values computed with the kit's own computeSource / formula / reduce),
+// named constants, plot curves, readouts ({{find}}), fitted lines, region geometry from `let` names
+// (resolved by the app's Figures), and the ids drawn so far. No DOM. Layout boxes are not computed
+// here (see layout.ts).
+//
+// Two users, one implementation: the commit gate replays a recorded answer beat by beat, and the
+// script parser (src/script/parser.ts) applies every tag as it is parsed, so a {{val}} is said with
+// the engine's value (`say`) and a {{contrast}} expands into the copy it draws (`expand`).
 import { computeSource, formula, colIndex } from '../desk/kit/kit';
 import * as C from '../desk/kit/compute';
 import { colRef } from '../script/parseKit';
 import { blockPart } from '../script/pointExpr';
-import type { KitSource, RawAction } from '../script/types';
+import type { FindAction, KitSource, MoveAction, RawAction, ValAction } from '../script/types';
 import { Figures, type Grounding } from '../geometry/resolve';
-import { compileVars } from '../desk/expr';
+import { curveOf, read, yAt, type Curve, type FitData, type Reading } from '../values/readout';
+import { sayNumber } from '../values/say';
 
 export type ValueSource = 'page' | 'question' | 'literal' | 'const' | 'computed' | 'derived';
 export type Value = { v: number; source: ValueSource; /** block id, page, const name… */ of: string; beat: number; row?: { table: string; r: number; cells: number[] } };
 
-type Block = { id: string; kind: string; vals?: number[][]; full?: number[][]; src?: KitSource; tab?: { heads: string[] }; computedCols?: Set<number>; region?: string };
+type Block = {
+  id: string; kind: string; vals?: number[][]; full?: number[][]; src?: KitSource; tab?: { heads: string[] }; computedCols?: Set<number>; region?: string;
+  dp?: number; with?: Record<string, number>; action?: RawAction;
+  data?: C.Pt[]; cols?: { id: string; x: number; y: number }; of?: string; pick?: [number, number];
+};
 
 const ROW_VARS = ['i', ...C.WIN_LETTERS.slice(0, 12), ...C.WIN_LETTERS.slice(0, 12).map((l) => `p${l}`)];
 
-/** A plot as a function of x (fn= plots only), with its domain and axes group. */
+/** A plot as a function of x, with its domain and axes group. */
 export type PlotFn = { id: string; f: (x: number) => number; x0: number; x1: number; group: string };
 /** Circles and lines resolved to region coordinates (for exact-geometry checks). */
 export type Circle = { id: string; region: string; cx: number; cy: number; r: number };
 export type Seg = { id: string; region: string; kind: string; a: { x: number; y: number }; b: { x: number; y: number } };
 export type PointG = { id: string; region: string; x: number; y: number; text?: string };
+type PlotSrc = Extract<RawAction, { kind: 'plot' }> & { id?: string };
+
+/**
+ * What the caption shows for a {{val}} the engine cannot resolve: a neutral dash, never a guessed
+ * number. The director records it as a skipped action and the gate fails its beat.
+ */
+export const UNBOUND_TEXT = '—';
 
 export class GateState {
   readonly values: Value[] = [];
+  /** Named numbers, lowercase (the expression language reads names lowercased). */
   readonly consts: Record<string, number> = {};
+  /** When each constant was declared (the beat, or for the parser the tag index). */
+  readonly declared = new Map<string, number>();
   readonly blocks = new Map<string, Block>();
   readonly ids = new Set<string>();
   readonly regions = new Set<string>();
-  readonly plots: PlotFn[] = [];
+  /** Engine plots by id, in order: their tag (curves are recomputed from the current constants). */
+  readonly plotSrc = new Map<string, { a: PlotSrc; group: string }>();
+  /** Named readouts ({{find}}), computed when read. */
+  readonly finds = new Map<string, FindAction>();
   readonly circles: Circle[] = [];
   readonly segs: Seg[] = [];
   readonly points: PointG[] = [];
@@ -61,14 +83,34 @@ export class GateState {
         for (const [k, src] of a.defs) {
           const f = formula(src, [], this.consts);
           const v = f ? f({}) : NaN;
-          if (Number.isFinite(v)) { this.consts[k] = v; this.addValues([v], 'const', k, beat); }
+          // A constant written as a number is the model's own literal; one written as a formula (T=2*v/g) is computed.
+          const lit = /^[-−+]?\d*\.?\d+$/.test(src.trim());
+          if (Number.isFinite(v)) { this.consts[k.toLowerCase()] = v; this.declared.set(k.toLowerCase(), beat); this.addValues([v], lit ? 'const' : 'computed', k, beat); }
         }
         return;
       }
+      case 'find': {
+        this.finds.set(a.id, a);
+        this.ids.add(a.id);
+        const r = this.reading(a.id);
+        if (typeof r === 'string') return r;
+        this.addValues([r.v, ...(r.point ? [r.x, r.y] : [])], 'computed', a.id, beat);
+        return;
+      }
+      case 'val': {
+        const r = this.value(a.ref);
+        return typeof r === 'string' ? r : undefined;
+      }
+      case 'contrast': {
+        const e = this.expand(a);
+        return typeof e === 'string' ? e : this.apply(e, beat);
+      }
+      case 'limit':
+      case 'beforeafter': return this.move(a, beat);
     }
     if (a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table' || a.kind === 'calc' || a.kind === 'scatter' || a.kind === 'fit') return this.kit(a, beat);
     if ('ref' in a) return this.verb(a, beat);
-    if (a.kind === 'plot') this.plot(a as never);
+    if (a.kind === 'plot' && x.region != null) { this.plot(a as PlotSrc); return; }
     // Plain shapes: resolve names for geometry checks.
     if (x.region != null) {
       const r = this.figures.resolve(a);
@@ -93,15 +135,16 @@ export class GateState {
     this.ids.add(id);
     if (a.kind === 'grid' || a.kind === 'bars') {
       const src = k.src as KitSource;
-      const got = computeSource(src, this.get, id, this.consts);
+      const w = k.with as Record<string, number> | undefined;
+      const got = computeSource(src, this.get, id, w ? { ...this.consts, ...w } : this.consts);
       if (typeof got === 'string') return got;
-      this.blocks.set(id, { id, kind: a.kind, vals: got.full, full: got.full, src, region: k.region });
+      this.blocks.set(id, { id, kind: a.kind, vals: got.full, full: got.full, src, region: k.region, dp: k.dp as number | undefined, ...(w ? { with: w } : {}), action: a });
       this.addValues(got.full.flat(), 'vals' in src ? 'literal' : 'computed', id, beat);
       return;
     }
     if (a.kind === 'table') {
       const vals = (k.vals as number[][]).map((r) => r.slice());
-      this.blocks.set(id, { id, kind: 'table', vals, full: vals, tab: { heads: [...(k.heads as string[])] }, computedCols: new Set(), region: k.region });
+      this.blocks.set(id, { id, kind: 'table', vals, full: vals, tab: { heads: [...(k.heads as string[])] }, computedCols: new Set(), region: k.region, dp: k.dp as number | undefined });
       this.addValues(vals.flat(), 'literal', id, beat);
       return;
     }
@@ -120,14 +163,152 @@ export class GateState {
         v = C.reduce(op === 'dot' || op === 'cos' ? 'sum' : op, per).value;
         this.addValues(per, 'computed', id, beat);
       } else v = C.reduce(op, xs, ys).value;
-      this.blocks.set(id, { id, kind: 'calc', full: [[v]], vals: [[v]], region: k.region });
+      this.blocks.set(id, { id, kind: 'calc', full: [[v]], vals: [[v]], region: k.region, dp: k.dp as number | undefined });
       this.addValues([v], 'computed', id, beat);
       // A mean shows its sum too.
       if (op === 'mean') this.addValues([xs.reduce((s, q) => s + q, 0)], 'computed', id, beat);
       return;
     }
+    if (a.kind === 'scatter') {
+      const data = k.data as C.Pt[] | undefined, cols = k.cols as Block['cols'];
+      this.blocks.set(id, { id, kind: 'scatter', region: k.region, ...(data ? { data: data.map((p) => ({ ...p })) } : {}), ...(cols ? { cols } : {}) });
+      return;
+    }
+    if (a.kind === 'fit') {
+      this.blocks.set(id, { id, kind: 'fit', region: k.region, of: k.of as string, pick: k.pick as [number, number] | undefined });
+      return this.fit(id) ? undefined : 'no line through those points';
+    }
     this.blocks.set(id, { id, kind: a.kind, region: k.region });
     return;
+  }
+
+  /** A scatter's points now (a table's columns as they stand). */
+  private scatterPts(b: Block): C.Pt[] {
+    if (b.data) return b.data;
+    const t = b.cols ? this.blocks.get(b.cols.id) : undefined;
+    return t?.full ? t.full.map((r) => ({ x: r[b.cols!.x], y: r[b.cols!.y] })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y)) : [];
+  }
+
+  /** A fit's line and its scatter's points (least squares, or through two picked points), as the board computes it. */
+  fit(id: string): FitData | undefined {
+    const f = this.blocks.get(id);
+    const sc = f?.kind === 'fit' && f.of ? this.blocks.get(f.of) : undefined;
+    if (!f || !sc || sc.kind !== 'scatter') return undefined;
+    const pts = this.scatterPts(sc);
+    const [i, j] = f.pick ?? [0, 0];
+    const line = f.pick ? (pts[i - 1] && pts[j - 1] ? C.lineThrough(pts[i - 1], pts[j - 1]) : null) : C.lstsq(pts);
+    return line ? { line, pts } : undefined;
+  }
+
+  /** A plot's curve with the current constants. */
+  curve(id: string): Curve | undefined {
+    const p = this.plotSrc.get(id);
+    return p ? curveOf(p.a, this.consts) ?? undefined : undefined;
+  }
+
+  /** A readout's value now; a string says why it can't be read. */
+  reading(id: string): Reading | string {
+    const a = this.finds.get(id);
+    if (!a) return `no readout ${id}`;
+    return read(a, (x) => this.curve(x), (x) => this.fit(x), this.consts);
+  }
+
+  /**
+   * The engine's value for a {{val}} reference: a readout (E, E.x, E.y), a constant, a calc's result,
+   * a one-value block, or a part (v[2], g[1,2], t[3].c / t[3].price). A string says why not.
+   */
+  value(ref: string): { v: number; dp?: number } | string {
+    const m = /^([^.[]+)(\[[^\]]+\])?(?:\.(.+))?$/.exec(ref);
+    if (!m) return `bad reference ${ref}`;
+    const [, id, idx, field] = m;
+    if (this.finds.has(id) && !idx) {
+      const r = this.reading(id);
+      if (typeof r === 'string') return r;
+      const v = field === 'x' ? r.x : field === 'y' ? r.y : field == null ? r.v : NaN;
+      return Number.isFinite(v) ? { v } : `${ref}: no such value`;
+    }
+    const b = this.blocks.get(id);
+    if (!b && !idx && !field && id.toLowerCase() in this.consts) return { v: this.consts[id.toLowerCase()] };
+    if (!b) return `unknown ${id}`;
+    const full = b.full;
+    if (!full) return `${id} has no values`;
+    const fin = (v: number | undefined) => (v != null && Number.isFinite(v) ? { v, dp: b.dp } : `${ref}: no value`);
+    if (!idx) {
+      if (field) return `${ref}: name a row (${id}[1].${field})`;
+      const flat = full.flat();
+      return flat.length === 1 ? fin(flat[0]) : `${id} has ${flat.length} values: name one (${id}[1])`;
+    }
+    const part = blockPart(`${id}${idx}`);
+    if (!part || part.r0 !== part.r1 || part.c0 !== part.c1) return `${ref}: one cell`;
+    if (b.kind === 'table') {
+      if (part.one && !field) return `${ref}: name a column (${id}${idx}.b)`;
+      const r = part.one ? part.c0 : part.r0;
+      const j = part.one ? (/^[a-z]$/.test(field!) ? colIndex(b.tab!.heads, field!.charCodeAt(0) - 97) : colIndex(b.tab!.heads, -1, field)) : part.c0;
+      if (j < 0) return `no column ${field} in ${id}`;
+      return fin(full[r]?.[j]);
+    }
+    if (field) return `${ref}: no field ${field}`;
+    if (part.one) { const flat = full.length === 1 ? full[0] : full.map((row) => row[0]); return fin(flat[part.c0]); }
+    return fin(full[part.r0]?.[part.c0]);
+  }
+
+  /**
+   * How a {{val}} is said: the caption text (the board's number format, or fmt= decimals; as=percent
+   * multiplies by 100 and adds %; as=abs drops the sign) and its spoken form (for TTS). Null when the
+   * engine has no such value: the caller shows UNBOUND_TEXT and the gate fails the beat.
+   */
+  say(a: ValAction): { said: string; spoken: string } | null {
+    const r = this.value(a.ref);
+    return typeof r === 'string' ? null : sayNumber(r.v, { fmt: a.fmt ?? r.dp, as: a.as });
+  }
+
+  /** {{contrast}} → the copy it draws: the same plot on the same axes, or the same block beside it, with one constant changed. */
+  expand(a: Extract<MoveAction, { kind: 'contrast' }>): RawAction | string {
+    const [k, src] = a.set;
+    const key = k.toLowerCase();
+    const f = formula(src, [], this.consts);
+    const v = f ? f({}) : NaN;
+    if (!Number.isFinite(v)) return `bad value ${src}`;
+    if (!(key in this.consts)) return `no constant ${k}`;
+    const id = a.id ?? `${a.ref}_2`;
+    if (this.ids.has(id)) return `duplicate id ${id}`;
+    const text = a.text ?? `${k} = ${C.fmt(v)}`;
+    const p = this.plotSrc.get(a.ref);
+    if (p) {
+      const { id: _i, label: _l, labelAt: _t, em: _e, ...rest } = p.a as PlotSrc & { em?: boolean };
+      void _i; void _l; void _t; void _e;
+      return { ...rest, id, axes: a.ref, label: text, dash: true, with: { ...(p.a.with ?? {}), [key]: v } } as RawAction;
+    }
+    const b = this.blocks.get(a.ref);
+    if (!b?.action || !b.src || 'vals' in b.src) return `${a.ref} is not a plot or a computed block`;
+    const { id: _i, caption: _c, below: _b, at: _a, rel: _r, right: _x, op: _o, ...rest } = b.action as unknown as Record<string, unknown>;
+    void _i; void _c; void _b; void _a; void _r; void _x; void _o;
+    return { ...rest, id, right: a.ref, op: '', caption: text, with: { ...(b.with ?? {}), [key]: v } } as unknown as RawAction;
+  }
+
+  /** limit / beforeafter: the constant takes its new value; every plot, readout and computed block follows. */
+  private move(a: Extract<MoveAction, { kind: 'limit' | 'beforeafter' }>, beat: number): string | undefined {
+    const [k, src] = a.set;
+    const key = k.toLowerCase();
+    if (!(key in this.consts)) return `no constant ${k}`;
+    if (!this.plotSrc.has(a.ref) && !this.blocks.has(a.ref)) return `unknown ${a.ref}`;
+    const f = formula(src, [], this.consts);
+    const v = f ? f({}) : NaN;
+    if (!Number.isFinite(v)) return `bad value ${src}`;
+    this.consts[key] = v;
+    this.addValues([v], 'const', k, beat);
+    this.recompute(beat);
+    for (const id of this.finds.keys()) { const r = this.reading(id); if (typeof r !== 'string') this.addValues([r.v, ...(r.point ? [r.x, r.y] : [])], 'computed', id, beat); }
+    return;
+  }
+
+  /** Every computed block again, in creation order (an input or a constant changed). */
+  private recompute(beat: number): void {
+    for (const d of this.blocks.values()) {
+      if (!d.src || 'vals' in d.src) continue;
+      const got = computeSource(d.src, this.get, d.id, d.with ? { ...this.consts, ...d.with } : this.consts);
+      if (typeof got !== 'string') { d.full = got.full; d.vals = got.full; this.addValues(got.full.flat(), 'computed', d.id, beat); }
+    }
   }
 
   private verb(a: RawAction, beat: number): string | undefined {
@@ -170,35 +351,37 @@ export class GateState {
       b.vals = b.full;
       if (b.src && 'vals' in b.src) b.src = { vals: b.full };
       this.addValues(b.full.flat(), 'computed', id, beat);
-      // Dependents recompute.
-      for (const d of this.blocks.values()) {
-        if (!d.src || 'vals' in d.src) continue;
-        const got = computeSource(d.src, this.get, d.id, this.consts);
-        if (typeof got !== 'string') { d.full = got.full; d.vals = got.full; this.addValues(got.full.flat(), 'computed', d.id, beat); }
-      }
+      this.recompute(beat);
       return;
     }
     return;
   }
 
-  private plot(a: { id?: string; fn?: string; domain?: [number, number]; domainSrc?: [string, string]; axes?: string; region?: string }): void {
-    if (!a.fn) return;
-    let f: ((x: number) => number) | null = null;
-    try { const g = compileVars(a.fn, ['x', ...Object.keys(this.consts)]); f = (x) => g({ ...this.consts, x }); } catch { f = null; }
-    if (!f) return;
-    const ev = (s: string) => { const g = formula(s, [], this.consts); return g ? g({}) : NaN; };
-    const [x0, x1] = a.domain ?? (a.domainSrc ? [ev(a.domainSrc[0]), ev(a.domainSrc[1])] : [NaN, NaN]);
-    if (!Number.isFinite(x0) || !Number.isFinite(x1)) return;
+  private plot(a: PlotSrc): void {
+    if (!a.fn && !(a.x && a.y && a.t)) return;
     const id = a.id ?? `_${++this.anon}`;
-    const group = a.axes ? (this.plots.find((p) => p.id === a.axes)?.group ?? a.axes) : id;
-    this.plots.push({ id, f, x0, x1, group });
+    const group = a.axes ? (this.plotSrc.get(a.axes)?.group ?? a.axes) : id;
+    this.plotSrc.set(id, { a, group });
+    this.ids.add(id);
+    this.lastId = id;
+  }
+
+  /** Engine plots as functions of x with the current constants (fn= plots exactly, parametric ones along their first pass). */
+  get plots(): PlotFn[] {
+    const out: PlotFn[] = [];
+    for (const [id, p] of this.plotSrc) {
+      const c = this.curve(id);
+      if (c) out.push({ id, f: c.f ?? ((x) => yAt(c, x)), x0: c.x0, x1: c.x1, group: p.group });
+    }
+    return out;
   }
 
   /** Where plots on shared axes cross: (x, y) pairs. The engine doesn't show these; narration often names them. */
   intersections(): { x: number; y: number; a: string; b: string }[] {
     const out: { x: number; y: number; a: string; b: string }[] = [];
-    for (let i = 0; i < this.plots.length; i++) for (let j = i + 1; j < this.plots.length; j++) {
-      const p = this.plots[i], q = this.plots[j];
+    const plots = this.plots;
+    for (let i = 0; i < plots.length; i++) for (let j = i + 1; j < plots.length; j++) {
+      const p = plots[i], q = plots[j];
       if (p.group !== q.group) continue;
       const lo = Math.max(p.x0, q.x0), hi = Math.min(p.x1, q.x1);
       if (!(hi > lo)) continue;

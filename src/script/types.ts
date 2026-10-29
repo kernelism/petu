@@ -85,7 +85,7 @@ export type Shape<P = Pt> =
    * parametric curve x= y= over t=; ranges may be expressions over {{const}} names; "label" sits at
    * the curve's end (label=top: at its highest point); xlabel=/ylabel= name the axes.
    */
-  | ({ kind: 'plot'; fn?: string; x?: string; y?: string; t?: [string, string]; domain?: [number, number]; domainSrc?: [string, string]; range?: [number, number]; axes?: string; dash?: boolean; label?: string; labelAt?: 'end' | 'top'; xLabel?: string; yLabel?: string } & W)
+  | ({ kind: 'plot'; fn?: string; x?: string; y?: string; t?: [string, string]; domain?: [number, number]; domainSrc?: [string, string]; range?: [number, number]; axes?: string; dash?: boolean; label?: string; labelAt?: 'end' | 'top'; xLabel?: string; yLabel?: string; /** a contrast's copy: these constants differ */ with?: Record<string, number> } & W)
   /** Region only. KaTeX. at = left edge, vertical middle (or the centre with `centered`). */
   | { kind: 'math'; at: P; tex: string; size: TextSize; centered?: boolean }
   | KitBlock<P>
@@ -123,7 +123,7 @@ export const SCENE_KINDS = new Set(['node', 'flow', 'link', 'note', 'group', 'pa
 // names data and operations; the engine lays out, computes every number and animates.
 
 /** Where a block goes: right of / below another block (the engine picks the spacing), or at a top-left point. `op` is a glyph drawn between it and its neighbour. */
-export type KitPlace<P = Pt> = { right?: string; below?: string; op?: string; at?: P; /** In a scene: placed by relation (left, above, beside, near too). */ rel?: ScenePlace };
+export type KitPlace<P = Pt> = { right?: string; below?: string; op?: string; at?: P; /** In a scene: placed by relation (left, above, beside, near too). */ rel?: ScenePlace; /** a contrast's copy: these constants differ */ with?: Record<string, number> };
 export type WinReduce = 'sum' | 'mean' | 'max' | 'min';
 /** Where a block's values come from: literals, or an operation the engine computes. */
 export type KitSource =
@@ -172,7 +172,8 @@ export type RefAction =
   | { kind: 'fade'; ref: string }
   /** A scene chip that becomes several (parts ref[1]…), spreading from where it was. */
   | { kind: 'split'; ref: string; items: string[] }
-  | KitVerb;
+  | KitVerb
+  | MoveAction;
 
 /**
  * Kit verbs on a block drawn earlier (ref = its id, or a part: `g[2,3]`, `g[1:2,1:3]`, `v[4]`, 1-based).
@@ -238,4 +239,48 @@ export type RawConnect = { kind: 'connect'; from: RawEnd; to: RawEnd; id?: strin
  * Each value is an expression over the constants before it. Taken when parsed (like let); never timed.
  */
 export type ConstAction = { kind: 'const'; defs: [string, string][] };
-export type RawAction = LayoutAction | (DrawAction<PtArg>) | RefAction | RawConnect | LetAction | MarkShape | RayShape | ConstAction;
+
+// ------------------------------------------------------------------------------------------------
+// Gated beats, step 2 (src/values/*): numbers the narration states are bound to the engine's.
+
+/** How a bound number is said: `fmt` decimals; `as=percent` (×100, "%"); `as=abs` (the magnitude: "falls by 12"). */
+export type ValFormat = { fmt?: number; as?: 'percent' | 'abs' };
+/**
+ * {{val id=…}} in the narration: the engine's value, said as a word. ref: a block (`s`), a part
+ * (`v[2]`, `o[1,2]`, `t[3].c` / `t[3].price`), a calc's result, a constant, a readout (`E`, `E.x`).
+ * The parser resolves it against the value model (src/values/model.ts) when it is parsed: `said` is
+ * the caption text, `spoken` the TTS form; both absent = unresolved (the caption shows `UNBOUND_TEXT`).
+ */
+export type ValAction = { kind: 'val'; ref: string; said?: string; spoken?: string } & ValFormat;
+/** What a readout finds on a plot (or a fit): see FindAction. */
+export type FindMode = 'cross' | 'level' | 'max' | 'min' | 'at' | 'slope' | 'area' | 'inside' | 'residual';
+/**
+ * {{find id=E of=a,b}}: an engine readout, named. Draws nothing; `{{val id=E}}` says its value,
+ * `at=E` places a point there (on the plot's own axes), `E.x` / `E.y` its coordinates.
+ *   cross    of=a,b — where two plots on shared axes meet (n=2: the second crossing, left to right)
+ *   level    of=a level=3 — where a reaches y = 3 (level=0: where it crosses the x axis)
+ *   max/min  of=a — its highest / lowest point over its domain
+ *   at       of=a x=2 — its value at x;  slope: of=a x=2 slope — its slope there
+ *   area     of=a[,b] from=0 to=3 — the area under a (between a and b) over [from, to] (default: the domain)
+ *   inside   of=f inside=2 — how many of a fit's points lie within 2 of its line
+ *   residual of=f residual — the RMS distance of a fit's points to its line (residual=3: point 3's)
+ * x=, level=, from=, to= may be formulas over {{const}} names.
+ */
+export type FindAction = { kind: 'find'; id: string; of: string[]; mode: FindMode; x?: string; level?: string; from?: string; to?: string; n?: number; w?: number; point?: number };
+/**
+ * Demonstration moves over existing engine plots and computed blocks; `set` holds the input that
+ * changes (a {{const}} name and its new value).
+ *   contrast    a second copy of `ref` with only that input different: a plot on the same axes, a
+ *               block beside it (one scale); `id` names the copy (default `<ref>_2`).
+ *   limit       the input sweeps toward its value over `dur` s; every plot and block using it follows,
+ *               with a live readout of the input (and of readout `show`).
+ *   beforeafter the input changes; `ref`'s old state stays as a dashed ghost and the difference is
+ *               highlighted (the band between the curves, the bars or cells that changed).
+ */
+export type MoveAction =
+  | { kind: 'contrast'; ref: string; set: [string, string]; id?: string; text?: string }
+  | { kind: 'limit'; ref: string; set: [string, string]; dur?: number; show?: string }
+  | { kind: 'beforeafter'; ref: string; set: [string, string]; text?: string };
+export const MOVE_KINDS = new Set(['contrast', 'limit', 'beforeafter']);
+
+export type RawAction = LayoutAction | (DrawAction<PtArg>) | RefAction | RawConnect | LetAction | MarkShape | RayShape | ConstAction | ValAction | FindAction;

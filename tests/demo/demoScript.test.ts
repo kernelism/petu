@@ -148,6 +148,8 @@ describe('every script', () => {
       const seen = new Set<string>();
       for (const a of parseAll(s)) {
         // a kit part (o[1,2]) or a table column (t.c) names its block
+        // a bound number may also name a constant or a readout's field (E.x)
+        const r = a as unknown as RawAction; if (r.kind === 'const') for (const [k] of r.defs) seen.add(k);
         if ('ref' in a) expect(seen, `${a.kind} ${a.ref}`).toContain(a.ref.replace(/\[.*$|\.[a-z]$/, ''));
         if (a.kind === 'connect') for (const e of [a.from, a.to]) if ('ref' in e) expect(seen).toContain(e.ref.replace(/\[.*$/, ''));
         if ('id' in a && a.id && a.kind !== 'sketch') seen.add(a.id);

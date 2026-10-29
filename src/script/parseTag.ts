@@ -4,6 +4,7 @@ import { tokenize, unquote } from './tokenize';
 import { NAME, normName, parsePtArg, worldPt, isBlockRef, type PtArg } from './pointExpr';
 import { parseKitBlock, parseKitVerb, sceneRel } from './parseKit';
 import { parseScene, parseSplit, SCENE_TAGS } from './parseScene';
+import { parseFind, parseMove, parseVal } from './parseValues';
 
 /** Region and element ids: a letter, then letters, digits, - or _. Case-insensitive (stored lowercased). */
 const ID = /^[a-z][a-z0-9_-]{0,23}$/;
@@ -105,6 +106,11 @@ export function parseTag(body: string): RawAction | null {
 
   // Any other tag with a repeated key (`line from=D to=C to=E`) is ambiguous: malformed.
   if (dupKeys.size) return null;
+
+  // Bound numbers, readouts, demonstration moves (src/script/parseValues.ts).
+  if (name === 'val') return parseVal(args);
+  if (name === 'find') return parseFind(args, flags);
+  if (name === 'contrast' || name === 'limit' || name === 'beforeafter') return parseMove(name, rawArgs, quotes);
 
   // Tags without a target.
   switch (name) {

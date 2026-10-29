@@ -32,9 +32,11 @@ export class Figures {
   private fitted = new Set<string>();
   /** Element ids per target (`r:s:X`): a connector end naming one waits for that element. */
   private elements = new Set<string>();
+  /** Readout names ({{find}}): points the kit places on their plot when built (like a block's part). */
+  private readouts = new Set<string>();
   constructor(private ground: Grounding) {}
 
-  clear(): void { this.figs.clear(); this.fitted.clear(); this.elements.clear(); }
+  clear(): void { this.figs.clear(); this.fitted.clear(); this.elements.clear(); this.readouts.clear(); }
 
   figure(t: Target): Figure {
     const k = key(t);
@@ -57,6 +59,7 @@ export class Figures {
 
   /** Lookahead: called for every parsed action, in stream order. */
   note(a: RawAction): void {
+    if (a.kind === 'find') { this.readouts.add(a.id); return; }
     if (a.kind === 'sketch') { if (a.fit) this.fitted.add(`r:${a.id}`); return; }
     if (a.kind === 'let') { const f = this.figure(tgt(a)); for (const [n, p] of a.defs) f.define(n, p); return; }
     if (!('page' in a) && !('region' in a)) return;
@@ -98,7 +101,7 @@ export class Figures {
     const h = t.region != null ? REGION_H : 1000;
     const local = (p: PtArg): Pt | string => {
       // A kit block's part (g[2,3]): its place exists only once the block is laid out, so the kit resolves it when built.
-      if (t.region != null && !isLiteral(p) && 'ref' in p && isBlockRef(p.ref)) return p as unknown as Pt;
+      if (t.region != null && !isLiteral(p) && 'ref' in p && (isBlockRef(p.ref) || (this.readouts.has(p.ref) && !f.has(p.ref)))) return p as unknown as Pt;
       const w = f.world(p);
       if (!('x' in w)) return 'missing' in w ? `unknown point ${w.missing}` : w.degenerate;
       return t.region != null ? f.toLocal(w, h) : { x: clamp(w.x, 1000), y: clamp(w.y, 1000) };

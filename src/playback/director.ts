@@ -117,6 +117,12 @@ export class Director {
   run(raw: RawAction, at: number = now()): void {
     if (raw.kind === 'let') return; // definitions were taken when it was parsed (prefetch)
     if (raw.kind === 'const') { if (!this.seen.has(raw)) kitStore(this.registry).defineConsts(raw.defs); return; }
+    if (raw.kind === 'find') { if (!this.seen.has(raw)) { this.figures.note(raw); kitStore(this.registry).finds.set(raw.id, raw); } return; }
+    // A bound number is a word, not ink: the parser said it. Unresolved, the caption shows a dash: recorded as a skip.
+    if (raw.kind === 'val') {
+      if (raw.said == null) this.report({ action: raw as unknown as Action, firedAt: at, queuedAt: now(), startedAt: now(), endedAt: now() }, { skipped: `unbound value ${raw.ref}` });
+      return;
+    }
     if (!this.seen.has(raw)) this.figures.note(raw); // callers that skip prefetch (tests, demos)
     const isInk = !isLayout(raw as Action);
     const a = (isInk ? raw : this.figures.resolve(raw)) as Action;
@@ -168,7 +174,9 @@ export class Director {
   prefetch(raw: RawAction): void {
     this.seen.add(raw);
     if (raw.kind === 'const') { kitStore(this.registry).defineConsts(raw.defs); return; }
+    if (raw.kind === 'find') kitStore(this.registry).finds.set(raw.id, raw);
     this.figures.note(raw);
+    if (raw.kind === 'val' || raw.kind === 'find') return;
     if (raw.kind === 'let' || 'mark' in raw || 'through' in raw) return;
     const a = raw as Action;
     if (a.kind === 'math') { void preloadMath().catch(() => {}); return; }
