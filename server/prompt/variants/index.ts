@@ -1,17 +1,18 @@
 // server/prompt/variants/index.ts — EXPERIMENT prompt variants (PETU_PROMPT_VARIANT; server/env.ts).
 /**
- * Each variant rewrites a copy of the default prompt's parts (server/prompt/system.ts PROMPT_PARTS)
- * and nothing else, so an arm differs from p5.x only where it says. The default (no variant) never
- * passes through here. Not for production: these exist to test causes in
+ * Each variant rewrites a copy of the tag-DSL prompt's parts (server/prompt/system.ts PROMPT_PARTS)
+ * and nothing else, so an arm differs from p5.7 only where it says; `tags` is p5.7 itself. The default
+ * (no variant: the svg prompt, SVG_PARTS) never passes through here. Not for production: these exist to test causes in
  * docs/superpowers/reference/live-vs-demo-boards.md §8.
  */
 import type { Example } from '../examples.ts';
 import { exdemos } from './exdemos.ts';
 import { boardfirst } from './boardfirst.ts';
-import { svgboard } from './svgboard.ts';
 
 export type Parts = { sections: string[]; examples: Example[]; head: string };
-export const VARIANTS: Record<string, (base: Parts) => Parts> = { exdemos, boardfirst, svgboard };
+/** `tags`: the tag-DSL prompt (p5.7) unchanged, for comparison with the svg default; the others are experiments on it. */
+const tags = (base: Parts): Parts => base;
+export const VARIANTS: Record<string, (base: Parts) => Parts> = { tags, exdemos, boardfirst };
 export const VARIANT_NAMES = Object.keys(VARIANTS);
 
 export function variantParts(name: string, base: Parts): Parts {

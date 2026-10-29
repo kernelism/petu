@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest';
-import { systemPrompt, promptVersionOf, PROMPT_VERSION, PROMPT_PARTS, buildSystemPrompt } from '../../server/prompt/system';
+import { systemPrompt, promptVersionOf, PROMPT_VERSION, PROMPT_PARTS, SVG_PARTS, buildSystemPrompt, isSvgMode } from '../../server/prompt/system';
 import { VARIANT_NAMES } from '../../server/prompt/variants/index';
 import { DEMO_EXAMPLES } from '../../server/prompt/variants/exdemos';
 import { BoardFirst, toBoardFirst, namesIn } from '../../server/boardFirst';
@@ -8,19 +8,27 @@ import { EXAMPLES } from '../../server/prompt/examples';
 import { ScriptParser } from '../../src/script/parser';
 import { ScriptFilter } from '../../server/scriptFilter';
 
-/** EXPERIMENT knob (PETU_PROMPT_VARIANT): the default stays the p5.x prompt; variants differ only where they say. */
+/**
+ * PETU_PROMPT_VARIANT: the default is the svg prompt (p6.0); `tags` is the tag-DSL prompt (p5.7) unchanged,
+ * and the experiments (exdemos, boardfirst) rewrite the tag prompt only where they say.
+ */
 describe('prompt variants', () => {
-  it('the default is untouched', () => {
-    expect(systemPrompt()).toBe(buildSystemPrompt(PROMPT_PARTS));
+  it('the default is the svg prompt; tags is the p5.7 tag prompt untouched', () => {
+    expect(systemPrompt()).toBe(buildSystemPrompt(SVG_PARTS));
+    expect(systemPrompt('tags')).toBe(buildSystemPrompt(PROMPT_PARTS));
     expect(systemPrompt(undefined)).toBe(systemPrompt());
     expect(promptVersionOf()).toBe(PROMPT_VERSION);
     expect(promptVersionOf('exdemos')).toBe(`${PROMPT_VERSION}-exdemos`);
     expect(() => systemPrompt('nope')).toThrow(/unknown prompt variant/);
-    expect(VARIANT_NAMES).toEqual(['exdemos', 'boardfirst', 'svgboard']);
+    expect(() => systemPrompt('svgboard')).toThrow(/unknown prompt variant/); // the experiment's whole-SVG-first format is gone
+    expect(VARIANT_NAMES).toEqual(['tags', 'exdemos', 'boardfirst']);
+    expect(isSvgMode()).toBe(true);
+    expect(isSvgMode('')).toBe(true);
+    for (const v of VARIANT_NAMES) expect(isSvgMode(v)).toBe(false);
   });
 
   it('exdemos: the three sentences gone, the demo examples in, nothing else changed', () => {
-    const d = systemPrompt(), e = systemPrompt('exdemos');
+    const d = systemPrompt('tags'), e = systemPrompt('exdemos');
     for (const gone of ['Say less and let the board carry it.', '40–70 spoken words', 'rather than adding beside it']) { expect(d).toContain(gone); expect(e).not.toContain(gone); }
     expect(e).toContain('Why does a competitive inhibitor not change Vmax?');
     expect(e).not.toContain('lighthouse');
@@ -47,7 +55,7 @@ describe('prompt variants', () => {
   });
 
   it('boardfirst changes only the output sentence, TIMING and the examples\' form', () => {
-    const d = systemPrompt(), b = systemPrompt('boardfirst');
+    const d = systemPrompt('tags'), b = systemPrompt('boardfirst');
     expect(b).toContain('BOARD FIRST, THEN NARRATION');
     expect(b).not.toContain('\nTIMING\n');
     const cut = (s: string) => s.slice(s.indexOf('WHAT YOU GET'), s.indexOf('EXAMPLE 1'));
@@ -115,6 +123,7 @@ describe('PETU_PROMPT_VARIANT', async () => {
   it('is absent by default and validated', () => {
     expect('promptVariant' in env().model).toBe(false);
     expect(env('boardfirst').model.promptVariant).toBe('boardfirst');
+    expect(env('tags').model.promptVariant).toBe('tags');
     expect(() => env('p9')).toThrow(/PETU_PROMPT_VARIANT/);
   });
 });
