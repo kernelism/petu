@@ -55,7 +55,10 @@ export function routeLink(a: Box, b: Box, obstacles: Box[], gap: number, pad: nu
   const dx = cb.x - ca.x, dy = cb.y - ca.y;
   const cands: { q: Route; pref: number }[] = [];
   const hMax = Math.max(a.h, b.h);
-  const sameRow = Math.abs(dy) < hMax * 0.6 && Math.abs(dx) > (a.w + b.w) / 2;
+  // In one row and far apart (a fan, a long hop over things between): an arc. Close neighbours are
+  // joined nearly straight, whatever row they share.
+  const facing = Math.abs(dx) - (a.w + b.w) / 2;
+  const sameRow = Math.abs(dy) < hMax * 0.6 && facing > hMax * 3;
   if (sameRow) {
     // Over the row (preferred) or under it, from the facing top (bottom) edges; the lift grows with
     // the span (proportional), so a short hop is a low arc and a long one never towers.
@@ -65,7 +68,7 @@ export function routeLink(a: Box, b: Box, obstacles: Box[], gap: number, pad: nu
       const span = Math.abs(xb - xa);
       for (const [f, p] of [[0.22, 0], [0.34, 0.5], [0.5, 1.1]] as const) {
         const lift = Math.max(hMax * 0.5, Math.min(span * f, hMax * 3.5));
-        cands.push({ q: { a: { x: xa, y: ya }, c: { x: (xa + xb) / 2, y: (ya + yb) / 2 + s * lift * 2 }, b: { x: xb, y: yb } }, pref: p + (s < 0 ? 0 : 0.6) });
+        cands.push({ q: { a: { x: xa, y: ya }, c: { x: (xa + xb) / 2, y: (ya + yb) / 2 + s * lift * 2 }, b: { x: xb, y: yb } }, pref: 0.1 + p + (s < 0 ? 0 : 0.9) });
       }
     }
   }
@@ -77,7 +80,7 @@ export function routeLink(a: Box, b: Box, obstacles: Box[], gap: number, pad: nu
     const m = { x: (pa.x + pb.x) / 2 + n.x * k * L, y: (pa.y + pb.y) / 2 + n.y * k * L };
     // Re-aim the ends at the control point so a bent link leaves its box on the bent side.
     const qa = exitPoint(a, m, gap), qb = exitPoint(b, m, gap);
-    cands.push({ q: { a: qa, c: m, b: qb }, pref: (sameRow ? 0.8 : 0) + Math.abs(k) * 1.6 + (k === 0 ? 0.15 : 0) });
+    cands.push({ q: { a: qa, c: m, b: qb }, pref: (sameRow ? 0.4 : 0) + Math.abs(k) * 1.6 + (k === 0 ? 0.15 : 0) });
   }
   const near = (q: Route) => {
     if (!avoid.length) return 0;

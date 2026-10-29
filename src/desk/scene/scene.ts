@@ -146,9 +146,11 @@ export async function buildScene(a: S, ctx: TargetCtx, env: BuildEnv): Promise<E
     const r = await placeBox(w, h, a.annotate ? { rel: 'near', of: a.annotate } : a.place);
     const claim = scene.claim(r);
     // The leader: a gentle curve from the note to the part, around anything in between.
-    const leader = target ? routeLink(r, target, clear(taken(), r, target), m.u(4), m.u(3)) : null;
+    const solid = [...scene.rects({ lines: false }), ...env.registry.obstacles(ctx.target, undefined, true)];
+    const leader = target ? routeLink(r, target, clear(solid, r, target), m.u(4), m.u(3)) : null;
     const corridor = leader ? claimCorridor(scene, leader, m) : [];
-    store.put(id, { rect: r, claim, moved: new Set(), data: { kind: 'note', corridor } });
+    const note = store.put(id, { rect: r, claim, moved: new Set(), data: { kind: 'note', corridor } });
+    const corridor0 = corridor.map((cl) => ({ ...cl.r }));
     return {
       target: ctx.target, bbox: grow(target ? union([r, target]) : r, m.u(6)),
       draw: async (_signal, k) => {
@@ -163,6 +165,19 @@ export async function buildScene(a: S, ctx: TargetCtx, env: BuildEnv): Promise<E
         }
         lines.forEach((l, i) => kitText(g, r.x, r.y + m.label * (0.68 + i * 1.35), l, { size: m.label, fill: a.em ? accent : c.ink2, anchor: 'start' }));
         env.registry.define({ id: a.id, kind: 'scene-note', target: ctx.target, bbox: r, boxes: [r], anchor: { x: r.x, y: r.y + h / 2 }, group: g, strokes });
+        // A callout goes where its thing goes (it moves with it, leader and all).
+        if (a.annotate && target) {
+          const key = blockPart(a.annotate)?.id ?? a.annotate;
+          store.get(key)?.moved?.add(() => void anchorBox(a.annotate!, env.registry, 0).then((nb) => {
+            if (!nb) return;
+            const dx = nb.x - target.x, dy = nb.y - target.y;
+            g.setAttribute('transform', `translate(${dx} ${dy})`);
+            note.rect = { ...r, x: r.x + dx, y: r.y + dy };
+            claim.move(note.rect);
+            corridor.forEach((cl, i) => cl.move({ ...corridor0[i], x: corridor0[i].x + dx, y: corridor0[i].y + dy }));
+            note.moved?.forEach((f) => f());
+          }));
+        }
         await fadeIn(g, k);
       },
     };
@@ -181,17 +196,36 @@ export async function buildScene(a: S, ctx: TargetCtx, env: BuildEnv): Promise<E
       else if (mine.size < of.length && a.of.every((x) => of.includes(x))) k0 = Math.min(k0, (t.data!.padK as number) * 0.5);
     }
     const pad = m.gap * 0.7 * k0;
+    // A line around things that sit apart would swallow whatever lies between them: the members
+    // gather first, each gliding next to the ones already gathered (their links follow).
+    const keys = a.of.map((x) => blockPart(x)?.id ?? x);
+    const mem = keys.map((x) => store.get(x));
+    const outside = store.ids().filter((x) => !keys.includes(x)).map((x) => store.get(x)!).filter((t) => t.claim && !['link', 'group', 'pair'].includes(String(t.data?.kind)));
+    const swallows = (bs: Box[]) => { const pts = lassoPath(bs, pad, id).pts; return outside.some((t) => inPoly({ x: t.rect.x + t.rect.w / 2, y: t.rect.y + t.rect.h / 2 }, pts)); };
+    const gather: { id: string; t: Thing; dest: Box }[] = [];
+    if (mem.every((t, i) => t && !isBlockRef(a.of[i])) && swallows(boxes as Box[])) {
+      const movers = new Set(mem.slice(1).map((t) => t!.claim?.r));
+      const room = scene.rects().filter((r) => !movers.has(r));
+      const got: Box[] = [boxes[0]!];
+      mem.slice(1).forEach((t, i) => {
+        const dest = placeRel(t!.rect.w, t!.rect.h, 'near', union(got), room, { gap: m.gap * 1.1, seed: `${id}:${i}`, view: scene.view() });
+        got.push(dest); room.push(dest); t!.claim?.move(dest);
+        gather.push({ id: keys[i + 1], t: t!, dest });
+      });
+      got.forEach((b, i) => { boxes[i] = b; });
+    }
     let shape = lassoPath(boxes as Box[], pad, id);
     const text = a.text ?? '';
     const tw = text ? m.u(textWidth(text, m.labelPx)) : 0;
     const labelBox = () => ({ x: shape.label.x - m.u(4), y: shape.label.y - m.label * 1.55, w: tw + m.u(8), h: m.label * 1.3 });
     let claims: SceneClaim[] = [];
-    const claimRing = () => { claims.forEach((cl) => cl.drop()); claims = [...shape.pts.filter((_, i) => i % 2 === 0).map((p) => scene.claim({ x: p.x - m.u(3), y: p.y - m.u(3), w: m.u(6), h: m.u(6) }, true)), ...(text ? [scene.claim(labelBox(), true)] : [])]; };
+    const claimRing = () => { claims.forEach((cl) => cl.drop()); claims = [...shape.pts.filter((_, i) => i % 2 === 0).map((p) => scene.claim({ x: p.x - m.u(3), y: p.y - m.u(3), w: m.u(6), h: m.u(6) }, 'line')), ...(text ? [scene.claim(labelBox(), 'label')] : [])]; };
     claimRing();
     const thing = store.put(id, { rect: shape.bbox, moved: new Set(), data: { kind: 'group', of: a.of, padK: k0 } });
     return {
       target: ctx.target, bbox: grow(union([shape.bbox, labelBox()]), m.u(6)),
       draw: async (_signal, k) => {
+        await Promise.all(gather.map((v) => glide(v.id, v.t, v.dest, env, k)));
         const g = svg(ctx.layers.agent, 'g', { class: 'scene-group', opacity: 0 });
         thing.group = g;
         const col = a.em ? accent : c.ink2;
@@ -219,15 +253,15 @@ export async function buildScene(a: S, ctx: TargetCtx, env: BuildEnv): Promise<E
     if (!A) return `unknown ${a.from}`;
     if (!B) return `unknown ${a.to}`;
     const gap = m.gap * 0.8;
-    const make = (x: Box, y: Box) => bracketPath(x, y, clear(taken(), x, y), gap);
-    let br = make(A, B);
     const text = a.text ?? '';
     const tw = text ? m.u(textWidth(text, m.labelPx)) : 0, th = m.label * 1.3;
+    const make = (x: Box, y: Box) => bracketPath(x, y, clear(taken(), x, y), gap, text ? { w: tw, h: th } : undefined);
+    let br = make(A, B);
     const lbox = () => (br.side === 'right' ? { x: br.label.x, y: br.label.y - th / 2, w: tw, h: th }
       : br.side === 'left' ? { x: br.label.x - tw, y: br.label.y - th / 2, w: tw, h: th }
         : { x: br.label.x - tw / 2, y: br.label.y - th / 2, w: tw, h: th });
     let claims: SceneClaim[] = [];
-    const claimAll = () => { claims.forEach((cl) => cl.drop()); claims = [scene.claim(br.rail, true), ...(text ? [scene.claim(lbox(), true)] : [])]; };
+    const claimAll = () => { claims.forEach((cl) => cl.drop()); claims = [scene.claim(br.rail, 'line'), ...(text ? [scene.claim(lbox(), 'label')] : [])]; };
     claimAll();
     const thing = store.put(id, { rect: text ? union([br.rail, lbox()]) : br.rail, moved: new Set(), data: { kind: 'pair' } });
     return {
@@ -303,6 +337,16 @@ export async function buildScene(a: S, ctx: TargetCtx, env: BuildEnv): Promise<E
   return planLink(a as LinkSpec, ctx, env, id, a.id);
 }
 
+/** Whether p lies inside the polygon (even-odd). */
+function inPoly(p: P, poly: P[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
 /** Everything in `taken` except the two ends' own boxes (and what contains them, or sits inside them). */
 function clear(taken: Box[], x: Box, y: Box): Box[] {
   return taken.filter((b) => !contains(grow(x, 1), b) && !contains(grow(y, 1), b) && !contains(b, x) && !contains(b, y));
@@ -311,7 +355,7 @@ function clear(taken: Box[], x: Box, y: Box): Box[] {
 /** Claims a few small boxes along a route (minor): later things and labels keep off the line. */
 function claimCorridor(scene: NonNullable<TargetCtx['scene']>, q: Route, m: Metrics): SceneClaim[] {
   const s = m.u(5);
-  return samples(q, 8).slice(1, -1).map((p) => scene.claim({ x: p.x - s / 2, y: p.y - s / 2, w: s, h: s }, true));
+  return samples(q, 8).slice(1, -1).map((p) => scene.claim({ x: p.x - s / 2, y: p.y - s / 2, w: s, h: s }, 'line'));
 }
 
 /** The part of a route up to t (de Casteljau). */
@@ -337,7 +381,8 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
   const fromKey = L.from, ends = await Promise.all(targets.map((t) => anchorBox(t, env.registry)));
   // Other links' paths: this one keeps off them where it can.
   const others = () => store.ofKind('link').flatMap((t) => ((t.data!.link as LinkState | undefined)?.routes ?? []).map((q) => samples(q, 16)));
-  const route = (f: Box, e: Box) => routeLink(f, e, clear(taken(), f, e), m.u(4), m.u(3), others());
+  const solid = () => [...scene.rects({ lines: false }), ...env.registry.obstacles(ctx.target, undefined, true)];
+  const route = (f: Box, e: Box) => routeLink(f, e, clear(solid(), f, e), m.u(4), m.u(3), others());
   const routes = ends.map((e) => route(from, e!));
   let corridor = routes.flatMap((q) => claimCorridor(scene, q, m));
   // The label: measured now (a weight readout at its widest), placed clear of things, labels and lines.
@@ -345,7 +390,7 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
   const txt0 = [L.text, L.showWeight ? '100%' : ''].filter(Boolean).join(' ');
   const lh = m.label * 1.25;
   let lbox: Box | null = txt0 ? placeLabel(routes[0], lw(txt0), lh, taken(), m.u(5)) : null;
-  let lclaim = lbox ? scene.claim(lbox, true) : null;
+  let lclaim = lbox ? scene.claim(lbox, 'label') : null;
   const bbox = grow(union([...routes.flatMap((q) => samples(q, 8)).map((p) => ({ x: p.x, y: p.y, w: 0, h: 0 })), ...(lbox ? [lbox] : [])]), m.u(10));
   return {
     target: ctx.target, bbox,
@@ -394,7 +439,7 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
         lclaim?.drop();
         for (let i = 0; i < targets.length; i++) { const e = await anchorBox(targets[i], env.registry, 0); if (e) { now.e[i] = e; routes[i] = route(f, e); } }
         corridor = routes.flatMap((q) => claimCorridor(scene, q, m));
-        if (lbox) { lbox = placeLabel(routes[0], lbox.w, lbox.h, taken(), m.u(5)); lclaim = scene.claim(lbox, true); }
+        if (lbox) { lbox = placeLabel(routes[0], lbox.w, lbox.h, taken(), m.u(5)); lclaim = scene.claim(lbox, 'label'); }
         if (aid && env.registry.get(aid)) env.registry.update(aid, { boxes: [...boxes(), ...(lbox ? [lbox] : [])], strokes: routes.map((q) => samples(q, 16)) });
         paint();
       };
@@ -533,30 +578,41 @@ export async function buildSceneRef(a: RefAction, env: BuildEnv): Promise<Elemen
     if (!anchor) return `unknown ${a.place.of}`;
     const others = ctx.scene ? ctx.scene.rects().filter((r) => r !== t.claim?.r) : [];
     const dest = placeRel(t.rect.w, t.rect.h, a.place.rel, anchor, others, { gap: m.gap * (t.data?.kind === 'kit' ? 1.3 : 2.1), seed: `${id}:move`, view: ctx.scene?.view() });
-    const dx = dest.x - t.rect.x, dy = dest.y - t.rect.y;
-    const kit = t.data?.kind === 'kit' ? kitStore(env.registry).get(id) : undefined;
+    const from = { ...t.rect };
+    // The room moves at once (things placed meanwhile keep clear of where it is going).
+    t.claim?.move(dest);
     return {
-      target, bbox: grow(union([t.rect, dest]), 8),
-      draw: async (_s, k) => {
-        // A kit block draws in its own space: it moves inside a wrapper, and its world shift is kept for links and connectors.
-        const g = kit ? mover(kit) : t.group;
-        const off = (t.data!.off as P | undefined) ?? { x: 0, y: 0 };
-        const base = { rect: { ...t.rect }, parts: t.parts?.map((p) => ({ ...p })) };
-        await tween((prefersReducedMotion() ? 0 : 560) * k.speed, (x) => {
-          g?.setAttribute('transform', `translate(${off.x + dx * x} ${off.y + dy * x})`);
-          t.rect = { ...base.rect, x: base.rect.x + dx * x, y: base.rect.y + dy * x };
-          if (base.parts) t.parts = base.parts.map((p) => ({ ...p, x: p.x + dx * x, y: p.y + dy * x }));
-          if (kit) kit.shift = { x: off.x + dx * x, y: off.y + dy * x };
-          t.moved?.forEach((f) => f());
-        }, undefined, easeOut);
-        t.data!.off = { x: off.x + dx, y: off.y + dy };
-        t.claim?.move(t.rect);
-        const shift = (b: Box) => ({ ...b, x: b.x + dx, y: b.y + dy });
-        if (e) env.registry.update(id, { bbox: shift(e.bbox), boxes: e.boxes.map(shift) });
-      },
+      target, bbox: grow(union([from, dest]), 8),
+      draw: (_s, k) => glide(id, t, dest, env, k),
     };
   }
   return 'not a scene verb';
+}
+
+/**
+ * Glides a scene thing (or a kit block) to `dest`; links, outlines and callouts on it follow every
+ * frame (its `moved` hooks). A kit block draws in its own space: it moves inside a wrapper, and its
+ * world shift is kept for links and connectors.
+ */
+async function glide(id: string, t: Thing, dest: Box, env: BuildEnv, k: Pace): Promise<void> {
+  const dx = dest.x - t.rect.x, dy = dest.y - t.rect.y;
+  if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
+  const kit = t.data?.kind === 'kit' ? kitStore(env.registry).get(id) : undefined;
+  const e = env.registry.get(id);
+  const g = kit ? mover(kit) : t.group;
+  const off = (t.data!.off as P | undefined) ?? { x: 0, y: 0 };
+  const base = { rect: { ...t.rect }, parts: t.parts?.map((p) => ({ ...p })) };
+  await tween((k.fadeMs != null || prefersReducedMotion() ? 0 : 560) * k.speed, (x) => {
+    g?.setAttribute('transform', `translate(${off.x + dx * x} ${off.y + dy * x})`);
+    t.rect = { ...base.rect, x: base.rect.x + dx * x, y: base.rect.y + dy * x };
+    if (base.parts) t.parts = base.parts.map((p) => ({ ...p, x: p.x + dx * x, y: p.y + dy * x }));
+    if (kit) kit.shift = { x: off.x + dx * x, y: off.y + dy * x };
+    t.moved?.forEach((f) => f());
+  }, undefined, easeOut);
+  t.data!.off = { x: off.x + dx, y: off.y + dy };
+  t.claim?.move(t.rect);
+  const shift = (b: Box) => ({ ...b, x: b.x + dx, y: b.y + dy });
+  if (e) env.registry.update(id, { bbox: shift(e.bbox), boxes: e.boxes.map(shift) });
 }
 
 /** A kit block's wrapper group (made on its first move), so its own drawing stays in its own space. */

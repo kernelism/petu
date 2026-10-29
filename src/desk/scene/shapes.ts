@@ -77,7 +77,7 @@ const hits = (r: Box, obstacles: Box[]) => obstacles.reduce((s, o) => s + Math.m
  * the side across their separation (stacked things are joined on their right or left; things in a row
  * above or below), whichever crosses less content.
  */
-export function bracketPath(a: Box, b: Box, obstacles: Box[], gap: number): { pts: P[]; label: P; side: Side; rail: Box } {
+export function bracketPath(a: Box, b: Box, obstacles: Box[], gap: number, lab?: { w: number; h: number }): { pts: P[]; label: P; side: Side; rail: Box } {
   const ca = { x: a.x + a.w / 2, y: a.y + a.h / 2 }, cb = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
   const stacked = Math.abs(cb.y - ca.y) > Math.abs(cb.x - ca.x);
   const sides: Side[] = stacked ? ['right', 'left'] : ['above', 'below'];
@@ -99,8 +99,15 @@ export function bracketPath(a: Box, b: Box, obstacles: Box[], gap: number): { pt
       label = { x: (ca.x + cb.x) / 2, y: Y + s * gap * 0.6 };
       rail = { x: Math.min(ca.x, cb.x), y: Math.min(Y, ey(a), ey(b)), w: Math.abs(cb.x - ca.x), h: Math.abs(Y - (s > 0 ? Math.min(ey(a), ey(b)) : Math.max(ey(a), ey(b)))) };
     }
-    const cost = hits({ ...rail, x: rail.x - 1, y: rail.y - 1, w: rail.w + 2, h: rail.h + 2 }, obstacles) + (side === sides[0] ? 0 : 1);
-    if (!best || cost < best.cost) best = { pts, label, side, rail, cost };
+    const railCost = hits({ ...rail, x: rail.x - 1, y: rail.y - 1, w: rail.w + 2, h: rail.h + 2 }, obstacles) + (side === sides[0] ? 0 : 1);
+    // The label slides along the spine (middle first) to where it touches nothing.
+    const along = side === 'right' || side === 'left' ? [0, -0.3, 0.3] : [0, -0.32, 0.32, -0.5, 0.5];
+    for (const f of along) {
+      const L = side === 'right' || side === 'left' ? { x: label.x, y: label.y + f * Math.abs(cb.y - ca.y) } : { x: label.x + f * Math.max(Math.abs(cb.x - ca.x), lab?.w ?? 0), y: label.y };
+      const box = lab ? (side === 'right' ? { x: L.x, y: L.y - lab.h / 2, ...lab } : side === 'left' ? { x: L.x - lab.w, y: L.y - lab.h / 2, ...lab } : { x: L.x - lab.w / 2, y: L.y - lab.h / 2, ...lab }) : null;
+      const cost = railCost + (box ? (hits(box, obstacles) / Math.max(1, box.w * box.h)) * 20 : 0) + Math.abs(f) * 0.6;
+      if (!best || cost < best.cost) best = { pts, label: L, side, rail, cost };
+    }
   }
   return best!;
 }

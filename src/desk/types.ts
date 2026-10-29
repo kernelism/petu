@@ -26,11 +26,12 @@ export type RegionSpec = { id: string; page: number; size: RegionSize; body?: nu
  * Elements claim room in it, so later ones are placed clear of them (src/desk/scene/place.ts). Claims
  * persist with the section across answers (a follow-up continues the scene).
  */
-export type SceneClaim = { r: SRect; move(r: SRect): void; drop(): void; /** A label's or a connection's room: kept clear, never an anchor for "the last thing". */ minor?: boolean };
+/** A minor claim: a label's room ('label') or a stretch of a drawn line ('line'): kept clear, never an anchor for "the last thing". */
+export type SceneClaim = { r: SRect; move(r: SRect): void; drop(): void; minor?: 'label' | 'line' };
 export type SceneSpace = {
-  claim(r: SRect, minor?: boolean): SceneClaim;
-  /** Every claimed rect (earlier answers' included). */
-  rects(): SRect[];
+  claim(r: SRect, minor?: 'label' | 'line'): SceneClaim;
+  /** Every claimed rect (earlier answers' included); `lines: false` leaves out the stretches of drawn lines (a router crosses a line rather than detour around it). */
+  rects(o?: { lines?: boolean }): SRect[];
   /** The camera's world rect now. */
   view(): SRect;
   /** The most recent thing's claim (where the explanation is; labels and links aside), or null. */

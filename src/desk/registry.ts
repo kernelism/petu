@@ -25,6 +25,9 @@ export type ElementEntry = {
 const sameTarget = (a: Target, b: Target) => (a.region != null ? a.region === b.region : a.page === b.page);
 
 /** Elements of the current answer, by id (rule 4: ids are unique per answer). */
+/** Kinds that are lines between things (their boxes sample the line). */
+const LINES = new Set(['scene-link', 'connect', 'scene-pair']);
+
 export class Registry {
   private byId = new Map<string, ElementEntry>();
   private waiters = new Map<string, ((e: ElementEntry) => void)[]>();
@@ -80,10 +83,10 @@ export class Registry {
     if (e) Object.assign(e, patch);
   }
 
-  /** Collision boxes of every element in `t`, except `skip`. */
-  obstacles(t: Target, skip?: string): SRect[] {
+  /** Collision boxes of every element in `t`, except `skip` (and, with `solid`, except lines: links and connectors a route may cross). */
+  obstacles(t: Target, skip?: string, solid = false): SRect[] {
     const out: SRect[] = [];
-    for (const e of this.byId.values()) if (e.id !== skip && !e.faded && sameTarget(e.target, t)) out.push(...e.boxes);
+    for (const e of this.byId.values()) if (e.id !== skip && !e.faded && sameTarget(e.target, t) && !(solid && LINES.has(e.kind))) out.push(...e.boxes);
     return out;
   }
 

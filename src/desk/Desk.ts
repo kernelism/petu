@@ -571,8 +571,12 @@ export class Desk implements DeskApi {
     // Board ink between the gutter and the target (a snapshot from when the wire was made), minus the target's own.
     const t = w.region.r, e = 0.5;
     const within = (a: SRect, b: SRect) => a.x >= b.x - e && a.y >= b.y - e && a.x + a.w <= b.x + b.w + e && a.y + a.h <= b.y + b.h + e;
+    // A part of a block (a bar, a cell): the rest of its block to the left of it still counts, so the
+    // wire does not cut across the part's neighbours on its way in.
     const obstacles = w.avoid
-      .filter((a) => !within(t, a) && !within(a, t))
+      .filter((a) => !within(a, t))
+      .map((a) => (!within(t, a) ? a : t.x - a.x > 1 ? { x: a.x, y: a.y, w: t.x - a.x, h: a.h } : null))
+      .filter((a): a is SRect => !!a)
       .map((a) => this.viewRect(w.section, a))
       .filter((a): a is ViewRect => !!a);
     let s = routeGutter(p, q, {
@@ -619,11 +623,11 @@ export class Desk implements DeskApi {
     const sc: Scene = { cam: { x: 0, y: 0, z: 1 }, claims, focus: null, glide: null, paper: null, space: null as unknown as SceneSpace };
     sc.space = {
       claim: (r, minor) => {
-        const c: SceneClaim = { r: { ...r }, move: (n) => { c.r = { ...n }; }, drop: () => { const i = claims.indexOf(c); if (i >= 0) claims.splice(i, 1); }, ...(minor ? { minor: true } : {}) };
+        const c: SceneClaim = { r: { ...r }, move: (n) => { c.r = { ...n }; }, drop: () => { const i = claims.indexOf(c); if (i >= 0) claims.splice(i, 1); }, ...(minor ? { minor } : {}) };
         claims.push(c);
         return c;
       },
-      rects: () => claims.map((c) => c.r),
+      rects: (o) => (o?.lines === false ? claims.filter((c) => c.minor !== 'line') : claims).map((c) => c.r),
       view: () => this.camRect(sec),
       last: () => [...claims].reverse().find((c) => !c.minor)?.r ?? null,
       extent: () => (claims.length ? unionR(claims.map((c) => c.r)) : null),

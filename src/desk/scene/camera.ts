@@ -20,8 +20,8 @@ const union = (a: SRect, b: SRect): SRect => {
   return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
 };
 
-/** The furthest the end-of-answer overview zooms out (the whole scene at a glance; labels may be small). */
-export const ZOVER = 0.45;
+/** The furthest the end-of-answer overview zooms out: as far as framing does, so every label stays readable. */
+export const ZOVER = ZMIN;
 
 /**
  * The end-of-answer overview: the whole scene `ext`, centred in the window with air, at the largest

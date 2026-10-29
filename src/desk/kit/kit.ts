@@ -66,6 +66,8 @@ export type Block = {
   placed: Placed;
   m: Metrics;
   deps: string[];
+  /** Bars: the bar's width when its slot is wider (a long label). */
+  barW?: number;
   /** Moved in a scene (move id=… below=…): its group glides by this much; `placed` stays in the block's own (drawing) space. */
   shift?: { x: number; y: number };
   g: SVGGElement | null;
@@ -468,15 +470,17 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
       if (typeof made === 'string') return made;
       b = made;
     } else {
-      const slot = cs, H = cs * 3.2;
       const ev = eventual(a.src, got.full, (x) => store.get(x));
       const lf = a.labelsFrom && a.labelsFrom[1] >= 0 ? store.get(a.labelsFrom[0]) : undefined;
       const labels = (lf?.full ? lf.full.map((r) => C.fmt(r[a.labelsFrom![1]], lf.dp)) : a.labels)?.slice(0, Cn);
+      // A slot is as wide as its label (words never run into each other); the bar keeps its own width.
+      const labW = labels?.length ? m.u(Math.max(...labels.map((l) => textWidth(l, m.labelPx))) + m.labelPx * 0.9) : 0;
+      const slot = Math.max(cs, labW), H = cs * 3.2;
       const neg = ev[0].some((v) => v < 0);
       const pad: Pad = { l: 0, t: m.label * 1.5, r: 0, b: (neg ? m.label * 1.4 : 0) + (labels ? m.label * 1.7 : 0) + (a.caption ? m.label * 1.9 : 0) + m.label * 0.4 };
       const placed = P(Cn * slot, H, pad);
       b = newBlock(id, 'bars', region, placed, m, got.deps);
-      Object.assign(b, { src: a.src, full: got.full, vals, dp: a.dp, cs, cellPx, em: a.em });
+      Object.assign(b, { src: a.src, full: got.full, vals, dp: a.dp, cs: slot, cellPx, em: a.em, barW: cs * 0.62 });
       b.el.labels = labels; b.el.caption = a.caption;
       // One scale with the bars it sits beside when their ranges are alike (raw vs raw); its own otherwise.
       const ext = (v: number[]) => ({ pos: Math.max(0, ...v.filter(Number.isFinite)), neg: Math.max(0, ...v.filter(Number.isFinite).map((x) => -x)) });
@@ -782,7 +786,7 @@ type BarEls = { bars: SVGRectElement[]; vals: SVGTextElement[]; ghosts: SVGGElem
 
 /** Bar i's rect for value v in the block's current scale. */
 function barRect(b: Block, i: number, v: number): Box {
-  const { body } = b.placed, slot = b.cs!, w = slot * 0.62;
+  const { body } = b.placed, slot = b.cs!, w = b.barW ?? slot * 0.62;
   const gr = b.group!, span = gr.pos + gr.neg || 1, k = body.h / span;
   const base = body.y + gr.pos * k;
   const x = body.x + i * slot + (slot - w) / 2;
