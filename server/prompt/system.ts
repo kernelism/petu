@@ -2,7 +2,7 @@
 import { EXAMPLES } from './examples.ts';
 
 /** Bump on any change: the eval records it with every run, and it is part of the cache prefix. */
-export const PROMPT_VERSION = 'p5.0';
+export const PROMPT_VERSION = 'p5.1';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -60,7 +60,7 @@ const BOARD = `THE BOARD (a panel beside the pages, for what the pages don't sho
 ONE SCENE. {{scene id=s near=p4}} opens the board as one open canvas for the whole answer (a follow-up continues the same scene). Build one connected explanation in it, the way a teacher fills a whiteboard:
 - Place each thing by what it explains: right=, left=, above=, below=, beside= or near= another thing or part. The engine picks the spacing and keeps everything clear; never give coordinates in a scene.
 - Connect everything: a link between things whose relation matters (a link with a few words saying what the relation is, strength= for how much), a note with a leader line on the exact part it explains, and connect from the page's own words, marks or equation parts to the thing on the board that works them out.
-- Transform rather than redraw: move a thing beside what it now relates to, set a new value, label or strength, and let what depends on it follow. The scene is the memory of the explanation; keep coming back to it.
+- Transform rather than redraw: move a thing (a block too) beside what it now relates to, set a new value, label or strength, split a thing into its parts or merge things into one, and let what depends on it follow. Draw a line around things that belong together, and a bracket between two that match. The scene is the memory of the explanation; keep coming back to it.
 - The camera follows the newest ink, so the scene can grow in any direction.
 {{sketch id=s near=p4 fit}} adds a separate section instead, for an exact geometric figure; draw into it with on=s. near= names the page the section belongs to; the board places it. Sections stack top to bottom and stay for the whole answer, so you can return to an earlier section and add to it. size=l asks for a wider board when a figure needs the room.
 With fit, use any convenient coordinates (negatives are fine; y grows downward, so up is negative). The engine scales the whole section to fit and keeps angles and ratios: twice the number is twice the length on screen.
@@ -99,6 +99,7 @@ SCENE (in {{scene id=s near=p4}}; P is right=, left=, above=, below=, beside= or
 {{node on=s id=a "label" right=b}} a labelled thing, value=0.3 or value=p[2] shows a small value under it  {{flow on=s id=f "first" "second" "third" arrows below=a}} a sequence of things (parts f[1]…; values=p shows p's values under them; down stacks it)
 {{link on=s from=a to=f[2] strength=p[2] "what it does"}} a relation; strength 0 to 1 or a part's value sets its weight (show prints it, plain drops the head, dash)  {{link on=s from=f[3] to=f strength=p}} one link to every part of f, weighted by p
 {{note on=s "short words" annotate=f[2]}} a callout with a leader line  {{note on=s "short words" below=a}}  {{move id=a beside=c}}  {{set id=a "new label"}}  {{set id=l strength=0.2}}
+{{group on=s id=g of=a,b "what they are together"}} a loose line around things (a boundary; it follows them)  {{pair on=s from=a to=b "how they match"}} a bracket joining two  {{split id=a "one part" "another"}}  {{merge on=s id=m of=a,b "what they become"}}
 {{shares on=s id=p op=softmax of=v t=2 labels=a,b,c below=f}} parts of a whole that sum to 1 (vals=2,1,1 are normalised)  {{blend on=s id=m of=p,v right=p "label"}} v's values mixed in p's shares, with the result
 op= is a standard operation on any block: softmax (t= temperature), normalize, l2, cumsum, rank, scale (t= factor), matmul of=A,B  {{calc on=s of=p,v reduce=wavg}} (also argmax)
 Kit blocks take the same placement in a scene (right=, below=, left=, above=, beside=, near=).

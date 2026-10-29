@@ -76,7 +76,7 @@ describe('system prompt', () => {
     for (const k of ['grid', 'bars', 'table', 'scatter', 'calc', 'col', 'fit', 'band', 'dist', 'step', 'sweep', 'set', 'level']) expect(kinds, k).toContain(k);
     for (const w of ['slide=', 'win=', 'reduce=', 'map=', 'zip=', 'right=', 'below=', 'op=', 'where=', 'center=']) expect(s, w).toContain(w);
     // Board v2: one connected scene
-    for (const k of ['scene', 'node', 'flow', 'link', 'note', 'shares', 'blend', 'move']) expect(kinds, k).toContain(k);
+    for (const k of ['scene', 'node', 'flow', 'link', 'note', 'shares', 'blend', 'move', 'group', 'pair', 'split', 'merge']) expect(kinds, k).toContain(k);
     for (const w of ['beside=', 'near=', 'annotate=', 'strength=', 'op=softmax', 'matmul', 'reduce=wavg', 'Transform rather than redraw', 'Connect everything']) expect(s, w).toContain(w);
   });
 
