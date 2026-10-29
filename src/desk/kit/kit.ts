@@ -59,12 +59,14 @@ export function metrics(scale: number, bodyPx: number): Metrics {
 type Win = { over: string; kernel?: string; spec: C.WinSpec; geo: { R: number; C: number; pr: number; pc: number; stride: number }; filled: boolean[][]; pos: [number, number] | null; calc: string | null; rect: Box | null; cur: [number, number] | null };
 type Group = { pos: number; neg: number; members: Block[] };
 /** Axes shared by line blocks (the first is the host; axes=v overlays onto v's). */
-type Plot = { host: Block; dom: { x0: number; x1: number; y0: number; y1: number }; members: Block[]; axes: SVGGElement | null; xLabel?: string; yLabel?: string };
+type Plot = { host: Block; dom: { x0: number; x1: number; y0: number; y1: number }; members: Block[]; axes: SVGGElement | null; xLabel?: string; yLabel?: string; /** On a slide's calibrated chart: its axes are the slide's, the domain never moves. */ fixed?: boolean };
 
 export type Block = {
   id: string;
-  kind: 'grid' | 'bars' | 'scatter' | 'table' | 'calc' | 'fit' | 'shares';
+  kind: 'grid' | 'bars' | 'scatter' | 'table' | 'calc' | 'fit' | 'shares' | 'tokens';
   region: string;
+  /** Where it draws when not a board section (a chart plot on a page). */
+  target?: Target;
   placed: Placed;
   m: Metrics;
   deps: string[];
@@ -87,6 +89,10 @@ export type Block = {
   win?: Win;
   group?: Group;
   ghost?: number[];
+  /** Stacked bars: each bar's parts, bottom up (a bar not split is one part); vals hold the totals. */
+  parts?: number[][];
+  /** Tokens: the states' names and each mark's state; the cluster width (marks per row) and pitch. */
+  tok?: { states: string[]; st: number[]; cols: number; pitch: number };
   /** image: a grid drawn as shaded pixels, no numerals; line: bars drawn as a curve on axes. */
   view?: 'image' | 'line';
   /** line: each value's x (numeric labels, the source's xs, else 1…n); the plot it is drawn on (its own, or its host's). */
@@ -235,6 +241,28 @@ export function formula(src: string, names: readonly string[], consts: Record<st
   return f && ks.length ? (e) => f({ ...consts, ...e }) : f;
 }
 
+/**
+ * A histogram's data and bins: its source block's values (all of them, computed: a window's output
+ * counts before it is swept), over their range, or over histogram `like`'s range and bin count (values
+ * outside it fall in the end bins).
+ */
+export function histBins(src: { hist: string; bins: number; like?: string }, get: (id: string) => Block | undefined): { data: number[]; lo: number; hi: number; bins: number } | string {
+  const of = (id: string) => { const cr = colRef(id); if (cr) { const t = get(cr[0]); return t?.kind === 'table' && cr[1] >= 0 ? (t.full ?? t.vals)!.map((r) => r[cr[1]]) : null; } const b = get(id); return (b?.full ?? b?.vals)?.flat() ?? null; };
+  const data = of(src.hist)?.filter(Number.isFinite);
+  if (!data) return `unknown block ${src.hist}`;
+  if (!data.length) return `${src.hist} has no values yet`;
+  if (src.like) {
+    const h = get(src.like)?.src;
+    if (!h || !('hist' in h)) return `${src.like} is not a histogram`;
+    const r = histBins(h, get);
+    return typeof r === 'string' ? r : { data, lo: r.lo, hi: r.hi, bins: r.bins };
+  }
+  let lo = Infinity, hi = -Infinity;
+  for (const v of data) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  if (hi - lo < 1e-12) { lo -= 0.5; hi += 0.5; }
+  return { data, lo, hi, bins: src.bins };
+}
+
 export function computeSource(src: KitSource, get: (id: string) => Block | undefined, seed?: string, consts: Record<string, number> = {}): { full: C.Mat; deps: string[]; win?: { spec: C.WinSpec; over: string; kernel?: string } } | string {
   // Noise (rand(), randn()) is seeded by the block's id: the same numbers on every build and replay.
   const rand = seed ? C.seededRand(seed) : undefined;
@@ -246,6 +274,13 @@ export function computeSource(src: KitSource, get: (id: string) => Block | undef
     return b?.vals ? b.vals : null;
   };
   const dep = (id: string) => colRef(id)?.[0] ?? id;
+  if ('hist' in src) {
+    const r = histBins(src, get);
+    if (typeof r === 'string') return r;
+    const counts = Array(r.bins).fill(0);
+    for (const v of r.data) counts[Math.min(r.bins - 1, Math.max(0, Math.floor(((v - r.lo) / (r.hi - r.lo)) * r.bins)))]++;
+    return { full: [counts], deps: [dep(src.hist), ...(src.like ? [src.like] : [])] };
+  }
   if ('vals' in src) {
     const full = C.resolveCells(src.vals, src.cells, consts);
     // A cell naming a block, not a constant: say what to write instead.
@@ -390,6 +425,8 @@ export const isVarName = (s: string) => /^[A-Za-z][′']*$/.test(s);
 // Building: placement happens here (on the block's word), drawing in plan.draw.
 
 const regionOf = (t: Target) => t.region!;
+/** A block's drawing target: its section, or the page of the chart it is drawn on. */
+const tgtOf = (b: Block): Target => b.target ?? { region: b.region };
 /** What a block will show once everything fills: a table column's computed values, else its values. */
 function eventual(src: KitSource, shown: C.Mat, get: (id: string) => Block | undefined): C.Mat {
   if ('col' in src) { const t = get(src.col[0]); if (t?.full && src.col[1] >= 0) return [t.full.map((r) => r[src.col[1]])]; }
@@ -438,9 +475,17 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
   const id = a.id ?? store.anonId();
   if (a.id && store.get(a.id)) return 'duplicate id';
   a = await withColumns(a, store);
+  let parts: number[][] | undefined;
+  if (a.kind === 'bars' && a.stack) {
+    // Stacked: each bar is the sum of its parts (formula parts over the constants), on one scale.
+    const ps = C.resolveCells(a.stack.vals, a.stack.cells, withConsts(store.consts, a.with));
+    if (typeof ps === 'string') return ps;
+    parts = ps;
+    a = Object.assign({}, a, { src: { vals: [ps.map((r) => r.reduce((t, v) => t + v, 0))] } });
+  }
   // bars axes=<another bar chart> (not a line): one y scale for both, drawn as bars (a line has no bar axes to sit on).
   let shareScale: Block | undefined;
-  if (a.kind === 'bars' && a.axes) {
+  if (a.kind === 'bars' && a.axes && !('hist' in a.src)) {
     const host = await store.wait(a.axes);
     if (host?.kind === 'bars' && !host.plot && host.group) { shareScale = host; a = { ...a, axes: undefined, view: undefined }; }
   }
@@ -481,7 +526,9 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     if (a.kind === 'bars' && R !== 1) return 'bars need one row';
     // Too many cells for numerals: a grid shows as an image, a vector as a line.
     const image = a.kind === 'grid' && (a.view === 'image' || R > C.MAX_DIM || Cn > C.MAX_DIM);
-    const line = a.kind === 'bars' && (a.view === 'line' || Cn > 16);
+    const hist = a.kind === 'bars' && 'hist' in a.src ? histBins(a.src, (x) => store.get(x)) : undefined;
+    if (typeof hist === 'string') return hist;
+    const line = a.kind === 'bars' && !hist && (a.view === 'line' || Cn > 16);
     const strs = image ? [] : fmtAll(got.full, a.dp, litFrac(a.src));
     const wide = Math.max(0, ...strs.map((s) => textWidth(s, m.numPx)));
     // Square cells, room for three digits at least, so a composition's cells come out one size.
@@ -522,11 +569,18 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
       const labels = (lf?.full ? lf.full.map((r) => C.fmt(r[a.labelsFrom![1]], lf.dp)) : a.labels)?.slice(0, Cn);
       // A slot is as wide as its label (words never run into each other); the bar keeps its own width.
       const labW = labels?.length ? m.u(Math.max(...labels.map((l) => textWidth(l, m.labelPx))) + m.labelPx * 0.9) : 0;
-      const slot = Math.max(cs, labW), H = cs * 3.2;
+      // A histogram's bins touch, across a fixed width (one x scale for every histogram that shares its bins).
+      const slot = hist ? HIST_W / Cn : Math.max(cs, labW), H = hist ? HIST_W * 0.42 : cs * 3.2;
       const neg = ev[0].some((v) => v < 0);
-      const pad: Pad = { l: 0, t: m.label * 1.5, r: 0, b: (neg ? m.label * 1.4 : 0) + (labels ? m.label * 1.7 : 0) + (a.caption ? m.label * 1.9 : 0) + m.label * 0.4 };
-      const placed = P(Cn * slot, H, pad);
+      // Stacked bars name their parts on the right, beside the last bar's segments.
+      const partW = a.parts?.length ? m.u(Math.max(...a.parts.map((l) => textWidth(l, m.labelPx))) + m.labelPx * 1.2) : 0;
+      const pad: Pad = { l: 0, t: m.label * 1.5, r: partW, b: (neg ? m.label * 1.4 : 0) + (labels || hist ? m.label * 1.7 : 0) + (a.caption ? m.label * 1.9 : 0) + m.label * 0.4 };
+      const placed = P(Cn * slot, parts ? H * 1.25 : H, pad);
       b = newBlock(id, 'bars', region, placed, m, got.deps);
+      if (parts) b.parts = parts;
+      if (a.parts) b.el.partNames = a.parts;
+      b.el.store = store;
+      if (hist) { b.el.hist = { lo: hist.lo, hi: hist.hi }; b.barW = slot * 0.94; }
       Object.assign(b, { src: a.src, full: got.full, vals, dp: a.dp, cs: slot, cellPx, em: a.em, barW: cs * 0.62 });
       b.el.labels = labels; b.el.caption = a.caption;
       // One scale with the bars it sits beside when their ranges are alike (raw vs raw); its own otherwise.
@@ -534,7 +588,8 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
       const mine = ext(ev[0]);
       b.full = ev;
       // Side by side (right=) is a comparison: one scale. Below is a new picture: its own.
-      const g0 = shareScale?.group ?? (anchor?.kind === 'bars' && a.right ? anchor.group : undefined);
+      // A histogram keeps its own count scale (axes= shares its bins, not its heights).
+      const g0 = hist ? undefined : shareScale?.group ?? (anchor?.kind === 'bars' && a.right ? anchor.group : undefined);
       const span = (e: { pos: number; neg: number }) => e.pos + e.neg || 1;
       if (g0 && (shareScale || (span(mine) / span(g0) < 4 && span(g0) / span(mine) < 4))) {
         g0.pos = Math.max(g0.pos, mine.pos); g0.neg = Math.max(g0.neg, mine.neg); g0.members.push(b); b.group = g0;
@@ -608,6 +663,19 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     b = newBlock(id, 'shares', region, P(W, H, pad), m, [...got.deps, ...(mix ? [mix.id] : [])]);
     Object.assign(b, { src: a.src, full: vals, vals, dp: a.dp, em: a.em });
     b.el.labels = labels; b.el.caption = a.caption; b.el.mix = a.mix;
+  } else if (a.kind === 'tokens') {
+    const n = tokenCount(a.n, withConsts(store.consts, a.with));
+    if (typeof n === 'string') return n;
+    const states = a.states.length ? a.states : [''];
+    // Marks in clusters of up to ten a row, one cluster per state, side by side: room for all of them apart.
+    const cols = n <= 12 ? n : 10, pitch = m.cell * 0.7, gap = pitch * 1.4;
+    const rows = Math.ceil(n / cols);
+    const W = states.length * Math.min(cols, n) * pitch + (states.length - 1) * gap;
+    const pad: Pad = { l: 0, t: m.label * 0.4, r: 0, b: m.num * 1.4 + (states[0] ? m.label * 1.3 : 0) + (a.caption ? m.label * 1.9 : 0) + m.label * 0.4 };
+    b = newBlock(id, 'tokens', region, P(W, rows * pitch, pad), m, []);
+    b.tok = { states, st: Array(n).fill(0), cols, pitch };
+    Object.assign(b, { full: [[n]], vals: [[n]], em: a.em });
+    b.el.caption = a.caption;
   } else {
     // calc
     const srcs = a.of.map((x) => store.get(x));
@@ -644,6 +712,8 @@ function planFor(b: Block, aid: string | undefined, ctx: TargetCtx, env: BuildEn
   store.add(b);
   b.el.accent = env.settings.inkColor;
   if (ctx.scene) { const claim = ctx.scene.claim(b.placed.rect); sceneStore(env.registry).put(b.id, { rect: b.placed.rect, claim, moved: new Set(), data: { kind: 'kit' } }); }
+  // A chart plot draws on its page: no section to grow or centre.
+  if (b.target && b.target.region == null) return chartPlan(b, aid, ctx, env, c);
   grow(env, region, b.placed.rect);
   const reach = (x: Block) => union([x.placed.rect, ...(x.placed.op ? [{ x: x.placed.op.x - x.m.opW / 2, y: x.placed.op.y - x.m.num, w: x.m.opW, h: 2 * x.m.num }] : [])]);
   const bbox = pad(union([b.placed.rect, ...(b.placed.op ? [{ x: b.placed.op.x - m.opW, y: b.placed.op.y - m.num, w: 2 * m.opW, h: 2 * m.num }] : [])]), m.u(8));
@@ -669,6 +739,7 @@ function planFor(b: Block, aid: string | undefined, ctx: TargetCtx, env: BuildEn
       }
       else if (b.kind === 'table') await drawTable(b, c, pace);
       else if (b.kind === 'shares') await drawShares(b, store, c, pace);
+      else if (b.kind === 'tokens') await drawTokens(b, c, pace);
       else await drawCalc(b, store, c, env, pace, true);
       const so = b.el.sceneOp as { from: string; glyph: string } | undefined;
       if (so) await sceneLink(so.from, b.id, /^[→↓]$/.test(so.glyph) ? '' : so.glyph, ctx, env, pace);
@@ -713,7 +784,7 @@ export async function setCaption(id: string, text: string, env: BuildEnv): Promi
   if (!b.el.caption) return `${id} has no caption to set (name it with "…" on its tag)`;
   const accent = env.settings.inkColor;
   return {
-    target: { region: b.region }, bbox: pad(b.placed.rect, b.m.u(8)),
+    target: tgtOf(b), bbox: pad(b.placed.rect, b.m.u(8)),
     draw: async (_signal, k) => {
       await b.ready;
       const c = col(), m = b.m;
@@ -901,7 +972,7 @@ function cellBox(b: Block, r0: number, r1: number, c0: number, c1: number): Box 
 // ------------------------------------------------------------------------------------------------
 // bars
 
-type BarEls = { bars: SVGRectElement[]; vals: SVGTextElement[]; ghosts: SVGGElement; base: SVGLineElement; emBars: Set<number> };
+type BarEls = { bars: SVGRectElement[]; vals: SVGTextElement[]; ghosts: SVGGElement; base: SVGLineElement; emBars: Set<number>; /** stacked: per bar, its segments and their numerals; the part names */ segs?: { g: SVGGElement; rects: SVGRectElement[]; texts: SVGTextElement[] }[]; names?: SVGGElement };
 
 /** Bar i's rect for value v in the block's current scale. */
 function barRect(b: Block, i: number, v: number): Box {
@@ -930,8 +1001,15 @@ async function drawBars(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: P
   const negs = b.group!.neg > 0;
   const below = body.y + body.h + (negs ? m.label * 1.4 : 0);
   labels?.forEach((s, i) => kitText(labG, body.x + (i + 0.5) * b.cs!, below + m.label * 0.95, s, { size: m.label, fill: c.muted }));
-  if (cap) caption(labG, body.x + body.w / 2, below + (labels ? m.label * 2.5 : m.label * 1.1), cap, m, c);
-  b.el.bars = { bars, vals, ghosts, base, emBars: new Set() } satisfies BarEls;
+  const hist = b.el.hist as { lo: number; hi: number } | undefined;
+  if (hist) for (const t of C.ticks(hist.lo, hist.hi, 5)) {
+    // The bins' value scale: a few round values under the bars.
+    const x = body.x + ((t - hist.lo) / (hist.hi - hist.lo)) * body.w;
+    svg(labG, 'line', { x1: x, x2: x, y1: below, y2: below + px(b, 4), stroke: c.edge, ...hair(1) });
+    kitText(labG, x, below + m.label * 0.95, C.fmt(t), { size: m.label, fill: c.muted });
+  }
+  if (cap) caption(labG, body.x + body.w / 2, below + (labels || b.el.hist ? m.label * 2.5 : m.label * 1.1), cap, m, c);
+  b.el.bars = { bars, vals, ghosts, base, emBars: new Set(), segs: [], names: svg(g, 'g') } satisfies BarEls;
   if (b.ghost) drawGhosts(b, b.ghost, c);
   await appear(labG, 160, k);
   const target = b.vals!.map((r) => r.slice());
@@ -971,11 +1049,15 @@ async function setBarVals(b: Block, next: C.Mat, ms: number, ctl: Ctl | undefine
       const f = Number.isFinite(from[i]) ? from[i] : 0;
       const cur = f + ((Number.isFinite(v) ? v : 0) - f) * t;
       const r = barRect(x, i, cur);
-      setAttrs(e.bars[i], { x: r.x, y: r.y, width: r.w, height: Math.max(0, r.h), fill: e.emBars.has(i) ? token('--kit-accent') || c.bar : c.bar });
+      const stacked = (x.parts?.[i]?.length ?? 0) > 1;
+      setAttrs(e.bars[i], { x: r.x, y: r.y, width: r.w, height: Math.max(0, r.h), fill: e.emBars.has(i) ? token('--kit-accent') || c.bar : c.bar, 'fill-opacity': stacked ? 0 : 0.85 });
       const lab = Number.isFinite(v) ? (t >= 1 ? C.fmt(v, x.dp, fracOf(x)) : C.fmt(Number(cur.toFixed(x.dp ?? decimals(v))), x.dp ?? decimals(v))) : '';
-      e.vals[i].textContent = lab;
+      // A histogram of many bins reads by its shape: counts only when there are few.
+      e.vals[i].textContent = x.el.hist && vs.length > 10 ? '' : lab;
       setAttrs(e.vals[i], { x: r.x + r.w / 2, y: cur >= 0 ? r.y - m.label * 0.7 : r.y + r.h + m.label * 0.7 });
+      if (x.parts) paintParts(x, i, r, t, c);
     });
+    if (x.parts) paintPartNames(x, c);
     const by = baseY(x);
     setAttrs(e.base, { y1: by, y2: by });
     if (x.ghost) drawGhosts(x, x.ghost, c);
@@ -986,6 +1068,66 @@ async function setBarVals(b: Block, next: C.Mat, ms: number, ctl: Ctl | undefine
     for (const o of others) paint(o, o.vals![0], o.vals![0], 1);
   }, ctl);
   gr.pos = tgt.pos; gr.neg = tgt.neg;
+}
+
+/** A stacked bar's part tones, bottom up: the bar's own, then lighter (one accent stays free for emph). */
+const partTone = (j: number, c: ReturnType<typeof col>) => (j === 0 ? c.bar : mix(c.bar, c.cell, Math.min(0.8, 0.42 + 0.2 * (j - 1))));
+
+/**
+ * Bar i's parts inside its rect r (a total at its current height): segments bottom up in proportion to
+ * the parts (tweened from `el.partsFrom`), each with its value centred when it fits. A split in progress
+ * (`el.splitT`) opens the gaps and turns the tones as it goes.
+ */
+function paintParts(b: Block, i: number, r: Box, t: number, c: ReturnType<typeof col>) {
+  const e = b.el.bars as BarEls, m = b.m;
+  const to = b.parts![i], from = (b.el.partsFrom as number[][] | undefined)?.[i];
+  const ps = to.map((p, j) => { const f = from?.[j]; return f != null && Number.isFinite(f) ? f + (p - f) * t : p; });
+  const s = (b.el.splitT as Map<number, number> | undefined)?.get(i) ?? 1;
+  let seg = e.segs![i];
+  if (!seg) { seg = { g: svg(e.bars[i].parentNode as SVGGElement, 'g'), rects: [], texts: [] }; e.segs![i] = seg; }
+  while (seg.rects.length < ps.length) { seg.rects.push(svg(seg.g, 'rect', { rx: px(b, 1.5) })); seg.texts.push(kitText(seg.g, 0, 0, '', { size: m.label, fill: c.ink })); }
+  seg.rects.slice(ps.length).forEach((x) => x.setAttribute('height', '0'));
+  seg.texts.slice(ps.length).forEach((x) => { x.textContent = ''; });
+  const sum = ps.reduce((a, v) => a + Math.max(0, v), 0) || 1;
+  const gap = ps.length > 1 ? px(b, 2) * s : 0;
+  let y = r.y + r.h;
+  ps.forEach((p, j) => {
+    const h = Math.max(0, (r.h * Math.max(0, p)) / sum - (j < ps.length - 1 ? gap : 0));
+    y -= h;
+    const tone = e.emBars.has(i) ? token('--kit-accent') || c.bar : mix(c.bar, partTone(j, c), s);
+    setAttrs(seg.rects[j], { x: r.x, y, width: r.w, height: h, fill: tone, 'fill-opacity': 0.9 });
+    // The part's value in the middle of its segment, when the segment holds it.
+    const fits = ps.length > 1 && h > m.label * 1.15;
+    seg.texts[j].textContent = fits ? C.fmt(t >= 1 ? to[j] : Number(p.toFixed(b.dp ?? 1)), b.dp) : '';
+    setAttrs(seg.texts[j], { x: r.x + r.w / 2, y: y + h / 2, fill: j === 0 ? c.cell : c.ink, opacity: s });
+    y -= j < ps.length - 1 ? gap : 0;
+  });
+}
+
+/** Part names beside the last bar that is split, each at its segment's middle (once, faded in by a split). */
+function paintPartNames(b: Block, c: ReturnType<typeof col>) {
+  const e = b.el.bars as BarEls, names = b.el.partNames as string[] | undefined;
+  if (!names?.length || !e.names) return;
+  let i = b.parts!.length - 1;
+  while (i > 0 && b.parts![i].length < 2) i--;
+  const seg = e.segs![i];
+  if (!seg || b.parts![i].length < 2) return;
+  const s = (b.el.splitT as Map<number, number> | undefined)?.get(i) ?? 1;
+  e.names.replaceChildren();
+  // Right of the bar; when a neighbouring block sits there (a split adds names after the layout), left of the block.
+  const store = b.el.store as KitStore | undefined;
+  const others = store ? store.inRegion(b.region).filter((o) => o !== b).map((o) => o.placed.rect) : [];
+  const rx = Number(seg.rects[0].getAttribute('x')) + Number(seg.rects[0].getAttribute('width')) + b.m.label * 0.6;
+  const wMax = Math.max(...names.map((nm) => b.m.u(textWidth(nm, b.m.labelPx))));
+  const top = Math.min(...seg.rects.map((rc) => Number(rc.getAttribute('y')))), bot = b.placed.body.y + b.placed.body.h;
+  const hit = others.some((o) => o.x < rx + wMax && o.x + o.w > rx && o.y < bot && o.y + o.h > top);
+  const x = hit ? b.placed.body.x - b.m.label * 0.6 : rx;
+  seg.rects.forEach((rc, j) => {
+    const nm = names[j];
+    const h = Number(rc.getAttribute('height'));
+    if (!nm || !(h > 0)) return;
+    kitText(e.names!, x, Number(rc.getAttribute('y')) + h / 2, nm, { size: b.m.label, fill: c.muted, anchor: hit ? 'end' : 'start', opacity: s });
+  });
 }
 
 function barBox(b: Block, c0: number, c1: number): Box {
@@ -1070,6 +1212,8 @@ async function makeLineXY(id: string, region: string, m: Metrics, P: (w: number,
   return b;
 }
 
+/** A histogram's body width (section units): every histogram on shared bins is this wide. */
+const HIST_W = 520;
 /** A chart's default body width in section units (the section is 1000 wide): ~75% of the board with its labels. */
 const CHART_W = 600;
 
@@ -1111,6 +1255,61 @@ export async function buildKitPlot(a: Extract<DrawAction, { kind: 'plot' }> & { 
   b.el.store = store;
   if (a.dash) b.el.dash = true;
   return planFor(b, a.id, ctx, env, store, region, m, col());
+}
+
+/**
+ * {{plot p=N on=#c1}}: a curve on a slide's calibrated chart, as a kit line whose axes are the slide's
+ * own (fixed: the domain is the chart's, values off its y axis are cut). Being a kit block, readout
+ * points, beforeafter, limit and contrast work on it as on a board plot. Null: a log axis (the
+ * stroke path in elements.ts draws it).
+ */
+export function buildChartPlot(a: Extract<DrawAction, { kind: 'plot' }> & { id?: string; em?: boolean }, ctx: TargetCtx, env: BuildEnv): Promise<ElementPlan | string> | null {
+  const ch = a.onChart;
+  if (!ch || ch.x.log || ch.y.log || a.page == null) return null;
+  return (async () => {
+    const store = kitStore(env.registry);
+    const id = a.id ?? store.anonId();
+    if (a.id && store.get(a.id)) return 'duplicate id';
+    const got = samplePlot(a, withConsts(store.consts, a.with));
+    if (typeof got === 'string') return got;
+    if (got.ys.filter(Number.isFinite).length < 2) return 'nothing to plot on the chart';
+    const m = metrics(ctx.scale(), 15);
+    // The chart's axis ends in this page's space: data (lo, hi) map linearly onto them.
+    const lo = ctx.toSpace({ x: ch.x.p0, y: ch.y.p0 }), hi = ctx.toSpace({ x: ch.x.p1, y: ch.y.p1 });
+    const body = { x: lo.x, y: hi.y, w: hi.x - lo.x, h: lo.y - hi.y };
+    const region = `chart:${a.page}:${ch.rect.x},${ch.rect.y}`;
+    const b = newBlock(id, 'bars', region, { body, rect: ctx.rectToSpace(ch.rect) }, m, []);
+    b.target = ctx.target;
+    // Every plot on one chart shares its (fixed) axes.
+    const host = store.all().find((x) => x.region === region && x.plot?.host === x);
+    b.plot = host?.plot ?? { host: b, dom: { x0: ch.x.lo, x1: ch.x.hi, y0: ch.y.lo, y1: ch.y.hi }, members: [], axes: null, fixed: true };
+    b.plot.members.push(b);
+    Object.assign(b, { full: [got.ys.slice()], vals: [got.ys.slice()], view: 'line', xs: got.xs, group: { pos: 0, neg: 0, members: [] }, em: a.em });
+    b.group!.members.push(b);
+    // The slide names its own curves: a chart plot is labelled only when the tag says so (never by its id).
+    b.el.caption = a.label ?? '';
+    b.el.labelAt = a.labelAt;
+    b.el.curve = true;
+    b.el.plotSrc = a;
+    b.el.store = store;
+    if (a.dash) b.el.dash = true;
+    return planFor(b, a.id, ctx, env, store, region, m, col());
+  })();
+}
+
+/** A chart plot's plan: drawn on the page's own layer (planFor's part for board sections does not apply). */
+function chartPlan(b: Block, aid: string | undefined, ctx: TargetCtx, env: BuildEnv, c: ReturnType<typeof col>): ElementPlan {
+  return {
+    target: ctx.target,
+    bbox: b.placed.rect,
+    draw: async (signal, k) => {
+      const g = svg(ctx.layers.agent, 'g', { class: 'kit-block', 'data-kit': 'chart-plot' });
+      b.g = g;
+      env.registry.define({ id: aid, kind: 'plot', target: ctx.target, bbox: b.placed.rect, boxes: [], anchor: { x: b.placed.body.x + b.placed.body.w, y: b.placed.body.y }, group: g });
+      b.markReady();
+      await drawLine(b, c, env, signal.aborted ? { speed: 0, fadeMs: 0 } : k);
+    },
+  };
 }
 
 /**
@@ -1218,6 +1417,11 @@ function lineColor(b: Block, c: ReturnType<typeof col>, accent: string): string 
   return b === ms[ms.length - 1] ? c.ink : c.muted;
 }
 
+/** Each line of a plot in its colour (the newest in ink, earlier ones muted), but `skip`. */
+function recolorLines(pl: Plot, c: ReturnType<typeof col>, accent: string, skip?: Block) {
+  for (const o of pl.members) if (o !== skip && o.el.line) { const oc = lineColor(o, c, accent); const oe = o.el.line as LineEls; oe.path.setAttribute('stroke', oc); oe.dots.forEach((d) => d.setAttribute('fill', oc)); oe.label?.setAttribute('fill', oc); }
+}
+
 /** End labels of a plot's lines never overlap: sorted by height, pushed apart by a line's height. */
 function spreadLabels(pl: Plot) {
   const st = pl.host.el.store as KitStore | undefined;
@@ -1235,7 +1439,7 @@ function spreadLabels(pl: Plot) {
 async function drawLine(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: Pace) {
   const pl = b.plot!, g = b.g!, m = b.m, accent = env.settings.inkColor;
   if (pl.host !== b) await pl.host.ready;
-  if (pl.host === b || pl.axes) drawPlotAxes(pl, c);
+  if (!pl.fixed && (pl.host === b || pl.axes)) drawPlotAxes(pl, c);
   const ys = b.vals![0];
   const color = lineColor(b, c, accent);
   const ghost = svg(g, 'path', { d: '', fill: 'none', stroke: c.muted, 'stroke-dasharray': '4 4', ...hair(1.2) });
@@ -1246,7 +1450,8 @@ async function drawLine(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: P
   if (label && isVarName(name!)) { label.setAttribute('font-style', 'italic'); label.setAttribute('font-family', 'KaTeX_Math, "STIX Two Math", "Cambria Math", "Times New Roman", serif'); }
   b.el.line = { path, ghost, dots, label, rings: svg(g, 'g') } satisfies LineEls;
   // Earlier lines on this plot: back to muted, and onto the (maybe widened) axes.
-  for (const o of pl.members) if (o !== b && o.el.line) { const oc = lineColor(o, c, accent); const oe = o.el.line as LineEls; oe.path.setAttribute('stroke', oc); oe.dots.forEach((d) => d.setAttribute('fill', oc)); oe.label?.setAttribute('fill', oc); paintLine(o, o.vals![0], c); }
+  recolorLines(pl, c, accent, b);
+  for (const o of pl.members) if (o !== b && o.el.line) paintLine(o, o.vals![0], c);
   // The line draws in from the left.
   const fast = k.fadeMs != null || prefersReducedMotion();
   await tween(fast ? 0 : Math.min(1400, 300 + ys.length * 25) * k.speed, (t) => paintLine(b, ys, c, 1 + t * (ys.length - 1)));
@@ -1260,7 +1465,7 @@ async function setLineVals(b: Block, next: C.Mat, ms: number, ctl: Ctl | undefin
   b.vals = [to.slice()];
   b.full = [to.slice()];
   const pl = b.plot!;
-  const old = pl.dom, dom = domOf(pl.members.map((x) => ({ xs: x.xs!, ys: [...x.vals![0], ...(x.ghost ?? [])] })));
+  const old = pl.dom, dom = pl.fixed ? old : domOf(pl.members.map((x) => ({ xs: x.xs!, ys: [...x.vals![0], ...(x.ghost ?? [])] })));
   const moved = dom.y0 !== old.y0 || dom.y1 !== old.y1 || dom.x0 !== old.x0 || dom.x1 !== old.x1;
   if (!b.el.line) { pl.dom = dom; return; }
   await tween(ms, (t) => {
@@ -1438,7 +1643,7 @@ async function band(v: Extract<KitVerb, { kind: 'band' }>, env: BuildEnv, store:
   const ins = new Set(C.inliers(sc.data!, f.line!, v.w));
   const c = col();
   return {
-    target: { region: sc.region }, bbox: sc.placed.rect,
+    target: tgtOf(sc), bbox: sc.placed.rect,
     draw: async (signal, k) => {
       await f.ready;
       const se = sc.el.scatter as ScatterEls, l = f.line!, d = sc.dom!;
@@ -1488,7 +1693,7 @@ async function dist(v: Extract<KitVerb, { kind: 'dist' }>, env: BuildEnv, store:
   const foot = C.footOn(p, f.line!), dv = C.distTo(p, f.line!);
   const c = col();
   return {
-    target: { region: sc.region }, bbox: sc.placed.rect,
+    target: tgtOf(sc), bbox: sc.placed.rect,
     draw: async (_s, k) => {
       await f.ready;
       const se = sc.el.scatter as ScatterEls, m = sc.m;
@@ -1499,7 +1704,7 @@ async function dist(v: Extract<KitVerb, { kind: 'dist' }>, env: BuildEnv, store:
       const L = Math.hypot(b.x - a.x, b.y - a.y) || 1, nx = -(b.y - a.y) / L, ny = (b.x - a.x) / L;
       const off = m.label * 1.1;
       kitText(g, mid.x + nx * off, mid.y + ny * off, C.fmt(dv), { size: m.label, fill: c.ink, halo: c.halo });
-      env.registry.define({ kind: 'kit-dist', target: { region: sc.region }, bbox: union([{ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) }]), boxes: [], anchor: mid, group: g });
+      env.registry.define({ kind: 'kit-dist', target: tgtOf(sc), bbox: union([{ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) }]), boxes: [], anchor: mid, group: g });
       await appear(g, 260, k);
     },
   };
@@ -1710,7 +1915,7 @@ async function stepOrSweep(v: Extract<KitVerb, { kind: 'step' | 'sweep' }>, env:
   const bbox = union([input.placed.rect, out.placed.rect, calc.placed.rect, ...(w.kernel ? [store.get(w.kernel)!.placed.rect] : [])]);
   const c = col();
   return {
-    target: { region: out.region }, bbox,
+    target: tgtOf(out), bbox,
     draw: async (signal) => {
       await Promise.all([out.ready, input.ready, w.kernel ? store.get(w.kernel)?.ready : null]);
       calc.g ??= svg(out.g!.parentNode as SVGGElement, 'g', { class: 'kit-block', 'data-kit': 'calc' });
@@ -1753,8 +1958,11 @@ async function setVerb(v: Extract<KitVerb, { kind: 'set' }>, env: BuildEnv, stor
   const part = blockPart(v.ref);
   const id = part ? part.id : v.ref;
   const b = await store.wait(id);
+  if (b?.kind === 'tokens') return setTokenVerb(b, v, part, env, store);
+  if (v.state != null) return `${id} has no marks to change (state= is for tokens)`;
   if (!b || (b.kind !== 'grid' && b.kind !== 'bars' && b.kind !== 'shares')) return `${id} has no values to set`;
   if (!b.src || !('vals' in b.src)) return `${id} is computed: set its inputs instead`;
+  if (b.parts) return setParts(b, v, part, env, store);
   const cur = b.src.vals;
   let next: C.Mat;
   if (v.vals) {
@@ -1774,7 +1982,7 @@ async function setVerb(v: Extract<KitVerb, { kind: 'set' }>, env: BuildEnv, stor
   const c = col();
   const bbox = union([b.placed.rect, ...deps.filter((d) => d.region === b.region).map((d) => d.placed.rect)]);
   return {
-    target: { region: b.region }, bbox,
+    target: tgtOf(b), bbox,
     draw: async (signal) => {
       await b.ready;
       void store.anim.run([b.id, ...deps.map((d) => d.id)], async (ctl) => {
@@ -1789,6 +1997,222 @@ async function setVerb(v: Extract<KitVerb, { kind: 'set' }>, env: BuildEnv, stor
         store.notify(b.id);
       });
       await pause(Math.min(SET_MS, 300));
+    },
+  };
+}
+
+/**
+ * A split's parts for a bar of value `total`: every part given (they must sum to it), or all but the
+ * first (the first is what remains). Formulas over the constants. A string says why not.
+ */
+export function splitParts(a: { vals: string[]; labels: string[] }, total: number, consts: Record<string, number>): number[] | string {
+  const vs = a.vals.map((e) => { const f = formula(e, [], consts); return f ? f({}) : NaN; });
+  const bad = a.vals.find((_, i) => !Number.isFinite(vs[i]));
+  if (bad != null) return `split: ${bad} is not a number`;
+  const rest = a.labels.length === vs.length + 1;
+  const parts = rest ? [total - vs.reduce((s, v) => s + v, 0), ...vs] : vs;
+  const sum = parts.reduce((s, v) => s + v, 0);
+  if (Math.abs(sum - total) > 1e-6 * Math.max(1, Math.abs(total))) return `split: the parts sum to ${C.fmt(sum)}, not ${C.fmt(total)}`;
+  if (parts.some((p) => p < 0) && total >= 0) return 'split: a part is negative';
+  return parts;
+}
+
+// ------------------------------------------------------------------------------------------------
+// Tokens: a count as that many marks, in clusters by state; a set moves marks between clusters.
+
+type TokenEls = { marks: SVGCircleElement[]; labels: SVGGElement; at: { x: number; y: number }[] };
+
+/** Where each mark sits for these states (clusters left to right in state order, centred), and each cluster's label spot and count. */
+function tokenLayout(b: Block, st: number[]): { at: { x: number; y: number }[]; groups: { x: number; count: number; j: number }[] } {
+  const t = b.tok!, { body } = b.placed, gap = t.pitch * 1.4;
+  const counts = t.states.map((_, j) => st.filter((s) => s === j).length);
+  const used = counts.map((c, j) => ({ c, j })).filter((g) => g.c > 0);
+  const widths = used.map((g) => Math.min(g.c, t.cols) * t.pitch);
+  const total = widths.reduce((s, w) => s + w, 0) + gap * (used.length - 1);
+  let x = body.x + (body.w - total) / 2;
+  const origin = new Map<number, number>();
+  const groups = used.map((g, k) => { origin.set(g.j, x); const out = { x: x + widths[k] / 2, count: g.c, j: g.j }; x += widths[k] + gap; return out; });
+  const seen = t.states.map(() => 0);
+  const at = st.map((s) => {
+    const k = seen[s]++;
+    return { x: origin.get(s)! + (k % t.cols) * t.pitch + t.pitch / 2, y: body.y + Math.floor(k / t.cols) * t.pitch + t.pitch / 2 };
+  });
+  return { at, groups };
+}
+
+/** Each cluster's count (the engine's) over its state's name, under the marks. */
+function paintTokenLabels(b: Block, groups: { x: number; count: number; j: number }[], c: ReturnType<typeof col>, opacity = 1) {
+  const e = b.el.tok as TokenEls, m = b.m, { body } = b.placed;
+  e.labels.replaceChildren();
+  const y = body.y + body.h + m.num * 0.85;
+  for (const g of groups) {
+    kitText(e.labels, g.x, y, String(g.count), { size: m.num, fill: c.ink, opacity });
+    const name = b.tok!.states[g.j];
+    if (name) kitText(e.labels, g.x, y + m.label * 1.3, name, { size: m.label, fill: c.muted, opacity });
+  }
+}
+
+async function drawTokens(b: Block, c: ReturnType<typeof col>, k: Pace) {
+  const g = b.g!, t = b.tok!, r = t.pitch * 0.34;
+  const { at, groups } = tokenLayout(b, t.st);
+  const markG = svg(g, 'g');
+  const marks = at.map((p, i) => svg(markG, 'circle', { cx: p.x, cy: p.y, r, fill: partTone(t.st[i], c), opacity: 0 }));
+  b.el.tok = { marks, labels: svg(g, 'g'), at } satisfies TokenEls;
+  const cap = b.el.caption as string | undefined;
+  if (cap) caption(g, b.placed.body.x + b.placed.body.w / 2, b.placed.body.y + b.placed.body.h + b.m.num * 1.4 + (t.states[0] ? b.m.label * 2.4 : b.m.label * 1.1), cap, b.m, c);
+  // Counted out one by one (quickly), then the count.
+  const fast = k.fadeMs != null || prefersReducedMotion();
+  const each = fast ? 0 : Math.min(90, 900 / marks.length) * k.speed;
+  for (const mk of marks) { mk.setAttribute('opacity', '1'); if (each) await pause(each); }
+  paintTokenLabels(b, groups, c);
+}
+
+/** Marks glide to their new clusters and take the new state's tone; the counts follow. */
+async function setTokens(b: Block, st: number[], ms: number, ctl: Ctl | undefined, c: ReturnType<typeof col>) {
+  const e = b.el.tok as TokenEls | undefined, t = b.tok!;
+  const before = t.st.slice();
+  t.st = st;
+  b.full = [[st.length]]; b.vals = b.full;
+  if (!e) return;
+  const { at, groups } = tokenLayout(b, st);
+  const from = e.at.map((p) => ({ ...p }));
+  const old = tokenLayout(b, before).groups;
+  await tween(ms, (k) => {
+    const q = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2; // ease in-out: a glide, not a jump
+    e.marks.forEach((mk, i) => {
+      // A moving mark lifts a little on its way (it travels, it does not slide through its neighbours).
+      const lift = before[i] !== st[i] ? Math.sin(Math.PI * q) * t.pitch * 0.45 : 0;
+      setAttrs(mk, { cx: from[i].x + (at[i].x - from[i].x) * q, cy: from[i].y + (at[i].y - from[i].y) * q - lift, fill: before[i] === st[i] ? partTone(st[i], c) : mix(partTone(before[i], c), partTone(st[i], c), q) });
+    });
+    if (k < 0.5) paintTokenLabels(b, old, c, 1 - 2 * k); else paintTokenLabels(b, groups, c, 2 * k - 1);
+  }, ctl);
+  e.at = at;
+  paintTokenLabels(b, groups, c);
+}
+
+/** Most marks a tokens block draws (a count beyond it is a bar or a grid). */
+export const MAX_TOKENS = 120;
+
+/** A tokens block's count: a whole number from a literal or a formula over the constants. */
+export function tokenCount(src: string, consts: Record<string, number>): number | string {
+  const f = formula(src, [], consts);
+  const n = f ? f({}) : NaN;
+  if (!Number.isFinite(n)) return `tokens: n=${src} is not a number`;
+  const k = Math.round(n);
+  if (Math.abs(n - k) > 1e-9 || k < 1) return `tokens: n=${src} is not a whole count`;
+  return k > MAX_TOKENS ? `tokens: ${k} marks is more than ${MAX_TOKENS} (use bars or a grid)` : k;
+}
+
+/**
+ * Which marks a `set … state=` moves: the part's marks (k[7:8]), or `n=` of them (a formula), taken
+ * from the end among those not already in that state. Returns every mark's new state.
+ */
+export function tokenMoves(tok: { states: string[]; st: number[] }, v: { state?: string; count?: string }, part: BlockPart | null, consts: Record<string, number>): number[] | string {
+  const j = tok.states.indexOf(v.state ?? '');
+  if (j < 0) return `no state ${v.state} (states: ${tok.states.join(', ')})`;
+  const st = tok.st.slice();
+  if (part && !part.one) return 'tokens: name marks as k[7:8]';
+  if (v.count != null) {
+    const n = tokenCount(v.count, consts);
+    if (typeof n === 'string') return n;
+    const lo = part ? part.c0 : 0, hi = part ? part.c1 : st.length - 1;
+    const free = [];
+    for (let i = hi; i >= lo; i--) if (st[i] !== j) free.push(i);
+    if (n > free.length) return `tokens: only ${free.length} marks can move to ${v.state}`;
+    free.slice(0, n).forEach((i) => { st[i] = j; });
+    return st;
+  }
+  if (!part) return 'set: name the marks (k[7:8]) or how many (n=)';
+  if (part.c1 >= st.length || part.c0 < 0) return `tokens: there are ${st.length} marks`;
+  for (let i = part.c0; i <= part.c1; i++) st[i] = j;
+  return st;
+}
+
+/** set on tokens: the named marks (or n= of them) take another state, gliding to its cluster. */
+function setTokenVerb(b: Block, v: Extract<KitVerb, { kind: 'set' }>, part: BlockPart | null, env: BuildEnv, store: KitStore): ElementPlan | string {
+  if (v.state == null) return `${b.id} is a count of marks: set id=${b.id}[1:2] state=…`;
+  // From the state the earlier sets will have left (they may still be drawing).
+  const st = tokenMoves({ states: b.tok!.states, st: (b.el.tokNext as number[] | undefined) ?? b.tok!.st }, v, part, store.consts);
+  if (typeof st === 'string') return st;
+  b.el.tokNext = st;
+  const c = col();
+  void env;
+  return {
+    target: tgtOf(b), bbox: pad(b.placed.rect, b.m.u(8)),
+    draw: async (signal, k) => {
+      await b.ready;
+      await store.anim.run([b.id], async (ctl) => {
+        if (signal.aborted || k.fadeMs != null) ctl.ff = true;
+        await setTokens(b, st, prefersReducedMotion() ? 0 : SET_MS * 1.6, ctl, c);
+        store.notify(b.id);
+      });
+    },
+  };
+}
+
+/** set on stacked bars: one part (`v[i,j] to=`; its total follows), or the totals (vals=, fn=; parts keep their proportions). */
+function setParts(b: Block, v: Extract<KitVerb, { kind: 'set' }>, part: BlockPart | null, env: BuildEnv, store: KitStore): ElementPlan | string {
+  const old = b.vals![0].slice(), from = b.parts!.map((r) => r.slice());
+  const parts = b.parts!.map((r) => r.slice());
+  if (v.to != null && part && !part.one) { if (parts[part.r0]?.[part.c0] == null) return 'set: no such part'; parts[part.r0][part.c0] = v.to; }
+  else {
+    let next: number[];
+    if (v.vals) next = v.vals.flat();
+    else if (v.fn) { const f = formula(v.fn, C.MAP_VARS, store.consts); if (!f) return 'bad fn'; next = C.mapMat([old], f)[0]; }
+    else if (v.to != null && part?.one) { next = old.slice(); next[part.c0] = v.to; }
+    else return 'set: name a part (v[2,1]) or give values';
+    if (next.length !== old.length) return 'set: shape differs';
+    next.forEach((t, i) => { parts[i] = parts[i].map((p) => (old[i] ? (p * t) / old[i] : t / parts[i].length)); });
+  }
+  if (parts.flat().some((x) => !Number.isFinite(x))) return 'set: not a number';
+  const totals = [parts.map((r) => r.reduce((t, x) => t + x, 0))];
+  const deps = store.dependents(b.id), c = col();
+  return {
+    target: tgtOf(b), bbox: b.placed.rect,
+    draw: async (signal) => {
+      await b.ready;
+      void store.anim.run([b.id, ...deps.map((d) => d.id)], async (ctl) => {
+        if (signal.aborted) ctl.ff = true;
+        b.src = { vals: totals }; b.full = totals; b.parts = parts; b.el.partsFrom = from;
+        await Promise.all([setBarVals(b, totals, SET_MS, ctl, c), refreshDeps([b.id], store, SET_MS, ctl, env, c)]);
+        b.el.partsFrom = undefined;
+        store.notify(b.id);
+      });
+      await pause(Math.min(SET_MS, 300));
+    },
+  };
+}
+
+/** {{split id=v[i] vals=… "a" "b"}}: bar i divides into its parts in place: gaps open, tones turn, values and names fade in. */
+async function splitVerb(v: Extract<KitVerb, { kind: 'splitBar' }>, env: BuildEnv, store: KitStore): Promise<ElementPlan | string> {
+  const part = blockPart(v.ref);
+  const b = await store.wait(part?.id ?? v.ref);
+  if (!b || b.kind !== 'bars' || b.view === 'line' || !b.vals) return `no bars ${part?.id ?? v.ref}`;
+  const totals = b.vals[0];
+  const i = part ? (part.one ? part.c0 : -1) : totals.length === 1 ? 0 : -1;
+  if (i < 0 || i >= totals.length) return `split: name one bar (${b.id}[1])`;
+  const got = splitParts(v, (b.full ?? b.vals)[0][i], store.consts);
+  if (typeof got === 'string') return got;
+  const c = col();
+  return {
+    target: tgtOf(b), bbox: b.placed.rect,
+    draw: async (signal, k) => {
+      await b.ready;
+      await store.anim.run([b.id], async (ctl) => {
+        if (signal.aborted || k.fadeMs != null) ctl.ff = true;
+        b.parts = b.parts ?? totals.map((x) => [x]);
+        b.parts[i] = got;
+        if (v.labels.length) b.el.partNames = v.labels;
+        const st = (b.el.splitT as Map<number, number> | undefined) ?? new Map<number, number>();
+        b.el.splitT = st;
+        // Room for the names on the right (the block was laid out without them): they sit past its body.
+        const e = b.el.bars as BarEls;
+        await tween(prefersReducedMotion() ? 0 : SET_MS * 1.2, (t) => { st.set(i, easeOut(t)); paintParts(b, i, barRect(b, i, b.vals![0][i]), 1, c); setAttrs(e.bars[i], { 'fill-opacity': 0 }); paintPartNames(b, c); }, ctl);
+        st.set(i, 1);
+        paintParts(b, i, barRect(b, i, b.vals![0][i]), 1, c);
+        paintPartNames(b, c);
+        store.notify(b.id);
+      });
     },
   };
 }
@@ -1892,7 +2316,7 @@ export async function resolveKitPoints<A extends InkAction>(a: A, registry: Regi
 /** Whether a ref action is the kit's: a kit verb, or emph / fade on a block or its part. */
 export function isKitRef(a: RefAction, registry: Registry): boolean {
   if (a.kind === 'step' || a.kind === 'sweep' || a.kind === 'set' || a.kind === 'band' || a.kind === 'dist' || a.kind === 'col' || a.kind === 'level') return true;
-  if (a.kind === 'limit' || a.kind === 'beforeafter' || a.kind === 'contrast') return true;
+  if (a.kind === 'limit' || a.kind === 'beforeafter' || a.kind === 'contrast' || a.kind === 'splitBar') return true;
   if (a.kind === 'emph' && a.where) return true;
   if (a.kind !== 'emph' && a.kind !== 'fade') return false;
   if (isBlockRef(a.ref)) return true;
@@ -1907,6 +2331,7 @@ export async function buildKitRef(a: RefAction, env: BuildEnv): Promise<ElementP
     case 'step':
     case 'sweep': return stepOrSweep(a, env, store);
     case 'set': return setVerb(a, env, store);
+    case 'splitBar': return splitVerb(a, env, store);
     case 'limit': return limitMove(a, env, store);
     case 'beforeafter': return beforeAfter(a, env, store);
     case 'contrast': return 'contrast: its copy is made when the script is parsed';
@@ -1943,7 +2368,7 @@ async function emphFade(a: Extract<RefAction, { kind: 'emph' | 'fade' }>, env: B
   const { b, box, part } = r;
   const c = col(), accent = env.settings.inkColor;
   return {
-    target: { region: b.region }, bbox: pad(box, b.m.u(8)),
+    target: tgtOf(b), bbox: pad(box, b.m.u(8)),
     draw: async (_signal, k) => {
       if (a.kind === 'fade') { await fadePart(b, part, k); return; }
       if (b.kind === 'bars' && b.view === 'line' && part) {
@@ -2152,7 +2577,7 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
   const c = col(), accent = env.settings.inkColor;
   const dur = v.dur;
   return {
-    target: { region: t.region }, bbox: union([t.placed.rect, cb.placed.rect]),
+    target: tgtOf(t), bbox: union([t.placed.rect, cb.placed.rect]),
     draw: async (signal) => {
       await t.ready;
       cb.g = svg(t.g!.parentNode as SVGGElement, 'g', { class: 'kit-block', 'data-kit': 'calc' });
@@ -2235,13 +2660,13 @@ async function levelVerb(v: Extract<KitVerb, { kind: 'level' }>, env: BuildEnv, 
   const accent = env.settings.inkColor;
   const labelW = v.label ? m.u(textWidth(v.label, m.labelPx)) + m.label : 0;
   return {
-    target: { region: b.region }, bbox: { x: x0, y: y - m.label, w: x1 - x0 + labelW, h: 2 * m.label },
+    target: tgtOf(b), bbox: { x: x0, y: y - m.label, w: x1 - x0 + labelW, h: 2 * m.label },
     draw: async (_s, k) => {
       await b.ready;
       const g = svg(b.g!, 'g');
       const ln = svg(g, 'line', { x1: x0, x2: x0, y1: y, y2: y, stroke: accent, 'stroke-dasharray': '5 4', ...hair(1.5) });
       if (v.label) kitText(g, x1 + m.label * 0.5, y, v.label, { size: m.label, fill: accent, anchor: 'start', halo: col().halo });
-      env.registry.define({ kind: 'kit-level', target: { region: b.region }, bbox: { x: x0, y: y - m.label, w: x1 - x0 + labelW, h: 2 * m.label }, boxes: [{ x: x1, y: y - m.label, w: labelW, h: 2 * m.label }], anchor: { x: x1, y }, group: g });
+      env.registry.define({ kind: 'kit-level', target: tgtOf(b), bbox: { x: x0, y: y - m.label, w: x1 - x0 + labelW, h: 2 * m.label }, boxes: [{ x: x1, y: y - m.label, w: labelW, h: 2 * m.label }], anchor: { x: x1, y }, group: g });
       await tween(k.fadeMs != null ? 0 : 380 * k.speed, (t) => ln.setAttribute('x2', String(x0 + (x1 - x0) * t)));
     },
   };
@@ -2276,7 +2701,7 @@ async function emphWhere(a: Extract<RefAction, { kind: 'emph' }>, env: BuildEnv,
   const accent = env.settings.inkColor;
   if (b.kind === 'bars' || b.kind === 'shares') return emphWhereVector(b, hits.map(([, q]) => q), accent);
   return {
-    target: { region: b.region }, bbox: b.placed.rect,
+    target: tgtOf(b), bbox: b.placed.rect,
     draw: async (_s, k) => {
       await b.ready;
       const over = b.kind === 'grid' ? (b.el.grid as GridEls).over : (b.el.table as TableEls).over;
@@ -2305,7 +2730,7 @@ async function emphWhere(a: Extract<RefAction, { kind: 'emph' }>, env: BuildEnv,
 /** where= on a vector: exactly the matching bars (points on a line, parts of a share) take the accent; an earlier where's marks go. */
 function emphWhereVector(b: Block, hits: number[], accent: string): ElementPlan {
   return {
-    target: { region: b.region }, bbox: b.placed.rect,
+    target: tgtOf(b), bbox: b.placed.rect,
     draw: async (_s, k) => {
       await b.ready;
       const c = col();
@@ -2467,7 +2892,10 @@ const valueOf = (src: string, consts: Record<string, number>) => { const f = for
 function moveReadout(w: Block, text: string, c: ReturnType<typeof col>, accent: string): SVGTextElement {
   const host = w.plot?.host ?? w, m = host.m, { body } = host.placed;
   (host.el.moveReadout as SVGElement | undefined)?.remove();
-  const t = kitText(host.g!, body.x + body.w, body.y - m.label * 1.0, text, { size: m.num, fill: accent, anchor: 'end', halo: c.halo });
+  // On a slide's chart the space above the plot holds the slide's own curve labels: inside its top-left corner instead.
+  const t = w.plot?.fixed
+    ? kitText(host.g!, body.x + m.label * 0.8, body.y + m.label * 0.9, text, { size: m.num, fill: accent, anchor: 'start', halo: c.halo })
+    : kitText(host.g!, body.x + body.w, body.y - m.label * 1.0, text, { size: m.num, fill: accent, anchor: 'end', halo: c.halo });
   host.el.moveReadout = t;
   return t;
 }
@@ -2489,7 +2917,7 @@ async function limitMove(v: Extract<MoveV, { kind: 'limit' }>, env: BuildEnv, st
     return `${name} = ${C.fmt(x)}${r && typeof r !== 'string' ? ` · ${v.show} = ${C.fmt(r.v)}` : ''}`;
   };
   return {
-    target: { region: host.region }, bbox: host.placed.rect,
+    target: tgtOf(host), bbox: host.placed.rect,
     draw: async (signal) => {
       await w.ready;
       let first!: () => void;
@@ -2502,6 +2930,7 @@ async function limitMove(v: Extract<MoveV, { kind: 'limit' }>, env: BuildEnv, st
         const pls = [...new Set(plots.map((b) => b.plot!))];
         const vs = Array.from({ length: 13 }, (_, i) => from + ((to - from) * i) / 12);
         for (const pl of pls) {
+          if (pl.fixed) continue; // the slide's own axes
           const old = pl.dom, d = domFor(pl, store, key, vs);
           await tween(prefersReducedMotion() ? 0 : 280, (k) => {
             pl.dom = { x0: old.x0 + (d.x0 - old.x0) * k, x1: old.x1 + (d.x1 - old.x1) * k, y0: old.y0 + (d.y0 - old.y0) * k, y1: old.y1 + (d.y1 - old.y1) * k };
@@ -2542,13 +2971,15 @@ async function beforeAfter(v: Extract<MoveV, { kind: 'beforeafter' }>, env: Buil
   const c = col(), accent = env.settings.inkColor;
   const host = w.plot?.host ?? w;
   return {
-    target: { region: host.region }, bbox: host.placed.rect,
+    target: tgtOf(host), bbox: host.placed.rect,
     draw: async (signal, k) => {
       await w.ready;
       const ms = signal.aborted || k.fadeMs != null ? 0 : SET_MS * 1.4;
       await store.anim.run([...plots, ...blocks].map((b) => b.id), async (ctl) => {
         if (signal.aborted) ctl.ff = true;
         const before = w.vals!.map((r) => r.slice()), beforeXs = w.xs?.slice();
+        // On a slide's chart the curve that changes is the one in ink (traced curves are drawn in any order).
+        if (w.plot?.fixed && w.plot.members.includes(w)) { const ms = w.plot.members; ms.splice(ms.indexOf(w), 1); ms.push(w); recolorLines(w.plot, c, accent); }
         // The snapshot: the watched thing's old state stays, dashed and muted.
         w.ghost = before[0].slice();
         if (beforeXs) w.el.ghostXs = beforeXs;
@@ -2574,14 +3005,16 @@ async function beforeAfter(v: Extract<MoveV, { kind: 'beforeafter' }>, env: Buil
             if (pts.length > 3) {
               const band = svg(g, 'polygon', { points: pts.map((p) => `${p.x},${p.y}`).join(' '), fill: accent, 'fill-opacity': 0, stroke: 'none' });
               g.parentNode?.insertBefore(g, g.parentNode.firstChild);
-              await tween(ms ? 320 : 0, (t) => band.setAttribute('fill-opacity', String(0.13 * t)), ctl);
+              const op = w.plot.fixed ? 0.09 : 0.13; // lighter over a slide's own shading
+              await tween(ms ? 320 : 0, (t) => band.setAttribute('fill-opacity', String(op * t)), ctl);
             }
           }
-          // The ghost is named by the old value, at its end.
+          // The ghost is named by the old value, at its end (on a slide's chart the curve ends hold the
+          // slide's own labels, and the readout already says old → new).
           let i = before[0].length - 1;
           while (i > 0 && !Number.isFinite(before[0][i])) i--;
           const p = linePt(w.plot, gx[i], before[0][i]);
-          kitText(host.g!, p.x + m.label * 0.5, p.y + m.label * 1.1, v.text ?? `${name} = ${C.fmt(from)}`, { size: m.label, fill: c.muted, anchor: 'start', halo: c.halo });
+          if (!w.plot.fixed) kitText(host.g!, p.x + m.label * 0.5, p.y + m.label * 1.1, v.text ?? `${name} = ${C.fmt(from)}`, { size: m.label, fill: c.muted, anchor: 'start', halo: c.halo });
           spreadLabels(w.plot);
         } else if (w.kind === 'grid' && w.el.grid) {
           // The cells that changed, tinted.
@@ -2610,7 +3043,8 @@ type ReadoutPt = { ref: string; dot: SVGCircleElement; drops: SVGPathElement; la
 /** Whether a region point names a readout (`at=E`). */
 export function isReadoutPoint(a: InkAction, registry: Registry): boolean {
   const at = (a as { at?: { ref?: string } }).at;
-  return a.kind === 'point' && (a as { region?: string }).region != null && !!at && typeof at === 'object' && 'ref' in at && !!at.ref && kitStore(registry).finds.has(at.ref);
+  const onBoard = (a as { region?: string }).region != null || !!(a as { onChart?: unknown }).onChart;
+  return a.kind === 'point' && onBoard && !!at && typeof at === 'object' && 'ref' in at && !!at.ref && kitStore(registry).finds.has(at.ref);
 }
 
 function readoutXY(store: KitStore, ref: string): { pl: Plot; x: number; y: number } | null {
@@ -2659,7 +3093,7 @@ export async function buildReadoutPoint(a: Extract<InkAction, { kind: 'point' }>
   const lab = text ? { x: p.x + m.label * 0.55, y: p.y - m.label * 1.3, w: lw, h: m.label * 1.1 } : null;
   const c = col(), color = a.em ? env.settings.inkColor : c.ink;
   return {
-    target: { region: host.region }, bbox: union([dot, ...(lab ? [lab] : [])]),
+    target: tgtOf(host), bbox: union([dot, ...(lab ? [lab] : [])]),
     draw: async (_s, k) => {
       await host.ready;
       const g = svg(host.g!, 'g', { opacity: 0 });
@@ -2672,7 +3106,7 @@ export async function buildReadoutPoint(a: Extract<InkAction, { kind: 'point' }>
       if (o.label && isVarName(text!)) { o.label.setAttribute('font-style', 'italic'); o.label.setAttribute('font-family', 'KaTeX_Math, "STIX Two Math", "Cambria Math", "Times New Roman", serif'); }
       paintReadoutPt(o, pl, p.x, p.y);
       host.el.readoutPts = [...((host.el.readoutPts as ReadoutPt[] | undefined) ?? []), o];
-      env.registry.define({ id: a.id, kind: 'point', target: { region: host.region }, bbox: union([dot, ...(lab ? [lab] : [])]), boxes: [dot, ...(lab ? [lab] : [])], anchor: p, group: g });
+      env.registry.define({ id: a.id, kind: 'point', target: tgtOf(host), bbox: union([dot, ...(lab ? [lab] : [])]), boxes: [dot, ...(lab ? [lab] : [])], anchor: p, group: g });
       await appear(g, 260, k);
     },
   };

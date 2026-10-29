@@ -13,7 +13,8 @@ export const SCENES: Scene[] = [
   { name: 'demo1', query: 'demo=1', moments: [mid(4000), mid(12000), END] },
   { name: 'side', query: 'demo=side', moments: [mid(6000), mid(14000), END] },
   { name: 'plane', query: 'demo=plane', moments: [mid(6000), END] },
-  { name: 'kit', query: 'script=kit', moments: [mid(10000), mid(30000), END] },
+  // The tail: amounts as parts (split, stacked bars), coins as tokens, histograms on shared bins.
+  { name: 'kit', query: 'script=kit', moments: [mid(10000), mid(30000), mid(168000), mid(186000), END] },
   { name: 'toolkit', query: 'script=toolkit', moments: [mid(10000), END] },
   { name: 'relational', query: 'script=relational', moments: [mid(8000), END] },
   // Flow across the document: a unit highlight on p9, the journey to p2 (route chip, parts), the return.

@@ -206,9 +206,12 @@ export class Figures {
     const ch = t.chart != null ? this.ground.mark(t.page!, t.chart) : undefined;
     if (t.chart != null && ch?.kind !== 'chart') return `unknown chart ${t.chart}`;
     const chart = ch?.kind === 'chart' ? ch : undefined;
+    let readout = false;
     const local = (p: PtArg): Pt | string => {
       // A kit block's part (g[2,3]): its place exists only once the block is laid out, so the kit resolves it when built.
       if (t.region != null && !isLiteral(p) && 'ref' in p && (isBlockRef(p.ref) || (this.readouts.has(p.ref) && !f.has(p.ref)))) return p as unknown as Pt;
+      // A readout ({{find}}) on a chart plot: the kit places it on the chart when built (it follows moves).
+      if (chart && !isLiteral(p) && 'ref' in p && this.readouts.has(p.ref) && !f.has(p.ref)) { readout = true; return p as unknown as Pt; }
       const w = f.world(p);
       if (!('x' in w)) return 'missing' in w ? `unknown point ${w.missing}` : w.degenerate;
       if (chart) {
@@ -252,6 +255,7 @@ export class Figures {
       if (typeof p === 'string') { if (k === 'near') { delete out.near; continue; } return p; }
       out[k] = p;
     }
+    if (readout && chart) out.onChart = { x: chart.x, y: chart.y, rect: chart.rect };
     if (Array.isArray(out.pts)) {
       const ps = (out.pts as PtArg[]).map(local);
       const bad = ps.find((p) => typeof p === 'string');

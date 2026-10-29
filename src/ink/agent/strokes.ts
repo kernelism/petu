@@ -174,6 +174,52 @@ export function braceStroke(a: SPt, b: SPt, depth: number, q = 0.6, per = 10): S
   return [...half(1), ...half(-1).reverse().slice(1)];
 }
 
+/**
+ * A bracket beside the segment a → b, on `side` (1: left of a → b, y down; −1: right): a spine `gap +
+ * tick` away from the segment, end ticks reaching back toward it (stopping `gap` short, so the bracket
+ * never touches what it measures) and a small notch pointing out at the middle. One stroke.
+ */
+export function bracketStroke(a: SPt, b: SPt, o: { gap: number; tick: number; notch: number; side: 1 | -1 }): Stroke {
+  const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  const t = { x: (b.x - a.x) / L, y: (b.y - a.y) / L };
+  const n = { x: t.y * o.side, y: -t.x * o.side };
+  const at = (u: number, v: number): SPt => ({ x: a.x + t.x * u + n.x * v, y: a.y + t.y * u + n.y * v });
+  const sp = o.gap + o.tick, w = Math.min(o.notch, L / 6);
+  return [at(0, o.gap), at(0, sp), at(L / 2 - w, sp), at(L / 2, sp + o.notch), at(L / 2 + w, sp), at(L, sp), at(L, o.gap)];
+}
+
+/** The unit normal pointing to `side` of a → b (as bracketStroke uses it). */
+export function sideNormal(a: SPt, b: SPt, side: 1 | -1): SPt {
+  const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  return { x: ((b.y - a.y) / L) * side, y: (-(b.x - a.x) / L) * side };
+}
+
+/**
+ * Which side of a → b a bracket goes: the one whose strip (as long as the segment, `reach` deep) holds
+ * less: boxes it overlaps (by area) and stroke segments crossing it. Ties: left of a → b (1).
+ */
+export function bracketSide(a: SPt, b: SPt, reach: number, boxes: { x: number; y: number; w: number; h: number }[], segs: { a: SPt; b: SPt }[]): 1 | -1 {
+  const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  const t = { x: (b.x - a.x) / L, y: (b.y - a.y) / L };
+  const cost = (side: 1 | -1) => {
+    const n = sideNormal(a, b, side);
+    // Local coords (u along, v out): inside the strip when 0 ≤ u ≤ L and 2 < v ≤ reach.
+    const local = (p: SPt) => ({ u: (p.x - a.x) * t.x + (p.y - a.y) * t.y, v: (p.x - a.x) * n.x + (p.y - a.y) * n.y });
+    const inside = (p: SPt) => { const q = local(p); return q.u >= 0 && q.u <= L && q.v > 2 && q.v <= reach; };
+    let c = 0;
+    for (const r of boxes) {
+      // Sample the box: the share of its points inside the strip, weighted by the box's size (capped at the strip's).
+      let hit = 0;
+      for (let i = 0; i <= 4; i++) for (let j = 0; j <= 4; j++) if (inside({ x: r.x + (r.w * i) / 4, y: r.y + (r.h * j) / 4 })) hit++;
+      c += (hit / 25) * Math.min(r.w * r.h, L * reach);
+    }
+    for (const sg of segs) for (let k = 0; k <= 4; k++) if (inside({ x: sg.a.x + ((sg.b.x - sg.a.x) * k) / 4, y: sg.a.y + ((sg.b.y - sg.a.y) * k) / 4 })) c += reach * 2;
+    return c;
+  };
+  const l = cost(1), r = cost(-1);
+  return r < l ? -1 : 1;
+}
+
 /** A small round dot (as a short closed loop), for points. */
 export function dotStroke(c: SPt, rad: number): Stroke {
   return Array.from({ length: 17 }, (_, i) => {

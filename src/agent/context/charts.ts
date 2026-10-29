@@ -3,6 +3,7 @@ import type { Pt } from '../../script/types';
 import type { PageRect } from '../../geometry/space';
 import type { PaintedPath } from './marks';
 import type { TextLine } from './textLines';
+import type { GroundMark, Grounding } from '../../geometry/resolve';
 
 /**
  * One calibrated axis: data value `lo` sits at page coordinate `p0`, `hi` at `p1` (x axis: page x;
@@ -25,6 +26,17 @@ export function chartToPage(c: Pick<Chart, 'x' | 'y'>, d: Pt): Pt | null {
   const x = lin(c.x, d.x), y = lin(c.y, d.y);
   return x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y) ? null : { x, y };
 }
+
+/**
+ * The calibrated charts of the latest grounding the app built (groundingOf): the live parser's value
+ * model reads a chart's axes from here at parse time, so a {{find}} on a chart plot is said with the
+ * engine's value. Only chart marks (`#cN`) are served; the gate and tests pass their own grounding.
+ */
+let memo: Grounding | undefined;
+export function noteCharts(g: Grounding | undefined): void { memo = g; }
+export const latestCharts: Grounding = {
+  mark: (page: number, id: string): GroundMark | undefined => (/^#c\d+$/.test(id) ? memo?.mark(page, id) : undefined),
+};
 
 // ---------------------------------------------------------------------------------------------
 // Detection. Everything below works in "x units": x as is, y × aspect, so lengths compare across

@@ -130,6 +130,33 @@ Prevention by construction: the narration never types a number the engine comput
   colony, limit on a falling stone with drag; every number in its narration is a val.
 - Tests: `tests/values/values.test.ts`, `tests/gate/bound.test.ts`.
 
+## Amounts, counts and distributions (teaching moves, design 3.2–3.7)
+
+- **Chart plots are kit lines** (`buildChartPlot`): `{{plot p=N on=#c1}}` on a linear calibrated chart is
+  a kit block on the page layer whose plot has the slide's fixed axes (`Plot.fixed`: no axes drawn, the
+  domain never moves, labelled only by an explicit quote). So `{{find}}`, readout points
+  (`{{point p=N on=#c1 at=E}}`: the resolver passes the ref through with `onChart`), `beforeafter`
+  (readout top-left inside the chart, no ghost label), `limit` and `contrast` work on the slide's graph.
+  Log axes fall back to the stroke path (`chartPlot`). The value model models chart plots (domain = the
+  chart's x axis from its grounding); the live parser's `GateState` reads chart axes from the latest
+  grounding the app built (`latestCharts` in `charts.ts`, set by `groundingOf`).
+- **Stacked bars**: `{{bars on=s id=b vals=100;90,20 labels=before,after parts=room,tax stack}}` (ragged
+  rows imply `stack`; cells may be formulas over constants): `vals` hold the totals, `Block.parts` the
+  parts; `b[i]` is a total, `b[i,j]` a part; `set id=b[i,j] to=` moves a part and the total follows.
+- **split**: `{{split id=b[2] vals=8-t,t "seller" "tax"}}` (kind `splitBar`; without `vals=` it is the
+  scene's chip split). Parts must sum to the bar; one value fewer than names: the first part is what
+  remains (`splitParts`).
+- **tokens**: `{{tokens on=s id=k n=8 states=seller,tax "coins"}}`: marks in clusters by state (≤ 120);
+  `{{set id=k[7:8] state=tax}}` or `{{set id=k state=tax n=t}}` glides marks to the other cluster;
+  `{{val id=k.tax}}` is a count (`tokenMoves`, `tokenCount`).
+- **histogram**: `{{bars on=s id=h hist=<block> bins=16}}` counts any block's values (its full computed
+  values: a window's output before it is swept); `axes=<hist>` shares its bins (one x scale, own heights).
+- **brace** is drawn as a bracket beside the segment (`bracketStroke`), on the side whose strip holds
+  less ink and page text (`bracketSide`), the label beyond its notch.
+- Demos: `?script=canvas` (chart readout + beforeafter on the slide), `?script=kit` sections 9–11.
+  Tests: `tests/values/chartValues.test.ts`, `tests/desk/kitStack|kitTokens|kitMovesNew.test.ts`,
+  `tests/ink/bracket.test.ts`.
+
 ## Expressions and computed data
 
 `src/desk/expr.ts` (no eval) reads a name as `[A-Za-z][A-Za-z0-9_]*`, lowercased (`K2`, `n10`, `T0`,
