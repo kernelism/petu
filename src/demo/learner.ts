@@ -57,8 +57,8 @@ const ASIDE =
 
 const FOLLOW =
   `{{sketch id=f near=p12}} Picture it {{const b=0.2}} on the chart. ` +
-  `{{plot on=f id=dem fn="7+b*(25-x)" domain=0,50 xlabel="quantity" ylabel="price" "demand"}} Here is demand, ` +
-  `{{plot on=f id=tx fn="4+x/5" domain=0,50 axes=dem "supply + tax"}} and supply lifted by the tax. ` +
+  `{{plot on=f id=dem fn="7+b*(25-x)" domain=0,35 xlabel="quantity" ylabel="price" "demand"}} Here is demand, ` +
+  `{{plot on=f id=tx fn="4+x/5" domain=0,35 axes=dem "supply + tax"}} and supply lifted by the tax. ` +
   `{{find id=E of=tx,dem}} They cross where buyers pay {{val id=E.y}}. ` +
   `{{beforeafter of=dem b=0.6}} Now make demand three times as steep: buyers hardly back away, so the crossing climbs and buyers pay {{val id=E.y}}, most of the two.`;
 

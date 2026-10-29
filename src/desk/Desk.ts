@@ -434,6 +434,12 @@ export class Desk implements DeskApi {
     sec.el.classList.toggle('is-collapsed', on);
   }
 
+  /** Where this answer's region-space rect is on screen now (point-to-ask on the board); null when unknown. */
+  onScreen(region: string, r: SRect): { x: number; y: number; w: number; h: number } | null {
+    const sec = this.ids.get(region);
+    return sec && this.open ? this.viewRect(sec, r) : null;
+  }
+
   /** Scrolls the board so the head `el` sits at its top (the trail: a question clicked or replayed). */
   async showHead(el: HTMLElement): Promise<void> {
     if (!this.open) return;

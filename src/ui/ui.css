@@ -985,3 +985,6 @@
 .keys-combo { display: inline-flex; gap: 3px; }
 .keys .keycap { min-width: 20px; height: 20px; padding: 0 5px; font-size: 11.5px; }
 @media (prefers-reduced-motion: reduce) { .keys, .route, .route-trip { transition: none; animation: none; } }
+
+/* Point-to-ask on the board: the pen's capture layer over the board while the pen is out. */
+.board-pen { position: fixed; z-index: 15; cursor: crosshair; touch-action: none; }

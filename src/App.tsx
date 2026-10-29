@@ -31,6 +31,7 @@ import { isShortcutsKey, ShortcutsOverlay } from './ui/ShortcutsOverlay';
 import { boardZoomKey, isMacPlatform } from './ui/zoomKeys';
 import { SettingsPopover } from './ui/SettingsPopover';
 import { CanvasToolbar } from './ui/CanvasToolbar';
+import { BoardPen } from './ui/BoardPen';
 import { Caption, joinWords } from './ui/Caption';
 import { AskBar, type Transcript } from './ui/AskBar';
 import { FollowPill } from './ui/FollowPill';
@@ -1316,6 +1317,18 @@ export default function App() {
   }, [hasDoc]);
   // …and circling something with the pen on a slide: the region, with the text inside it.
   const inkState = useInk();
+  // …or circling part of the board: the drawn elements it covers, and the board text inside it.
+  const onBoardLoop = useCallback((r: { x: number; y: number; w: number; h: number }) => {
+    const d = deskRef.current;
+    const inside = (b: { x: number; y: number; w: number; h: number } | null) => !!b && b.x + b.w / 2 >= r.x && b.x + b.w / 2 <= r.x + r.w && b.y + b.h / 2 >= r.y && b.y + b.h / 2 <= r.y + r.h;
+    const elements = director.registry.entries()
+      .filter((e) => e.target.region != null && inside(d?.onScreen(e.target.region, e.bbox) ?? null))
+      .map((e) => `${e.kind}${e.id ? ` #${e.id}` : ''}`);
+    const text = [...document.querySelectorAll<SVGTextElement>('[data-petu-board] .desk-region:not(.is-collapsed) text')]
+      .filter((t) => { const b = t.getBoundingClientRect(); return inside({ x: b.x, y: b.y, w: b.width, h: b.height }); })
+      .map((t) => t.textContent ?? '').join(' ');
+    setPointed({ kind: 'circle', board: true, elements: elements.slice(0, 12), text });
+  }, [director]);
   const lastStroke = useRef(0);
   useEffect(() => {
     const st = inkState.strokes[inkState.strokes.length - 1];
@@ -1498,6 +1511,9 @@ export default function App() {
       <RouteChip route={route} backTo={backTo} onBack={onBack} x={dock.x} />
       <SettingsPopover open={settingsOpen} onClose={closeSettings} />
       <CanvasToolbar />
+      {inkState.canvasOn && inkState.tool === 'pen' && desk?.board && !desk.stacked && (
+        <BoardPen rect={desk.board} color={inkState.color} keep={!!pointed && pointed.kind === 'circle' && pointed.page == null} onLoop={onBoardLoop} />
+      )}
       <ShortcutsOverlay open={shortcutsOpen} onClose={closeShortcuts} x={dock.x} bottom={dockBottom} dev={import.meta.env.DEV} />
       {/* left/width are set directly rather than through custom properties, so the dock's glide never
           depends on var() invalidation (suspected in a Safari report of the dock staying left; not
