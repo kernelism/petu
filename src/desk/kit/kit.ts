@@ -46,6 +46,16 @@ export const GLIDE_MS = 320;
 
 export type Metrics = { s: number; numPx: number; labelPx: number; num: number; label: number; /** The board's measured body size (units): no reading text under it. */ body: number; cell: number; gap: number; opW: number; margin: number; top: number; u: (px: number) => number };
 
+/**
+ * A label written as an id (`arms_out`, `total_revenue`) is shown with spaces ("arms out"). Only list
+ * values (bar and part labels, table headers, grid row/column labels, token states) and only words of
+ * two or more characters joined by underscores: `x_1`, `K_m`, `v_max` keep their subscript form.
+ */
+export function shown(s: string): string {
+  return /^[\p{L}\p{N}]{2,}(?:_[\p{L}\p{N}]{2,})+$/u.test(s) ? s.replace(/_/g, ' ') : s;
+}
+const shownAll = (xs: string[] | undefined) => xs?.map(shown);
+
 export function metrics(scale: number, bodyPx: number): Metrics {
   const s = Math.max(scale, 1e-3);
   // Numerals at the slide's body size, never under 13px, and growing with a wide board (to 20px).
@@ -512,7 +522,12 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
   const P = (w: number, h: number, pad: Pad): Placed => {
     if (a.at) return place(w, h, pad, { right: a.right, below: a.below, op: a.op, at: a.at as Pt | undefined }, anchor?.placed, others, spacing);
     if (!scene) return clearDown(place(w, h, pad, { right: a.right, below: a.below, op: a.op }, anchor?.placed, others, spacing), looseInk(env, ctx.target), m.gap);
-    const r = placeRel(pad.l + w + pad.r, pad.t + h + pad.b, rel?.rel ?? null, relBox, [...scene.rects(), ...unclaimed(env, ctx.target)], { gap: m.gap * 1.3, seed: id, view: scene.view(), last: scene.last() });
+    const taken = [...scene.rects(), ...unclaimed(env, ctx.target)];
+    const r = placeRel(pad.l + w + pad.r, pad.t + h + pad.b, rel?.rel ?? null, relBox, taken, { gap: m.gap * 1.3, seed: id, view: scene.view(), last: scene.last() });
+    // A kit block opening an empty scene is composed into the board: centred across the window (a
+    // chart is the scene's centrepiece, not a chip in its corner); later things flow on from it.
+    const v = scene.view();
+    if (!relBox && !taken.length && v && r.w < v.w) r.x = v.x + (v.w - r.w) / 2;
     const body = { x: r.x + pad.l, y: r.y + pad.t, w, h };
     // In a scene an op is a relation, not a glyph in a gap: a link from the source, routed around
     // content, labelled with the glyph unless it is a plain arrow (drawn once the block is).
@@ -572,7 +587,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
       }
       b = newBlock(id, 'grid', region, placed, m, got.deps);
       Object.assign(b, { src: a.src, full: got.full, vals, dp: a.dp, cs, cellPx, shade: image ? a.shade ?? 'image' : a.shade, em: a.em, ...(image ? { view: 'image', ch } : {}) });
-      b.el.rows = rows; b.el.cols = cols; b.el.caption = a.caption;
+      b.el.rows = shownAll(rows); b.el.cols = shownAll(cols); b.el.caption = a.caption;
     } else if (line) {
       const made = await makeLine(a as Extract<KitBlock, { kind: 'bars' }>, got, id, region, m, P, store);
       if (typeof made === 'string') return made;
@@ -580,19 +595,19 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     } else {
       const ev = eventual(a.src, got.full, (x) => store.get(x));
       const lf = a.labelsFrom && a.labelsFrom[1] >= 0 ? store.get(a.labelsFrom[0]) : undefined;
-      const labels = (lf?.full ? lf.full.map((r) => C.fmt(r[a.labelsFrom![1]], lf.dp)) : a.labels)?.slice(0, Cn);
+      const labels = shownAll((lf?.full ? lf.full.map((r) => C.fmt(r[a.labelsFrom![1]], lf.dp)) : a.labels)?.slice(0, Cn));
       // A slot is as wide as its label (words never run into each other); the bar keeps its own width.
       const labW = labels?.length ? m.u(Math.max(...labels.map((l) => textWidth(l, m.labelPx))) + m.labelPx * 0.9) : 0;
       // A histogram's bins touch, across a fixed width (one x scale for every histogram that shares its bins).
       const slot = hist ? HIST_W / Cn : Math.max(cs, labW), H = hist ? HIST_W * 0.42 : cs * 3.2;
       const neg = ev[0].some((v) => v < 0);
       // Stacked bars name their parts on the right, beside the last bar's segments.
-      const partW = a.parts?.length ? m.u(Math.max(...a.parts.map((l) => textWidth(l, m.labelPx))) + m.labelPx * 1.2) : 0;
+      const partW = a.parts?.length ? m.u(Math.max(...a.parts.map((l) => textWidth(shown(l), m.labelPx))) + m.labelPx * 1.2) : 0;
       const pad: Pad = { l: 0, t: m.label * 1.5, r: partW, b: (neg ? m.label * 1.4 : 0) + (labels || hist ? m.label * 1.7 : 0) + (a.caption ? m.label * 1.9 : 0) + m.label * 0.4 };
       const placed = P(Cn * slot, parts ? H * 1.25 : H, pad);
       b = newBlock(id, 'bars', region, placed, m, got.deps);
       if (parts) b.parts = parts;
-      if (a.parts) b.el.partNames = a.parts;
+      if (a.parts) b.el.partNames = shownAll(a.parts);
       b.el.store = store;
       if (hist) { b.el.hist = { lo: hist.lo, hi: hist.hi }; b.barW = slot * 0.94; }
       Object.assign(b, { src: a.src, full: got.full, vals, dp: a.dp, cs: slot, cellPx, em: a.em, barW: cs * 0.62 });
@@ -624,7 +639,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     const R = lit.length, Cn = a.heads.length;
     const vals = lit.map((r) => [...r, ...Array(Cn - r.length).fill(NaN)]);
     const rh = m.num * 2, hh = m.label * 2.2;
-    const ws = a.heads.map((h, j) => m.u(Math.max(textWidth(h, m.labelPx), ...vals.map((r) => textWidth(C.fmt(r[j], a.dp), m.numPx)), m.numPx * 2.2) + m.numPx * 1.8));
+    const ws = a.heads.map((h, j) => m.u(Math.max(textWidth(shown(h), m.labelPx), ...vals.map((r) => textWidth(C.fmt(r[j], a.dp), m.numPx)), m.numPx * 2.2) + m.numPx * 1.8));
     const placed = P(ws.reduce((x, y) => x + y, 0), R * rh, { l: 0, t: hh, r: 0, b: a.caption ? m.label * 2 : m.label * 0.3 });
     b = newBlock(id, 'table', region, placed, m, []);
     const xs: number[] = [];
@@ -669,7 +684,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     if (raw.some((v) => v < 0)) return 'shares need values of 0 or more';
     const vals = [normalize(raw)];
     if (vals[0].some((v) => !Number.isFinite(v))) return 'shares: the values sum to 0';
-    const labels = a.labels?.slice(0, raw.length) ?? sourceLabels(a.src, store);
+    const labels = shownAll(a.labels?.slice(0, raw.length)) ?? sourceLabels(a.src, store);
     const W = Math.max(m.cell * 7.5, Math.min(m.cell * 13, raw.length * m.cell * 1.9)), H = m.cell * 0.82;
     const mix = a.mix ? store.get(a.mix) : undefined;
     if (a.mix && !mix?.vals) return `unknown block ${a.mix}`;
@@ -2142,7 +2157,7 @@ function paintTokenLabels(b: Block, groups: { x: number; count: number; j: numbe
   for (const g of groups) {
     kitText(e.labels, g.x, y, String(g.count), { size: m.num, fill: c.ink, opacity });
     const name = b.tok!.states[g.j];
-    if (name) kitText(e.labels, g.x, y + m.label * 1.3, name, { size: m.label, fill: c.muted, opacity });
+    if (name) kitText(e.labels, g.x, y + m.label * 1.3, shown(name), { size: m.label, fill: c.muted, opacity });
   }
 }
 
@@ -2297,7 +2312,7 @@ async function splitVerb(v: Extract<KitVerb, { kind: 'splitBar' }>, env: BuildEn
         if (signal.aborted || k.fadeMs != null) ctl.ff = true;
         b.parts = b.parts ?? totals.map((x) => [x]);
         b.parts[i] = got;
-        if (v.labels.length) b.el.partNames = v.labels;
+        if (v.labels.length) b.el.partNames = shownAll(v.labels);
         const st = (b.el.splitT as Map<number, number> | undefined) ?? new Map<number, number>();
         b.el.splitT = st;
         // Room for the names on the right (the block was laid out without them): they sit past its body.
@@ -2556,7 +2571,7 @@ async function drawTable(b: Block, c: ReturnType<typeof col>, k: Pace) {
   const [R, Cn] = C.shape(b.vals!);
   const head = svg(g, 'g');
   const over = svg(g, 'g');
-  const heads = tb.heads.map((h, j) => kitText(head, tb.xs[j] + tb.ws[j] / 2, body.y - tb.hh / 2, h, { size: m.label, fill: c.ink2 }));
+  const heads = tb.heads.map((h, j) => kitText(head, tb.xs[j] + tb.ws[j] / 2, body.y - tb.hh / 2, shown(h), { size: m.label, fill: c.ink2 }));
   svg(head, 'line', { x1: body.x, x2: body.x + body.w, y1: body.y - px(b, 1), y2: body.y - px(b, 1), stroke: c.edge, ...hair(1) });
   const cap = b.el.caption as string | undefined;
   if (cap) caption(head, body.x + body.w / 2, body.y + body.h + m.label * 1.2, cap, m, c);
@@ -2663,15 +2678,15 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
   const x = t.placed.body.x;
   const maxW = 1000 - m.margin - x;
   const exps = full.map((_, r) => rowExp(v, fn, full, r, t.dp));
-  const lines = Math.max(1, ...exps.map((e) => wrapPieces(piecesOf(e, tb.heads[j]), maxW, (s) => m.u(textWidth(s, m.numPx))).length));
-  const textW = Math.min(maxW, Math.max(...exps.map((e) => m.u(textWidth(piecesOf(e, tb.heads[j]).join(''), m.numPx)))));
+  const lines = Math.max(1, ...exps.map((e) => wrapPieces(piecesOf(e, shown(tb.heads[j])), maxW, (s) => m.u(textWidth(s, m.numPx))).length));
+  const textW = Math.min(maxW, Math.max(...exps.map((e) => m.u(textWidth(piecesOf(e, shown(tb.heads[j])).join(''), m.numPx)))));
   const prev = t.el.colCalc ? store.get(t.el.colCalc as string) : undefined;
   let cb: Block;
   if (prev?.calc) {
     cb = prev;
     cb.placed.body.w = cb.placed.rect.w = Math.max(cb.placed.body.w, textW);
     cb.placed.body.h = cb.placed.rect.h = Math.max(cb.placed.body.h, lines * m.num * 1.55);
-    cb.calc = { ...cb.calc!, label: tb.heads[j], lines: Math.max(cb.calc!.lines ?? 1, lines) };
+    cb.calc = { ...cb.calc!, label: shown(tb.heads[j]), lines: Math.max(cb.calc!.lines ?? 1, lines) };
     roomMoved(cb, env);
   } else {
     const others = store.inRegion(t.region).filter((o) => o !== t);
@@ -2683,7 +2698,7 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
     let body = { x, y: yBelow + m.gap * 0.7, w: textW, h: lines * m.num * 1.55 };
     if (scene) body = clearOf(t, body, scene, m, env);
     cb = newBlock(store.anonId(), 'calc', t.region, { body, rect: { ...body } }, m, []);
-    cb.calc = { of: [], reduce: 'sum', live: true, label: tb.heads[j], lines, maxW };
+    cb.calc = { of: [], reduce: 'sum', live: true, label: shown(tb.heads[j]), lines, maxW };
     if (t.shift) cb.shift = { ...t.shift };
     store.add(cb);
     claimRoom(cb, env);
@@ -2701,11 +2716,11 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
       const e = t.el.table as TableEls;
       // A new column's header and cells.
       if (!e.heads[j]) {
-        e.heads[j] = kitText(e.heads[0].parentNode as SVGGElement, tb.xs[j] + tb.ws[j] / 2, t.placed.body.y - tb.hh / 2, v.head, { size: m.label, fill: c.ink2 });
+        e.heads[j] = kitText(e.heads[0].parentNode as SVGGElement, tb.xs[j] + tb.ws[j] / 2, t.placed.body.y - tb.hh / 2, shown(v.head), { size: m.label, fill: c.ink2 });
         const rule = (e.heads[0].parentNode as SVGGElement).querySelector('line');
         rule?.setAttribute('x2', String(t.placed.body.x + t.placed.body.w));
         e.texts.forEach((row, r) => { const cell = tabCell(t, r, j); row[j] = kitText(e.rows, cell.x + cell.w / 2, cell.y + cell.h / 2, '', { size: m.num, fill: c.ink }); });
-      } else e.heads[j].textContent = tb.heads[j];
+      } else e.heads[j].textContent = shown(tb.heads[j]);
       let first!: () => void;
       const started = new Promise<void>((r) => { first = r; });
       void store.anim.run([t.id], async (ctl) => {
