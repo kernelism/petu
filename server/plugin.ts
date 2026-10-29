@@ -68,7 +68,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   const cache = new CacheStats(join(dir, 'cache.json'), o.now);
   // Every answer's record, local only (gitignored): diagnosable without screenshots.
   const log = (rec: object) => appendFileSync(join(dir, 'answers.jsonl'), `${JSON.stringify(rec)}\n`);
-  const deps: Deps = { key: env.key, ledger, phase: env.phase, fetch: o.fetch ?? fetch, cache, log, ...(o.timeouts ? { timeouts: o.timeouts } : {}) };
+  const deps: Deps = { key: env.key, ...(env.anthropicKey ? { anthropicKey: env.anthropicKey } : {}), ledger, phase: env.phase, fetch: o.fetch ?? fetch, cache, log, ...(o.timeouts ? { timeouts: o.timeouts } : {}) };
   let systemWarming: Promise<unknown> | null = null;
   const now = o.now ?? Date.now;
   const prewarmed = new Map<string, number>();
@@ -83,7 +83,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   };
 
   const statusLine = () =>
-    `petu: model ${env.model.model}/${env.model.effort} · spent $${ledger.spent().toFixed(2)} of $${env.caps.totalUsd} · phase ${env.phase}${env.key ? '' : ' · no OPENAI_API_KEY in .env'}`;
+    `petu: model ${env.model.model}/${env.model.effort} · spent $${ledger.spent().toFixed(2)} of $${env.caps.totalUsd} · phase ${env.phase}${env.key ? '' : ' · no OPENAI_API_KEY in .env'}${env.model.model.startsWith('claude-') && !env.anthropicKey ? ' · no PETU_ANTHROPIC_KEY (answers will refuse)' : ''}`;
 
   async function handle(req: IncomingMessage, res: ServerResponse, next: Next): Promise<void> {
     const path = (req.url ?? '').split('?')[0];
@@ -100,7 +100,8 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
       if (path === '/api/report') return await routeReport(req, res, o.root, env.key);
       if (path.startsWith('/api/dev-pdf/')) return routePdf(req, res, path.slice('/api/dev-pdf/'.length));
     } catch (e) {
-      console.error(`petu: ${path} failed: ${env.key ? String(e).split(env.key).join('***') : String(e)}`.slice(0, 300));
+      const msg = [env.key, env.anthropicKey].filter(Boolean).reduce((m, k) => m.split(k).join('***'), String(e));
+      console.error(`petu: ${path} failed: ${msg}`.slice(0, 300));
       if (!res.headersSent && !res.writableEnded) return json(res, 500, { error: 'internal error' });
       if (!res.writableEnded) res.end();
       return;
@@ -195,7 +196,8 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     const worst = worstCaseUsd(env.model.model, TYPICAL_INPUT_TOKENS, env.model.maxOutput, env.model.fast) + worstCaseUsd(env.scout.model, TYPICAL_SCOUT_TOKENS, env.scout.maxOutput, env.scout.fast)
       + (env.storyboard ? worstCaseUsd(env.storyboard.model, TYPICAL_INPUT_TOKENS, env.storyboard.maxOutput, env.storyboard.fast) : 0);
     const refusal = ledger.check(env.phase, worst);
-    return json(res, 200, { ...s, phase: env.phase, phaseCapUsd: env.caps.phaseUsd?.[env.phase], ...(refusal ? { blocked: refusal.message, blockedCode: refusal.code } : {}) });
+    // Which keys the server has (booleans only), so a runner can refuse a config before spending on scouts.
+    return json(res, 200, { ...s, phase: env.phase, phaseCapUsd: env.caps.phaseUsd?.[env.phase], model: env.model.model, keys: { openai: !!env.key, anthropic: !!env.anthropicKey }, ...(refusal ? { blocked: refusal.message, blockedCode: refusal.code } : {}) });
   }
 
   async function routeJudge(req: IncomingMessage, res: ServerResponse) {

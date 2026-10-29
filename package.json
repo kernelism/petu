@@ -11,6 +11,7 @@
     "fixture": "node --experimental-strip-types scripts/make-fixture.ts",
     "decks": "node --experimental-strip-types scripts/make-decks.ts",
     "eval": "node --experimental-strip-types scripts/eval/run.ts",
+    "bench": "node --import ./scripts/lib/tsResolve.mjs --experimental-transform-types --no-warnings scripts/eval/bench.ts",
     "ground": "node --experimental-strip-types scripts/ground.ts",
     "reports": "node --experimental-strip-types scripts/reports.ts",
     "corpus-profile": "node --expose-gc --max-old-space-size=8192 --experimental-strip-types scripts/corpus/profile.ts",

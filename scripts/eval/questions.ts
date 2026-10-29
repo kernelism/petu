@@ -9,6 +9,7 @@
 import { createHash } from 'node:crypto';
 import { Q2 } from './q2.ts';
 import { Q3, type Q3Kind } from './q3.ts';
+import { DRAW } from './draw.ts';
 import { knownDeck } from './decks.ts';
 
 export type Split = 'dev' | 'test';
@@ -79,8 +80,10 @@ export const FU: Question[] = [
   q('D4', 'ost-econ', 128, 'hand', 'follow-up', 'Why does the elasticity change along a straight demand line if its slope is the same everywhere?', { followUp: "I still don't get it" }),
 ];
 
-export type QSetName = 'q1' | 'q2' | 'q3' | 'fu';
-export const QSETS: Record<QSetName, Question[]> = { q1: Q1, q2: Q2, q3: Q3, fu: FU };
+export type QSetName = 'q1' | 'q2' | 'q3' | 'fu' | 'draw';
+export const QSETS: Record<QSetName, Question[]> = { q1: Q1, q2: Q2, q3: Q3, fu: FU, draw: DRAW };
+/** Sets whose questions may share a page (each question still opens its own fresh session). */
+export const SHARED_PAGES_OK = new Set<string>(['draw']);
 export const DEFAULT_QSET: QSetName = 'q2';
 /** The default set (q2). Pass a set explicitly where the runner's --qset applies. */
 export const QUESTIONS: Question[] = QSETS[DEFAULT_QSET];
@@ -108,7 +111,7 @@ function nameOf(qs: Question[]): string {
 export const QSET = qsetId();
 
 /** Sanity checks on the set itself (used by tests and by `freeze`). */
-export function validateSet(qs: Question[]): string[] {
+export function validateSet(qs: Question[], o: { sharedPages?: boolean } = {}): string[] {
   const errs: string[] = [];
   const ids = new Set<string>();
   for (const x of qs) {
@@ -122,7 +125,7 @@ export function validateSet(qs: Question[]): string[] {
   const pages = new Map<string, string>();
   for (const x of qs) {
     const k = `${x.deck}:${x.page}`;
-    if (pages.has(k)) errs.push(`${x.id} shares page ${k} with ${pages.get(k)}`);
+    if (pages.has(k) && !o.sharedPages) errs.push(`${x.id} shares page ${k} with ${pages.get(k)}`);
     pages.set(k, x.id);
   }
   return errs;
@@ -147,7 +150,7 @@ export function assertSplitAllowed(ids: string[], phase: string, testUsedBefore:
 /** Freeze a set into <evalDir>/questions[-<name>].json (q1 keeps its original file name). */
 export async function freeze(evalDir: string, name: QSetName = DEFAULT_QSET): Promise<string> {
   const qs = QSETS[name];
-  const errs = validateSet(qs);
+  const errs = validateSet(qs, { sharedPages: SHARED_PAGES_OK.has(name) });
   if (errs.length) throw new Error(errs.join('; '));
   const { mkdirSync, writeFileSync } = await import('node:fs');
   const { join } = await import('node:path');

@@ -3,7 +3,7 @@ import { closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, ren
 import { dirname } from 'node:path';
 import { formatUsd, type SpendSummary } from '../src/agent/protocol';
 
-export type Phase = 'dev' | 'bakeoff' | 'iterate' | 'validate' | 'founder' | 'lessondev' | 'lessonbake' | 'lessoniter' | 'lessonval';
+export type Phase = 'dev' | 'bakeoff' | 'iterate' | 'validate' | 'founder' | 'lessondev' | 'lessonbake' | 'lessoniter' | 'lessonval' | 'bench';
 export type Entry = {
   id: string; at: string; phase: Phase; kind: 'answer' | 'scout' | 'storyboard' | 'prewarm' | 'judge';
   model: string; usd: number; estimated?: boolean; tokens?: { in: number; cached: number; out: number };

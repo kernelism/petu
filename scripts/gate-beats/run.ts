@@ -18,7 +18,8 @@ const mainRoot = (() => { try { return resolve(execSync('git rev-parse --git-com
 
 type Doc = { numPages: number; getPage(n: number): Promise<unknown>; destroy?: () => Promise<void> };
 
-async function grounder() {
+/** PDF grounding for recordings (pdf.js in Node): page text and PageGrounds of the pages an answer touched. */
+export async function grounder() {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const { groundPage } = await import('../../src/agent/context/build.ts');
   const { pathOfSrc, pdfDirs } = await import('../eval/decks.ts');

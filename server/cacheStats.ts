@@ -54,9 +54,10 @@ export class CacheStats {
   }
 
   /** Is the system block likely cached (for the doc-open prewarm's dedupe)? */
-  systemFresh(k: { model: string; version: string }): boolean {
+  /** `ttlMs`: the provider's system-block lifetime (Anthropic's 1h breakpoint: a little under an hour). */
+  systemFresh(k: { model: string; version: string }, ttlMs = SYSTEM_TTL_MS): boolean {
     const s = this.f.system[sysKey(k)];
-    return !!s && this.now() - s.at < SYSTEM_TTL_MS;
+    return !!s && this.now() - s.at < ttlMs;
   }
 
   /** Input tokens this request most likely reads from cache, at most `inputTokens`. */

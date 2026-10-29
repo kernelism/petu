@@ -15,11 +15,12 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 | `server/ledger.ts` | `Ledger`: `reserve` (worst case) → `settle` (real or estimated) / `release`; lockfile; dead-process reservations booked as `recovered`. File `.petu/spend.json`. |
 | `server/prices.ts` | `PRICES` per model (in/cached/out/write30m/write12h), `costUsd`, `worstCaseUsd`. A wrong price = a wrong ledger. |
 | `server/cacheStats.ts` | What the cache likely holds (`.petu/cache.json`): estimates for aborted calls, `systemFresh` (11.5h). |
+| `server/anthropic.ts` | Stage 2 on a `claude-*` model (`PETU_MODEL`): the Responses body from `buildRequest` converted block for block to the Messages API (system 12h → `cache_control` 1h; digest, page image, MEMORY 30m → 5m), thinking/effort mapping (`none` = thinking off on Sonnet/Haiku 5.5; Opus 5.5 refuses `none`), SSE → `Upstream` (`AnthropicEvents`), usage → petu `Usage` (`normalizeUsage`), `max_tokens: 0` prewarm. Wired via `endpointOf` / `buildAnswerRequest` in `openai.ts`. Key: `PETU_ANTHROPIC_KEY`, else `ANTHROPIC_API_KEY`, from the `.env` file only (never process.env). Scout, storyboard and judge stay on OpenAI. |
 | `server/sse.ts`, `scriptFilter.ts`, `lint.ts` | SSE → `ResponseEvents`; strips `<plan>…</plan>` (kept for debug/eval) and markdown/TeX from narration; grammar notes (`TAG_NAMES`). |
 | `server/prompt/system.ts` | Stage-2 developer prompt, `PROMPT_VERSION` (p5.5). Sections: identity → teach (with the per-beat contract) → no-dup → timing → context → pointing → board (… NUMBERS YOU SAY, TEACHING MOVES, WORK ON THE SLIDE AND FROM IT) → tags → situations → examples (five). |
 | `server/prompt/scout.ts` | `SCOUT_SYSTEM`, `SCOUT_VERSION` (s2.1): opener, ≤ 6 pages, ≤ 80-word plan, JSON order opener→pages→plan. |
 | `server/prompt/examples.ts` | Few-shot `EXAMPLES` on invented documents (music notation, shadows, levers…), each executable. |
-| `src/agent/protocol.ts` | `AskRequest`, `AskContext`, `AskEvent` (NDJSON), `SpendSummary`, `HARD_STOP_USD` 40. |
+| `src/agent/protocol.ts` | `AskRequest`, `AskContext`, `AskEvent` (NDJSON), `SpendSummary`, `HARD_STOP_USD` 60. |
 | `src/agent/scout.ts` | `ScoutRequest/Result/Event`, `SCOUT_SCHEMA`, `parseScout`, `fallbackScout`, `answerPages`, `imagePages` (≤ 4 images incl. visible). |
 | `src/agent/twoStage.ts` | Joins opener stream + stage-2 stream; emits `scout` / `handoff` events; failure after the opener = cut-off, not error. |
 | `src/agent/useAgent.ts` | Per-document state: `ContextBuilder`, `History` (≤ 3 turns, narration only), `SessionMemory` (MEMORY block), `Prewarm`, spend; `source()` builds the two-stage generator and records each finished or stopped answer. |
@@ -73,9 +74,9 @@ previous exchange, question. The scout may name any page and an optional `find` 
 
 - Every call: `reserve(worstCaseUsd)` (all input at the 12h write rate + full max output) → refused
   before sending if a cap would be crossed → `settle` with `costUsd(usage)`; abort/crash → estimate.
-- Caps: total ≤ $40 (`PETU_TOTAL_CAP_USD` can only lower it); phase (`PETU_PHASE`, default `founder`):
+- Caps: total ≤ $60 (`PETU_TOTAL_CAP_USD` can only lower it); phase (`PETU_PHASE`, default `founder`):
   dev 1, bakeoff 6, iterate 7, validate 2, founder 21.99, lessondev 1.5, lessonbake 3, lessoniter 3.5,
-  lessonval 2 (override one run: `PETU_CAP_<PHASE>=…`); daily $3 in founder phase only (`PETU_DAILY_CAP_USD`).
+  lessonval 2, bench 15 (override one run: `PETU_CAP_<PHASE>=…`); daily $3 in founder phase only (`PETU_DAILY_CAP_USD`).
 - Kinds booked: `answer`, `scout`, `storyboard`, `prewarm`, `judge`. `GET /api/spend` shows totals and `blocked`.
 - A request whose `phase` ≠ the server's phase is rejected (400).
 

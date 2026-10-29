@@ -30,8 +30,9 @@ streams a script (narration with `{{tags}}`) → parser → scheduler (word time
 - **Ports 5180 and 5181 belong to the founder.** Don't start, kill or probe servers on them. Your own
   dev server: `npx vite --port 5182 --strictPort` (or any free port outside 5180–5181); the eval runner
   uses 5186–5195 by itself.
-- **Budget caps.** Every OpenAI call goes through the ledger (`.petu/spend.json`). $40 hard stop
+- **Budget caps.** Every OpenAI call goes through the ledger (`.petu/spend.json`). $60 hard stop
   (`HARD_STOP_USD`), per-phase budgets (`server/env.ts` `PHASE_CAPS`), $3/day in the founder phase.
+  Anthropic calls (stage 2 on a `claude-*` model) go through the same ledger.
   Never write a script that calls the API directly; never raise a cap without being told to (and then
   only per run, on the command line).
 - **The prompt is a brief, not a rulebook.** No modes, no per-question-type recipes, no length or

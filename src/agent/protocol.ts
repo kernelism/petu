@@ -88,6 +88,9 @@ export type SpendSummary = {
   phase?: string;
   /** The current phase's budget. */
   phaseCapUsd?: number;
+  /** The server's answer model, and which provider keys it has (never the keys themselves). */
+  model?: string;
+  keys?: { openai: boolean; anthropic: boolean };
   /** Set when the next answer would be refused: the refusal line. */
   blocked?: string;
   /** Which cap `blocked` names. */
@@ -98,8 +101,8 @@ export type SpendSummary = {
   n?: number;
 };
 
-/** The checkpoint's hard stop: PETU_TOTAL_CAP_USD may only lower it (server/env.ts). */
-export const HARD_STOP_USD = 40;
+/** The hard stop (raised from $40 to $60 by the founder, 2026-10-28, for the author benchmark): PETU_TOTAL_CAP_USD may only lower it (server/env.ts). */
+export const HARD_STOP_USD = 60;
 
 /**
  * Dollars for people: cents from $0.10 up; below that, two significant digits so small amounts stay

@@ -7,7 +7,26 @@ type Rect = { x: number; y: number; w: number; h: number };
 
 export type Metrics = {
   ttftMs: number | null; firstWordMs: number | null; firstMarkMs: number | null; totalMs: number | null;
-  usd: number; cachedShare: number; estimated: boolean;
+  /**
+   * How long the answer talks: from its first word to the end of its last sentence (ms). Separate from
+   * the wait before it (firstWordMs) and from totalMs (the last action's end, which includes ink after
+   * the last word).
+   */
+  spokenMs: number | null;
+  /**
+   * When the author's (stage 2's) first text arrived, ms since Enter (the handoff; without an opener
+   * its first chunk), and the silence it left after the opener's last word (0 when it was in time).
+   * The first word itself is usually the scout's opener, the same for every author.
+   */
+  stage2Ms: number | null;
+  handoffGapMs: number | null;
+  /** Stage 2's cost (the `done` event). */
+  usd: number;
+  /** The scout's cost (the `scout` event) and the storyboard's, when there was one. */
+  scoutUsd: number;
+  /** Everything the answer cost: scout + storyboard + stage 2. */
+  answerUsd: number;
+  cachedShare: number; estimated: boolean;
   tags: number; malformed: number; linted: number; skipped: Record<string, number>; skippedTotal: number;
   /** Skipped actions whose id a later action names (the student never saw what came after them either). */
   skippedDeps: number;
@@ -127,13 +146,21 @@ export function computeMetrics(r: EvalResult): Metrics {
     return order.slice(i + 1).some((u) => { const { kind: _k, ...rest } = u.action; void _k; return strs(rest).some((x) => re.test(x)); });
   }).length;
   const labels = labelStats(r.registry);
+  const scoutUsd = r.events.reduce((s, e) => s + ((e.t === 'scout' || e.t === 'storyboard') ? (e.usd ?? 0) : 0), 0);
+  const handoff = r.events.find((e) => e.t === 'handoff') as Extract<EvalResult['events'][number], { t: 'handoff' }> | undefined;
+  const lastSpoken = r.sentences.length ? r.sentences[r.sentences.length - 1].endMs : r.words.length ? r.words[r.words.length - 1].t : null;
 
   return {
     ttftMs: r.chunks[0]?.t ?? done?.ttftMs ?? null,
     firstWordMs: r.words[0]?.t ?? null,
     firstMarkMs: firstMark,
     totalMs: ends.length ? Math.max(...ends) : null,
+    spokenMs: r.words.length && lastSpoken != null ? Math.max(0, lastSpoken - r.words[0].t) : null,
+    stage2Ms: handoff?.ms ?? r.chunks[0]?.t ?? null,
+    handoffGapMs: handoff?.openerEndMs != null ? Math.max(0, handoff.ms - handoff.openerEndMs) : null,
     usd: done?.usd ?? 0,
+    scoutUsd,
+    answerUsd: (done?.usd ?? 0) + scoutUsd,
     cachedShare: done?.usage?.input_tokens ? cached / done.usage.input_tokens : 0,
     estimated: !!done?.estimated,
     tags,
@@ -179,6 +206,11 @@ export type RunMetrics = {
   firstWordMs: { p50: number | null; p90: number | null };
   firstMarkMs: { p50: number | null; p90: number | null };
   totalMs: { p50: number | null; p90: number | null };
+  spokenMs: { p50: number | null; p90: number | null };
+  /** Mean spoken length (ms). */
+  meanSpokenMs: number | null;
+  /** Everything the answers cost (scout + storyboard + stage 2). */
+  answerUsd: number;
   usd: number; meanUsd: number; cachedShare: number;
   takeawayFirstRate: number;
   /** Answers with a skip defect (see Metrics.skipDefect). */
@@ -192,12 +224,15 @@ export function aggregate(ms: Metrics[]): RunMetrics {
   const n = ms.length;
   const sum = (k: keyof Metrics) => ms.reduce((a, m) => a + (m[k] as number), 0);
   const mean = (k: keyof Metrics) => (n ? sum(k) / n : 0);
-  const pp = (k: 'ttftMs' | 'firstWordMs' | 'firstMarkMs' | 'totalMs') => ({ p50: percentile(ms.map((m) => m[k]), 0.5), p90: percentile(ms.map((m) => m[k]), 0.9) });
+  const pp = (k: 'ttftMs' | 'firstWordMs' | 'firstMarkMs' | 'totalMs' | 'spokenMs') => ({ p50: percentile(ms.map((m) => m[k]), 0.5), p90: percentile(ms.map((m) => m[k]), 0.9) });
   const skipped: Record<string, number> = {};
   for (const m of ms) for (const [k, v] of Object.entries(m.skipped)) skipped[k] = (skipped[k] ?? 0) + v;
   return {
     n,
     ttftMs: pp('ttftMs'), firstWordMs: pp('firstWordMs'), firstMarkMs: pp('firstMarkMs'), totalMs: pp('totalMs'),
+    spokenMs: pp('spokenMs'),
+    meanSpokenMs: (() => { const v = ms.map((m) => m.spokenMs).filter((x): x is number => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; })(),
+    answerUsd: ms.reduce((a, m) => a + (m.answerUsd ?? m.usd), 0),
     usd: sum('usd'), meanUsd: mean('usd'), cachedShare: mean('cachedShare'),
     takeawayFirstRate: n ? ms.filter((m) => m.takeawayFirst).length / n : 0,
     skipDefects: ms.filter((m) => m.skipDefect).length,

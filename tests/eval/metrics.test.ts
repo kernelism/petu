@@ -136,3 +136,33 @@ describe('run level', () => {
     expect(g.skipped).toEqual({ 'unknown point Q': 2 });
   });
 });
+
+describe('spoken length and the whole answer cost', () => {
+  it('spoken = first word → end of the last sentence, apart from first-word latency and totalMs; answerUsd adds the scout', () => {
+    const r = base();
+    r.events = [{ t: 'scout', pages: [3], plan: 'p', ms: 900, usd: 0.002 }, ...r.events];
+    const m = computeMetrics(r);
+    expect(m.firstWordMs).toBe(1200);
+    expect(m.spokenMs).toBe(3000 - 1200);
+    expect(m.totalMs).toBe(3100);
+    expect(m.scoutUsd).toBe(0.002);
+    expect(m.answerUsd).toBeCloseTo(0.012, 10);
+    const a = aggregate([m, { ...m, spokenMs: 4000, answerUsd: 0.02 }]);
+    expect(a.spokenMs.p50).toBe(1800);
+    expect(a.meanSpokenMs).toBe((1800 + 4000) / 2);
+    expect(a.answerUsd).toBeCloseTo(0.032, 10);
+  });
+  it('the author\'s first text (handoff) and the pause after the opener, apart from the first word', () => {
+    const r = base();
+    r.events = [{ t: 'handoff', ms: 5200, openerEndMs: 4000 }, ...r.events];
+    const m = computeMetrics(r);
+    expect(m.stage2Ms).toBe(5200);
+    expect(m.handoffGapMs).toBe(1200);
+    expect(computeMetrics(base()).stage2Ms).toBe(420); // no opener: stage 2's first chunk
+    expect(computeMetrics(base()).handoffGapMs).toBeNull();
+  });
+  it('no words: no spoken length', () => {
+    const r = base(); r.words = []; r.sentences = [];
+    expect(computeMetrics(r).spokenMs).toBeNull();
+  });
+});

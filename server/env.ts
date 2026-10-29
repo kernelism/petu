@@ -1,4 +1,8 @@
-// server/env.ts — the ONLY place that reads OPENAI_API_KEY (and every PETU_* knob).
+// server/env.ts — the ONLY place that reads OPENAI_API_KEY, the Anthropic key (and every PETU_* knob).
+// The Anthropic key comes from the .env file only (Vite's loadEnv result): PETU_ANTHROPIC_KEY, else
+// ANTHROPIC_API_KEY. A value of either name in the process environment is never used (in this shell
+// ANTHROPIC_API_KEY can belong to other Anthropic tools and redirect their billing), and nothing is
+// ever written into process.env, so no other code in the process picks the key up.
 //
 // Precedence: process.env first, then the .env files via Vite's loadEnv. Phases and caps are set on
 // the command line for a run (`PETU_PHASE=bakeoff npm run dev`); nobody edits .env for them.
@@ -10,17 +14,19 @@ import { PRICES } from './prices';
 import { HARD_STOP_USD } from '../src/agent/protocol';
 import type { Caps, Phase } from './ledger';
 import type { Effort, ModelConfig } from './openai';
+import { ANTHROPIC_NO_NONE, isAnthropicModel } from './anthropic';
 
-/** The $40 hard stop for checkpoint 2 (prior spike spend included). PETU_TOTAL_CAP_USD may only lower it. */
+/** The $60 hard stop (prior spike spend included; $40 until 2026-10-28). PETU_TOTAL_CAP_USD may only lower it. */
 export const MAX_TOTAL_USD = HARD_STOP_USD;
 /**
- * Per-phase budgets (plan §3; Lessons v3 "Spend" adds the lesson* phases inside the same $40 hard
- * stop, from the headroom outside the founder reserve). Override one for a run with
+ * Per-phase budgets (plan §3; Lessons v3 "Spend" adds the lesson* phases inside the same hard
+ * stop, from the headroom outside the founder reserve). `bench` ($15): the author-model benchmark
+ * (`npm run bench`), from the $20 the hard stop gained. Override one for a run with
  * PETU_CAP_<PHASE>, e.g. PETU_CAP_DEV=3 for contingency.
  */
 export const PHASE_CAPS: Record<Phase, number> = {
   dev: 1, bakeoff: 6, iterate: 7, validate: 2, founder: 21.99,
-  lessondev: 1.5, lessonbake: 3, lessoniter: 3.5, lessonval: 2,
+  lessondev: 1.5, lessonbake: 3, lessoniter: 3.5, lessonval: 2, bench: 15,
 };
 export const PHASES = Object.keys(PHASE_CAPS) as Phase[];
 const EFFORTS: Effort[] = ['none', 'low', 'medium', 'high'];
@@ -52,6 +58,8 @@ const NO_NONE = new Set(['gpt-6.1-sol', 'gpt-6-astra']);
 
 export type PetuEnv = {
   key: string;
+  /** PETU_ANTHROPIC_KEY ('' when unset: a claude-* answer model then refuses each answer with a clear message). */
+  anthropicKey: string;
   model: ModelConfig;
   /** Stage 1 (scout): a fast model at no reasoning; JSON out. */
   scout: ModelConfig;
@@ -65,8 +73,11 @@ export type PetuEnv = {
   evalToken?: string;
 };
 
-/** Typed, validated config from a key lookup. Throws on a bad knob (the dev server then refuses to start). */
-export function parseEnv(get: (k: string) => string | undefined, opts: { root: string; home: string }): PetuEnv {
+/**
+ * Typed, validated config from a key lookup. Throws on a bad knob (the dev server then refuses to start).
+ * `opts.fileEnv`: a lookup of the .env file alone (no process.env); the Anthropic key is read only there.
+ */
+export function parseEnv(get: (k: string) => string | undefined, opts: { root: string; home: string; fileEnv?: (k: string) => string | undefined }): PetuEnv {
   const str = (k: string) => { const v = get(k)?.trim(); return v ? v : undefined; };
   const num = (k: string, dflt: number) => {
     const v = str(k);
@@ -85,6 +96,7 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   if (!PRICES[model]) throw new Error(`petu: PETU_MODEL "${model}" has no price in server/prices.ts (${Object.keys(PRICES).join(', ')})`);
   const effort = oneOf('PETU_EFFORT', EFFORTS, DEFAULT_EFFORT);
   if (effort === 'none' && NO_NONE.has(model)) throw new Error(`petu: ${model} does not accept reasoning effort none; set PETU_EFFORT=low`);
+  if (effort === 'none' && ANTHROPIC_NO_NONE.has(model)) throw new Error(`petu: ${model} cannot turn thinking off; set PETU_EFFORT=low`);
   const verbosity = str('PETU_VERBOSITY') == null ? undefined : oneOf('PETU_VERBOSITY', ['low', 'medium'] as const, 'low');
   // Lessons v3: an answer may walk several pages and build a figure across them.
   const maxOutput = Math.round(num('PETU_MAX_OUTPUT', DEFAULT_MAX_OUTPUT));
@@ -92,11 +104,13 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
 
   const scoutModel = str('PETU_SCOUT_MODEL') ?? DEFAULT_SCOUT_MODEL;
   if (!PRICES[scoutModel]) throw new Error(`petu: PETU_SCOUT_MODEL "${scoutModel}" has no price in server/prices.ts`);
+  if (isAnthropicModel(scoutModel)) throw new Error('petu: the scout runs on OpenAI only (PETU_SCOUT_MODEL); Claude models are wired for stage 2 (PETU_MODEL)');
   const scoutEffort = oneOf('PETU_SCOUT_EFFORT', EFFORTS, 'none');
   if (scoutEffort === 'none' && NO_NONE.has(scoutModel)) throw new Error(`petu: ${scoutModel} does not accept reasoning effort none; set PETU_SCOUT_EFFORT=low`);
   const explicitCache = str('PETU_EXPLICIT_CACHE') !== '0';
   const storyModel = str('PETU_STORYBOARD_MODEL') ?? DEFAULT_STORYBOARD_MODEL;
   if (!PRICES[storyModel]) throw new Error(`petu: PETU_STORYBOARD_MODEL "${storyModel}" has no price in server/prices.ts`);
+  if (isAnthropicModel(storyModel)) throw new Error('petu: the storyboard runs on OpenAI only (PETU_STORYBOARD_MODEL)');
   const storyEffort = oneOf('PETU_STORYBOARD_EFFORT', EFFORTS, DEFAULT_STORYBOARD_EFFORT);
   if (storyEffort === 'none' && NO_NONE.has(storyModel)) throw new Error(`petu: ${storyModel} does not accept reasoning effort none; set PETU_STORYBOARD_EFFORT=low`);
   const storyOn = oneOf('PETU_STORYBOARD', ['0', '1'] as const, '0') === '1';
@@ -117,6 +131,7 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
 
   return {
     key: get('OPENAI_API_KEY')?.trim() ?? '',
+    anthropicKey: anthropicKeyOf(opts.fileEnv),
     model: { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) },
     scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, fast: str('PETU_SCOUT_FAST') === '1', explicitCache },
     storyboard: storyOn ? { model: storyModel, effort: storyEffort, maxOutput: STORYBOARD_MAX_OUTPUT, fast: false, explicitCache, ...(str('PETU_STORYBOARD_TIMEOUT_MS') ? { timeoutMs: num('PETU_STORYBOARD_TIMEOUT_MS', 12_000) } : {}) } : null,
@@ -127,8 +142,20 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   };
 }
 
-/** Reads the environment once for the dev server: process.env wins over the .env files. */
-export function loadPetuEnv(mode: string, envDir: string | false, root: string): PetuEnv {
-  const files = loadEnv(mode, envDir, '');
-  return parseEnv((k) => (process.env[k] ? process.env[k] : files[k]), { root, home: homedir() });
+/** The Anthropic key from the .env file lookup: PETU_ANTHROPIC_KEY first, else ANTHROPIC_API_KEY; '' when neither. */
+export function anthropicKeyOf(fileEnv?: (k: string) => string | undefined): string {
+  for (const k of ['PETU_ANTHROPIC_KEY', 'ANTHROPIC_API_KEY']) { const v = fileEnv?.(k)?.trim(); if (v) return v; }
+  return '';
+}
+
+/**
+ * Reads the environment once for the dev server: process.env wins over the .env files (knobs). The
+ * Anthropic key is the exception: file only. Vite's loadEnv (prefix '') returns process.env's value
+ * for any key the process also has, so a name present in process.env is skipped for the key (its file
+ * value can't be told apart from the process's): unset it in the shell, or use PETU_ANTHROPIC_KEY.
+ */
+export function loadPetuEnv(mode: string, envDir: string | false, root: string, load: typeof loadEnv = loadEnv, proc: NodeJS.ProcessEnv = process.env): PetuEnv {
+  const files = load(mode, envDir, '');
+  const fileEnv = (k: string) => (proc[k] === undefined ? files[k] : undefined);
+  return parseEnv((k) => (proc[k] ? proc[k] : files[k]), { root, home: homedir(), fileEnv });
 }
