@@ -22,13 +22,14 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 | `src/agent/protocol.ts` | `AskRequest`, `AskContext`, `AskEvent` (NDJSON), `SpendSummary`, `HARD_STOP_USD` 40. |
 | `src/agent/scout.ts` | `ScoutRequest/Result/Event`, `SCOUT_SCHEMA`, `parseScout`, `fallbackScout`, `answerPages`, `imagePages` (≤ 4 images incl. visible). |
 | `src/agent/twoStage.ts` | Joins opener stream + stage-2 stream; emits `scout` / `handoff` events; failure after the opener = cut-off, not error. |
-| `src/agent/useAgent.ts` | Per-document state: `ContextBuilder`, `History` (≤ 3 turns, narration only), `Prewarm`, spend; `source()` builds the two-stage generator. |
+| `src/agent/useAgent.ts` | Per-document state: `ContextBuilder`, `History` (≤ 3 turns, narration only), `SessionMemory` (MEMORY block), `Prewarm`, spend; `source()` builds the two-stage generator and records each finished or stopped answer. |
+| `src/agent/context/memory.ts` | Session record + MEMORY: per answer the question, pages, `relation`, plan (+ storyboard), board as data (sections; things with kind/id/label/data/the words drawn on; constants; changes), claims, check question. Append-only; past 8 entries the oldest half rolls to one line each. `RELATIONS`, `REVISIONS`. |
 | `src/agent/client.ts` | `askStream` (NDJSON), `scoutLive`, `getSpend`, cap/error lines (`capLine`, `askErrorLine`). |
 | `src/agent/prewarm.ts` | Prewarm on ask-bar intent (focus or 3rd char), dedupe 25 min; system block on document open. |
 | `src/agent/context/build.ts` | `ContextBuilder`: `digest()`, `visible()`, `build()` (stage 2), `pagePrefix()` (prewarm), `groundPage()` (pdf.js → `PageGround`). |
 | `src/agent/context/*` | `textLines` (`t7 436 415–470: …`), `marks` (`#d #s #a #b #i #g #e`, ≤ 60/page), `operatorList`, `format` (listings), `digest` (≤ 48k chars), `search`, `outline`, `image` (JPEG, `MAX_PATCHES`), `ink` (student ink summary + crop). |
 | `src/agent/context/charts.ts` | Figure calibration: `chartMarks(paths, lines, aspect)` finds axes (long strokes, ticks, numeric tick labels below/left, least-squares fit, log when the labels are powers/geometric) → `#cN` charts (`PageGround.charts`, listed after the marks as `#c1 chart x,y w×h x "Q" 0–60, y "P" 0–14`); `chartToPage` maps data → page. Skips anything ambiguous. `scripts/corpus/charts.ts` validates (fixtures + corpus sample, `--render` dots on ticks). |
-| `src/agent/context/{tiers,docmap,labels,candidates,printed,memory}.ts` | The tiered scout context (`?ctx=new`, `PETU_CTX=new` for evals; default old). `tiers`: small ≤ 60 pages = digest; medium ≤ 400 = card + map + digest; huge = card + map + the visible section card. `docmap`: every bookmark with page ranges (6k-token cap, deepest level dropped from the back) or detected headings; `printed`: printed-vs-PDF page offset (page labels or running headers on a fixed sample); `labels`: Figure/Table/Example/Appendix/eq. (3.4)/section → page; `candidates`: per question ≤ 8 pages (named labels and printed pages, ±2 neighbours, BM25 top 5) and the scout's `find` resolver; `memory`: append-only SESSION block. `ContextBuilder.scout()` returns all of it; the cached blocks never depend on index progress. `npm run ctx-bench` measures it offline. |
+| `src/agent/context/{tiers,docmap,labels,candidates,printed,memory}.ts` | The tiered scout context (`?ctx=new`, `PETU_CTX=new` for evals; default old). `tiers`: small ≤ 60 pages = digest; medium ≤ 400 = card + map + digest; huge = card + map + the visible section card. `docmap`: every bookmark with page ranges (6k-token cap, deepest level dropped from the back) or detected headings; `printed`: printed-vs-PDF page offset (page labels or running headers on a fixed sample); `labels`: Figure/Table/Example/Appendix/eq. (3.4)/section → page; `candidates`: per question ≤ 8 pages (named labels and printed pages, ±2 neighbours, BM25 top 5) and the scout's `find` resolver; `memory`: the session record and MEMORY block (owned by useAgent, both modes). `ContextBuilder.scout()` returns all of it; the cached blocks never depend on index progress. `npm run ctx-bench` measures it offline. |
 | `src/agent/evalHooks.ts` | `?eval` only: `window.__petu` for the runner. |
 | `scripts/ground.ts` | `npm run ground -- <pdf> <page…>`: prints exactly what the model sees. No API call. |
 
@@ -57,9 +58,9 @@ JSON, upstream error or cap → stage 2 on the scout plan. Esc aborts it (booked
 
 1. `developer`: system prompt — breakpoint **12h**.
 2. `user`: `docText` (deck digest) — **30m**; `pageText` (visible listing); visible JPEG (detail high) — **30m**.
-3. history (≤ 3 Q/A, narration only).
+3. MEMORY (follow-ups; append-only, 30m breakpoint), then history (≤ 3 Q/A, narration only).
 4. volatile tail: `pagesText` (scout pages' listings), `IMAGE of page N` × ≤ 3, `searchText` (v2 only),
-   `PLAN (…teaching order…)`, `STUDENT INK`, `QUESTION (…page N)`, then `openerNote(opener)` last.
+   `PLAN (…teaching order…)`, `RELATION to your previous answer` (follow-ups: `relationNote`; a revision asks for a fresh section and a different representation or level), `STUDENT INK`, `QUESTION (…page N)`, then `openerNote(opener)` last.
 
 `prompt_cache_key` = `petu-<PROMPT_VERSION>` shared by **all documents** (scout: `petu-scout-<SCOUT_VERSION>`).
 Scout prefix = `SCOUT_SYSTEM`, digest (30m), visible listing with "listing only, no image" (30m) — byte-identical
@@ -114,6 +115,7 @@ curl -s localhost:<yourport>/api/spend                # never 5180/5181
 - Changing anything before the 30m breakpoints (digest format, listing format) invalidates every
   cached prefix; scout and answer must keep the digest byte-identical.
 - `LIMITS.images` is 3 (others) + the visible image; raising `imagePages` needs both sides.
+- Follow-ups: the scout's JSON starts with `relation` (continue / revise-representation / simplify / new-example / deeper / new-topic, s2.4); the desk still continues the newest `{{scene}}` for any later scene tag (src/desk/Desk.ts addRegion), so a revision's "fresh section" is only a new section when it opens with `{{sketch}}`.
 - `searchText` is a v2 path still wired; v3 sends the digest instead. History (follow-ups) is live:
   ≤ 3 turns to stage 2, the last one (first 600 chars) to the scout as `prior`.
 - `?debug` panel shows cost, cache share, scout verdict, handoff gap and skipped actions — use it.

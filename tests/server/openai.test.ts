@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from '../../server/ledger';
 import { costUsd } from '../../server/prices';
-import { type AnswerRecord, ask, askImages, buildRequest, buildScoutRequest, buildSystemPrewarm, estimateInputTokens, openerNote, prewarm, prewarmScout, prewarmSystem, judge, scoutStream, scoutCacheKey, systemTokensLow, type ModelConfig, type Deps } from '../../server/openai';
+import { type AnswerRecord, ask, askImages, buildRequest, buildScoutRequest, buildSystemPrewarm, estimateInputTokens, openerNote, relationNote, prewarm, prewarmScout, prewarmSystem, judge, scoutStream, scoutCacheKey, systemTokensLow, type ModelConfig, type Deps } from '../../server/openai';
 import { SCOUT_SYSTEM } from '../../server/prompt/scout';
 import type { ScoutEvent } from '../../src/agent/scout';
 import { CacheStats } from '../../server/cacheStats';
@@ -106,6 +106,32 @@ describe('buildRequest', () => {
     expect(b.input).toHaveLength(2);
     expect(b.stream).toBe(false);
     expect(b.prompt_cache_options).toEqual({ mode: 'explicit', prewarm: true });
+  });
+});
+
+describe('follow-ups: MEMORY and RELATION', () => {
+  it('MEMORY is its own message after the page block, cached at its end (30m), before history; the relation note follows the PLAN', () => {
+    const b = buildRequest(req({ history: [{ q: 'q', a: 'a', page: 1 }], context: { ...context, memory: 'MEMORY\nA1 …', scout: { pages: [2], plan: 'walk', relation: 'simplify' } } }), cfg) as any;
+    expect(b.input[2]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'MEMORY\nA1 …', prompt_cache_breakpoint: { mode: 'explicit', ttl: '30m' } }] });
+    expect(b.input[3].content[0].text).toBe('QUESTION (page 1): q');
+    const bps = JSON.stringify(b.input).match(/prompt_cache_breakpoint/g) ?? [];
+    expect(bps.length).toBeLessThanOrEqual(4);
+    const tail = b.input.at(-1).content.map((c: any) => c.text ?? '');
+    const plan = tail.findIndex((t: string) => t.startsWith('PLAN'));
+    expect(tail[plan + 1]).toBe(relationNote('simplify'));
+    expect(relationNote('simplify')).toMatch(/fresh board section/);
+    expect(relationNote('simplify')).toMatch(/everyday comparison mapped part for part/);
+    expect(relationNote('continue')).not.toMatch(/fresh board section/);
+  });
+  it('no memory, no relation note; prewarm never carries memory', () => {
+    const b = buildRequest(req({ context: { ...context, scout: { pages: [2], plan: 'walk', relation: 'simplify' } } }), cfg) as any;
+    expect(JSON.stringify(b.input.at(-1))).not.toContain('RELATION to your previous answer');
+    const w = buildRequest(req({ context: { ...context, memory: 'MEMORY' } }), cfg, true) as any;
+    expect(w.input).toHaveLength(2);
+  });
+  it('the scout reads the relation first and passes it on', () => {
+    expect(parseScout('{"relation":"new-example","opener":"x","pages":[2],"find":[],"plan":"p"}', 5, 1)).toEqual({ pages: [2], plan: 'p', relation: 'new-example' });
+    expect(parseScout('{"relation":"eli5","pages":[2],"plan":"p"}', 5, 1)).toEqual({ pages: [2], plan: 'p' });
   });
 });
 
@@ -546,7 +572,7 @@ describe('Lessons v3: two stages', () => {
     expect(tail.endsWith('QUESTION: How does it work?')).toBe(true);
     expect(b).toMatchObject({ stream: true, max_output_tokens: 600, reasoning: { effort: 'none' }, prompt_cache_key: scoutCacheKey(), text: { format: { type: 'json_schema', strict: true } } });
     // The opener is first in the schema: it streams first.
-    expect(Object.keys(b.text.format.schema.properties)).toEqual(['opener', 'pages', 'find', 'plan']);
+    expect(Object.keys(b.text.format.schema.properties)).toEqual(['relation', 'opener', 'pages', 'find', 'plan']);
     // The prewarm is the same prefix (and the same output format, which is part of the prompt).
     const pre = buildScoutRequest(sreq, scfg, true) as any;
     expect(pre.input).toEqual(b.input.slice(0, 2));

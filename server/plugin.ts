@@ -33,6 +33,7 @@ import { CacheStats } from './cacheStats';
 import { worstCaseUsd } from './prices';
 import { loadPetuEnv, type PetuEnv } from './env';
 import { routeReport } from './report';
+import { isRelation } from '../src/agent/context/memory';
 
 export const BODY_LIMIT = 12 * 1024 * 1024;
 const PREWARM_TTL_MS = 25 * 60 * 1000;
@@ -322,6 +323,8 @@ export function validateContext(c: any): string | null {
   if (c.opener != null && (!isStr(c.opener) || c.opener.length > LIMITS.opener)) return 'context.opener must be a string of at most 2,000 characters';
   if (c.searchText != null && (!isStr(c.searchText) || c.searchText.length > LIMITS.searchText)) return 'context.searchText must be a string of at most 20,000 characters';
   if (c.ink != null && (!isStr(c.ink.summary) || c.ink.summary.length > LIMITS.inkSummary || (c.ink.crop != null && !isImage(c.ink.crop)))) return 'context.ink is malformed';
+  if (c.memory != null && (!isStr(c.memory) || c.memory.length > LIMITS.memory)) return `context.memory must be a string of at most ${LIMITS.memory.toLocaleString('en-US')} characters`;
+  if (c.scout?.relation != null && !isRelation(c.scout.relation)) return 'context.scout.relation is not a known relation';
   if (c.scoutSection != null && (!isStr(c.scoutSection) || c.scoutSection.length > LIMITS.section)) return 'context.scoutSection is too long';
   return null;
 }

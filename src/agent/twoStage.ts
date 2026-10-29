@@ -37,7 +37,7 @@ export async function* twoStage(o: TwoStage, signal: AbortSignal): AsyncGenerato
         t: 'scout', pages: sc.pages, plan: sc.plan, ms: sc.ms, atMs, usd: c.usd, ...(sc.fallback ? { fallback: sc.fallback } : {}),
         ...(sc.openerMs != null ? { openerMs: sc.openerMs } : {}), ...(sc.opener ? { opener: sc.opener } : {}),
         ...(c.cached != null ? { cached: c.cached } : {}), ...(c.input != null ? { input: c.input } : {}),
-        ...(sc.find?.length ? { find: sc.find } : {}), ...(o.ctx ? { ctx: o.ctx } : {}),
+        ...(sc.find?.length ? { find: sc.find } : {}), ...(sc.relation ? { relation: sc.relation } : {}), ...(o.ctx ? { ctx: o.ctx } : {}),
       };
       o.handlers.onEvent?.(ev);
       o.handlers.onScout?.(ev);

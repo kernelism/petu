@@ -67,8 +67,20 @@ export const Q1: Question[] = [
   q('T10', 'szeliski', 1220, 'random', 'navigation', 'Where does the book introduce matte reflection?', { tags: ['text'] }),
 ];
 
-export type QSetName = 'q1' | 'q2' | 'q3';
-export const QSETS: Record<QSetName, Question[]> = { q1: Q1, q2: Q2, q3: Q3 };
+/**
+ * Question set fu (follow-ups): a question, then a scripted revision request on the same page. The
+ * follow-up must change the representation or level as asked and not repeat the first answer (the r3
+ * judge sees both answers: judge.ts FOLLOW_UP_RUBRIC). All dev: it is for tuning the follow-up path.
+ */
+export const FU: Question[] = [
+  q('D1', 'bio', 4, 'hand', 'follow-up', 'How does competitive inhibition change the reaction rate? Show me.', { followUp: 'improve the drawing' }),
+  q('D2', 'econ', 12, 'hand', 'follow-up', 'Why does the tax create a deadweight loss?', { followUp: "explain like I'm 5" }),
+  q('D3', 'mechanics', 6, 'hand', 'follow-up', 'Why do 30 and 60 degrees land at the same spot?', { followUp: 'show me a different example' }),
+  q('D4', 'ost-econ', 128, 'hand', 'follow-up', 'Why does the elasticity change along a straight demand line if its slope is the same everywhere?', { followUp: "I still don't get it" }),
+];
+
+export type QSetName = 'q1' | 'q2' | 'q3' | 'fu';
+export const QSETS: Record<QSetName, Question[]> = { q1: Q1, q2: Q2, q3: Q3, fu: FU };
 export const DEFAULT_QSET: QSetName = 'q2';
 /** The default set (q2). Pass a set explicitly where the runner's --qset applies. */
 export const QUESTIONS: Question[] = QSETS[DEFAULT_QSET];

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseJudge, buildJudgeRequestR3, judgeAnswer, R2, R3, RUBRIC_R3, JUDGE_SCHEMA_R3, CRITERIA_R3, DEFECTS_R3, rubricOf, criteriaOf, meanScore, estimateJudgeTokens, fakeJudgement, fakeJudgeFetch, agreement, DEFAULT_RUBRIC } from '../../scripts/eval/judge';
+import { parseJudge, buildJudgeRequestR3, judgeAnswer, R2, R3, RUBRIC_R3, JUDGE_SCHEMA_R3, CRITERIA_R3, DEFECTS_R3, rubricOf, criteriaOf, meanScore, estimateJudgeTokens, fakeJudgement, fakeJudgeFetch, agreement, DEFAULT_RUBRIC, FOLLOW_UP_RUBRIC } from '../../scripts/eval/judge';
 
 const good = { scores: { understanding: 4, illustration: 2, deck: 3, craft: 3, economy: 5 }, defects: ['board_copies_page', 'single_slide'], fatal: [], notes: 'Draw a window over a corner.' };
 const img = { b64: 'AAAA', w: 1152, h: 720 };
@@ -50,6 +50,16 @@ describe('rubric r3', () => {
     expect((sk.content.at(-1) as { text: string }).text).toBe('Engine: 1 action(s) were skipped and never appeared: grid id=o: unknown block img.');
     const noBoard = buildJudgeRequestR3({ phase: 'x', question: 'Q', result: { chunks: [], timings: [] }, page: img, digest: '', frames: [{ ...img, caption: 'c' }] });
     expect(JSON.stringify(noBoard.content)).not.toContain('whole board');
+  });
+  it('a follow-up is judged against the previous answer: its frames, board and transcript first, plus the follow-up rubric', () => {
+    const prev = { question: 'First?', frames: [{ ...img, caption: 'p1' }], board: img, result: { chunks: [{ t: 0, d: 'Before.' }], timings: [] } };
+    const r = buildJudgeRequestR3({ phase: 'x', question: 'simpler', result: { chunks: [{ t: 0, d: 'After.' }], timings: [] }, page: img, digest: '', frames: [{ ...img, caption: 'c' }], previous: prev });
+    expect(r.instructions).toBe(`${RUBRIC_R3}\n\n${FOLLOW_UP_RUBRIC}`);
+    expect(FOLLOW_UP_RUBRIC).toContain('followup_repeats');
+    const texts = r.content.flatMap((c) => (c.type === 'input_text' ? [c.text] : []));
+    expect(texts[0]).toContain('PREVIOUS ANSWER. The student first asked: First?');
+    expect(texts.findIndex((t) => t.includes('Previous transcript:\nBefore.'))).toBeLessThan(texts.findIndex((t) => t.startsWith('Follow-up question: simpler')));
+    expect(r.content.filter((c) => c.type === 'input_image' && c.detail === 'low')).toHaveLength(2); // previous frame + this page
   });
   it('estimates tokens like the server (images by 32-px patches)', () => {
     const r = buildJudgeRequestR3({ phase: 'x', question: 'Q', result: { chunks: [], timings: [] }, page: img, digest: '', frames: [{ ...img, caption: 'c' }] });

@@ -22,7 +22,6 @@ import { bucketMap, capMap, formatMap, headingLines, headingMap, outlineTree, wi
 import { LabelIndex } from './labels.ts';
 import { candidates as findCandidates, formatCandidates, resolveFind, type Candidate } from './candidates.ts';
 import { offsetFromHeaders, offsetFromLabels, samplePages } from './printed.ts';
-import { SessionMemory, boardObjects } from './memory.ts';
 import { sectionCard, sectionWindow, tierOf, tokens, windowBoilerplate, type Tier } from './tiers.ts';
 import { boilerplate } from './digest.ts';
 import { inkSummary } from './ink.ts';
@@ -94,8 +93,6 @@ export type ScoutContext = {
   section?: string;
   pageText: string;
   ground: PageGround;
-  /** Session memory (append-only, cached at its end). */
-  memory?: string;
   /** Per question (uncached tail): CANDIDATES and the printed-page note. */
   candidates?: string;
   /** A scanned page or one whose math is drawn as outlines: its image, sent at low detail. */
@@ -149,7 +146,6 @@ export class ContextBuilder {
   /** Heading candidates per indexed page (a document without bookmarks gets its map from them). */
   private heads = new Map<number, string[]>();
   private labels = new LabelIndex();
-  private memory = new SessionMemory();
   private mapP: Promise<{ text: string; map: MapEntry[]; card: DocCard }> | null = null;
   private fullDigest: string | null = null;
   private searchPages: { n: number; pages: Map<number, string[]> } | null = null;
@@ -248,7 +244,7 @@ export class ContextBuilder {
 
   /**
    * Stage 1 (scout), whatever the mode: the cached document block, the section card (huge), the visible
-   * page, session memory, and the per-question CANDIDATES. Old mode: the digest and the page only.
+   * page and the per-question CANDIDATES (session MEMORY is added by useAgent). Old mode: the digest and the page only.
    */
   async scout(page: number, question: string, prior?: { q: string }): Promise<ScoutContext> {
     const t0 = performance.now();
@@ -273,21 +269,15 @@ export class ContextBuilder {
     const cand = [note, block].filter(Boolean).join('\n');
     let image: Jpeg | undefined;
     if (vis.ground.noText || vis.ground.mathOutlines) { try { image = (await this.entry(page, true).image!).jpeg; } catch { /* listing only */ } }
-    const memory = this.memory.text();
     return {
       digest, ...(section ? { section } : {}), pageText: vis.pageText, ground: vis.ground,
-      ...(memory ? { memory } : {}), ...(cand ? { candidates: cand } : {}), ...(image ? { image } : {}),
+      ...(cand ? { candidates: cand } : {}), ...(image ? { image } : {}),
       info: {
         mode: 'new', tier, ms: Math.round(performance.now() - t0),
-        tokens: { [tier === 'huge' ? 'map' : tier === 'medium' ? 'map+digest' : 'digest']: tokens(digest), ...(section ? { section: tokens(section) } : {}), page: tokens(vis.pageText), ...(image ? { image: 85 } : {}), memory: tokens(memory), candidates: tokens(cand) },
+        tokens: { [tier === 'huge' ? 'map' : tier === 'medium' ? 'map+digest' : 'digest']: tokens(digest), ...(section ? { section: tokens(section) } : {}), page: tokens(vis.pageText), ...(image ? { image: 85 } : {}), candidates: tokens(cand) },
         candidates: cs.map(candLabel), ...(m.card.printedOffset ? { printedOffset: m.card.printedOffset } : {}),
       },
     };
-  }
-
-  /** A finished answer, for the session memory (new mode). */
-  remember(t: { question: string; page: number; pages: number[]; script: string }): void {
-    this.memory.add({ question: t.question, page: t.page, pages: t.pages, board: boardObjects(t.script) });
   }
 
   /** The scout's `find` strings → pages (label index, then keyword search), excluding `exclude`. */

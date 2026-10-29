@@ -7,6 +7,9 @@
 // opener is spoken while the rest is still being written, and stage 2 starts as soon as the pages
 // and plan are known, told exactly what the opener said. Its JSON is parsed defensively: anything
 // unusable falls back to the visible page alone, so a scout failure never stops an answer.
+// On a follow-up it also decides how the question relates to the previous answer (`relation`), first,
+// so the opener can already speak in the new way.
+import { isRelation, RELATIONS, type Relation } from './context/memory';
 
 /** What the browser sends to POST /api/scout. */
 export type ScoutRequest = {
@@ -28,7 +31,7 @@ export type ScoutRequest = {
   section?: string;
   /** A scanned page or one whose equations are drawn as outlines: its image, read at low detail. */
   image?: { b64: string; w: number; h: number };
-  /** Session memory: earlier answers on this document (append-only, cached at its end). */
+  /** Session MEMORY (src/agent/context/memory.ts): earlier answers' plans, boards and claims (append-only, cached at its end). */
   memory?: string;
   /** Per question (uncached, before the question): CANDIDATES and the printed-page note. */
   candidates?: string;
@@ -36,6 +39,8 @@ export type ScoutRequest = {
 
 /** The scout's verdict. `fallback` says why the visible page alone is used. */
 export type ScoutResult = { pages: number[]; plan: string; ms: number; usd: number; fallback?: string;
+  /** How the question relates to the previous answer (absent: unknown, e.g. a fallback). */
+  relation?: Relation;
   /** Labels or phrases the scout wants found (resolved locally into pages before stage 2). */
   find?: string[];
   /** The opener as spoken (tags included; only what passed the visible-page filter). */
@@ -49,7 +54,7 @@ export type ScoutResult = { pages: number[]; plan: string; ms: number; usd: numb
  */
 export type ScoutEvent =
   | { t: 'opener'; d: string; ms: number }
-  | { t: 'scout'; pages: number[]; plan: string; ms: number; fallback?: string; notes?: string[]; find?: string[] }
+  | { t: 'scout'; pages: number[]; plan: string; ms: number; fallback?: string; notes?: string[]; find?: string[]; relation?: Relation }
   | { t: 'end'; usd: number; ms: number; cached?: number; input?: number };
 
 export const SCOUT_MAX_PAGES = 6;
@@ -63,9 +68,11 @@ const FIND_CHARS = 80;
 export const SCOUT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['opener', 'pages', 'find', 'plan'],
-  // Property order is output order: the opener first, so it can be spoken while the rest is written.
+  required: ['relation', 'opener', 'pages', 'find', 'plan'],
+  // Property order is output order: the relation (a few tokens), then the opener, so it can be spoken
+  // in the right way while the rest is written.
   properties: {
+    relation: { type: 'string', enum: [...RELATIONS], description: 'How this question relates to your previous answer (the last in MEMORY): continue, revise-representation, simplify, new-example, deeper, or new-topic (also every first question).' },
     opener: { type: 'string', description: 'The first one or two sentences of the spoken answer, with tags that point only at the visible page.' },
     pages: { type: 'array', items: { type: 'integer' }, description: 'At most 6 page numbers of the document, in teaching order.' },
     find: { type: 'array', items: { type: 'string' }, description: 'At most 3 labels or short phrases to look up (e.g. a figure, table or equation number the answer needs); usually empty.' },
@@ -81,7 +88,7 @@ export const fallbackScout = (page: number, why: string, ms = 0, usd = 0): Scout
  * strings, duplicates and out-of-range pages (dropped), more than 6 pages (cut), a long plan (cut at
  * a word). No usable page → the visible page.
  */
-export function parseScout(text: string, numPages: number, visible: number): { pages: number[]; plan: string; fallback?: string; find?: string[] } {
+export function parseScout(text: string, numPages: number, visible: number): { pages: number[]; plan: string; fallback?: string; find?: string[]; relation?: Relation } {
   let raw: unknown;
   const s = text.trim();
   try { raw = JSON.parse(s); } catch {
@@ -90,7 +97,8 @@ export function parseScout(text: string, numPages: number, visible: number): { p
     try { raw = JSON.parse(s.slice(a, b + 1)); } catch { return { pages: [visible], plan: '', fallback: 'scout returned bad JSON' }; }
   }
   if (raw == null || typeof raw !== 'object') return { pages: [visible], plan: '', fallback: 'scout returned no object' };
-  const o = raw as { pages?: unknown; plan?: unknown; find?: unknown };
+  const o = raw as { pages?: unknown; plan?: unknown; find?: unknown; relation?: unknown };
+  const rel = isRelation(o.relation) ? { relation: o.relation } : {};
   const pages: number[] = [];
   for (const v of Array.isArray(o.pages) ? o.pages : []) {
     const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v.replace(/^p/i, '')) : NaN;
@@ -99,8 +107,8 @@ export function parseScout(text: string, numPages: number, visible: number): { p
   }
   const plan = clipWords(typeof o.plan === 'string' ? o.plan.replace(/\s+/g, ' ').trim() : '', SCOUT_PLAN_CHARS);
   const find = (Array.isArray(o.find) ? o.find : []).filter((x): x is string => typeof x === 'string').map((x) => x.replace(/\s+/g, ' ').trim().slice(0, FIND_CHARS)).filter(Boolean).slice(0, SCOUT_FIND);
-  if (!pages.length) return { pages: [visible], plan, fallback: 'scout chose no valid page', ...(find.length ? { find } : {}) };
-  return { pages, plan, ...(find.length ? { find } : {}) };
+  if (!pages.length) return { pages: [visible], plan, fallback: 'scout chose no valid page', ...(find.length ? { find } : {}), ...rel };
+  return { pages, plan, ...(find.length ? { find } : {}), ...rel };
 }
 
 function clipWords(s: string, n: number): string {

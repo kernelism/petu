@@ -16,6 +16,8 @@ export const EVAL_VOCAB = [
   // the Eval v3 synthetic decks (public/fixtures/econ.pdf, mechanics.pdf)
   /elasticit/i, /deadweight/i, /supply and demand|demand curve|supply curve/i, /surplus/i, /projectile/i,
   /inclined plane/i, /friction/i, /pulley|Atwood/i, /centripetal/i,
+  // the bio deck (public/fixtures/bio.pdf) and the follow-up set's requests
+  /inhibit/i, /enzyme/i, /Michaelis/i, /substrate/i, /like I'm 5/i,
 ];
 
 describe('system prompt', () => {

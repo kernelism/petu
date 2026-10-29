@@ -12,6 +12,7 @@ it. The review artefact is `report.html`, not recordings.
 | `scripts/eval/plan.ts` | `parseArgs` (flags below), `selectQuestions`, `checkBudget` (preflight vs `/api/spend`), `remainingUsd`. |
 | `scripts/eval/configs.ts` | Named model configs (`terra-none` default, `luna-none`, `terra-low`, `sol-low`, `astra-low`, `terra-none-fast`, `terra-none-verbosity-low`) → server env; preflight cost assumptions. |
 | `scripts/eval/questions.ts` | Sets `q1` (checkpoint 2, 24 q) and `q2` (default, 40 q); hashed (`qsetId`, pinned in `tests/eval/questions.test.ts`); `assertSplitAllowed` (held-out test split). |
+| `scripts/eval/questions.ts` `FU` | Set `fu` (4 dev follow-up cases: bio p4 + improve the drawing, econ p12 + ELI5, mechanics p6 + a different example, ost-econ p128 + I still don't get it). A follow-up turn's r3 judge sees the previous answer (frames low detail, board, transcript) and `FOLLOW_UP_RUBRIC` (defect `followup_repeats`). `PETU_PHASE=lessondev npm run eval -- --qset fu --split dev`. |
 | `scripts/eval/q2.ts` | q2 rows (34 course + 6 on synthetic `econ`/`mechanics` decks), written by an agent that saw only the PDFs; split computed. |
 | `scripts/eval/split.ts` | `stratifiedSplit` by deck then scope, seed 670 → 20 dev / 20 test. |
 | `scripts/eval/decks.ts` | Deck id → file; course PDFs read in place from `PETU_PDF_DIRS` (default `~/Documents/670/contents`, `public/dev`), never copied; fixtures from `public/fixtures/`. |

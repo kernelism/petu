@@ -45,6 +45,7 @@ import { systemPrompt, PROMPT_VERSION } from './prompt/system';
 import { SCOUT_SYSTEM, SCOUT_VERSION } from './prompt/scout';
 import { SCOUT_SCHEMA, fallbackScout, parseScout, type ScoutEvent, type ScoutRequest, type ScoutResult } from '../src/agent/scout';
 import { OpenerGate, ScoutJson } from './scoutStream';
+import type { Relation } from '../src/agent/context/memory';
 import { CacheStats, estimatedUsage } from './cacheStats';
 import { STORYBOARD_SYSTEM, STORYBOARD_VERSION } from './prompt/storyboard';
 import { STORYBOARD_SCHEMA, parseStoryboard, storyboardText, type Storyboard } from '../src/agent/storyboard';
@@ -113,6 +114,7 @@ export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { con
   const input = [
     developer(cfg),
     pageBlock(c, cfg),
+    ...(prewarm ? [] : memoryBlock(c, cfg)),
     ...(prewarm ? [] : historyTurns(r.history)),
     ...(prewarm ? [] : [{ role: 'user', content: tail }]),
   ];
@@ -131,6 +133,11 @@ const pageBlock = (c: AskContext, cfg: ModelConfig) => ({ role: 'user', content:
   { type: 'input_text', text: c.pageText },
   { type: 'input_image', image_url: img(c.image.b64), detail: 'high', ...bp(cfg.explicitCache, '30m') },
 ] });
+/**
+ * Session MEMORY (follow-ups): its own message after the page block, cached at its end (30m). It is
+ * append-only, so each turn reads the earlier turns from cache (≤ 4 breakpoints: system, digest, image, memory).
+ */
+const memoryBlock = (c: AskContext, cfg: ModelConfig) => (c.memory ? [{ role: 'user', content: [{ type: 'input_text', text: c.memory, ...bp(cfg.explicitCache, '30m') }] }] : []);
 const historyTurns = (h: AskRequest['history']) => h.flatMap((x) => [
   { role: 'user', content: [{ type: 'input_text', text: `QUESTION (page ${x.page}): ${x.q}` }] },
   { role: 'assistant', content: [{ type: 'output_text', text: x.a }] },
@@ -147,12 +154,32 @@ function groundingTail(c: AskContext, cfg: ModelConfig): unknown[] {
   if (c.scout) {
     const order = c.scout.pages.join(', ');
     tail.push({ type: 'input_text', text: `PLAN (a first read of the whole document; pages in teaching order: ${order})${c.scout.plan ? `: ${c.scout.plan}` : ''}` });
+    if (c.memory && c.scout.relation) tail.push({ type: 'input_text', text: relationNote(c.scout.relation) });
   }
   if (c.ink) {
     tail.push({ type: 'input_text', text: `STUDENT INK on page ${c.page}: ${c.ink.summary}` });
     if (c.ink.crop) tail.push({ type: 'input_image', image_url: img(c.ink.crop.b64), detail: 'high' });
   }
   return tail;
+}
+
+/**
+ * How this question stands to the previous answer (the last in MEMORY), as the scout read it. A
+ * revision (another picture, simpler, another example, deeper) adds what it asks of the board and
+ * the narration: a fresh section, a deliberately different representation or level, nothing repeated.
+ * Per-turn text in the volatile tail, so the cached system block stays one for every question.
+ */
+export function relationNote(r: Relation): string {
+  const head = `RELATION to your previous answer (the last in MEMORY): ${r}.`;
+  if (r === 'continue') return `${head} Carry on from where it left off, in the same scene, without repeating it.`;
+  if (r === 'new-topic') return `${head} A new question: answer it on its own; refer to earlier answers only when they help.`;
+  const change: Record<string, string> = {
+    'revise-representation': 'The student wants the same idea shown another, better way: choose a different kind of picture, the one that shows the cause producing the effect most directly for what this student is missing (a physical picture, a count of things, a before and after, a picture on the slide\'s own figure), not the same kind of chart redrawn.',
+    'simplify': 'The student wants it simpler: fewer things on the board, plain everyday words, and one everyday comparison mapped part for part onto the real thing: draw the comparison itself, each part labelled with the real thing it stands for, so the mapping is something the student sees, then show the real idea in that light.',
+    'new-example': 'The student wants another example: a new case with new values that the same idea runs on, so they watch the same mechanism work again.',
+    'deeper': 'The student wants to go deeper: the next level of the mechanism under what you showed, built on a concrete case.',
+  };
+  return `${head} ${change[r]} What you showed did not land, or not well enough. Do not add to the old picture: open a fresh board section with a new id and teach the idea with this deliberately different representation or level. The new picture shows the mechanism happening (change one thing and let the student watch what follows) and its final state shows the point on its own. Your first beat says in a few words what is different this time. Reuse the slide's own figure when it can carry the new picture, and point back to the earlier picture only to contrast. Never repeat a claim or a drawing MEMORY lists.`;
 }
 
 /** The storyboard's cache key: one per storyboard prompt version, shared by every document. */
@@ -180,6 +207,7 @@ export function buildStoryboardRequest(r: Pick<AskRequest, 'question' | 'history
     input: [
       { role: 'developer', content: [{ type: 'input_text', text: STORYBOARD_SYSTEM, ...bp(cfg.explicitCache, '12h') }] },
       pageBlock(c, cfg),
+      ...memoryBlock(c, cfg),
       ...historyTurns(r.history),
       { role: 'user', content: tail },
     ],
@@ -330,11 +358,11 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
     if (openerMs == null) openerMs = ms();
     emit({ t: 'opener', d: s, ms: ms() });
   };
-  const decide = (v: { pages: number[]; plan: string; fallback?: string; find?: string[] }) => {
+  const decide = (v: { pages: number[]; plan: string; fallback?: string; find?: string[]; relation?: Relation }) => {
     if (verdict) return;
     say(gate.end());
-    verdict = { pages: v.pages, plan: v.plan, ms: ms(), usd: 0, ...(v.fallback ? { fallback: v.fallback } : {}), ...(v.find?.length ? { find: v.find } : {}), ...(gate.said ? { opener: gate.said } : {}), ...(openerMs != null ? { openerMs } : {}) };
-    if (!signal?.aborted) emit({ t: 'scout', pages: verdict.pages, plan: verdict.plan, ms: verdict.ms, ...(v.fallback ? { fallback: v.fallback } : {}), ...(v.find?.length ? { find: v.find } : {}), ...(gate.notes.length ? { notes: gate.notes } : {}) });
+    verdict = { pages: v.pages, plan: v.plan, ms: ms(), usd: 0, ...(v.fallback ? { fallback: v.fallback } : {}), ...(v.relation ? { relation: v.relation } : {}), ...(v.find?.length ? { find: v.find } : {}), ...(gate.said ? { opener: gate.said } : {}), ...(openerMs != null ? { openerMs } : {}) };
+    if (!signal?.aborted) emit({ t: 'scout', pages: verdict.pages, plan: verdict.plan, ms: verdict.ms, ...(v.fallback ? { fallback: v.fallback } : {}), ...(v.relation ? { relation: v.relation } : {}), ...(v.find?.length ? { find: v.find } : {}), ...(gate.notes.length ? { notes: gate.notes } : {}) });
   };
   const finish = (usd: number, u?: Usage): ScoutResult => {
     if (!verdict) decide(fallbackScout(r.page, 'scout ended without a verdict'));
@@ -366,7 +394,7 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
       // The opener's last sentence plays as soon as its string closes, not when the verdict comes.
       if (k === 'opener') say(gate.end());
       // The verdict once pages and plan are both in (the opener, first in the schema, is complete by then).
-      if ((k === 'pages' || k === 'plan') && 'pages' in f && 'plan' in f) decide(parseScout(JSON.stringify({ pages: f.pages, plan: f.plan, find: f.find }), r.numPages, r.page));
+      if ((k === 'pages' || k === 'plan') && 'pages' in f && 'plan' in f) decide(parseScout(JSON.stringify({ pages: f.pages, plan: f.plan, find: f.find, relation: f.relation }), r.numPages, r.page));
     },
   });
   try {
