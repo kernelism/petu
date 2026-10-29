@@ -43,4 +43,25 @@ export const SCENES: Scene[] = [
 ];
 
 export const SIZES = ['1440x900', '2560x1440'] as const;
-export const BROWSERS = ['chromium', 'webkit'] as const;
+export const BROWSERS = ['chromium', 'webkit', 'firefox'] as const;
+/** Default browsers left out, with a note, when their Playwright build isn't installed (the gate keeps working without them). */
+export const OPTIONAL_BROWSERS: readonly string[] = ['firefox'];
+
+/**
+ * The browsers a run renders. Asked-for browsers are kept as they are (a missing one fails at launch, loudly);
+ * by default every BROWSERS entry, minus the optional ones not installed, each with a skip note.
+ */
+export function pickBrowsers(asked: string[] | undefined, installed: (b: string) => boolean): { browsers: string[]; skipped: string[] } {
+  if (asked?.length) {
+    const unknown = asked.filter((b) => !(BROWSERS as readonly string[]).includes(b));
+    if (unknown.length) throw new Error(`unknown browser ${unknown.join(', ')} (known: ${BROWSERS.join(', ')})`);
+    return { browsers: asked, skipped: [] };
+  }
+  const skipped: string[] = [];
+  const browsers = BROWSERS.filter((b) => {
+    if (!OPTIONAL_BROWSERS.includes(b) || installed(b)) return true;
+    skipped.push(`${b} (not installed: \`npx playwright-core install ${b}\` once, or set PLAYWRIGHT_DIR)`);
+    return false;
+  });
+  return { browsers, skipped };
+}
