@@ -21,6 +21,17 @@ const id = (s?: string) => (s && ID.test(s.toLowerCase()) ? s.toLowerCase() : un
 /** An element id; a hyphen reads as an underscore (id=row-column is row_column everywhere). */
 const eid = (s?: string) => { const n = s ? normName(s.trim().replace(/-/g, '_')) : ''; return n && NAME.test(n) ? n : undefined; };
 const MARK_ID = /^#[a-z]\d{1,3}$/;
+/** A calibrated chart on a page (`on=#c1`, with `p=`). */
+const CHART_ID = /^#c\d{1,3}$/;
+/** What may be drawn on a chart in its data coordinates. */
+const CHART_KINDS = new Set(['line', 'arrow', 'point', 'circle', 'label', 'curve', 'shade', 'angle', 'brace', 'plot', 'note']);
+/** "x,y,w,h" → a page rect (model coords), clipped to the page; null unless w, h > 0. */
+function rect4(s?: string): { x: number; y: number; w: number; h: number } | undefined {
+  const p = s?.split(',').map(Number);
+  if (!p || p.length !== 4 || !p.every(Number.isFinite)) return undefined;
+  const x = clamp(p[0], 1000), y = clamp(p[1], 1000), w = Math.min(p[2], 1000 - x), h = Math.min(p[3], 1000 - y);
+  return w > 0 && h > 0 ? { x, y, w, h } : undefined;
+}
 /** An element id, or a part of a kit block (`g[2,3]`, `v[1:3]`). */
 const rid = (s?: string) => (s && isBlockRef(s) ? s : eid(s));
 
@@ -81,7 +92,9 @@ export function parseTag(body: string): RawAction | null {
     return defs.length ? { kind: 'const', defs } : null;
   }
   if (name === 'let') {
-    const on = rawArgs.on !== undefined ? id(rawArgs.on) : undefined;
+    // On a chart (p=12 on=#c1): names of data points, mapped onto the page when used there.
+    const chartOn = rawArgs.on !== undefined && CHART_ID.test(rawArgs.on.toLowerCase()) ? rawArgs.on.toLowerCase() : undefined;
+    const on = rawArgs.on !== undefined && !chartOn ? id(rawArgs.on) : undefined;
     const page = on === undefined ? num(rawArgs.p) : undefined;
     const scalarOf = (k: string, v: string) => k !== 'on' && k !== 'p' && !dupKeys.has(k) && /^[A-Za-z][A-Za-z0-9_]{0,15}$/.test(k) && !v.includes(',') && /^[-−+(.\d]|^(sqrt|pi|rad|deg|sin|cos|tan)\b/i.test(v.trim());
     // Numbers in a let (v=20 g=9.8, no comma: not points) are constants, as a {{const}} would make them.
@@ -89,7 +102,7 @@ export function parseTag(body: string): RawAction | null {
     const allScalar = scalars.length > 0 && Object.keys(rawArgs).every((k) => k === 'on' || k === 'p' || scalars.some(([s]) => s === k));
     if (allScalar && !flags.size && !quotes.length) return { kind: 'const', defs: scalars.map(([k, v]) => [k, v.trim()]) };
     if (on === undefined && (page === undefined || page < 1 || !Number.isInteger(page))) return null;
-    const lit = on !== undefined ? worldPt : (v: string) => pt(v, 1000);
+    const lit = on !== undefined || chartOn ? worldPt : (v: string) => pt(v, 1000);
     const parsed: [string, PtArg][] = [];
     for (const [k, v] of Object.entries(rawArgs)) {
       if (k === 'on' || (on === undefined && k === 'p')) continue;
@@ -101,7 +114,7 @@ export function parseTag(body: string): RawAction | null {
       parsed.push([n, p]);
     }
     if (!parsed.length || flags.size || quotes.length) return null;
-    return on !== undefined ? { kind: 'let', region: on, defs: parsed } : { kind: 'let', page: page!, defs: parsed };
+    return on !== undefined ? { kind: 'let', region: on, defs: parsed } : { kind: 'let', page: page!, defs: parsed, ...(chartOn ? { chart: chartOn } : {}) };
   }
 
   // Any other tag with a repeated key (`line from=D to=C to=E`) is ambiguous: malformed.
@@ -165,10 +178,13 @@ export function parseTag(body: string): RawAction | null {
     }
   }
 
-  // Everything else draws into one target: `p=N` (a page) or `on=<region>`.
+  // Everything else draws into one target: `p=N` (a page) or `on=<region>`. `p=N on=#c1`: a page
+  // drawing on that page's calibrated chart, in its data coordinates.
   const onRaw = args.on?.toLowerCase();
+  const chart = onRaw !== undefined && CHART_ID.test(onRaw) ? onRaw : undefined;
+  if (chart && !CHART_KINDS.has(name)) return null;
   let target: Target;
-  if (onRaw !== undefined) { const r = id(onRaw); if (!r) return null; target = { region: r }; }
+  if (onRaw !== undefined && !chart) { const r = id(onRaw); if (!r) return null; target = { region: r }; }
   else {
     const p = num(args.p);
     if (p === undefined || p < 1 || !Number.isInteger(p)) return null;
@@ -179,13 +195,24 @@ export function parseTag(body: string): RawAction | null {
   const mark = { ...(eid(args.id) ? { id: eid(args.id) } : {}), ...(flags.has('em') ? { em: true } : {}) };
   // Points: page literals clamp here (as before); region literals are world units, clamped by the
   // resolver after fitting; names, page marks (#d3) and constructions resolve when built.
-  const P = (s?: string): PtArg | undefined => parsePtArg(s, inRegion ? worldPt : (v) => pt(v, 1000));
+  // Chart points are data values (any range): the resolver maps them onto the page.
+  const P = (s?: string): PtArg | undefined => parsePtArg(s, inRegion || chart ? worldPt : (v) => pt(v, 1000));
   const PS = (s: string | undefined, min: number): PtArg[] | undefined => {
     if (!s) return undefined;
     const out = s.trim().split(/\s+/).map((x) => P(x));
     return out.length >= min && out.every(Boolean) ? (out as PtArg[]) : undefined;
   };
-  if (SCENE_TAGS.has(name)) {
+  // {{lift p=4 mark=#g1 on=s id=fig}} / box=x,y,w,h: the slide's region onto the board (p= is the source page).
+  if (name === 'lift') {
+    if (!inRegion) return null;
+    const p = num(args.p), box = rect4(args.box), m = args.mark, at = P(args.at), w = num(args.w);
+    if (p === undefined || p < 1 || !Number.isInteger(p) || !box === !m || (m !== undefined && !MARK_ID.test(m))) return null;
+    if ((args.at !== undefined && !at) || (w !== undefined && !(w > 0))) return null;
+    return { kind: 'lift', ...target, srcPage: p, ...(box ? { src: box } : { srcMark: m }), ...(at ? { at } : {}), ...(w ? { w: Math.min(w, 1000) } : {}), ...mark } as RawAction;
+  }
+  // {{note p=4 "…" annotate=#e2|"quote"}} (or at=x,y): a note beside it on the page (below, as `annot`).
+  const pageNote = name === 'note' && !inRegion;
+  if (SCENE_TAGS.has(name) && !pageNote) {
     if (!inRegion) return null;
     const s = parseScene(name, args, quotes, flags);
     return s ? ({ ...s, ...target, ...mark } as RawAction) : null;
@@ -197,7 +224,7 @@ export function parseTag(body: string): RawAction | null {
   }
   const markArg = args.mark;
   if (markArg !== undefined) {
-    if (inRegion || !MARK_ID.test(markArg)) return null;
+    if (inRegion || chart || !MARK_ID.test(markArg)) return null;
     if (!['circle', 'box', 'highlight', 'underline', 'line', 'arrow'].includes(name)) return null;
     const w = args.weight?.toLowerCase();
     if (w !== undefined && !WEIGHTS.has(w as Weight)) return null;
@@ -219,7 +246,20 @@ export function parseTag(body: string): RawAction | null {
     return rx && ry && rx > 0 && ry > 0 ? { rx: Math.min(rx, MAX_R), ry: Math.min(ry, MAX_R) } : null;
   };
 
+  const out = drawTag();
+  return out && chart ? ({ ...out, chart } as RawAction) : out;
+
+  function drawTag(): RawAction | null {
   switch (name) {
+    case 'note': {
+      // A page note: what it annotates is a page mark (#e2, #t5, #c1), a quote, or a point (at=).
+      if (!pageNote || !quote) return null;
+      const ann = args.annotate?.trim();
+      const text = quote.slice(0, 120);
+      if (ann && MARK_ID.test(ann) && !chart) return { kind: 'annot', ...target, text, annotate: ann, ...mark } as RawAction;
+      if (ann && !MARK_ID.test(ann) && !chart) return { kind: 'annot', ...target, text, quote: ann, ...(near ? { near } : {}), ...mark } as RawAction;
+      return !ann && at ? ({ kind: 'annot', ...target, text, at, ...mark } as RawAction) : null;
+    }
     case 'scroll': {
       if (target.page == null || inRegion) return null; // regions never scroll
       const y = num(args.y);
@@ -309,8 +349,10 @@ export function parseTag(body: string): RawAction | null {
       const param = !!(tr && args.x && args.y);
       const dsrc = two(args.domain);
       const dnum = pair(args.domain);
-      if (!inRegion) return null;
-      if (!param && (!fn || fn.length > MAX_FN_CHARS || !dsrc)) return null;
+      if (!inRegion && !chart) return null;
+      // On a chart the domain defaults to its x axis (the resolver fills it in).
+      if (!param && (!fn || fn.length > MAX_FN_CHARS || (!dsrc && !chart))) return null;
+      if (chart && (axes || args.xlabel || args.ylabel)) return null; // the chart has its own axes
       if (!param && dnum && !(dnum[1] > dnum[0])) return null;
       if (param && (args.x!.length > MAX_FN_CHARS || args.y!.length > MAX_FN_CHARS)) return null;
       if (range && !(range[1] > range[0])) return null;
@@ -318,7 +360,7 @@ export function parseTag(body: string): RawAction | null {
       const axisLabels = { ...(args.xlabel ? { xLabel: args.xlabel.slice(0, 40) } : !param && args.x ? { xLabel: args.x.slice(0, 40) } : {}), ...(args.ylabel ? { yLabel: args.ylabel.slice(0, 40) } : !param && args.y ? { yLabel: args.y.slice(0, 40) } : {}) };
       return {
         kind: 'plot', ...target,
-        ...(param ? { x: args.x!.trim(), y: args.y!.trim(), t: tr } : { fn, domainSrc: dsrc, ...(dnum && dnum[1] > dnum[0] ? { domain: dnum } : {}) }),
+        ...(param ? { x: args.x!.trim(), y: args.y!.trim(), t: tr } : { fn, ...(dsrc ? { domainSrc: dsrc } : {}), ...(dnum && dnum[1] > dnum[0] ? { domain: dnum } : {}) }),
         ...(range ? { range } : {}), ...(axes ? { axes } : {}), ...(quote ? { label: quote.slice(0, 40) } : {}), ...labelAt, ...axisLabels, ...dash, ...weight, ...mark,
       };
     }
@@ -329,5 +371,6 @@ export function parseTag(body: string): RawAction | null {
     }
     default:
       return null;
+  }
   }
 }

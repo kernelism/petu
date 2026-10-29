@@ -22,6 +22,16 @@ export type PageGround = {
 export function groundingOf(pages: PageGround[]): Grounding {
   const by = new Map(pages.map((p) => [p.page, p]));
   return {
+    aspect: (page) => by.get(page)?.aspect,
+    obstacles(page) {
+      const g = by.get(page);
+      if (!g) return [];
+      // Text lines and everything drawn with an extent (figures, images, equations, boxes, charts).
+      const rects = g.lines.map((l) => l.rect);
+      for (const m of g.marks) if ('rect' in m) rects.push(m.rect);
+      for (const c of g.charts ?? []) rects.push(c.rect);
+      return rects;
+    },
     mark(page, id): GroundMark | undefined {
       const g = by.get(page);
       if (!g) return undefined;

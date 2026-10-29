@@ -233,6 +233,10 @@ export class Desk implements DeskApi {
     this.rerouteAll();
   }
 
+  pageImage(page: number, r: { x: number; y: number; w: number; h: number }, pxW: number): Promise<string | null> {
+    return this.host.crop?.(page, r, pxW) ?? Promise.resolve(null);
+  }
+
   noteInk(t: Target, r: SRect): void {
     if (t.page == null) return;
     this.inked.unshift({ page: t.page, r });

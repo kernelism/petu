@@ -140,6 +140,8 @@ export interface DeskApi {
   centreRegion?(id: string, x0: number, x1: number): void;
   /** Ink is landing at this target-space rect: later page framing keeps it in view when it fits. */
   noteInk?(t: Target, r: SRect): void;
+  /** A page region as an image (a lift): see DeskHost.crop. */
+  pageImage?(page: number, r: { x: number; y: number; w: number; h: number }, pxW: number): Promise<string | null>;
   /** The answer has ended: a scene it drew in is shown whole (Board v2 overview). */
   overview?(): Promise<void>;
   isVisible(t: Target, r: SRect): boolean;
@@ -190,4 +192,6 @@ export interface DeskHost {
   onUserIntent(cb: () => void): () => void;
   /** Where `page` has printed content (null until it has rendered): connectors route around it. */
   contentMask?(page: number): ContentMask | null;
+  /** A crisp copy of a page region (model coords), `pxW` device px wide, as an image URL (null: can't render). */
+  crop?(page: number, r: { x: number; y: number; w: number; h: number }, pxW: number): Promise<string | null>;
 }

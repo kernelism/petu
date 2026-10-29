@@ -143,10 +143,11 @@ describe('prompt examples', () => {
       it('copies quotes from the listing, with near= where a quote is short or repeated', () => {
         const { acts, ground } = run(ex);
         for (const a of acts) {
-          if (!('quote' in a) || a.page == null) continue;
-          const hits = ground.lines(a.page).filter((l) => l.text.includes(a.quote));
+          if (!('quote' in a) || !a.quote || a.page == null) continue;
+          const quote = a.quote;
+          const hits = ground.lines(a.page).filter((l) => l.text.includes(quote));
           expect(hits.length, a.quote).toBeGreaterThan(0);
-          const count = hits.reduce((n, l) => n + l.text.split(a.quote).length - 1, 0);
+          const count = hits.reduce((n, l) => n + l.text.split(quote).length - 1, 0);
           if (a.quote.length <= 2 || count > 1) {
             expect(a.near, `${a.quote} needs near=`).toBeDefined();
             const near = a.near as Pt;
