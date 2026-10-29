@@ -71,7 +71,8 @@ export class ScriptParser {
     const k = this.n++;
     if (a.kind === 'contrast') {
       const e = this.values.expand(a);
-      if (typeof e === 'string') { console.warn('[script] contrast skipped:', e); out.push({ type: 'action', action: a }); return; }
+      // Not expandable (no such plot, block or constant): the director skips it with its reason.
+      if (typeof e === 'string') { out.push({ type: 'action', action: a }); return; }
       this.values.note(e);
       this.values.apply(e, k);
       out.push({ type: 'action', action: e });

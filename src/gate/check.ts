@@ -14,7 +14,7 @@ import type { Beat, Tag, Word } from './segment';
 import { NEW_INK } from './segment';
 import type { GateState, Value } from './engine';
 
-export type CheckKind = 'number' | 'threshold' | 'direction' | 'deixis' | 'layout' | 'geometry' | 'erasure' | 'tag';
+export type CheckKind = 'number' | 'threshold' | 'direction' | 'deixis' | 'layout' | 'geometry' | 'erasure' | 'tag' | 'unbound' | 'order';
 export type Flag = { check: CheckKind; detail: string };
 export type Verdict = { ok: boolean; flags: Flag[]; notes: string[] };
 
@@ -58,6 +58,38 @@ export function checkNumbers(words: readonly string[], ctx: NumberCtx): { flags:
     flags.push({ check: 'number', detail: `"${m.text}" matches no page, literal or computed value${near ? ` (nearest: ${+near.v.toPrecision(4)} from ${near.source} ${near.of})` : ''}` });
   }
   return { flags, notes };
+}
+
+/**
+ * Step 2 (bound numbers): a number the narration types that equals a value only the engine has (a
+ * computed cell, a calc result, a readout, a formula constant) should have been a {{val}}: flagged
+ * `unbound`. A {{val}} is never a typed word, so bound numbers pass by construction. Numbers that
+ * also match the page, the question or a literal the model wrote are the model's own: not flagged.
+ */
+export function checkUnbound(words: readonly string[], known: readonly Value[]): Flag[] {
+  const flags: Flag[] = [];
+  for (const m of mentions(words)) {
+    if (m.ref || m.approx || isSmallCount(m) || isYear(m)) continue;
+    const hits = known.filter((k) => matches(m, k.v));
+    if (!hits.length || hits.some((k) => k.source !== 'computed')) continue;
+    flags.push({ check: 'unbound', detail: `"${m.text}" is the engine's ${hits[0].of}: say it with {{val id=${hits[0].of}}}` });
+  }
+  return flags;
+}
+
+/**
+ * Constants before statements: a number the narration states that equals a constant's literal
+ * declared more than `ahead` beats later (the narration leans on a number the engine has not been
+ * given yet). `consts`: each declared literal, with the beat of its {{const}}.
+ */
+export function checkOrder(words: readonly string[], beat: number, consts: readonly { name: string; v: number; beat: number }[], ahead = 1): Flag[] {
+  const flags: Flag[] = [];
+  for (const m of mentions(words)) {
+    if (m.ref || isSmallCount(m) || isYear(m)) continue;
+    const c = consts.find((k) => matches(m, k.v) && k.beat > beat + ahead);
+    if (c && !consts.some((k) => matches(m, k.v) && k.beat <= beat + ahead)) flags.push({ check: 'order', detail: `"${m.text}" is constant ${c.name}, declared ${c.beat - beat} beats later: declare it first` });
+  }
+  return flags;
 }
 
 const BELOW = /^(below|under|less|lower|smaller|fewer|beneath|at most|no more)$/;

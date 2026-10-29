@@ -22,6 +22,9 @@ const KIT_COMPUTED = /^\{\{\s*(grid|bars|calc)\b[^}]*\b(result|value|answer|out)
 export class Lint {
   private buf = ''; private inTag = false;
   private seen = new Map<string, string>();
+  /** Constants declared so far, and names used (in a formula or a {{val}}) before any constant had that name. */
+  private consts = new Set<string>();
+  private early = new Map<string, string>();
   notes: string[] = [];
   push(s: string): string {
     let out = '';
@@ -50,6 +53,14 @@ export class Lint {
     if (name && TAG_NAMES.has(name) && !a) this.notes.push(`malformed (dropped): ${t.slice(0, 300)}`);
     if (a) {
       const x = a as unknown as Record<string, unknown>;
+      // Constants before statements: a name a formula or a {{val}} used before its {{const}}.
+      if (a.kind === 'const') {
+        for (const [k] of a.defs) {
+          const n = k.toLowerCase(), first = this.early.get(n);
+          if (first && !this.consts.has(n)) this.notes.push(`constant ${k} used before it is declared: ${first.slice(0, 120)}`);
+          this.consts.add(n);
+        }
+      } else for (const n of usedNames(a)) if (!this.consts.has(n) && !this.early.has(n)) this.early.set(n, t);
       // Notes, not skips: hand-placed geometry where a formula would do, and a drawing made twice.
       if (a.kind === 'curve' && Array.isArray(x.pts) && x.pts.length >= HAND_CURVE_PTS) this.notes.push(`hand-placed curve (${x.pts.length} points): draw it from its formula with {{plot}}: ${t.slice(0, 120)}`);
       if (['line', 'arrow', 'curve', 'circle', 'box', 'shade', 'brace'].includes(a.kind) && 'region' in a) {
@@ -63,4 +74,16 @@ export class Lint {
     }
     return t;
   }
+}
+
+/** Names a tag reads as numbers: identifiers in its formulas, and a {{val}}'s base name. */
+function usedNames(a: NonNullable<ReturnType<typeof parseTag>>): string[] {
+  const x = a as unknown as Record<string, unknown>;
+  const srcs: string[] = [];
+  if (a.kind === 'val') return [a.ref.replace(/[[.].*$/, '').toLowerCase()];
+  for (const k of ['fn', 'x', 'y', 'level', 'from', 'to'] as const) if (typeof x[k] === 'string') srcs.push(x[k] as string);
+  for (const k of ['t', 'domainSrc', 'set'] as const) if (Array.isArray(x[k])) srcs.push(...(x[k] as unknown[]).filter((v): v is string => typeof v === 'string'));
+  const src = x.src as { fn?: string } | undefined;
+  if (src?.fn) srcs.push(src.fn);
+  return srcs.flatMap((s) => s.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []).map((n) => n.toLowerCase());
 }

@@ -94,7 +94,7 @@ export class GateState {
         this.ids.add(a.id);
         const r = this.reading(a.id);
         if (typeof r === 'string') return r;
-        this.addValues([r.v, ...(r.point ? [r.x, r.y] : [])], 'computed', a.id, beat);
+        this.addReading(a, r, beat);
         return;
       }
       case 'val': {
@@ -206,6 +206,12 @@ export class GateState {
     return p ? curveOf(p.a, this.consts) ?? undefined : undefined;
   }
 
+  /** What a readout computed: not the input it was asked at (the level, the x), which the model chose. */
+  private addReading(a: FindAction, r: Reading, beat: number): void {
+    const vs = a.mode === 'level' ? [r.x] : a.mode === 'at' ? [r.y] : a.mode === 'slope' ? [r.v, r.y] : r.point ? [r.x, r.y] : [r.v];
+    this.addValues(vs, 'computed', a.id, beat);
+  }
+
   /** A readout's value now; a string says why it can't be read. */
   reading(id: string): Reading | string {
     const a = this.finds.get(id);
@@ -298,7 +304,7 @@ export class GateState {
     this.consts[key] = v;
     this.addValues([v], 'const', k, beat);
     this.recompute(beat);
-    for (const id of this.finds.keys()) { const r = this.reading(id); if (typeof r !== 'string') this.addValues([r.v, ...(r.point ? [r.x, r.y] : [])], 'computed', id, beat); }
+    for (const [id, f] of this.finds) { const r = this.reading(id); if (typeof r !== 'string') this.addReading(f, r, beat); }
     return;
   }
 

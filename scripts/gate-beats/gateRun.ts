@@ -3,7 +3,7 @@
 // recorded timings. Pure given its inputs (the PDF grounding is passed in).
 import { beats as segment, tokenize, type Beat, type Tag } from '../../src/gate/segment.ts';
 import { GateState } from '../../src/gate/engine.ts';
-import { checkDeixis, checkDirections, checkErasure, checkGeometry, checkNumbers, checkTags, checkThresholds, derivedValues, type Flag, type Verdict } from '../../src/gate/check.ts';
+import { checkDeixis, checkDirections, checkErasure, checkGeometry, checkNumbers, checkOrder, checkTags, checkThresholds, checkUnbound, derivedValues, type Flag, type Verdict } from '../../src/gate/check.ts';
 import { checkLayout, type El } from '../../src/gate/layout.ts';
 import { textNumbers } from '../../src/gate/numbers.ts';
 import type { Grounding } from '../../src/geometry/resolve.ts';
@@ -81,6 +81,8 @@ export function gateAnswer(rec: Recording, env: GateEnv): AnswerResult {
   const skips = liveSkips(rec.script, rec.timings);
   const entries = entriesByTag(rec.script, rec.registry, skips);
   const all = answerBeats(rec);
+  // Constants as declared (their literal values and beats), for the constants-before-statements check.
+  const consts = all.flatMap(({ beat }, k) => beat.tags.flatMap((t) => (t.action?.kind === 'const' ? t.action.defs.filter(([, v]) => /^[-−+]?\d*\.?\d+$/.test(v.trim())).map(([name, v]) => ({ name, v: Number(v.replace('−', '-')), beat: k })) : [])));
   const drawn: El[] = [];
   const results: BeatResult[] = [];
   // Lookahead: the director notes names a little ahead; the gate sees the whole beat before release.
@@ -96,7 +98,9 @@ export function gateAnswer(rec: Recording, env: GateEnv): AnswerResult {
       if (!t.action || skipped.has(t)) continue;
       const why = state.apply(t.action, k);
       if (state.lastId) made.set(t, state.lastId);
-      if (why) notes.push(`offline engine could not apply ${t.action.kind}: ${why}`);
+      // A bound number the engine cannot resolve is shown as a dash: the beat fails.
+      if (why && t.action.kind === 'val') flags.push({ check: 'tag', detail: `{{val id=${t.action.ref}}} unbound: ${why}` });
+      else if (why) notes.push(`offline engine could not apply ${t.action.kind}: ${why}`);
     }
     // Shapes drawn within 4 words of a word (for claims like "tangent").
     const near = (re: RegExp) => {
@@ -109,6 +113,7 @@ export function gateAnswer(rec: Recording, env: GateEnv): AnswerResult {
     const inter = state.intersections().flatMap((p) => [p.x, p.y]);
     const num = checkNumbers(ws, { known: state.values, derived: derivedValues([...core, ...inter], pageVals), intersections: inter, pageImage: beat.tags.some((t) => /\bmark=#[eig]\d/.test(t.body)) });
     flags.push(...num.flags, ...checkThresholds(ws, state, k), ...checkDirections(ws, state, k));
+    flags.push(...checkUnbound(ws, state.values), ...checkOrder(ws, k, consts));
     notes.push(...num.notes);
     flags.push(...checkDeixis(beat, 8, new Set(skipped.keys())));
     flags.push(...checkGeometry(beat, state, { segs: state.segs.filter((s) => !segsBefore.has(s.id)).map((s) => s.id), points: state.points.filter((p) => !ptsBefore.has(p.id)).map((p) => p.id) }, 0.02, near));

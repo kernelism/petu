@@ -24,7 +24,7 @@ describe('system prompt', () => {
   it('is stable (one cacheable prefix) and within budget', () => {
     expect(systemPrompt()).toBe(s);
     expect(PROMPT_VERSION).toMatch(/^p\d+\.\d+$/);
-    expect(s.length / 3.6).toBeLessThan(7400); // ~tokens (the visual kit's card added ~1,000; views, plots and FORMULAS ~400; Board v2's scene ~700)
+    expect(s.length / 3.6).toBeLessThan(8100); // ~tokens (the visual kit's card added ~1,000; views, plots and FORMULAS ~400; Board v2's scene ~700; bound numbers, readouts, moves and a fifth example ~650)
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
   });
 

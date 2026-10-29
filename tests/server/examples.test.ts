@@ -69,8 +69,8 @@ function sentences(text: string) {
 }
 
 describe('prompt examples', () => {
-  it('four invented documents of different reach; at least one walks several pages, one works numbers with the kit', () => {
-    expect(EXAMPLES).toHaveLength(4);
+  it('five invented documents of different reach; at least one walks several pages, one works numbers with the kit', () => {
+    expect(EXAMPLES).toHaveLength(5);
     const kit = EXAMPLES.filter((e) => run(e).acts.some((a) => a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table'));
     expect(kit.length).toBeGreaterThanOrEqual(1);
     const acts = run(kit.find((e) => run(e).acts.some((a) => a.kind === 'step' || a.kind === 'sweep'))!).acts;
@@ -164,7 +164,7 @@ describe('prompt examples', () => {
         for (const s of sketches) {
           const i = acts.indexOf(s);
           if (s.kind !== 'sketch' || s.scene) continue;
-          const kitOnly = acts.every((a) => !('region' in a) || a.region !== s.id || ['grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'shares'].includes(a.kind));
+          const kitOnly = acts.every((a) => !('region' in a) || a.region !== s.id || ['grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'shares', 'plot'].includes(a.kind) || (a.kind === 'point' && 'ref' in (a.at as object)));
           if (kitOnly) continue;
           expect(s.fit).toBe(true);
           expect(acts[i + 1].kind).toBe('let');
