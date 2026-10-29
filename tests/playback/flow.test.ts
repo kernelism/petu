@@ -204,6 +204,9 @@ describe('Director journeys', () => {
     expect(journeys).toEqual([{ from: 3, to: 42, at: 450 }]);
     expect(holds).toEqual([[450, JOURNEY_HOLD_MS]]);
     expect(drawn[0]).toBeGreaterThanOrEqual(500 + ARRIVAL_MS);
+    // The ink fired before the hold moves with its word: it lands on the word as now spoken.
+    expect(drawn[0]).toBeGreaterThanOrEqual(450 + JOURNEY_HOLD_MS);
+    expect(drawn[0]).toBeLessThan(450 + JOURNEY_HOLD_MS + 50);
   });
 
   it('an adjacent page is not a journey', async () => {

@@ -122,6 +122,14 @@ export class Director {
   }
 
   private seen = new WeakSet<object>();
+  /**
+   * Holds asked for by journeys: words from `from` on were pushed back `ms` at `time`. Ink fired
+   * before a hold, for a word at or after it, carries the old word time: it moves with its word.
+   */
+  private holds: { from: number; ms: number; time: number }[] = [];
+  private heldMs(t: ActionTiming, at: number): number {
+    return this.holds.reduce((n, h) => (t.queuedAt <= h.time && at >= h.from - 1 ? n + h.ms : n), 0);
+  }
 
   private runResolved(a: Action, raw: RawAction, at: number): void {
     const signal = this.ctrl.signal;
@@ -173,6 +181,7 @@ export class Director {
     this.drawing.clear();
     this.registry.settle(); // kit animations (a sweep) land in their end state
     this.pendingReset = null; // an answer stopped before it acted leaves the desk as it is
+    this.holds = [];
     this.desk()?.abort(); // pans stop, and no desk move in flight (a column glide, entering B) lands later
     this.gen++;
     this.busy = 0;
@@ -309,7 +318,10 @@ export class Director {
     const from = v.currentPage();
     const journey = isJourney(from, a.page) && now() - at < LATE_MS;
     if (journey && entry) entry.journey = true;
-    if (journey) { this.d.onJourney?.({ from, to: a.page, at }); this.d.hold?.(at, JOURNEY_HOLD_MS); }
+    if (journey) {
+      this.d.onJourney?.({ from, to: a.page, at });
+      if (this.d.hold) { this.d.hold(at, JOURNEY_HOLD_MS); this.holds.push({ from: at, ms: JOURNEY_HOLD_MS, time: now() }); }
+    }
     await this.land(); // a scroll always moves the view
     if (signal.aborted) return;
     this.d.onScrolledTo(a.page); // the page indicator names the destination as the glide starts
@@ -465,7 +477,9 @@ export class Director {
     if (target && box) await this.reveal(desk, target, box, signal, this.anchorOf(a));
     if (signal.aborted) return;
 
-    await wait(startAt - now());
+    // A journey's hold moved this ink's word later: it starts on the word as it will now be spoken.
+    const held = this.heldMs(t, t.firedAt);
+    await wait(startAt + held - now());
     if (signal.aborted) return;
     if (!plan) {
       plan = await this.build(raw, env, signal);
@@ -483,7 +497,7 @@ export class Director {
     const p = plan;
     desk.noteInk?.(p.target, p.bbox);
     // Ink after a journey's arrival is not behind: the narration held for it.
-    const k = backlog(now() - Math.max(t.firedAt, dep?.arrivedAt ?? -Infinity));
+    const k = backlog(now() - Math.max(t.firedAt + held, dep?.arrivedAt ?? -Infinity));
     this.report(t, { startedAt: now() });
     const own = new AbortController();
     const onAbort = () => own.abort();
