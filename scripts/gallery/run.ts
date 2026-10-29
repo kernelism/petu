@@ -28,7 +28,10 @@ const STEP_MS = 200;
 /** Real time the page gets, clock paused, before a screenshot (pdf.js workers and paint catch up). */
 const SETTLE_MS = 350;
 const FAKE_EPOCH = Date.UTC(2026, 0, 1);
-const PER_BROWSER = Number(process.env.PETU_GALLERY_CONCURRENCY ?? 6);
+/** Browser processes at once, per browser: 12 in all by default (6 each for two browsers, 4 for three). */
+const perBrowser = (n: number) => Number(process.env.PETU_GALLERY_CONCURRENCY ?? Math.max(2, Math.round(12 / n)));
+/** The paused clock's start, ahead of install: real time passes between the calls (seconds when a busy machine launches Firefox). */
+const PAUSE_LEAD_MS = 60_000;
 
 export function galleryRoot(): string {
   if (process.env.PETU_GALLERY_DIR) return resolve(process.env.PETU_GALLERY_DIR);
@@ -142,7 +145,7 @@ async function renderScene(browser: any, browserName: string, base: string, scen
     page.on('requestfailed', () => { inflight--; });
     await page.addInitScript(WORKER_COUNTER);
     await page.clock.install({ time: FAKE_EPOCH });
-    await page.clock.pauseAt(FAKE_EPOCH + 1000); // a moment ahead: real ms pass between the two calls
+    await page.clock.pauseAt(FAKE_EPOCH + PAUSE_LEAD_MS);
     await page.goto(`${base}/?${scene.query}`, { waitUntil: 'commit' });
     let msgs = 0, scroll = '';
     let fake = 0, start: number | null = null, done: number | null = null;
@@ -257,7 +260,7 @@ export async function runGallery(o: GalleryOptions = {}): Promise<Manifest & { d
       await warm.waitForFunction('!!window.__desk', null, { timeout: 30_000 }).catch(() => {});
     } finally { await warmB.close(); }
     // One browser process per job: several pages in one WebKit process stall each other's clocks.
-    const perBrowser = await Promise.all(browsers.map(async (bn) => {
+    const byBrowser = await Promise.all(browsers.map(async (bn) => {
       const jobs = scenes.flatMap((sc) => sizes.map((sz) => async () => {
         const browser = await launch(bn);
         try {
@@ -266,9 +269,9 @@ export async function runGallery(o: GalleryOptions = {}): Promise<Manifest & { d
           return got;
         } finally { await browser.close(); }
       }));
-      return (await pool(jobs, PER_BROWSER)).flat();
+      return (await pool(jobs, perBrowser(browsers.length))).flat();
     }));
-    shots = perBrowser.flat().sort((a, b) => a.name.localeCompare(b.name));
+    shots = byBrowser.flat().sort((a, b) => a.name.localeCompare(b.name));
   } finally { server.stop(); }
   const renderMs = Date.now() - t0;
 
