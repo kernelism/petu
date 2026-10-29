@@ -126,6 +126,32 @@ Prevention by construction: the narration never types a number the engine comput
   colony, limit on a falling stone with drag; every number in its narration is a val.
 - Tests: `tests/values/values.test.ts`, `tests/gate/bound.test.ts`.
 
+## The slide as canvas (spec "The slide is part of the canvas")
+
+Work on the slide and from it, rather than drawing a disconnected copy.
+
+- **Calibrated charts** (`src/agent/context/charts.ts`: `Chart`, `ChartAxis`, `chartToPage`): the grounding
+  lists `#c1 chart …` with its axes; `groundingOf` resolves `#cN` to `{kind:'chart', rect, x, y}`.
+  `p=N on=#cN` on line/arrow/point/circle/label/curve/shade/angle/brace/plot/note/let: points are data
+  values (parser: unclamped, `chart` on the action). The resolver keeps one figure per chart (world =
+  data; page marks read back through the inverse map) and maps every point to the page; an unknown
+  chart skips. A chart plot gets `onChart` (axes + rect), its domain defaults to the x axis and values
+  off the y axis are cut (`chartPlot` in elements.ts, sampled by the kit's `samplePlot` with `{{const}}`s).
+- **Lift** `{{lift p=4 mark=#g1|box=x,y,w,h on=s id=fig at= w=}}`: the resolver places it (`placeLift`:
+  page proportions, inside the 1000 × 700 section; plain sketches only, not `fit`) and records it; a
+  page mark used later in that section (`from=#d2`, `at=#b1`) resolves through the latest lift that
+  holds it (`onLift`). The board draws a crisp pdf.js crop (`DeskHost.crop` → `PageRenderer.crop`,
+  2.5 device px per CSS px, transparent ground) in a sheet slot behind later ink, fading in;
+  `move id=fig to=x,y` glides it (by its centre). Raster only (a vector copy is open).
+- **Page notes** `{{note p=4 "…" annotate=#e2|"quote"}}` (or `on=#c1 at=x,y`) → kind `annot`: the resolver
+  turns a mark into its rect and attaches `Grounding.obstacles(page)` (text lines + rect marks); the
+  board places it with `placeNote` (`src/desk/annotate.ts`, pure: right/left first, then around, then
+  the margins; never touching text, figures or earlier ink; a leader when apart; no room → skipped).
+- **Gate**: `checkPageText` (page annotations never cover page text lines), `lift-outside` in
+  `checkLayout`. Demo `?script=canvas` on `public/fixtures/canvas.pdf` (`make-decks.ts canvas`: econ p12,
+  bio p4, mechanics p2); gallery scene `canvas`. Tests: `tests/script/parseCanvas.test.ts`,
+  `tests/geometry/canvas.test.ts`, `tests/desk/annotate.test.ts`, `tests/gate/canvas.test.ts`.
+
 ## How a tag becomes ink
 
 1. `ScriptParser.push(chunk)` → `parseTag(body)` → `RawAction`.

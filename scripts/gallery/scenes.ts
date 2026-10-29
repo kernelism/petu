@@ -22,6 +22,8 @@ export const SCENES: Scene[] = [
   { name: 'scene-bio', query: 'script=scene-bio', moments: [mid(20000), END] },
   // Demonstration moves and bound numbers: beforeafter (market), contrast (colony), limit (drag).
   { name: 'moves', query: 'script=moves', moments: [mid(12000), mid(26000), END] },
+  // The slide as canvas: on the chart (data units), the enzyme lifted and acted out, notes in place.
+  { name: 'canvas', query: 'script=canvas', moments: [mid(16000), mid(42000), mid(62000), END] },
   { name: 'lec09', query: 'script=lec09', moments: [mid(14000), END], needs: 'public/dev/lec09_optical_flow.pdf' },
 ];
 
