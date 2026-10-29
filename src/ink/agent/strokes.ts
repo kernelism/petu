@@ -20,16 +20,22 @@ function wobble(r: Rng, amp: number) {
   return (t: number) => amp * (0.6 * Math.sin(6.283 * f1 * t + p1) + 0.4 * Math.sin(6.283 * f2 * t + p2));
 }
 
-/** Counter-clockwise loop starting near 11 o'clock, sweeping ~375° so it closes just past its start. */
-export function circleStroke(c: SPt, rx: number, ry: number, r: Rng | null): Stroke {
-  const n = 72, start = -Math.PI / 2 - 0.45, sweep = Math.PI * 2 * 1.04;
-  const wr = r ? wobble(r, 0.05) : () => 0;
-  const drift = r ? r() * 0.06 : 0;
+/**
+ * Counter-clockwise loop starting near 11 o'clock, sweeping ~375° so it closes just past its start.
+ * Hand style rings loosely (wider, wobbling, drifting outward: an enclosure around words or a mark).
+ * `exact`: a geometric circle (a sketch's centre and radius), whose points must land on it: the radius
+ * holds to half a unit, and the close overlaps by a few degrees on the same radius (no second arc).
+ */
+export function circleStroke(c: SPt, rx: number, ry: number, r: Rng | null, exact = false): Stroke {
+  const n = 72, start = -Math.PI / 2 - 0.45, sweep = exact ? Math.PI * 2 + 0.08 : Math.PI * 2 * 1.04;
+  const wr = r ? wobble(r, exact ? Math.min(0.05, 0.5 / Math.max(rx, ry, 1)) : 0.05) : () => 0;
+  const drift = r && !exact ? r() * 0.06 : 0;
+  const widen = r && !exact ? 1.06 : 1;
   const pts: Stroke = [];
   for (let i = 0; i <= n; i++) {
     const t = i / n, a = start - sweep * t;
     const k = 1 + wr(t) + drift * t;
-    pts.push({ x: c.x + Math.cos(a) * rx * k * (r ? 1.06 : 1), y: c.y + Math.sin(a) * ry * k });
+    pts.push({ x: c.x + Math.cos(a) * rx * k * widen, y: c.y + Math.sin(a) * ry * k });
   }
   return pts;
 }

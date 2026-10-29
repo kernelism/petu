@@ -21,7 +21,9 @@ function parseAll(script: string): Action[] {
 const em = (as: Action[]) => as.filter((a) => 'em' in a && a.em).map((a) => a.kind);
 // The prompt's examples (`ex-*`) are model-facing scripts played as they are: tests/server/examples.test.ts
 // checks them against their own listings and the prompt's rules, not the hand-written demos' style.
-const ALL = [DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.entries(SCRIPTS).filter(([k]) => !k.startsWith('ex-')).map(([, x]) => x.script)];
+/** Answers kept exactly as a model wrote them (founder live tests): agent grammar and tag stacking included. */
+const VERBATIM = new Set(['tunnel']);
+const ALL = [DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.entries(SCRIPTS).filter(([k]) => !k.startsWith('ex-') && !VERBATIM.has(k)).map(([, x]) => x.script)];
 /** A simulated session's later answers (asides, follow-ups, check replies). */
 const ANSWERS = Object.values(SCRIPTS).flatMap((x) => Object.values(x.answers ?? {}));
 
@@ -181,7 +183,7 @@ describe('demos through the resolver', () => {
     const { Figures } = await import('../../src/geometry/resolve');
     // `relational` is literal-free by design (it shows the agent grammar): checked on its own below.
     // `canvas` draws on its slides' own charts and lifts their marks: checked against its grounding in canvasDemo.test.ts.
-    const all = { DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.fromEntries(Object.entries(SCRIPTS).filter(([k]) => k !== 'relational' && k !== 'canvas' && !k.startsWith('ex-')).map(([k, v]) => [k, v.script])) };
+    const all = { DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.fromEntries(Object.entries(SCRIPTS).filter(([k]) => k !== 'relational' && k !== 'canvas' && !k.startsWith('ex-') && !VERBATIM.has(k)).map(([k, v]) => [k, v.script])) };
     for (const [name, script] of Object.entries(all)) {
       const raw = parseAll(script);
       const f = new Figures({ mark: () => undefined });

@@ -24,6 +24,12 @@ export type ElementEntry = {
   faded?: boolean;
 };
 
+/**
+ * A label written beside an element (a point's name, a line's own label): `boxes[index]` of its owner.
+ * `place` finds its clear spot again from where things are now; a later stroke that crosses it re-places it.
+ */
+export type PlacedLabel = { owner: string; index: number; text: string; group: SVGGElement; place(): SRect };
+
 const sameTarget = (a: Target, b: Target) => (a.region != null ? a.region === b.region : a.page === b.page);
 
 /** Elements of the current answer, by id (rule 4: ids are unique per answer). */
@@ -34,6 +40,7 @@ export class Registry {
   private byId = new Map<string, ElementEntry>();
   private waiters = new Map<string, ((e: ElementEntry) => void)[]>();
   private anon = 0;
+  private placed: PlacedLabel[] = [];
   /** Per-answer state kept beside the registry (the visual kit's blocks): settled and cleared with it. */
   private exts = new Map<string, { settle?(): void; clear?(): void }>();
 
@@ -109,6 +116,25 @@ export class Registry {
     return out;
   }
 
+  /** Records a label beside its owner (see PlacedLabel). */
+  addLabel(l: PlacedLabel): void { this.placed.push(l); }
+
+  /** The labels in `t` with their owners' entries and current boxes (faded owners excluded). */
+  labels(t: Target): (PlacedLabel & { entry: ElementEntry; box: SRect })[] {
+    const out: (PlacedLabel & { entry: ElementEntry; box: SRect })[] = [];
+    for (const l of this.placed) {
+      const entry = this.byId.get(l.owner), box = entry?.boxes[l.index];
+      if (entry && box && !entry.faded && sameTarget(entry.target, t)) out.push({ ...l, entry, box });
+    }
+    return out;
+  }
+
+  /** Every placed label's text and box (all targets, or `t`'s). */
+  labelBoxes(t?: Target): { text: string; box: SRect }[] {
+    return (t ? this.labels(t) : this.placed.flatMap((l) => { const e = this.byId.get(l.owner); return e ? this.labels(e.target).filter((x) => x.group === l.group) : []; }))
+      .map((l) => ({ text: l.text, box: l.box }));
+  }
+
   /** The most recent element of `kind` in `t` (plot finds its axes). */
   latest(t: Target, kind: string): ElementEntry | undefined {
     let last: ElementEntry | undefined;
@@ -120,6 +146,7 @@ export class Registry {
     this.settle();
     this.exts.forEach((e) => e.clear?.());
     this.byId.clear();
+    this.placed = [];
     this.anon = 0;
     // Pending waits resolve undefined on their own timers.
   }

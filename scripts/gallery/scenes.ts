@@ -50,6 +50,8 @@ export const SCENES: Scene[] = [
     { name: '4-follow', after: 'start', ms: 66000 }, { name: '5-point', after: 'start', ms: 78000 }, { name: '6-check', after: 'start', ms: 112000 },
     { name: '6-judged', after: 'start', ms: 134000 }, { name: '7-trail', after: 'start', ms: 160000 },
   ] },
+  // A founder live test (chord tunnel): a fit sketch with a circle, a chord on it, labelled arrows.
+  { name: 'tunnel', query: 'script=tunnel&style=hand', moments: [mid(26000), END], needs: '.petu/corpus/openstax-university-physics-volume-1.pdf' },
   { name: 'lec09', query: 'script=lec09', moments: [mid(14000), END], needs: 'public/dev/lec09_optical_flow.pdf' },
 ];
 
