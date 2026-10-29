@@ -269,7 +269,11 @@ describe('Desk: the board', () => {
     const d = new Desk(fakeHost(), stage);
     await d.addRegion(spec('side'));
     d.follow.setAnswering(true);
-    stage.querySelector('[data-petu-board]')!.dispatchEvent(new Event('wheel'));
+    const sc = stage.querySelector('[data-petu-board]')!;
+    // A wheel that scrolls the board (it has room below).
+    Object.defineProperty(sc, 'scrollHeight', { get: () => 2000 });
+    Object.defineProperty(sc, 'clientHeight', { get: () => 800 });
+    sc.dispatchEvent(new WheelEvent('wheel', { deltaY: 40 }));
     expect(d.following()).toBe(false);
   });
 });

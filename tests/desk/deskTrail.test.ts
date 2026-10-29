@@ -1,7 +1,7 @@
 // tests/desk/deskTrail.test.ts — the session trail's heads and the aside's inset on the board (v1 learner UX).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Desk, type DeskHost } from '../../src/desk/Desk';
-import { computeLayout, frameFor, type Split } from '../../src/desk/layout';
+import { BOARD_HEAD, computeLayout, frameFor, type Split } from '../../src/desk/layout';
 
 /** A viewer stand-in: real layout math, no pdf.js (as tests/desk/desk.test.ts). */
 function fakeHost(W = 1440, H = 900, pages = 5): DeskHost {
@@ -24,8 +24,28 @@ function fakeHost(W = 1440, H = 900, pages = 5): DeskHost {
     onUserIntent: none,
   } as unknown as DeskHost;
 }
-const spec = (id: string) => ({ id, page: 2, size: 'm' as const });
+const spec = (id: string, o: object = {}) => ({ id, page: 2, size: 'm' as const, ...o });
 const head = () => { const e = document.createElement('div'); e.className = 'trail-head'; return e; };
+
+/** jsdom has no layout: the board's scroller gets its real extent (content height over the board's height). */
+function measurable(stage: HTMLElement) {
+  const sc = stage.querySelector<HTMLElement>('[data-petu-board]')!;
+  const content = sc.firstElementChild as HTMLElement;
+  const board = stage.querySelector<HTMLElement>('.desk-board')!;
+  Object.defineProperty(sc, 'clientHeight', { get: () => parseFloat(board.style.height) || 0 });
+  Object.defineProperty(sc, 'scrollHeight', { get: () => Math.max(parseFloat(content.style.height) || 0, parseFloat(board.style.height) || 0) });
+  Object.defineProperty(sc, 'clientWidth', { get: () => parseFloat(board.style.width) || 0 });
+  Object.defineProperty(sc, 'scrollWidth', { get: () => parseFloat(board.style.width) || 0 });
+  let top = 0;
+  Object.defineProperty(sc, 'scrollTop', { get: () => top, set: (v: number) => { top = Math.max(0, Math.min(v, sc.scrollHeight - sc.clientHeight)); sc.dispatchEvent(new Event('scroll')); } });
+  return sc;
+}
+/** Where an element sits in the board's view (px below the board's top edge). */
+const inView = (el: HTMLElement, sc: HTMLElement) => parseFloat(el.style.top) - sc.scrollTop;
+/** Lets every board glide run to its end. */
+const settle = () => vi.advanceTimersByTimeAsync(1500);
+/** Awaits a desk move whose glide runs on (fake) animation frames. */
+const run = async <T,>(p: Promise<T>): Promise<T> => { await settle(); return p; };
 
 describe('Desk: session trail and asides', () => {
   let stage: HTMLDivElement;
@@ -63,5 +83,129 @@ describe('Desk: session trail and asides', () => {
     d.toggleAside(h);
     expect(h.classList.contains('is-collapsed')).toBe(false);
     expect(parseFloat(side.style.height)).toBeGreaterThan(0);
+  });
+
+  it('an answer\'s header lands whole under the board\'s head row, its first drawing below it (scene or sketch)', async () => {
+    for (const [H, o] of [[900, { scene: true }], [560, {}], [1440, { scene: true }]] as const) {
+      const st = document.createElement('div');
+      const d = new Desk(fakeHost(1440, H), st);
+      const sc = measurable(st);
+      const board = st.querySelector<HTMLElement>('.desk-board')!;
+      // An earlier answer above, so the new one lands lower on the board.
+      d.follow.setAnswering(true);
+      d.headNext(head(), 44);
+      await d.addRegion(spec('first'));
+      await settle();
+      await d.reset(0);
+      const h = head();
+      d.headNext(h, 44);
+      const p = d.addRegion(spec('next', o));
+      await settle();
+      await p;
+      const sec = [...st.querySelectorAll<HTMLElement>('.desk-region')][1];
+      // Never clipped or jammed against the top: the head sits where the first head of a fresh board does.
+      expect(inView(h, sc)).toBeGreaterThanOrEqual(BOARD_HEAD - 0.5);
+      expect(inView(sec, sc)).toBeCloseTo(inView(h, sc) + 44, 3);
+      expect(inView(sec, sc)).toBeLessThan(parseFloat(board.style.height));
+      // A scene's window fits the view under its head.
+      if ('scene' in o) expect(inView(sec, sc) + parseFloat(sec.style.height)).toBeLessThanOrEqual(parseFloat(board.style.height) + 0.5);
+    }
+  });
+
+  it('an aside lands its inset in view even if the student had scrolled away, follows it, and returns to the answer when it ends', async () => {
+    const d = new Desk(fakeHost(1440, 700), stage);
+    const sc = measurable(stage);
+    const board = stage.querySelector<HTMLElement>('.desk-board')!;
+    d.follow.setAnswering(true);
+    d.headNext(head(), 44);
+    await run(d.addRegion(spec('main')));
+    await run(d.addRegion(spec('more')));
+    await settle();
+    // The answer's latest ink, low in its second section.
+    const ink = { x: 100, y: 560, w: 300, h: 80 };
+    await run(d.reveal({ region: 'more' }, ink));
+    await settle();
+    expect(d.isVisible({ region: 'more' }, ink)).toBe(true);
+    // The student scrolls up to look (follow stops), then asks.
+    sc.dispatchEvent(new WheelEvent('wheel', { deltaY: -200 }));
+    sc.scrollTop = 0;
+    expect(d.following()).toBe(false);
+    d.setAside(true);
+    expect(d.following()).toBe(true);
+    const ah = head();
+    d.headNext(ah, 40);
+    const p = d.addRegion(spec('side'));
+    await settle();
+    await p;
+    expect(inView(ah, sc)).toBeGreaterThanOrEqual(BOARD_HEAD - 0.5);
+    expect(inView(ah, sc)).toBeLessThan(parseFloat(board.style.height) - 40);
+    // Its ink further down is kept in view.
+    const low = { x: 100, y: 620, w: 200, h: 60 };
+    await run(d.reveal({ region: 'side' }, low));
+    await settle();
+    expect(d.isVisible({ region: 'side' }, low)).toBe(true);
+    // Resume: the board goes back to where the answer was drawing.
+    d.setAside(false);
+    await settle();
+    expect(d.isVisible({ region: 'more' }, ink)).toBe(true);
+  });
+
+  it('a student scroll during the aside is respected: no return glide when it ends', async () => {
+    const d = new Desk(fakeHost(1440, 700), stage);
+    const sc = measurable(stage);
+    d.follow.setAnswering(true);
+    await run(d.addRegion(spec('main')));
+    await run(d.addRegion(spec('more')));
+    await run(d.reveal({ region: 'more' }, { x: 0, y: 600, w: 100, h: 60 }));
+    await settle();
+    d.setAside(true);
+    d.headNext(head(), 40);
+    await run(d.addRegion(spec('side')));
+    await settle();
+    sc.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+    sc.scrollTop = 10;
+    expect(d.following()).toBe(false);
+    d.setAside(false);
+    await settle();
+    expect(sc.scrollTop).toBe(10);
+  });
+});
+
+describe('Desk: pointer input never moves a drawing', () => {
+  let stage: HTMLDivElement;
+  beforeEach(() => { vi.useFakeTimers(); stage = document.createElement('div'); });
+  afterEach(() => vi.useRealTimers());
+
+  it('a plain wheel over a scene leaves its camera alone (the board scrolls); a pinch zooms it', async () => {
+    const d = new Desk(fakeHost(), stage);
+    measurable(stage);
+    d.follow.setAnswering(true);
+    await run(d.addRegion(spec('s', { scene: true })));
+    await settle();
+    const sec = stage.querySelector<HTMLElement>('.desk-region')!;
+    const vb = () => sec.querySelector('svg')!.getAttribute('viewBox');
+    const before = vb();
+    for (const [dx, dy] of [[0.4, 0.6], [-3, 2], [0, -40], [12, 0]]) {
+      const e = new WheelEvent('wheel', { deltaX: dx, deltaY: dy, clientX: 900, clientY: 300, cancelable: true, bubbles: true });
+      sec.dispatchEvent(e);
+      expect(e.defaultPrevented).toBe(false);
+    }
+    expect(vb()).toBe(before);
+    expect(d.following()).toBe(true);
+    const pinch = new WheelEvent('wheel', { deltaY: -20, ctrlKey: true, clientX: 900, clientY: 300, cancelable: true, bubbles: true });
+    sec.dispatchEvent(pinch);
+    expect(pinch.defaultPrevented).toBe(true);
+    expect(vb()).not.toBe(before);
+  });
+
+  it('a wheel that scrolls nothing (no delta, or the board at its end) is not the student taking over', async () => {
+    const d = new Desk(fakeHost(), stage);
+    const sc = measurable(stage);
+    d.follow.setAnswering(true);
+    await run(d.addRegion(spec('a')));
+    await settle();
+    sc.dispatchEvent(new WheelEvent('wheel', { deltaX: 0, deltaY: 0 }));
+    sc.dispatchEvent(new WheelEvent('wheel', { deltaY: -30 })); // already at the top
+    expect(d.following()).toBe(true);
   });
 });

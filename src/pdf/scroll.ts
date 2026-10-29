@@ -34,7 +34,11 @@ export function animateScrollTo(el: HTMLElement, target: number | (() => number)
     let done = false;
     const events = ['wheel', 'touchstart', 'keydown'];
     const cleanup = () => { events.forEach((e) => el.removeEventListener(e, stop)); o.signal?.removeEventListener('abort', stop); };
-    const stop = () => { if (done) return; done = true; cleanup(); o.owner?.glideEnd(); resolve(); };
+    const stop = (e?: Event) => {
+      // A wheel with no delta (a touch-surface mouse brushed while the cursor moves) is not the user taking over.
+      if (done || (e?.type === 'wheel' && !(e as WheelEvent).deltaX && !(e as WheelEvent).deltaY)) return;
+      done = true; cleanup(); o.owner?.glideEnd(); resolve();
+    };
     events.forEach((e) => el.addEventListener(e, stop, { passive: true }));
     o.signal?.addEventListener('abort', stop);
     const t0 = performance.now();
