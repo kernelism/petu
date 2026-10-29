@@ -17,7 +17,8 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { decodePng, encodePng } from './png.ts';
 import { diffImages, shotName, DEFAULT_DIFF, type ShotRow } from './diff.ts';
-import { SCENES, SIZES, BROWSERS, type Scene } from './scenes.ts';
+import { SCENES, SIZES, BROWSERS, audited, type Scene } from './scenes.ts';
+import { auditGate } from './audit.ts';
 import { renderSheet } from './sheet.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -172,6 +173,7 @@ async function renderScene(browser: any, browserName: string, base: string, scen
         pending.splice(pending.indexOf(m), 1);
       }
     }
+    if (audited(scene)) for (const p of auditGate(await page.evaluate('window.__petuGateLog || []'))) errors.push(`${tag}: ${p}`);
   } catch (e) {
     errors.push(`${tag}: ${(e as Error).message.split('\n')[0]}`);
   } finally { await ctx.close(); }
