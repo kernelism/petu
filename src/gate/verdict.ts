@@ -21,7 +21,8 @@ const normId = (s?: string) => s?.replace(/-/g, '_');
 export function toEl(e: RegEntry, a: RawAction): El {
   const kit = e.kind.startsWith('kit-');
   const textKinds = new Set(['write', 'label', 'math', 'annot']);
-  const text = kit ? [e.bbox] : e.kind === 'point' ? e.boxes.slice(1) : textKinds.has(e.kind) ? e.boxes : [];
+  // A kit block's box is its text (cells, numerals); an engine plot's box is a chart that labels sit on by design.
+  const text = kit && a.kind !== 'plot' ? [e.bbox] : kit ? [] : e.kind === 'point' ? e.boxes.slice(1) : textKinds.has(e.kind) ? e.boxes : [];
   const x = a as unknown as { labels?: string[]; ref?: string; at?: { ref?: string }; axes?: string; id?: string };
   return {
     id: e.id, kind: e.kind, region: e.target.region, page: e.target.page, bbox: e.bbox, boxes: e.boxes, strokes: e.strokes ?? [], text,

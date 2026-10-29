@@ -24,7 +24,9 @@ export const NUMBER_FAMILY = new Set<CheckKind>(['number', 'threshold', 'directi
 // (a) numbers
 
 /** Small integers are counts ("two points", "three images"): exempt unless stated as a percentage. */
-const isSmallCount = (m: Mention) => !m.percent && !m.frac && m.dp === 0 && Number.isInteger(m.value) && Math.abs(m.value) <= 12;
+const isSmallCount = (m: Mention) => (!m.percent && !m.frac && m.dp === 0 && Number.isInteger(m.value) && Math.abs(m.value) <= 12)
+  // "its two halves", "three thirds": parts of a whole, counted (the fraction is exactly 1).
+  || (!!m.frac && !m.percent && m.value === 1);
 const isYear = (m: Mention) => !m.spelled && m.dp === 0 && m.value >= 1900 && m.value <= 2100;
 
 /** One arithmetic step from the known values: what narration may state without the board showing it. */

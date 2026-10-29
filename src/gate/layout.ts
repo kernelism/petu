@@ -70,7 +70,8 @@ export function checkLayout(added: El[], before: El[]): LayoutFlag[] {
       if (o.annotates === e.id || e.annotates === o.id) continue;
       if (e.group != null && e.group === o.group) continue;
       // Text against text (and kit blocks, which are mostly text): a 4-unit margin each.
-      const eText = isKit(e) ? [e.bbox] : e.text, oText = isKit(o) ? [o.bbox] : o.text;
+      // A chart (an engine plot: it has a group) is not text: points and labels sit on its area by design.
+      const eText = isKit(e) && e.group == null ? [e.bbox] : e.text, oText = isKit(o) && o.group == null ? [o.bbox] : o.text;
       if (isKit(e) && isKit(o)) {
         if (inter(e.bbox, o.bbox) > 0) once({ kind: 'block-overlap', detail: `kit ${e.id} overlaps kit ${o.id}`, ids: [e.id, o.id] });
         continue;

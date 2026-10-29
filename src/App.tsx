@@ -35,10 +35,11 @@ import { takeSentences } from './ui/text';
 import type { Action, RawAction } from './script/types';
 import type { Grounding } from './geometry/resolve';
 import type { AskEvent } from './agent/protocol';
-import { AskError, askErrorLine, capLine, type AskHandlers } from './agent/client';
+import { AskError, askErrorLine, capLine, spendPhase, type AskHandlers } from './agent/client';
+import { fakeRepair, makeRepair, recordedRepair } from './agent/repair';
 import { useAgent, type MakeContext } from './agent/useAgent';
 import { ContextBuilder, groundPage } from './agent/context/build';
-import { installEvalHooks, outOfFrameOf, type EvalBackend, type Recorder, type RegistryRow } from './agent/evalHooks';
+import { installEvalHooks, outOfFrameOf, publishGate, type EvalBackend, type Recorder, type RegistryRow } from './agent/evalHooks';
 import type { Registry } from './desk/registry';
 import { groundingOf, type PageGround } from './agent/context/types';
 import { AnswerLog, boardOf, buildReport } from './report/capture';
@@ -119,12 +120,6 @@ const GATE_FAULTS = parseFaults(params.get('gatefail'));
 const GATE_LOG = params.has('gatelog');
 const REPAIR_PARAM = params.get('repair');
 const REPAIR_MS = Number(params.get('repairms')) || 1500;
-/** `&repair=fake`: the replacement is the beat said plainly (no tags), after REPAIR_MS. The real client is src/agent/repair.ts. */
-const fakeRepairFn: RepairFn = (req, signal) => new Promise((r) => {
-  const t = window.setTimeout(() => r({ ok: true, text: req.beat.replace(/\{\{[^}]*\}\}/g, '').replace(/\b(notice|look at)\b\s*/gi, '').replace(/[ \t]{2,}/g, ' ') }), REPAIR_MS);
-  signal.addEventListener('abort', () => { window.clearTimeout(t); r({ ok: false, reason: 'error', detail: 'aborted' }); }, { once: true });
-});
-
 const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
 const hasFiles = (e: DragEvent) => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
 
@@ -697,7 +692,17 @@ export default function App() {
       log.event(e as never);
       run.rec?.event(e as never);
       if (DEBUG) setDebug((d) => ({ ...d, gate: [...(d.gate ?? []), e] }));
+      publishGate(e); // __petu.gate() and the gallery's audit
       if (GATE_LOG) console.info('[gate]', JSON.stringify(e));
+    };
+    // Repairs: &repair=fake (no network) | off; replays use the recording's repairs; live answers ask the server.
+    const repairFor = (): RepairFn | undefined => {
+      if (REPAIR_PARAM === 'off') return undefined;
+      if (REPAIR_PARAM === 'fake') return fakeRepair({ delayMs: REPAIR_MS, text: DEV_SCRIPT?.repairs });
+      if (run.replay) return recordedRepair(run.replay.events ?? []);
+      if (!toAgent) return undefined;
+      const phase = spendPhase(ag.spend);
+      return (req, signal) => (gate?.reqId ? makeRepair({ reqId: gate.reqId, ...(phase ? { phase } : {}) })(req, signal) : Promise.resolve({ ok: false, reason: 'refused', detail: 'no reqId' }));
     };
     if (setting !== 'off') {
       shadow = new ShadowStage({ desk: () => deskRef.current, viewer: () => viewerRef.current, settings: getSettings, grounding: () => groundingRef.current ?? NO_MARKS });
@@ -705,7 +710,7 @@ export default function App() {
       const preflight = new GatePreflight({ board: shadow, pages: () => pageTexts, question: q, grounding: () => groundingRef.current });
       gate = new LiveGate({
         clock: { now: () => performance.now(), endsAt: () => clock.endsAt() }, preflight,
-        repair: REPAIR_PARAM === 'fake' ? fakeRepairFn : undefined,
+        repair: repairFor(),
         faults: GATE_FAULTS, setting: setting === 'shadow' ? 'shadow' : 'live', onEvent: gateEvent,
         headroomMs: HEADROOM_MS,
       });
