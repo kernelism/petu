@@ -143,7 +143,8 @@ async function renderScene(browser: any, browserName: string, base: string, scen
     const pending = [...scene.moments];
     const t0 = Date.now();
     while (pending.length) {
-      if (fake > 240_000 || Date.now() - t0 > 150_000) throw new Error(`timed out (fake ${fake}ms, start ${start}, done ${done}, waiting for ${pending.map((m) => m.name)})`);
+      // The real-time cap leaves room for slower machines (the kit scene takes ~150s of real time on a Linux box).
+      if (fake > 240_000 || Date.now() - t0 > 400_000) throw new Error(`timed out (fake ${fake}ms, start ${start}, done ${done}, waiting for ${pending.map((m) => m.name)})`);
       await page.clock.runFor(STEP_MS);
       fake += STEP_MS;
       // Fake time stands still while real-time work runs (fetches, the pdf.js worker, CSS transitions):
