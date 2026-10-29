@@ -1,4 +1,6 @@
-// server/env.ts — the ONLY place that reads OPENAI_API_KEY (and every PETU_* knob).
+// server/env.ts — the ONLY place that reads OPENAI_API_KEY, PETU_ANTHROPIC_KEY (and every PETU_* knob).
+// The Anthropic key is read from PETU_ANTHROPIC_KEY only, never ANTHROPIC_API_KEY (that name can
+// redirect the billing of other Anthropic tools on this machine).
 //
 // Precedence: process.env first, then the .env files via Vite's loadEnv. Phases and caps are set on
 // the command line for a run (`PETU_PHASE=bakeoff npm run dev`); nobody edits .env for them.
@@ -10,6 +12,7 @@ import { PRICES } from './prices';
 import { HARD_STOP_USD } from '../src/agent/protocol';
 import type { Caps, Phase } from './ledger';
 import type { Effort, ModelConfig } from './openai';
+import { ANTHROPIC_NO_NONE, isAnthropicModel } from './anthropic';
 
 /** The $40 hard stop for checkpoint 2 (prior spike spend included). PETU_TOTAL_CAP_USD may only lower it. */
 export const MAX_TOTAL_USD = HARD_STOP_USD;
@@ -52,6 +55,8 @@ const NO_NONE = new Set(['gpt-6.1-sol', 'gpt-6-astra']);
 
 export type PetuEnv = {
   key: string;
+  /** PETU_ANTHROPIC_KEY ('' when unset: a claude-* answer model then refuses each answer with a clear message). */
+  anthropicKey: string;
   model: ModelConfig;
   /** Stage 1 (scout): a fast model at no reasoning; JSON out. */
   scout: ModelConfig;
@@ -85,6 +90,7 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   if (!PRICES[model]) throw new Error(`petu: PETU_MODEL "${model}" has no price in server/prices.ts (${Object.keys(PRICES).join(', ')})`);
   const effort = oneOf('PETU_EFFORT', EFFORTS, DEFAULT_EFFORT);
   if (effort === 'none' && NO_NONE.has(model)) throw new Error(`petu: ${model} does not accept reasoning effort none; set PETU_EFFORT=low`);
+  if (effort === 'none' && ANTHROPIC_NO_NONE.has(model)) throw new Error(`petu: ${model} cannot turn thinking off; set PETU_EFFORT=low`);
   const verbosity = str('PETU_VERBOSITY') == null ? undefined : oneOf('PETU_VERBOSITY', ['low', 'medium'] as const, 'low');
   // Lessons v3: an answer may walk several pages and build a figure across them.
   const maxOutput = Math.round(num('PETU_MAX_OUTPUT', DEFAULT_MAX_OUTPUT));
@@ -92,11 +98,13 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
 
   const scoutModel = str('PETU_SCOUT_MODEL') ?? DEFAULT_SCOUT_MODEL;
   if (!PRICES[scoutModel]) throw new Error(`petu: PETU_SCOUT_MODEL "${scoutModel}" has no price in server/prices.ts`);
+  if (isAnthropicModel(scoutModel)) throw new Error('petu: the scout runs on OpenAI only (PETU_SCOUT_MODEL); Claude models are wired for stage 2 (PETU_MODEL)');
   const scoutEffort = oneOf('PETU_SCOUT_EFFORT', EFFORTS, 'none');
   if (scoutEffort === 'none' && NO_NONE.has(scoutModel)) throw new Error(`petu: ${scoutModel} does not accept reasoning effort none; set PETU_SCOUT_EFFORT=low`);
   const explicitCache = str('PETU_EXPLICIT_CACHE') !== '0';
   const storyModel = str('PETU_STORYBOARD_MODEL') ?? DEFAULT_STORYBOARD_MODEL;
   if (!PRICES[storyModel]) throw new Error(`petu: PETU_STORYBOARD_MODEL "${storyModel}" has no price in server/prices.ts`);
+  if (isAnthropicModel(storyModel)) throw new Error('petu: the storyboard runs on OpenAI only (PETU_STORYBOARD_MODEL)');
   const storyEffort = oneOf('PETU_STORYBOARD_EFFORT', EFFORTS, DEFAULT_STORYBOARD_EFFORT);
   if (storyEffort === 'none' && NO_NONE.has(storyModel)) throw new Error(`petu: ${storyModel} does not accept reasoning effort none; set PETU_STORYBOARD_EFFORT=low`);
   const storyOn = oneOf('PETU_STORYBOARD', ['0', '1'] as const, '0') === '1';
@@ -117,6 +125,7 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
 
   return {
     key: get('OPENAI_API_KEY')?.trim() ?? '',
+    anthropicKey: get('PETU_ANTHROPIC_KEY')?.trim() ?? '',
     model: { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) },
     scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, fast: str('PETU_SCOUT_FAST') === '1', explicitCache },
     storyboard: storyOn ? { model: storyModel, effort: storyEffort, maxOutput: STORYBOARD_MAX_OUTPUT, fast: false, explicitCache, ...(str('PETU_STORYBOARD_TIMEOUT_MS') ? { timeoutMs: num('PETU_STORYBOARD_TIMEOUT_MS', 12_000) } : {}) } : null,

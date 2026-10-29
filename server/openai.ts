@@ -49,6 +49,7 @@ import type { Relation } from '../src/agent/context/memory';
 import { CacheStats, estimatedUsage } from './cacheStats';
 import { STORYBOARD_SYSTEM, STORYBOARD_VERSION } from './prompt/storyboard';
 import { STORYBOARD_SCHEMA, parseStoryboard, storyboardText, type Storyboard } from '../src/agent/storyboard';
+import { ANTHROPIC_URL, AnthropicEvents, NO_ANTHROPIC_KEY, anthropicHeaders, anthropicInput, isAnthropicModel, normalizeUsage, toAnthropicRequest, type AnthropicUsage } from './anthropic';
 
 export type Effort = 'none' | 'low' | 'medium' | 'high';
 export type ModelConfig = { model: string; effort: Effort; maxOutput: number; fast: boolean; verbosity?: 'low' | 'medium'; explicitCache: boolean;
@@ -58,6 +59,8 @@ export type ModelConfig = { model: string; effort: Effort; maxOutput: number; fa
   timeoutMs?: number };
 export type Deps = {
   key: string; ledger: Ledger; phase: Phase; fetch: typeof fetch;
+  /** PETU_ANTHROPIC_KEY (server/env.ts): used only when the answer model is a Claude model (server/anthropic.ts). */
+  anthropicKey?: string;
   now?: () => number;
   /** Retry back-off; tests pass an immediate one. */
   sleep?: (ms: number) => Promise<void>;
@@ -93,6 +96,23 @@ const img = (b64: string) => `data:image/jpeg;base64,${b64}`;
 const sleepDefault = (ms: number) => new Promise<void>((ok) => setTimeout(ok, ms));
 const scrub = (s: string, key: string) => (key ? s.split(key).join('***') : s);
 const headers = (key: string) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' });
+/** Where a model's calls go: OpenAI's Responses API, or Anthropic's Messages API for claude-* (stage 2 and its prewarm only). */
+type Endpoint = { anthropic: boolean; vendor: string; url: string; key: string; headers: Record<string, string> };
+export const endpointOf = (model: string, d: Pick<Deps, 'key' | 'anthropicKey'>): Endpoint => (isAnthropicModel(model)
+  ? { anthropic: true, vendor: 'Anthropic', url: ANTHROPIC_URL, key: d.anthropicKey ?? '', headers: anthropicHeaders(d.anthropicKey ?? '') }
+  : { anthropic: false, vendor: 'OpenAI', url: URL_, key: d.key, headers: headers(d.key) });
+const noKeyMessage = (ep: Endpoint) => (ep.anthropic ? NO_ANTHROPIC_KEY : 'Add OPENAI_API_KEY to .env and restart npm run dev.');
+/**
+ * Input tokens of a provider's request body, upper bound. Anthropic's tokenizer on current models
+ * counts up to ~1.35× what an older tokenizer does: its estimate is scaled by that.
+ */
+const estimateFor = (ep: Endpoint, body: any, images: { w: number; h: number }[]) =>
+  (ep.anthropic ? Math.ceil(estimateInputTokens(anthropicInput(body), images) * 1.35) : estimateInputTokens(body, images));
+/** Stage 2's request for the model's provider (the Anthropic body keeps the same blocks and breakpoints). */
+export function buildAnswerRequest(r: Parameters<typeof buildRequest>[0], cfg: ModelConfig, prewarm = false): any {
+  const oa = buildRequest(r, cfg, prewarm);
+  return isAnthropicModel(cfg.model) ? toAnthropicRequest(oa as never, cfg, prewarm) : oa;
+}
 const developer = (cfg: ModelConfig) => ({ role: 'developer', content: [{ type: 'input_text', text: systemPrompt(), ...bp(cfg.explicitCache, '12h') }] });
 const common = (cfg: ModelConfig) => ({
   model: cfg.model, store: false, max_output_tokens: cfg.maxOutput, reasoning: { effort: cfg.effort },
@@ -504,7 +524,8 @@ export const askImages = (c: AskContext) => [c.image, ...(c.images ?? []), ...(c
  */
 export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: AskEvent) => void, signal: AbortSignal, story?: ModelConfig | null): Promise<void> {
   const reqId = randomUUID();
-  if (!d.key) { emit({ t: 'error', code: 'no_key', message: 'Add OPENAI_API_KEY to .env and restart npm run dev.', retryable: false }); return; }
+  const ep = endpointOf(cfg.model, d);
+  if (!ep.key) { emit({ t: 'error', code: 'no_key', message: noKeyMessage(ep), retryable: false }); return; }
   if (!PRICES[cfg.model]) { emit({ t: 'error', code: 'bad_request', message: `No price for ${cfg.model}.`, retryable: false }); return; }
   let sb: StoryboardEvent | undefined;
   if (story && r.context.opener) {
@@ -515,8 +536,8 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
     }
     emit(sb);
   }
-  const body = buildRequest({ ...r, ...(sb?.board ? { storyboard: sb.board } : {}) }, cfg);
-  const est = estimateInputTokens(body, askImages(r.context));
+  const body = buildAnswerRequest({ ...r, ...(sb?.board ? { storyboard: sb.board } : {}) }, cfg);
+  const est = estimateFor(ep, body, askImages(r.context));
   const ck = { model: cfg.model, version: PROMPT_VERSION, docHash: r.context.docHash, page: r.context.page };
   const cachedGuess = d.cache?.expectedCached(ck, est) ?? 0;
   const estUsd = costUsd(cfg.model, estimatedUsage(est, cachedGuess, cfg.maxOutput), '12h', cfg.fast);
@@ -532,7 +553,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const onAbort = () => up.abort();
   signal.addEventListener('abort', onAbort);
   if (signal.aborted) up.abort();
-  const filter = new ScriptFilter(), lint = new Lint(), sse = new SseParser(), events = new ResponseEvents();
+  const filter = new ScriptFilter(), lint = new Lint(), sse = new SseParser(), events = ep.anthropic ? new AnthropicEvents() : new ResponseEvents();
   let outChars = 0, rawChars = 0, ttft = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
   let sent = false, terminal = false, complete = false, idle = false, script = '';
   const send = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; script += s; if (Number.isNaN(ttft)) ttft = now() - t0; emit({ t: 'text', d: s }); };
@@ -548,18 +569,18 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
       const timer = setTimeout(() => att.abort(), T.headersMs);
       try {
         sent = true;
-        const r0 = await d.fetch(URL_, { method: 'POST', signal: att.signal, headers: headers(d.key), body: JSON.stringify(body) });
+        const r0 = await d.fetch(ep.url, { method: 'POST', signal: att.signal, headers: ep.headers, body: JSON.stringify(body) });
         clearTimeout(timer);
         if (r0.ok) { res = r0; live = att; break; }
         up.signal.removeEventListener('abort', onUp);
         const retryable = r0.status === 429 || r0.status >= 500;
-        const text = scrub((await r0.text()).slice(0, 300), d.key);
-        if (!retryable || attempt === 1) { failed = { t: 'error', code: r0.status === 429 ? 'rate_limited' : r0.status === 400 ? 'bad_request' : 'upstream', message: `OpenAI ${r0.status}: ${text}`, retryable }; break; }
+        const text = scrub((await r0.text()).slice(0, 300), ep.key);
+        if (!retryable || attempt === 1) { failed = { t: 'error', code: r0.status === 429 ? 'rate_limited' : r0.status === 400 ? 'bad_request' : 'upstream', message: `${ep.vendor} ${r0.status}: ${text}`, retryable }; break; }
       } catch (e) {
         clearTimeout(timer);
         up.signal.removeEventListener('abort', onUp);
         if (signal.aborted) throw e;
-        if (attempt === 1) { failed = { t: 'error', code: 'network', message: 'Network error reaching OpenAI.', retryable: true }; break; }
+        if (attempt === 1) { failed = { t: 'error', code: 'network', message: `Network error reaching ${ep.vendor}.`, retryable: true }; break; }
         // A network failure or timeout may have reached OpenAI and been billed: book it on its own
         // (the request's reservation covers the retry).
         d.ledger.settle({ id: `${reqId}:a0`, phase: d.phase, kind: 'answer', model: cfg.model, usd: estUsd, estimated: true });
@@ -581,11 +602,12 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
         if (r.done || signal.aborted) break;
         for (const ev of sse.push(dec.decode(r.value, { stream: true }))) {
           if ((ev as { type?: string })?.type === 'response.output_text.delta') rawChars += String((ev as { delta?: unknown }).delta ?? '').length;
+          else if ((ev as { type?: string })?.type === 'content_block_delta') { const dl = (ev as { delta?: { text?: string; thinking?: string } }).delta; rawChars += String(dl?.text ?? dl?.thinking ?? '').length; }
           for (const u of events.handle(ev)) {
             if (u.t === 'text') send(lint.push(filter.push(u.d)));
             else if (u.t === 'note') emit({ t: 'note', message: u.message });
             else if (u.t === 'usage') { usage = u.usage; terminal = true; complete = u.complete; }
-            else if (u.t === 'error') { terminal = true; failed = { t: 'error', code: 'upstream', message: scrub(u.message, d.key), retryable: true }; }
+            else if (u.t === 'error') { terminal = true; failed = { t: 'error', code: 'upstream', message: scrub(u.message, ep.key), retryable: true }; }
           }
         }
       }
@@ -594,12 +616,12 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
       // Stalled, cut short upstream (response.incomplete), or ended without a terminal event: what
       // arrived plays, then the client hears cut_off; with no text at all it is an error.
       if (!signal.aborted && !failed && (idle || !terminal || !complete)) {
-        const why = idle ? 'OpenAI stopped sending.' : terminal ? 'OpenAI ended the answer early.' : 'The stream from OpenAI ended early.';
+        const why = idle ? `${ep.vendor} stopped sending.` : terminal ? `${ep.vendor} ended the answer early.` : `The stream from ${ep.vendor} ended early.`;
         failed = { t: 'error', code: outChars ? 'cut_off' : idle ? 'network' : 'upstream', message: why, retryable: true };
       }
     }
   } catch (e) {
-    if (!signal.aborted) failed = { t: 'error', code: outChars ? 'cut_off' : 'network', message: scrub(String(e), d.key).slice(0, 200), retryable: true };
+    if (!signal.aborted) failed = { t: 'error', code: outChars ? 'cut_off' : 'network', message: scrub(String(e), ep.key).slice(0, 200), retryable: true };
   } finally {
     signal.removeEventListener('abort', onAbort);
   }
@@ -629,10 +651,12 @@ const storyRecord = (e: StoryboardEvent): NonNullable<AnswerRecord['storyboard']
 /** Writes the cacheable prefix (system prompt + page block) without generating output. */
 export async function prewarm(context: AskContext, cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {
   if (!cfg.explicitCache) return { ok: false, usd: 0, reason: 'prewarm needs explicit caching (PETU_EXPLICIT_CACHE=0)' };
-  if (!d.key) return { ok: false, usd: 0, reason: 'no key' };
+  const ep = endpointOf(cfg.model, d);
+  if (!ep.key) return { ok: false, usd: 0, reason: 'no key' };
   if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };
-  const body = buildRequest({ question: '', history: [], context }, cfg, true);
-  const r = await callJson(body, cfg.model, estimateInputTokens(body, askImages(context)), cfg.maxOutput, cfg.fast, 'prewarm', d);
+  const body = buildAnswerRequest({ question: '', history: [], context }, cfg, true);
+  // An Anthropic prewarm generates nothing (max_tokens 0): reserve no output.
+  const r = await callJson(body, cfg.model, estimateFor(ep, body, askImages(context)), ep.anthropic ? 0 : cfg.maxOutput, cfg.fast, 'prewarm', d, { ep });
   if (r.ok && r.json?.usage) d.cache?.observe({ model: cfg.model, version: PROMPT_VERSION, docHash: context.docHash, page: context.page }, r.json.usage, systemTokensLow());
   return r.ok ? { ok: true, usd: r.usd } : { ok: false, usd: r.usd, reason: r.message };
 }
@@ -643,12 +667,15 @@ export async function prewarm(context: AskContext, cfg: ModelConfig, d: Deps): P
  */
 export async function prewarmSystem(cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {
   if (!cfg.explicitCache) return { ok: false, usd: 0, reason: 'prewarm needs explicit caching (PETU_EXPLICIT_CACHE=0)' };
-  if (!d.key) return { ok: false, usd: 0, reason: 'no key' };
+  const ep = endpointOf(cfg.model, d);
+  if (!ep.key) return { ok: false, usd: 0, reason: 'no key' };
   if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };
   const k = { model: cfg.model, version: PROMPT_VERSION };
-  if (d.cache?.systemFresh(k)) return { ok: true, usd: 0, reason: 'cached' };
-  const body = buildSystemPrewarm(cfg);
-  const r = await callJson(body, cfg.model, estimateInputTokens(body, []), cfg.maxOutput, cfg.fast, 'prewarm', d);
+  // Anthropic's system breakpoint lives 1h (refreshed by each read), not 12h.
+  if (d.cache?.systemFresh(k, ep.anthropic ? 55 * 60_000 : undefined)) return { ok: true, usd: 0, reason: 'cached' };
+  const oa = buildSystemPrewarm(cfg);
+  const body = ep.anthropic ? toAnthropicRequest(oa as never, cfg, true) : oa;
+  const r = await callJson(body, cfg.model, estimateFor(ep, body, []), ep.anthropic ? 0 : cfg.maxOutput, cfg.fast, 'prewarm', d, { ep });
   if (r.ok) {
     const u = r.json?.usage as Usage | undefined;
     const t = u ? (u.input_tokens_details?.cached_tokens ?? 0) + (u.input_tokens_details?.cache_write_tokens ?? 0) : 0;
@@ -684,24 +711,26 @@ export async function judge(j: JudgeRequest, d: Deps): Promise<JudgeResult> {
 type CallResult = { ok: true; json: any; usd: number } | { ok: false; code: string; message: string; usd: number };
 
 /** A non-streamed call: reserve the worst case → POST (one retry on 429/5xx/network) → book usage. */
-type CallOpts = { timeoutMs?: number; retry?: boolean; signal?: AbortSignal };
+type CallOpts = { timeoutMs?: number; retry?: boolean; signal?: AbortSignal; ep?: Endpoint };
 async function callJson(body: unknown, model: string, est: number, maxOutput: number, fast: boolean, kind: 'prewarm' | 'judge' | 'scout', d: Deps, o: CallOpts = {}): Promise<CallResult> {
   const id = randomUUID();
   const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(model, est, maxOutput, fast), { kind, model });
   if (refused) return { ok: false, code: 'cap', message: capHint(refused.code, refused.message, d.phase), usd: 0 };
   const sleep = d.sleep ?? sleepDefault;
   const T = { ...TIMEOUTS, ...d.timeouts };
-  let last: CallResult = { ok: false, code: 'network', message: 'Network error reaching OpenAI.', usd: 0 };
+  const ep = o.ep ?? endpointOf(JUDGE_MODEL, d);
+  let last: CallResult = { ok: false, code: 'network', message: `Network error reaching ${ep.vendor}.`, usd: 0 };
   let reached = false;
   const attempts = o.retry === false ? 1 : 2;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const timeout = AbortSignal.timeout(o.timeoutMs ?? T.callMs);
       const signal = o.signal ? AbortSignal.any([timeout, o.signal]) : timeout;
-      const res = await d.fetch(URL_, { method: 'POST', signal, headers: headers(d.key), body: JSON.stringify(body) });
+      const res = await d.fetch(ep.url, { method: 'POST', signal, headers: ep.headers, body: JSON.stringify(body) });
       const text = await res.text();
       if (res.ok) {
         const json = JSON.parse(text);
+        if (ep.anthropic && json.usage) json.usage = normalizeUsage(json.usage as AnthropicUsage);
         const u = json.usage as Usage | undefined;
         const estimated = !u;
         const usage: Usage = u ?? { input_tokens: est, output_tokens: maxOutput, input_tokens_details: { cache_write_tokens: est } };
@@ -709,12 +738,12 @@ async function callJson(body: unknown, model: string, est: number, maxOutput: nu
         d.ledger.settle({ id, phase: d.phase, kind, model, usd, estimated, tokens: tokens(usage) });
         return { ok: true, json, usd };
       }
-      last = { ok: false, code: res.status === 429 ? 'rate_limited' : res.status === 400 ? 'bad_request' : 'upstream', message: `OpenAI ${res.status}: ${scrub(text.slice(0, 300), d.key)}`, usd: 0 };
+      last = { ok: false, code: res.status === 429 ? 'rate_limited' : res.status === 400 ? 'bad_request' : 'upstream', message: `${ep.vendor} ${res.status}: ${scrub(text.slice(0, 300), ep.key)}`, usd: 0 };
       if (!(res.status === 429 || res.status >= 500)) break;
     } catch (e) {
       // A network error or timeout after sending may still bill: the last try is booked below at its
       // worst case; a first try that a retry follows is booked now, on its own.
-      last = { ok: false, code: 'network', message: scrub(String(e), d.key).slice(0, 200), usd: 0 };
+      last = { ok: false, code: 'network', message: scrub(String(e), ep.key).slice(0, 200), usd: 0 };
       if (attempt < attempts - 1) d.ledger.settle({ id: `${id}:a0`, phase: d.phase, kind, model, usd: worstCaseUsd(model, est, maxOutput, fast), estimated: true });
       else reached = true;
     }
