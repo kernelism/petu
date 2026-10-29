@@ -776,55 +776,65 @@
 }
 .report-line.is-error { color: #B3261E; }
 
-/* ───────── Answer parts (in the caption, in place of the question line) ───────── */
-.parts {
+/* ───────── Answer playback row (in the caption, in place of the question line) ─────────
+   One slim row: pause · where (count + title) · part rail · replay · speed · go deeper. Quiet until
+   touched: muted glyphs, white on hover; the current part's progress fills its segment. */
+.pb {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 22px;
-  margin: -2px 0 2px -6px;
+  gap: 4px;
+  height: 24px;
+  margin: -4px -8px 2px -8px;
   font-size: 12.5px;
   line-height: 18px;
-  color: rgba(255,255,255,.52);
+  color: rgba(255,255,255,.56);
   pointer-events: auto;
   min-width: 0;
 }
-.parts button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
-.parts-btn {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 6px;
-  border-radius: 6px;
-  transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out);
-}
-.parts-btn:hover, .parts-step:hover { background: rgba(255,255,255,.1); color: rgba(255,255,255,.9); }
-.parts-btn:active, .parts-step:active { background: rgba(255,255,255,.16); }
-.parts-btn:focus-visible, .parts-step:focus-visible { outline: 2px solid #fff; outline-offset: 0; }
-.parts-deeper { margin-left: auto; }
-.parts-list { display: flex; align-items: center; gap: 2px; min-width: 0; margin: 0; padding: 0; list-style: none; overflow: hidden; }
-.parts-item { display: flex; align-items: center; min-width: 0; }
-.parts-item + .parts-item::before { content: '·'; padding: 0 2px; color: rgba(255,255,255,.3); }
-.parts-step { display: inline-flex; align-items: center; gap: 5px; min-width: 0; height: 22px; padding: 0 6px; border-radius: 6px; transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out); }
-.parts-n {
+.pb button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; padding: 0; }
+.pb-btn {
   flex: none;
   display: inline-grid;
   place-items: center;
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.35);
+  min-width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  border-radius: 6px;
+  transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out);
 }
-.parts-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 22ch; }
-.parts-item.is-current .parts-step { color: #fff; }
-.parts-item.is-current .parts-n { background: #fff; color: var(--ink); box-shadow: none; }
-.parts-item.is-done .parts-n { box-shadow: inset 0 0 0 1px rgba(255,255,255,.6); }
-.parts-status { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pb-btn:hover { background: rgba(255,255,255,.1); color: rgba(255,255,255,.92); }
+.pb-btn:active { background: rgba(255,255,255,.17); }
+.pb-btn:focus-visible, .pb-seg:focus-visible { outline: 2px solid #fff; outline-offset: 0; }
+.pb-play { color: rgba(255,255,255,.86); }
+.pb-speed { min-width: 40px; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.pb-where { flex: 1 1 auto; display: flex; align-items: baseline; gap: 8px; min-width: 0; padding: 0 6px 0 4px; }
+.pb-count { flex: none; font-size: 11.5px; font-variant-numeric: tabular-nums; color: rgba(255,255,255,.46); }
+.pb-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: rgba(255,255,255,.78); }
+.pb-where.is-preview .pb-title { color: #fff; }
+.pb-rail { flex: none; display: flex; align-items: center; gap: 3px; margin: 0 6px 0 0; padding: 0; list-style: none; }
+.pb-part { flex: 1 1 0; min-width: 0; display: flex; }
+/* A segment: a 4px track in a 24px-tall hit area. done = full, current = its progress, upcoming = empty. */
+.pb-seg { flex: 1; display: flex; align-items: center; height: 24px; border-radius: 4px; }
+.pb-track {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: rgba(255,255,255,.2);
+  transition: background-color 120ms var(--ease-out), height 120ms var(--ease-out);
+}
+.pb-fill {
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,.92);
+  transform-origin: 0 50%;
+  transition: transform 260ms linear;
+}
+.pb-seg.is-done .pb-fill { background: rgba(255,255,255,.58); }
+.pb-seg:hover .pb-track { background: rgba(255,255,255,.34); height: 6px; }
+.pb-seg:active .pb-track { background: rgba(255,255,255,.44); }
+@media (prefers-reduced-motion: reduce) { .pb-fill, .pb-track { transition: none; } }
 
 /* ───────── Journey route + "Back to pN" (top of the slide column) ───────── */
 .route {

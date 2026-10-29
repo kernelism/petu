@@ -7,13 +7,14 @@ import { PdfViewer } from './pdf/PdfViewer';
 import type { ViewerApi } from './pdf/viewerApi';
 import { Director, type ActionTiming, type Journey } from './playback/director';
 import { AnswerSession, type ParsedScript, type SessionState } from './playback/session';
-import { deriveParts, partAt, partText, partTitle, returnTarget, type Part } from './playback/parts';
+import { deriveParts, nextSentence, partAt, partProgress, partText, partTitle, replayTarget, returnTarget, type Part } from './playback/parts';
 import { SectionLabels } from './pdf/sections';
 import { RouteChip, type Route } from './ui/RouteChip';
 import { DeeperInset, type Deeper } from './ui/DeeperInset';
 import type { PartsView } from './ui/PartsBar';
+import { playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
 import { PacedClock } from './playback/clock';
-import { getSettings, setSettings } from './settings/settings';
+import { getSettings, setSettings, SPEEDS, stepSpeed, useSettings } from './settings/settings';
 import { DEMOS, DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
 import { Desk, GLIDE_MS } from './desk/Desk';
@@ -81,6 +82,8 @@ const STILL_THINKING = 'Still thinking…';
 const PAUSE_GRACE_MS = 350;
 /** A journey's route stays up this long after it starts (the travel, the arrival beat, a read). */
 const ROUTE_MS = 4000;
+/** The narration's clock: the wpm setting, played at the playback speed (both read on every word). */
+const narrationClock = () => new PacedClock(() => getSettings().wpm, undefined, undefined, () => getSettings().speed);
 /** ← within this many words of a part's start goes to the part before; later, to its own start. */
 const PART_RESTART_WORDS = 8;
 /** Demos and dev scripts send no page marks: every `mark=` is skipped. */
@@ -333,6 +336,9 @@ export default function App() {
   const partIdxRef = useRef(0);
   partIdxRef.current = partIdx;
   const [userPaused, setUserPaused] = useState(false);
+  /** Words spoken so far (the current part's progress). */
+  const [spokenN, setSpokenN] = useState(0);
+  const { speed } = useSettings();
   /** Go deeper: the inset (one level) and its own narration-only session. */
   const [deeper, setDeeper] = useState<Deeper | null>(null);
   const deeperRef = useRef<Deeper | null>(null);
@@ -611,6 +617,7 @@ export default function App() {
     partsRef.current = [];
     scriptRef.current = null;
     setPartIdx(0);
+    setSpokenN(0);
     // The old ink fades at the head of the director's queue while the request goes out.
     void director.begin(300);
     groundingRef.current = undefined;
@@ -663,7 +670,7 @@ export default function App() {
       onCutOff: (m) => { cutOff = m; },
     };
 
-    const clock = new PacedClock(() => getSettings().wpm);
+    const clock = narrationClock();
     /** The script stream has not ended: a pause in it is a gap the student can see. */
     let streamOpen = true;
     let firstChunk = true;
@@ -718,10 +725,10 @@ export default function App() {
         // Titles only show in the stepper (two parts or more): a one-part answer reads no page text for them.
         if (ps.length > 1) for (const p of ps) if (labels && labels.get(p.page) == null) void labels.load(p.page).then((l) => { if (l) setLabelTick((n) => n + 1); });
       },
-      onAction: (a, at) => {
+      onAction: (a, at, live) => {
         if (sessionRef.current !== session) return;
         if (a.kind !== 'scroll' && a.kind !== 'clear') drew = true;
-        director.run(a, at);
+        director.run(a, at, live);
       },
       idle: () => director.finale(),
       onWord: (words) => {
@@ -730,6 +737,7 @@ export default function App() {
         if (!spoke) { spoke = true; setWaiting(false); clearThink(); }
         const idx = partAt(partsRef.current, words.length - 1);
         setPartIdx(idx);
+        setSpokenN(words.length);
         setReached((r) => Math.max(r, idx));
         // Once these words are spoken, a faint ellipsis if nothing new has come (a gap in the stream).
         window.clearTimeout(pauseTimer.current);
@@ -856,6 +864,38 @@ export default function App() {
     jumpTo(pos - ps[i].start > PART_RESTART_WORDS || i === 0 ? i : i - 1);
   }, [jumpTo]);
 
+  /** Seeks the narration to word `w` (replay a sentence, skip one): plays on from there. */
+  const seekWord = useCallback((w: number | null) => {
+    const s = sessionRef.current;
+    if (!s || w == null || deeperRef.current) return;
+    if (!s.seek(w)) return;
+    setUserPaused(false);
+    clearPause();
+    deskRef.current?.follow.resume();
+  }, []);
+  /** R (and Shift+←): the sentence being spoken again; pressed again at once, the one before. */
+  const replaySentence = useCallback(() => {
+    const s = sessionRef.current;
+    if (s) seekWord(replayTarget(s.script().words, s.position()));
+  }, [seekWord]);
+  /** Shift+→: on to the next sentence (once it has streamed in). */
+  const skipSentence = useCallback(() => {
+    const s = sessionRef.current;
+    if (s) seekWord(nextSentence(s.script().words, s.position()));
+  }, [seekWord]);
+
+  /** A new playback speed: remembered (settings), and the words not yet spoken re-time at once. */
+  const changeSpeed = useCallback((next: number) => {
+    if (next === getSettings().speed) return;
+    setSettings({ speed: next });
+    sessionRef.current?.respeed();
+    deeperSession.current?.respeed();
+  }, []);
+  const cycleSpeed = useCallback(() => {
+    const i = SPEEDS.findIndex((v) => v === getSettings().speed);
+    changeSpeed(SPEEDS[(i + 1) % SPEEDS.length]);
+  }, [changeSpeed]);
+
   const titleOf = (p: Part) => partTitle(p, originRef.current, labelsRef.current?.get(p.page));
 
   const openDeeper = useCallback(() => {
@@ -884,7 +924,7 @@ export default function App() {
       : agentRef.current.source({ question, page: pageRef.current, ink: () => ink.get().strokes, handlers: {}, onGrounding: () => {} });
     deeperSession.current?.stop();
     const sess: AnswerSession = new AnswerSession({
-      clock: new PacedClock(() => getSettings().wpm),
+      clock: narrationClock(),
       onAction: () => {},
       onWord: (words) => { if (deeperSession.current === sess) setDeeper((d) => d && { ...d, words, state: 'playing' }); },
       onState: (st) => {
@@ -906,21 +946,20 @@ export default function App() {
     setUserPaused(false);
   }, []);
 
-  // Space pause/resume, ←/→ parts, Esc closes the inset. Capture phase, so the keys never also scroll
-  // the slides (follow mode would read that as the student taking over) or stop the answer (Esc).
-  const keysRef = useRef({ togglePause, stepPart, closeDeeper });
-  keysRef.current = { togglePause, stepPart, closeDeeper };
+  // Playback keys (src/ui/playbackKeys.ts): Space, R, ←/→, Shift+←/→, < >; Esc closes the inset.
+  // Capture phase, so the keys never also scroll the slides (follow mode would read that as the
+  // student taking over) or stop the answer (Esc).
+  const keysRef = useRef<PlaybackHandlers>({ togglePause, stepPart, closeDeeper, replay: replaySentence, skip: skipSentence, speed: (d) => changeSpeed(stepSpeed(getSettings().speed, d)) });
+  keysRef.current = { togglePause, stepPart, closeDeeper, replay: replaySentence, skip: skipSentence, speed: (d) => changeSpeed(stepSpeed(getSettings().speed, d)) };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
-      const k = keysRef.current;
-      const swallow = () => { e.preventDefault(); e.stopImmediatePropagation(); };
-      if (e.key === 'Escape' && deeperRef.current) { swallow(); k.closeDeeper(); return; }
-      const t = e.target as HTMLElement | null;
-      const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-      if (typing || deeperRef.current || !sessionRef.current || document.querySelector('.popover')) return;
-      if (e.key === ' ' || e.key === 'Spacebar') { swallow(); k.togglePause(); }
-      else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && partsRef.current.length > 1) { swallow(); k.stepPart(e.key === 'ArrowLeft' ? -1 : 1); }
+      const handled = playbackKey(e, {
+        deeper: !!deeperRef.current,
+        playing: !!sessionRef.current,
+        parts: partsRef.current.length,
+        popover: !!document.querySelector('.popover'),
+      }, keysRef.current);
+      if (handled) { e.preventDefault(); e.stopImmediatePropagation(); }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -1057,9 +1096,18 @@ export default function App() {
   }, [director, fileName]);
 
   const dock = dockPlacement(viewportW, desk);
-  // The stepper shows while an answer plays and has parts (or is paused, for the controls).
-  const partsView: PartsView | undefined = busy && !waiting && (parts.length > 1 || userPaused)
-    ? { titles: parts.map(titleOf), current: Math.min(partIdx, parts.length - 1), paused: userPaused, onJump: jumpTo, onTogglePause: togglePause, onDeeper: openDeeper }
+  // The playback row shows once an answer speaks (the question line holds its place until then).
+  const curPart = Math.max(0, Math.min(partIdx, parts.length - 1));
+  const partsView: PartsView | undefined = busy && !waiting
+    ? {
+      titles: parts.length > 1 ? parts.map(titleOf) : [],
+      label: question,
+      current: curPart,
+      progress: partProgress(parts, curPart, spokenN, scriptRef.current?.words.length ?? spokenN),
+      paused: userPaused,
+      speed,
+      onJump: jumpTo, onTogglePause: togglePause, onReplay: replaySentence, onSpeed: cycleSpeed, onDeeper: openDeeper,
+    }
     : undefined;
 
   if (!doc) return <EmptyState onFile={openFile} onSample={openSample} error={loadError} />;

@@ -52,16 +52,27 @@ export class PacedClock implements NarrationClock {
   private starts: number[] = [];
   private words: string[] = [];
   private end = -Infinity;
-  /** `duration` overrides the word-length model (tests). */
+  /**
+   * `duration` overrides the word-length model (tests). `rate` is the playback speed (1 = the
+   * narration's wpm; 1.5 plays every word and pause in 1/1.5 of the time). Read on every word, so a
+   * change applies to words timed after it (Scheduler.respeed re-times the queued ones).
+   */
   constructor(
     private wpm: () => number,
     private clockNow: () => number = () => performance.now(),
     private duration?: (word: string) => number,
+    private rate: () => number = () => 1,
   ) {}
 
   now(): number { return this.clockNow(); }
 
   durationMs(word: string): number {
+    const r = this.rate();
+    const k = Number.isFinite(r) && r > 0 ? r : 1;
+    return this.baseMs(word) / k;
+  }
+
+  private baseMs(word: string): number {
     if (this.duration) return this.duration(word);
     const syl = syllables(word);
     const base = NO_LETTERS.test(word) || syl === 0 ? 0 : (60000 / this.wpm()) * (FIXED_SHARE + ((1 - FIXED_SHARE) * syl) / MEAN_SYLLABLES);
