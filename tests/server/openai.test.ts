@@ -285,6 +285,14 @@ describe('ask', () => {
     expect(recs).toHaveLength(1);
     expect(recs[0]).toMatchObject({ question: 'Why does disparity shrink?', page: 2, script: 'Look {{grid on=s id=g vals=1,2;3}} here.', lint: ['malformed (dropped): {{grid on=s id=g vals=1,2;3}}'] });
   });
+  it('a failed answer leaves a record too, with its error code and no cost', async () => {
+    const { f } = fakeFetch([{ status: 400, text: 'bad' }]);
+    const recs: AnswerRecord[] = [];
+    await run(req(), deps(f, { log: (r) => recs.push(r) }));
+    expect(recs).toHaveLength(1);
+    expect(recs[0]).toMatchObject({ question: 'Why does disparity shrink?', page: 2, script: '', usd: 0 });
+    expect(recs[0].error).toBeTruthy();
+  });
   it('streams the script once when a commentary message is followed by a final_answer duplicate', async () => {
     const chunks = [
       sse({ type: 'response.output_item.added', item: { id: 'r0', type: 'reasoning' } }),
