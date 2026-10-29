@@ -23,6 +23,10 @@ dock, follow mode and settings. All geometry derives from the window, never the 
 | `src/ui/SettingsPopover.tsx` + `src/settings/settings.ts` | Ink style (live/hand/clean), ink + highlight colour, caption speed (wpm, default 170), shortcuts. Persisted in localStorage `pdf-tutor.settings` (v2); `useSettings()`. |
 | `src/ui/CanvasToolbar.tsx` + `src/ink/student/*` | Student drawing (D toggles, pen/highlighter/eraser, undo); strokes in `ink` store, sent as `STUDENT INK`. |
 | `src/ui/FollowPill.tsx`, `EmptyState.tsx` | "Back to answer" (→ `desk.resume()`); drop/open screen with the sample. |
+| `src/ui/RouteChip.tsx` | Journeys: "p9 → p2 · <section>" at the top of the slide column for `ROUTE_MS` (App), then a persistent "Back to p9" until the view is back there (mid-answer it is the student taking over: follow pauses). |
+| `src/ui/PartsBar.tsx` | The answer's parts (`src/playback/parts.ts`) as a stepper in the caption, in place of the question line, with pause/resume and Go deeper. Shown while busy with ≥ 2 parts, or paused. |
+| `src/ui/DeeperInset.tsx` | Go deeper: pauses the answer; a follow-up (part as context, narration only) plays in the dock's caption slot; Return / Esc resumes from the paused word. |
+| `src/pdf/sections.ts` | `SectionLabels`: a page's label = deepest bookmark at or before it, else the page title (tallest top line). |
 | `src/ui/ui.css`, `src/app.css`, `src/styles/tokens.css`, `src/desk/desk.css`, `src/pdf/viewer.css` | Styles; tokens are the source for ink colours/weights (`ink/agent/tokens.ts` mirrors them). |
 
 ## States and data flow
@@ -46,6 +50,11 @@ dock, follow mode and settings. All geometry derives from the window, never the 
 from `PETU_PDF_DIRS`), `&page=N` (with `&eval`), `&debug`, `&noplay`, `&style=hand|clean`, `&eval`
 (installs `window.__petu`), `&nogen` (replay only), `&fail=N` (cut the stream after N chunks).
 Demo/script/fail paths play canned scripts and make no API call.
+
+- **Flow across the document** (spec section of that name): the director reports journeys (a scroll
+  to a page that isn't adjacent) → route chip; the session's parsed script → `deriveParts`. Keys in a
+  capture-phase listener in App: Space pause/resume, ←/→ parts, Esc closes the inset (before
+  AskBar's Esc-stops). Dev: `?script=flow` (econ.pdf, asked on p9).
 
 ## Invariants / contracts
 
