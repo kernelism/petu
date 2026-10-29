@@ -49,7 +49,7 @@ export function normalizeText(s: string): string {
   return out.trim();
 }
 
-type Slot = { run: number; ch: number }; // ch = -1 for inserted separators
+export type Slot = { run: number; ch: number }; // ch = -1 for inserted separators
 
 const sameLine = (a: PageRect, b: PageRect) => Math.abs(a.y + a.h / 2 - (b.y + b.h / 2)) < Math.min(a.h, b.h) * 0.5;
 
@@ -151,18 +151,40 @@ const isWordChar = (c: string | undefined) => !!c && /[\p{L}\p{N}]/u.test(c);
  * Exact matches on word boundaries win; among several, the one nearest `near` (or the first).
  */
 export function locateQuote(pageRuns: TextRun[], quote: string, near?: { x: number; y: number }, opts: LocateOpts = {}): PageRect[] {
+  return findQuote(pageRuns, quote, near, opts)?.rects ?? [];
+}
+
+/** The quote as the locator normalizes it (superscript markup, hyphens and extra spaces gone). */
+export function quoteKey(quote: string): string {
   // The listing writes superscripts as ^c / ^(...) (textLines); the page's runs have no markup.
   const plain = quote.replace(/\^\(([^()]*)\)/g, '$1').replace(/\^(?=\S)/g, '');
-  const q = normalizeText(plain).replace(/-/g, '').replace(/ {2,}/g, ' ').trim();
-  if (!q || !pageRuns.length) return [];
+  return normalizeText(plain).replace(/-/g, '').replace(/ {2,}/g, ' ').trim();
+}
+
+/** The searchable text of a page: runs in line order, the indexed text and each character's run. */
+export type PageIndex = { runs: TextRun[]; text: string; map: Slot[] };
+export function pageIndex(pageRuns: TextRun[], aspect = 1): PageIndex {
+  const runs = lineOrder(pageRuns, aspect);
+  return { runs, ...buildIndex(runs) };
+}
+/** Rects of an index range [start, end), one per line. */
+export function rangeRects(ix: PageIndex, range: [number, number], opts: LocateOpts = {}): PageRect[] {
+  return rectsFor(ix.runs, ix.map, range, opts.measure ?? defaultMeasure());
+}
+
+/** locateQuote, plus where the hit sits in the page index (`range`). */
+export function findQuote(pageRuns: TextRun[], quote: string, near?: { x: number; y: number }, opts: LocateOpts = {}): { rects: PageRect[]; range: [number, number]; index: PageIndex } | null {
+  const plain = quote.replace(/\^\(([^()]*)\)/g, '$1').replace(/\^(?=\S)/g, '');
+  const q = quoteKey(quote);
+  if (!q || !pageRuns.length) return null;
   // Quotes of ≤ 2 characters ("x", "C′") need a position unless the page has exactly one
   // whole-word hit; with `near`, the hit must sit within NEAR_MAX of it.
   const short = Array.from(normalizeText(plain).replace(/ /g, '')).length <= 2;
   // Search the same line index the model reads: runs of each line in x order, lines in reading
   // order (equation glyphs and sub/superscripts come out as listed).
-  const runs = lineOrder(pageRuns, opts.aspect ?? 1);
-  if (!runs.length) return [];
-  const { text, map } = buildIndex(runs);
+  const index = pageIndex(pageRuns, opts.aspect ?? 1);
+  const { runs, text, map } = index;
+  if (!runs.length) return null;
   const hits: number[] = [];
   for (let i = text.indexOf(q); i >= 0; i = text.indexOf(q, i + 1)) hits.push(i);
   const whole = hits.filter((i) => !isWordChar(text[i - 1]) && !isWordChar(text[i + q.length]));
@@ -172,14 +194,14 @@ export function locateQuote(pageRuns: TextRun[], quote: string, near?: { x: numb
     const f = fuzzy(text, q);
     if (f) candidates.push(f);
   }
-  if (!candidates.length) return [];
-  if (short && !near && candidates.length !== 1) return [];
-  const results = candidates.map((range) => rectsFor(runs, map, range, opts.measure ?? defaultMeasure())).filter((r) => r.length);
-  if (!results.length) return [];
-  if (!near) return results[0];
+  if (!candidates.length) return null;
+  if (short && !near && candidates.length !== 1) return null;
+  const results = candidates.map((range) => ({ range, rects: rectsFor(runs, map, range, opts.measure ?? defaultMeasure()) })).filter((r) => r.rects.length);
+  if (!results.length) return null;
+  if (!near) return { ...results[0], index };
   const dist = (rs: PageRect[]) => Math.hypot(rs[0].x + rs[0].w / 2 - near.x, rs[0].y + rs[0].h / 2 - near.y);
-  const best = results.reduce((b, r) => (dist(r) < dist(b) ? r : b));
-  return short && dist(best) > NEAR_MAX ? [] : best;
+  const best = results.reduce((b, r) => (dist(r.rects) < dist(b.rects) ? r : b));
+  return short && dist(best.rects) > NEAR_MAX ? null : { ...best, index };
 }
 
 function rectsFor(runs: TextRun[], map: Slot[], range: [number, number], measure: Measure | null): PageRect[] {
