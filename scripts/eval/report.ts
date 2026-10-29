@@ -6,6 +6,7 @@ import { criteriaOf, meanScore } from './judge.ts';
 import { esc } from './esc.ts';
 import { TRUST, type Calibration } from './calibrate.ts';
 import type { Summary, QuestionSummary } from './summary.ts';
+import type { GateMetrics } from './metrics.ts';
 import type { Question } from './questions.ts';
 
 export { esc };
@@ -105,7 +106,18 @@ ${it.webkit ? imgs(it.webkit, 'WebKit still') : ''}
 ${row('cost', `$${m.usd.toFixed(4)}${m.estimated ? ' (est.)' : ''}`)}${row('cached', `${Math.round(m.cachedShare * 100)}%`)}
 ${row('elements', m.elements)}${row('skipped', sk + (m.skipDefect ? ' · SKIP DEFECT' : '') + (m.skippedDeps ? ` · ${m.skippedDeps} with dependents` : ''))}${row('malformed', m.malformed)}${row('linted', m.linted)}
 ${row('floating points', m.floatingPoints)}${row('label hits / clipped', `${m.labelHits} / ${m.labelsClipped}`)}${row('out of frame', m.outOfFrame)}
-${row('words', m.words)}${row('leaks', m.leaks)}</table></div></div></article>`;
+${row('words', m.words)}${row('leaks', m.leaks)}${m.gate ? gateRows(m.gate) : ''}</table></div></div></article>`;
+}
+
+/** The live gate's rows in an answer's metrics table. */
+export function gateRows(g: GateMetrics): string {
+  const row = (k: string, v: string | number) => `<tr><th>${esc(k)}</th><td>${esc(String(v))}</td></tr>`;
+  const bad = (k: string, v: number, s: string) => `<tr><th>${esc(k)}</th><td${v ? ' class="defect"' : ''}>${esc(s)}</td></tr>`;
+  return row('gate units / fails / strips', `${g.units} / ${g.fails} / ${g.strips}`)
+    + bad('gate drops', g.drops, `${g.drops}${g.droppedWords ? ` (${g.droppedWords} words)` : ''}${g.cascades ? ` · cascade ×${g.cascades}` : ''}`)
+    + row('repairs', g.repairs ? `${g.repairs}: ok ${g.repairOk}, late ${g.repairLate}, failed re-check ${g.repairFail}, refused/error ${g.repairRefused} · $${g.repairUsd.toFixed(4)}${g.repairMs.length ? ` · ${g.repairMs.map((x) => `${Math.round(x)} ms`).join(', ')}` : ''}` : 'none')
+    + bad('holds > 1 s', g.holds, String(g.holds)) + row('seam', ms(g.seamMs))
+    + bad('live skips after pass', g.liveSkipAfterPass, String(g.liveSkipAfterPass)) + bad('shadow drift', g.shadowDrift, String(g.shadowDrift));
 }
 
 /** Hand-vs-judge: the comparison when hand scores exist, else how to make one. */
@@ -145,6 +157,7 @@ ${sum.fakeJudge ? '<p class="banner">Fake judge (--fake-judge): every score belo
 ${stat('answers', String(r.n))}${stat('judge mean', sum.judge.mean == null ? '-' : sum.judge.mean.toFixed(2))}${byC}${stat('fatal', String(sum.judge.fatal))}
 ${stat('first word p50 / p90', `${ms(r.firstWordMs.p50)} / ${ms(r.firstWordMs.p90)}`)}${stat('first mark p50', ms(r.firstMarkMs.p50))}
 ${stat('floating points', String(r.sum.floatingPoints))}${stat('label hits', String(r.sum.labelHits))}
+${r.gate ? stat('gate drops / units', `${r.gate.sum.drops} / ${r.gate.sum.units}`) + stat('repairs ok / sent', `${r.gate.sum.repairOk} / ${r.gate.sum.repairs}`) + stat('repair p50 / p95', `${ms(r.gate.repairMs.p50)} / ${ms(r.gate.repairMs.p95)}`) + stat('holds > 1 s', String(r.gate.sum.holds)) + stat('live skips after pass', String(r.gate.sum.liveSkipAfterPass)) + stat('check p95', ms(r.gate.shadowMs.p95)) + stat('repair $', r.gate.repairUsd.toFixed(3)) : ''}
 ${stat('generation $', sum.genUsd.toFixed(3))}${stat('judge $', sum.judge.usd.toFixed(3))}
 </div>
 ${defects ? `<p><span class="mute">defects</span> ${esc(defects)}</p>` : ''}

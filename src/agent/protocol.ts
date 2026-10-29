@@ -2,6 +2,7 @@
 import type { Usage } from '../../server/prices';
 import type { Storyboard } from './storyboard';
 import type { Relation } from './context/memory';
+import type { GateEvent, RepairEvent, RepairRequest } from '../gate/events';
 
 /** What the browser sends to POST /api/ask (and /api/prewarm, without question/history/ink). */
 export type AskRequest = {
@@ -71,7 +72,21 @@ export type AskEvent =
   | { t: 'text'; d: string }
   | { t: 'note'; message: string }
   | { t: 'done'; usage?: Usage; usd: number; estimated?: boolean; spentUsd: number; capUsd: number; ttftMs: number; plan?: string; lint?: string[] }
-  | { t: 'error'; code: AskErrorCode; message: string; retryable: boolean };
+  | { t: 'error'; code: AskErrorCode; message: string; retryable: boolean }
+  /** Client-side: the live gate's verdicts and repairs (src/gate/live.ts), recorded with the answer. */
+  | GateEvent
+  | RepairEvent;
+
+/**
+ * POST /api/repair (design §6): the gate's RepairRequest plus the answer it repairs (`reqId`, from
+ * stage 2's `meta`) and the spend phase. Response: NDJSON RepairWireEvents.
+ */
+export type RepairWire = RepairRequest & { reqId: string; phase?: string };
+/** /api/repair's NDJSON lines: the replacement's text, then done (cost) or error. */
+export type RepairWireEvent =
+  | { t: 'text'; d: string }
+  | { t: 'done'; usd: number; estimated?: boolean; ms: number; lint?: string[] }
+  | { t: 'error'; code: 'not_found' | 'too_many' | 'bad_request' | 'cap' | 'off' | 'upstream' | 'network' | 'late' | 'no_key'; message: string; usd?: number };
 
 export type AskErrorCode = 'no_key' | 'cap' | 'rate_limited' | 'upstream' | 'network' | 'bad_request' | 'cut_off';
 

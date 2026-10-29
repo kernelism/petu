@@ -14,11 +14,31 @@ export type Comparison = {
   malformed: { a: number; b: number };
   firstWordP50: { a: number | null; b: number | null };
   takeawayFirstRate: { a: number; b: number };
+  /** The live gate (absent on both sides when neither run was gated; an ungated run counts as 0). */
+  gate?: { drops: { a: number; b: number }; holds: { a: number; b: number }; liveSkipAfterPass: { a: number; b: number }; repairUsd: { a: number; b: number } };
   verdict: Verdict;
   reasons: string[];
 };
 
-export const THRESHOLDS = { acceptDelta: 0.15, rerunBand: 0.25, skippedSlack: 2, malformedSlack: 1, firstWordSlack: 0.15 };
+export const THRESHOLDS = { acceptDelta: 0.15, rerunBand: 0.25, skippedSlack: 2, malformedSlack: 1, firstWordSlack: 0.15,
+  /** Live gate: more dropped units or > 1 s holds than this over A rejects; any live skip after a pass rejects. */
+  dropSlack: 1, holdSlack: 2 };
+
+/** The gate comparison and its reject reasons (pure; used by compare). */
+export function gateRules(A: Pick<Summary, 'run'>, B: Pick<Summary, 'run'>): { gate?: Comparison['gate']; reasons: string[] } {
+  const ga = A.run.gate, gb = B.run.gate;
+  if (!ga && !gb) return { reasons: [] };
+  const v = (g: typeof ga, k: 'drops' | 'holds' | 'liveSkipAfterPass') => g?.sum[k] ?? 0;
+  const gate = {
+    drops: { a: v(ga, 'drops'), b: v(gb, 'drops') }, holds: { a: v(ga, 'holds'), b: v(gb, 'holds') },
+    liveSkipAfterPass: { a: v(ga, 'liveSkipAfterPass'), b: v(gb, 'liveSkipAfterPass') }, repairUsd: { a: ga?.repairUsd ?? 0, b: gb?.repairUsd ?? 0 },
+  };
+  const reasons: string[] = [];
+  if (gate.drops.b - gate.drops.a > THRESHOLDS.dropSlack) reasons.push(`gate drops up by ${gate.drops.b - gate.drops.a} (> ${THRESHOLDS.dropSlack})`);
+  if (gate.holds.b - gate.holds.a > THRESHOLDS.holdSlack) reasons.push(`holds > 1 s up by ${gate.holds.b - gate.holds.a} (> ${THRESHOLDS.holdSlack})`);
+  if (gb && gate.liveSkipAfterPass.b > 0) reasons.push(`${gate.liveSkipAfterPass.b} live skip(s) after the gate passed`);
+  return { gate, reasons };
+}
 
 /** Criteria both runs were judged on (r2 or r3); comparing across rubrics is refused. */
 export function sharedCriteria(A: Summary, B: Summary): string[] {
@@ -63,6 +83,8 @@ export function compare(A: Summary, B: Summary): Comparison {
   if (malformed.b - malformed.a > T.malformedSlack) reasons.push(`malformed up by ${malformed.b - malformed.a} (> ${T.malformedSlack})`);
   if (fw.a != null && fw.b != null && fw.b > fw.a * (1 + T.firstWordSlack)) reasons.push(`p50 first word worse by ${(((fw.b - fw.a) / fw.a) * 100).toFixed(0)}% (> 15%)`);
   // The takeaway-first gate belongs to the r2 answer shape; Lessons v3 dropped that rule (r3 runs skip it).
+  const g = gateRules(A, B);
+  reasons.push(...g.reasons);
   if (!criteria.includes('understanding') && tk.b < tk.a) reasons.push(`takeawayFirst rate down (${pct(tk.a)} -> ${pct(tk.b)})`);
 
   let verdict: Verdict;
@@ -72,7 +94,7 @@ export function compare(A: Summary, B: Summary): Comparison {
   else if (d != null && d >= T.acceptDelta && (d >= T.rerunBand || !mixed)) verdict = 'ACCEPT';
   else if (d != null && Math.abs(d) < T.rerunBand && mixed) verdict = 'RERUN n=2';
   else { verdict = 'REJECT'; reasons.push(d == null ? 'no judged questions in common' : `mean judge delta ${d.toFixed(2)} < +${T.acceptDelta}`); }
-  return { rows, meanJudgeDelta, signs, fatal, skipped, malformed, firstWordP50: fw, takeawayFirstRate: tk, verdict, reasons };
+  return { rows, meanJudgeDelta, signs, fatal, skipped, malformed, firstWordP50: fw, takeawayFirstRate: tk, ...(g.gate ? { gate: g.gate } : {}), verdict, reasons };
 }
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -89,6 +111,7 @@ export function format(A: Summary, B: Summary, c: Comparison): string {
   L.push('', `mean judge delta ${f2(c.meanJudgeDelta)}  (up ${c.signs.up}, down ${c.signs.down})`,
     `fatal ${c.fatal.a} -> ${c.fatal.b}   skipped ${c.skipped.a} -> ${c.skipped.b}   malformed ${c.malformed.a} -> ${c.malformed.b}`,
     `p50 first word ${c.firstWordP50.a ?? '-'} -> ${c.firstWordP50.b ?? '-'} ms   takeawayFirst ${pct(c.takeawayFirstRate.a)} -> ${pct(c.takeawayFirstRate.b)}`,
+    ...(c.gate ? [`gate drops ${c.gate.drops.a} -> ${c.gate.drops.b}   holds>1s ${c.gate.holds.a} -> ${c.gate.holds.b}   live skips after pass ${c.gate.liveSkipAfterPass.a} -> ${c.gate.liveSkipAfterPass.b}   repair $${c.gate.repairUsd.a.toFixed(3)} -> $${c.gate.repairUsd.b.toFixed(3)}`] : []),
     `VERDICT: ${c.verdict}${c.reasons.length ? ` (${c.reasons.join('; ')})` : ''}`);
   return L.join('\n');
 }

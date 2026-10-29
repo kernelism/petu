@@ -10,3 +10,10 @@ export const SCOUT_MAX_OUTPUT = 600;
  * reasoning tokens count against this budget too.
  */
 export const STORYBOARD_MAX_OUTPUT = 4000;
+/**
+ * A repair (live gate, design §6): one replacement beat (≤ ~55 words + tags). The ledger reserves
+ * this much output per repair; the eval preflight counts it too.
+ */
+export const REPAIR_MAX_OUTPUT = 450;
+/** Repairs one answer may ask for (the server refuses the next with 429). */
+export const MAX_REPAIRS = 2;

@@ -10,6 +10,8 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 |---|---|
 | `server/plugin.ts` | Routes (`/api/ask`, `/api/scout`, `/api/prewarm`, `/api/spend`, `/api/judge`, `/api/dev-pdf/`), `guard` (loopback Host, same Origin, JSON content-type), body validation (`validateAsk/Scout/Context`, `LIMITS`), prewarm dedupe (25 min). |
 | `server/openai.ts` | Request builders `buildRequest` (stage 2), `buildScoutRequest`, `buildSystemPrewarm`; `ask`, `scoutStream`, `prewarm*`, `judge`, `callJson`; `openerNote`; token estimate; timeouts `TIMEOUTS` (15s headers / 20s idle / 60s call), `SCOUT_TIMEOUT_MS` 8000. |
+| `server/repair.ts`, `server/prompt/repair.ts` | Live-gate repairs (`POST /api/repair`, design 2026-10-29 §6): `RepairCache` keeps stage 2's OpenAI-format body per `reqId` (10 min, ≤ 16; filled by `ask` via `Deps.onBody`); a repair resends it unchanged (same cache key and breakpoints) + the released text (assistant) + `repairNote(report)` (user, `REPAIR_VERSION` r1), 450 output tokens, the answer's provider (Anthropic converted by `toAnthropicRequest`). Ledger kind `repair`; `MAX_REPAIRS` 2 per answer (429); 404 unknown reqId, 400 bad body/phase, 402 cap, 503 `PETU_REPAIR=off`; the deadline aborts and books an estimate. `PETU_REPAIR_EFFORT` (default: stage 2's). answers.jsonl gets `{kind:'repair', …}`. Shares `readUpstream` (SSE → filter → lint) with `ask`. |
+| `src/agent/repair.ts` | The gate's `RepairFn`s: `makeRepair({reqId, phase})` (NDJSON), `fakeRepair({delayMs, faults, text})` (no network), `recordedRepair(events)` (replays). |
 | `server/scoutStream.ts` | `ScoutJson` (incremental JSON reader) + `OpenerGate` (whole sentences only; tags limited to `OPENER_TAGS` on the visible page; narration cleaned). |
 | `server/env.ts` | The ONLY reader of the key and `PETU_*`. Defaults: `gpt-6.1-terra`, effort none, `DEFAULT_MAX_OUTPUT` 3200, scout max 600. `PHASE_CAPS`, `MAX_TOTAL_USD`. Throws on bad knobs. |
 | `server/ledger.ts` | `Ledger`: `reserve` (worst case) → `settle` (real or estimated) / `release`; lockfile; dead-process reservations booked as `recovered`. File `.petu/spend.json`. |
@@ -77,7 +79,7 @@ previous exchange, question. The scout may name any page and an optional `find` 
 - Caps: total ≤ $60 (`PETU_TOTAL_CAP_USD` can only lower it); phase (`PETU_PHASE`, default `founder`):
   dev 1, bakeoff 6, iterate 7, validate 2, founder 21.99, lessondev 1.5, lessonbake 3, lessoniter 3.5,
   lessonval 2, bench 15 (override one run: `PETU_CAP_<PHASE>=…`); daily $3 in founder phase only (`PETU_DAILY_CAP_USD`).
-- Kinds booked: `answer`, `scout`, `storyboard`, `prewarm`, `judge`. `GET /api/spend` shows totals and `blocked`.
+- Kinds booked: `answer`, `scout`, `storyboard`, `prewarm`, `judge`, `repair`. `GET /api/spend` shows totals and `blocked`.
 - A request whose `phase` ≠ the server's phase is rejected (400).
 
 ## Invariants / contracts
