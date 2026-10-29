@@ -10,6 +10,9 @@
 //                              { scope: 'system' } → the shared system block (document open; ≤ 1 per 11.5h)
 //   GET  /api/spend            → SpendSummary (+ phase, phaseCapUsd, byPhase, byModel, n)
 //   POST /api/judge            eval only; header x-petu-eval: <.petu/eval-token> → JudgeResult
+//   POST /api/repair           RepairWire → NDJSON RepairWireEvents (the live gate's replacement beat for
+//                              an answer's failed unit, server/repair.ts); 404 unknown reqId, 429 past
+//                              MAX_REPAIRS, 400 bad body or phase, 402 cap, 503 repairs off
 //   POST /api/report           { report, png? } → saved under .petu/reports/ (server/report.ts)
 //   GET  /api/dev-pdf/<n>.pdf  <n>.pdf from the first PETU_PDF_DIRS directory that has it
 //
@@ -33,6 +36,8 @@ import { CacheStats } from './cacheStats';
 import { worstCaseUsd } from './prices';
 import { loadPetuEnv, type PetuEnv } from './env';
 import { routeReport } from './report';
+import { RepairCache, repair } from './repair';
+import type { RepairWire, RepairWireEvent } from '../src/agent/protocol';
 import { isRelation } from '../src/agent/context/memory';
 
 export const BODY_LIMIT = 12 * 1024 * 1024;
@@ -68,7 +73,10 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   const cache = new CacheStats(join(dir, 'cache.json'), o.now);
   // Every answer's record, local only (gitignored): diagnosable without screenshots.
   const log = (rec: object) => appendFileSync(join(dir, 'answers.jsonl'), `${JSON.stringify(rec)}\n`);
-  const deps: Deps = { key: env.key, ...(env.anthropicKey ? { anthropicKey: env.anthropicKey } : {}), ledger, phase: env.phase, fetch: o.fetch ?? fetch, cache, log, ...(o.timeouts ? { timeouts: o.timeouts } : {}) };
+  // Stage 2's requests by reqId, so a live-gate repair resends the same cached prefix (server/repair.ts).
+  const repairs = new RepairCache(o.now);
+  const deps: Deps = { key: env.key, ...(env.anthropicKey ? { anthropicKey: env.anthropicKey } : {}), ledger, phase: env.phase, fetch: o.fetch ?? fetch, cache, log, ...(o.timeouts ? { timeouts: o.timeouts } : {}),
+    ...(env.repair ? { onBody: (id, oa, cfg, ck, images) => repairs.put(id, oa, cfg, ck, images) } : {}) };
   let systemWarming: Promise<unknown> | null = null;
   const now = o.now ?? Date.now;
   const prewarmed = new Map<string, number>();
@@ -97,6 +105,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
       if (path === '/api/prewarm') return await routePrewarm(req, res);
       if (path === '/api/spend') return routeSpend(req, res);
       if (path === '/api/judge') return await routeJudge(req, res);
+      if (path === '/api/repair') return await routeRepair(req, res);
       if (path === '/api/report') return await routeReport(req, res, o.root, env.key);
       if (path.startsWith('/api/dev-pdf/')) return routePdf(req, res, path.slice('/api/dev-pdf/'.length));
     } catch (e) {
@@ -127,6 +136,35 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     const emit = (e: AskEvent) => { if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify(e) + '\n'); };
     try {
       await ask(body as AskRequest, env.model, deps, emit, ctl.signal, env.storyboard);
+    } finally {
+      res.off('close', onClose);
+      if (!res.writableEnded && !res.destroyed) res.end();
+    }
+  }
+
+  async function routeRepair(req: IncomingMessage, res: ServerResponse) {
+    if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
+    const body = await readJson(req, res);
+    if (body === undefined) return;
+    const bad = validateRepair(body) ?? (body.phase != null && body.phase !== env.phase ? `phase "${String(body.phase)}" ≠ server phase "${env.phase}"` : null);
+    if (bad) return json(res, 400, { t: 'error', code: 'bad_request', message: bad });
+    const ctl = new AbortController();
+    const onClose = () => { if (!res.writableEnded) ctl.abort(); };
+    res.on('close', onClose);
+    let opened = false;
+    const open = () => {
+      if (opened) return;
+      opened = true;
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/x-ndjson; charset=utf-8');
+      res.setHeader('cache-control', 'no-store');
+      res.setHeader('x-accel-buffering', 'no');
+      res.flushHeaders();
+    };
+    const emit = (e: RepairWireEvent) => { open(); if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify(e) + '\n'); };
+    try {
+      const refused = await repair(body as RepairWire, env.repair, { ...deps, repairs, log }, emit, ctl.signal);
+      if (refused && !opened) return json(res, refused.status, refused.error);
     } finally {
       res.off('close', onClose);
       if (!res.writableEnded && !res.destroyed) res.end();
@@ -308,7 +346,9 @@ const isStr = (v: unknown): v is string => typeof v === 'string';
 /** Sane maxima for what the browser sends (it sends ≤ 1280 px images and much shorter text). */
 export const LIMITS = { imageSide: 2048, docText: 120_000, pageText: 60_000, pagesText: 120_000, images: 3, plan: 2_000, opener: 2_000, scoutPages: 6, searchText: 20_000, inkSummary: 4_000,
   /** Tiered context (ctx=new): the section card, session memory, candidates. */
-  section: 60_000, memory: 20_000, candidates: 20_000 };
+  section: 60_000, memory: 20_000, candidates: 20_000,
+  /** /api/repair: the released stage-2 text, the failed beat, the report (as JSON). */
+  committed: 40_000, beat: 4_000, report: 6_000 };
 const isImage = (v: any) => v != null && isStr(v.b64) && v.b64.length > 0 && typeof v.w === 'number' && typeof v.h === 'number' && v.w > 0 && v.h > 0 && v.w <= LIMITS.imageSide && v.h <= LIMITS.imageSide;
 
 export function validateContext(c: any): string | null {
@@ -351,4 +391,22 @@ export function validateAsk(b: any): string | null {
   if (!Array.isArray(b.history) || b.history.length > 3) return 'history must be an array of at most 3';
   if (!b.history.every((h: any) => h && isStr(h.q) && isStr(h.a) && isInt(h.page))) return 'history items need { q, a, page }';
   return validateContext(b.context);
+}
+
+/** POST /api/repair's body (RepairWire): reqId, unit index, released text, failed beat, report, deadline. */
+export function validateRepair(b: any): string | null {
+  if (b == null || typeof b !== 'object') return 'body must be an object';
+  if (!isStr(b.reqId) || !b.reqId || b.reqId.length > 100) return 'reqId is required';
+  if (!isInt(b.k) || b.k < 0 || b.k > 10_000) return 'k must be a unit index';
+  if (!isStr(b.committed) || b.committed.length > LIMITS.committed) return `committed must be a string of at most ${LIMITS.committed.toLocaleString('en-US')} characters`;
+  if (!isStr(b.beat) || !b.beat.trim() || b.beat.length > LIMITS.beat) return `beat must be 1–${LIMITS.beat.toLocaleString('en-US')} characters`;
+  if (typeof b.deadlineMs !== 'number' || !Number.isFinite(b.deadlineMs) || b.deadlineMs <= 0 || b.deadlineMs > 60_000) return 'deadlineMs must be 1–60000';
+  const r = b.report;
+  if (r == null || typeof r !== 'object' || JSON.stringify(r).length > LIMITS.report) return `report must be an object of at most ${LIMITS.report.toLocaleString('en-US')} characters`;
+  if (!isStr(r.beat) || !isStr(r.tail) || !isInt(r.maxWords) || r.maxWords < 1) return 'report needs { beat, tail, maxWords }';
+  if (!Array.isArray(r.problems) || !r.problems.every((p: any) => p && isStr(p.check) && isStr(p.detail) && (p.hint == null || isStr(p.hint)))) return 'report.problems must be [{ check, detail, hint? }]';
+  if (!Array.isArray(r.board) || !r.board.every((s: any) => s && isStr(s.section) && isInt(s.count) && (s.items == null || (Array.isArray(s.items) && s.items.every((i: any) => i && isStr(i.id) && isStr(i.kind) && (i.label == null || isStr(i.label))))))) return 'report.board must be [{ section, count, items? }]';
+  if (r.consts == null || typeof r.consts !== 'object' || Array.isArray(r.consts) || !Object.values(r.consts).every((v) => typeof v === 'number')) return 'report.consts must be { name: number }';
+  if (!Array.isArray(r.finds) || !r.finds.every(isStr) || !Array.isArray(r.later) || !r.later.every(isStr)) return 'report.finds and report.later must be string arrays';
+  return null;
 }
