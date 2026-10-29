@@ -4,13 +4,16 @@ import { REGION_H, type Action, type End, type Pt, type RawAction, type RawEnd, 
 import { isBlockRef, isLiteral, type PtArg } from '../script/pointExpr';
 import { Figure, rayEnd } from './figure';
 import type { PageRect } from './space';
+import type { ChartAxis } from '../agent/context/charts';
 
 /** What the grounding knows about one page mark (model coords). */
 export type GroundMark =
   | { kind: 'dot'; at: Pt }
   | { kind: 'line' | 'arrow'; from: Pt; to: Pt }
   | { kind: 'box' | 'image' | 'figure' | 'equation'; rect: PageRect }
-  | { kind: 'text'; rect: PageRect; text: string };
+  | { kind: 'text'; rect: PageRect; text: string }
+  /** A calibrated chart (`#c1`): page drawings on it take data coordinates. */
+  | { kind: 'chart'; rect: PageRect; x: ChartAxis; y: ChartAxis };
 export type Grounding = { mark(page: number, id: string): GroundMark | undefined };
 
 /** Pages: a ray without `len` stops at 1.5 × |AB| (a page has no frame to run to). */

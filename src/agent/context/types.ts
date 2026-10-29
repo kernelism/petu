@@ -2,6 +2,7 @@
 import type { GroundMark, Grounding } from '../../geometry/resolve';
 import type { TextLine } from './textLines';
 import type { FigureMark } from './marks';
+import type { Chart } from './charts';
 
 /** Everything known about one page, built once per page (LRU) on scroll idle. */
 export type PageGround = {
@@ -13,6 +14,8 @@ export type PageGround = {
   noText: boolean;
   /** Its equations are drawn as glyph outlines (≥ GLYPH_FLOOD small filled paths): absent from the text, only in the image. */
   mathOutlines?: boolean;
+  /** Calibrated charts (`#c1`…): axes fitted from ticks and tick labels. Absent or empty: none trusted. */
+  charts?: Chart[];
 };
 
 /** The marks of the pages sent with the current question, by page: the director's Grounding. */
@@ -25,6 +28,10 @@ export function groundingOf(pages: PageGround[]): Grounding {
       if (/^#t\d+$/.test(id)) {
         const l = g.lines.find((x) => `#${x.id}` === id);
         return l ? { kind: 'text', rect: l.rect, text: l.text } : undefined;
+      }
+      if (/^#c\d+$/.test(id)) {
+        const c = g.charts?.find((x) => x.id === id);
+        return c ? { kind: 'chart', rect: c.rect, x: c.x, y: c.y } : undefined;
       }
       const m = g.marks.find((x) => x.id === id);
       if (!m) return undefined;
