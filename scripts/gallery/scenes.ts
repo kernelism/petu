@@ -50,8 +50,8 @@ export const SCENES: Scene[] = [
   // The prompt's few-shot examples on their own slides (public/fixtures/examples.pdf): what the model is shown, as a student sees it.
   // The svg board (p6, the default answer format): the prompt's two examples and the svgboard
   // experiment's four recorded answers, streamed as beats through the server's own filter.
-  { name: 'svg-ferry', query: 'script=svg-ferry', moments: [mid(9000), mid(22000), END] },
-  { name: 'svg-dough', query: 'script=svg-dough', moments: [mid(9000), mid(22000), END] },
+  { name: 'svg-ferry', query: 'script=svg-ferry', moments: [mid(14000), mid(30000), END] },
+  { name: 'svg-dough', query: 'script=svg-dough', moments: [mid(14000), mid(30000), END] },
   { name: 'svg-skater', query: 'script=svg-skater', moments: [mid(12000), END] },
   { name: 'svg-tunnel', query: 'script=svg-tunnel', moments: [mid(12000), END] },
   { name: 'svg-rent', query: 'script=svg-rent', moments: [mid(12000), END] },
