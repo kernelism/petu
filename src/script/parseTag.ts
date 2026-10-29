@@ -284,6 +284,12 @@ export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
     case 'highlight':
     case 'underline':
       return anchor ? ({ kind: name, ...target, ...anchor, ...(name === 'underline' ? weight : {}), ...mark } as RawAction) : null;
+    case 'zoom': {
+      // {{zoom on=s at=P r=60 scale=4}}: a small detail, enlarged beside the figure (region only).
+      const r = num(args.r), k = args.scale != null ? num(args.scale) : 3;
+      if (!inRegion || !at || r == null || !(r > 0) || k == null || !(k > 1)) return null;
+      return { kind: 'zoom', ...target, at, r, scale: Math.min(Math.max(k, 1.5), 8), ...(quote ? { text: quote.slice(0, 60) } : {}), ...mark };
+    }
     case 'circle': {
       if (anchor) return { kind: 'circle', ...target, ...anchor, ...dash, ...weight, ...mark };
       const r = radii();

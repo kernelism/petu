@@ -186,7 +186,7 @@ function source(args: Args, flags: Set<string>, kind = '', ctx?: ParseCtx): KitS
  * Stacked bars' parts: `100;90,20` (a row per bar; literal or formula cells). Undefined: not stacked
  * (one row, or rectangular rows without the flag); null: malformed.
  */
-function stackOf(s: string | undefined, flag: boolean): { vals: number[][]; cells?: (string | null)[][] } | null | undefined {
+function stackOf(s: string | undefined, flag: boolean): { vals: number[][]; cells?: (string | null)[][]; side?: boolean } | null | undefined {
   if (s == null) return flag ? null : undefined;
   const rows = s.split(';').map((r) => r.trim()).filter(Boolean);
   const got = rows.map((r) => parseCells(r));
@@ -258,8 +258,12 @@ export function parseKitBlock(name: string, args: Args, quotes: string[], flags:
     case 'bars': {
       // Stacked: each bar the sum of its parts (rows of vals=, any lengths). Rows of different lengths
       // can only be meant this way, so they imply `stack`.
-      const st = stackOf(args.vals, flags.has('stack'));
+      // Rectangular rows that name their parts (`vals=17,17;15,19 parts=supplied,demanded`) can only be
+      // grouped bars: a group per row, a bar per part, side by side on one baseline (`stack.side`).
+      const side = !flags.has('stack') && args.parts != null && (args.vals?.includes(';') ?? false);
+      const st = stackOf(args.vals, flags.has('stack') || side);
       if (st === null) return null;
+      if (st && side && new Set(st.vals.map((r) => r.length)).size === 1) st.side = true;
       if (st) {
         const labels = list(args.labels), parts = list(args.parts);
         if (labels === null || parts === null || ['map', 'zip', 'over', 'size', 'axes', 'view'].some((k) => args[k] != null)) return null;

@@ -22,7 +22,7 @@ const em = (as: Action[]) => as.filter((a) => 'em' in a && a.em).map((a) => a.ki
 // The prompt's examples (`ex-*`) are model-facing scripts played as they are: tests/server/examples.test.ts
 // checks them against their own listings and the prompt's rules, not the hand-written demos' style.
 /** Answers kept exactly as a model wrote them (founder live tests): agent grammar and tag stacking included. */
-const VERBATIM = new Set(['tunnel']);
+const VERBATIM = new Set(['tunnel', 'live-econ', 'live-calc', 'live-calc-zoom']);
 const ALL = [DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.entries(SCRIPTS).filter(([k]) => !k.startsWith('ex-') && !VERBATIM.has(k)).map(([, x]) => x.script)];
 /** A simulated session's later answers (asides, follow-ups, check replies). */
 const ANSWERS = Object.values(SCRIPTS).flatMap((x) => Object.values(x.answers ?? {}));
