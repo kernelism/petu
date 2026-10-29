@@ -555,6 +555,10 @@ describe('Lessons v3: two stages', () => {
     expect(two - one).toBeGreaterThan(40 * 23 * 1.2);
   });
 
+  it('scout s2.6: the plan ends with its beats and a scope word; a narrow question is three or four beats (founder 2026-10-29: length by scope)', () => {
+    expect(SCOUT_SYSTEM).toMatch(/end with "Scope:" and one word: narrow \([^)]*three or four beats\), standard, or broad/);
+  });
+
   const sreq = { question: 'How does it work?', docName: 'd.pdf', docHash: 'h', numPages: 12, page: 3, digest: 'DECK d.pdf\np1: a', prior: { q: 'before?', a: 'x'.repeat(2000), page: 2 },
     pageText: 'PAGE 3 (visible; 16:9 slide; image attached)\nt1 60 40–300: Three' };
   const scfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600, fast: false, explicitCache: true };

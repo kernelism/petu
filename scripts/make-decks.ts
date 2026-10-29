@@ -743,11 +743,11 @@ async function canvas(): Promise<void> {
 }
 
 // Deck 5: the prompt's few-shot examples (server/prompt/examples.ts) as real slides, so their scripts
-// play on the board (`?script=ex-village`, `ex-forecast`, `ex-counter`) and the gallery shows what a
+// play on the board (`?script=ex-village`, `ex-lighthouse`, `ex-counter`) and the gallery shows what a
 // student would see. Pages sit at the examples' own page numbers (2: the counter's chart; 3–5: the
-// village; 7: the forecast); the music page is not drawn (its sharp sign is outside WinAnsi).
+// village; 7: the lighthouse); the music page is not drawn (its sharp sign is outside WinAnsi).
 async function examples(): Promise<void> {
-  const d = await Deck.create('Prompt examples: a counter, a village, a forecast (sample deck)');
+  const d = await Deck.create('Prompt examples: a counter, a village, a lighthouse (sample deck)');
   d.page();
   {
     const p = d.page('Waiting at one counter');
@@ -774,8 +774,15 @@ async function examples(): Promise<void> {
   }
   d.page();
   {
-    const p = d.page('Reading a forecast');
-    d.bullets(p, ['A 70% chance of rain means it rains on about 7 of every 10 days', 'that get this same forecast.', 'It is not a promise about today, which will either be wet or dry.'], 110, 16);
+    const p = d.page("The keeper's lamp");
+    d.bullets(p, ['The lamp turns at a steady rate, one full turn every 20 seconds.', 'Its beam lights a spot on a straight shore 200 m away.'], 100, 15);
+    // a coast: the shore, the sea below it, the tower on a rock, the beam reaching the shore
+    d.line(p, [430, 260], [760, 260], 2, INK);
+    d.text(p, 'shore', 700, 250, 12, d.f.sans, GRAY);
+    d.rect(p, 520, 420, 22, 50, TINT_R, INK);
+    d.poly(p, [[516, 420], [531, 400], [546, 420]], PANEL, INK);
+    d.line(p, [531, 410], [640, 260], 1, GRAY, [5, 4]);
+    d.text(p, 'tower', 512, 490, 12, d.f.sans, BODY);
   }
   await d.save('public/fixtures/examples.pdf');
 }

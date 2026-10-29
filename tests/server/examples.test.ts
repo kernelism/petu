@@ -4,6 +4,7 @@ import { ScriptFilter } from '../../server/scriptFilter';
 import { Lint } from '../../server/lint';
 import { ScriptParser } from '../../src/script/parser';
 import { Figures, type GroundMark } from '../../src/geometry/resolve';
+import { evalConst } from '../../src/geometry/live';
 import { GateState, UNBOUND_TEXT } from '../../src/gate/engine';
 import type { Pt, RawAction } from '../../src/script/types';
 
@@ -80,7 +81,10 @@ function run(ex: Example) {
   const p = new ScriptParser();
   const acts = [...p.push(text), ...p.end()].flatMap((e) => (e.type === 'action' ? [e.action] : [])) as RawAction[];
   const ground = parseListings(ex.listing);
-  const figs = new Figures(ground);
+  // The answer's constants as the engine holds them (live geometry reads them on every resolve).
+  const consts: Record<string, number> = {};
+  for (const a of acts) if (a.kind === 'const') for (const [k, v] of a.defs) { const n = evalConst(v, consts); if (typeof n === 'number') consts[k.toLowerCase()] = n; }
+  const figs = new Figures(ground, () => consts);
   acts.forEach((a) => figs.note(a));
   return { text, plan: f.plan, acts, ground, figs };
 }
@@ -101,14 +105,15 @@ function sentences(text: string) {
 }
 
 describe('prompt examples', () => {
-  it('four invented documents of different reach; at least one walks several pages, one works numbers with the kit', () => {
+  it('four invented documents of different reach; one walks several pages, one makes the thing happen (a tween with a live readout), one has the engine compute', () => {
     expect(EXAMPLES).toHaveLength(4);
-    const kit = EXAMPLES.filter((e) => run(e).acts.some((a) => a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table'));
-    expect(kit.length).toBeGreaterThanOrEqual(1);
-    const acts = run(kit.find((e) => run(e).acts.some((a) => a.kind === 'step' || a.kind === 'sweep'))!).acts;
-    expect(acts.some((a) => a.kind === 'step' || a.kind === 'sweep' || a.kind === 'col')).toBe(true);
-    // the engine computes: a block from an operation (never a hand-written result)
-    expect(acts.some((a) => 'src' in a && !('vals' in (a as { src: object }).src))).toBe(true);
+    // p5.7: something happening is drawn and made to happen: a figure bound to a constant that a tween drives, its quantity read live.
+    const moving = EXAMPLES.map((e) => run(e).acts).find((acts) => acts.some((a) => a.kind === 'tween'));
+    expect(moving).toBeDefined();
+    expect(moving!.some((a) => a.kind === 'let')).toBe(true);
+    expect(moving!.some((a) => a.kind === 'write' && 'value' in a && a.value != null)).toBe(true);
+    // the engine computes: a plot or a found reading from a formula, a block from an operation (never a hand-written result)
+    expect(EXAMPLES.some((e) => run(e).acts.some((a) => a.kind === 'find' || ('src' in a && !('vals' in (a as { src: object }).src))))).toBe(true);
     expect(EXAMPLES.some((e) => e.pages.length >= 3 && new Set(run(e).acts.flatMap((a) => ('page' in a && a.page != null ? [a.page] : []))).size >= 3)).toBe(true);
     expect(EXAMPLES.some((e) => e.pages.length === 1 && run(e).acts.every((a) => a.kind !== 'sketch'))).toBe(true);
   });
@@ -214,7 +219,7 @@ describe('prompt examples', () => {
   }
 
   it('every example that draws changes what it drew (moves, sets, splits, sweeps, shifts), and ends on a question to the student', () => {
-    const MOVES = new Set(['set', 'move', 'split', 'merge', 'fade', 'emph', 'step', 'sweep', 'beforeafter', 'limit', 'contrast']);
+    const MOVES = new Set(['tween', 'set', 'move', 'split', 'merge', 'fade', 'emph', 'step', 'sweep', 'beforeafter', 'limit', 'contrast']);
     for (const ex of EXAMPLES) {
       const { acts, text } = run(ex);
       if (acts.some((a) => 'region' in a && a.region != null || 'chart' in a && a.chart != null)) expect(acts.some((a) => MOVES.has(a.kind)), ex.title).toBe(true);
@@ -231,6 +236,19 @@ describe('prompt examples', () => {
     const p = new ScriptParser(new GateState(parseListings(ex.listing)));
     const said = [...p.push(text), ...p.end()].flatMap((e) => (e.type === 'word' ? [e.text] : [])).join(' ');
     expect(said).toContain('keeps 40,');
+  });
+
+  it('lighthouse: the spot is bound to the turn and sits on the shore; the turn is tweened and the readout climbs', () => {
+    const ex = EXAMPLES.find((e) => e.title.includes('made to happen'))!;
+    const { acts, text, figs } = run(ex);
+    expect(acts.some((a) => a.kind === 'tween')).toBe(true);
+    expect(acts.some((a) => a.kind === 'point' && 'trace' in a && a.trace)).toBe(true);
+    const at = (n: string) => figs.figure({ region: 'c' }).world({ ref: n }) as Pt;
+    expect(at('S').y).toBeCloseTo(at('N').y, 6); // on the shore
+    expect(at('B').x - at('A').x).toBeGreaterThan(at('A').x - at('N').x); // equal turns, longer stretch
+    const p = new ScriptParser(new GateState(parseListings(ex.listing)));
+    const said = [...p.push(text), ...p.end()].flatMap((e) => (e.type === 'word' ? [e.text] : [])).join(' ');
+    expect(said).toMatch(/reaching 30\d metres a second/);
   });
 
   it("counter: the guess is tested on the slide's own chart: a readout where it fails, then the curve shifted with its ghost", () => {

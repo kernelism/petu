@@ -49,7 +49,7 @@ export const SCENES: Scene[] = [
   { name: 'gate-repair', query: 'script=gate&gate=live&gatefail=2:skip&repair=fake&repairms=1500', moments: [END], audit: false },
   // The prompt's few-shot examples on their own slides (public/fixtures/examples.pdf): what the model is shown, as a student sees it.
   { name: 'ex-village', query: 'script=ex-village', moments: [mid(14000), mid(30000), END] },
-  { name: 'ex-forecast', query: 'script=ex-forecast', moments: [mid(20000), END] },
+  { name: 'ex-lighthouse', query: 'script=ex-lighthouse', moments: [mid(16000), mid(24000), END] },
   { name: 'ex-counter', query: 'script=ex-counter', moments: [mid(22000), END] },
   // v1 learner UX (storyboard frames 1–7), one simulated session on econ.pdf p12 (src/demo/learner.ts).
   { name: 'learner', query: 'script=learner', moments: [
