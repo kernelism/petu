@@ -12,10 +12,9 @@
 import type { DrawAction, RefAction, SceneShape, ValueRef } from '../../script/types';
 import type { BuildEnv, ElementPlan, Pace, SceneClaim, TargetCtx } from '../types';
 import { blockPart, isBlockRef } from '../../script/pointExpr';
-import { kitStore, metrics, type Block, type Metrics } from '../kit/kit';
+import { kitNumber, kitStore, metrics, type Block, type Metrics } from '../kit/kit';
 import { kitText, svg, setAttrs, textWidth } from '../kit/text';
 import { tween, easeOut } from '../kit/anim';
-import { fmt } from '../kit/compute';
 import { token } from '../../ink/agent/tokens';
 import { prefersReducedMotion } from '../../ink/agent/animate';
 import { penDown, penLift, penTo } from '../../ink/agent/penCursor';
@@ -41,8 +40,12 @@ const fadeIn = (el: Element, k: Pace, ms = 260) => tween(k.fadeMs != null || pre
 
 let anon = 0;
 
+type Shown = { get(): number; src?: string; norm(): number };
+/** A shown value's text: the kit's number formatting, with its source block's dp= and fractions. */
+const valueText = (v: Shown, env: BuildEnv) => kitNumber(v.get(), v.src ? kitStore(env.registry).get(v.src) : undefined);
+
 /** The value a ValueRef shows now (a literal, or a kit block's part), and the block it follows. */
-async function valueOf(v: ValueRef, env: BuildEnv): Promise<{ get(): number; src?: string; norm(): number }> {
+async function valueOf(v: ValueRef, env: BuildEnv): Promise<Shown> {
   if (typeof v === 'number') return { get: () => v, norm: () => v };
   const store = kitStore(env.registry);
   const p = isBlockRef(v) ? blockPart(v) : null;
@@ -130,9 +133,11 @@ export async function buildScene(a: S, ctx: TargetCtx, env: BuildEnv): Promise<E
           void fadeIn(sub, k, 220);
         });
         thing.data!.chips = chips;
-        const paint = () => vs?.forEach((v, i) => { const x0 = v.get(); vtexts[i].textContent = Number.isFinite(x0) ? (kitStore(env.registry).get(v.src ?? '')?.kind === 'shares' ? `${Math.round(x0 * 100)}%` : fmt(x0, 2)) : ''; });
+        // Values read as the kit shows them (its decimals, the source block's dp= and fractions).
+        const paint = () => vs?.forEach((v, i) => { vtexts[i].textContent = valueText(v, env); });
         paint();
         vs?.forEach((v) => v.src && kitStore(env.registry).listen(v.src, paint));
+        if (vs) Object.assign(thing.data!, { values: vs, vtexts, paint });
         await new Promise((res) => setTimeout(res, k.fadeMs != null ? 0 : Math.min(600, 120 * items.length) * k.speed));
       },
     };
@@ -424,7 +429,7 @@ async function planLink(L: LinkSpec, ctx: TargetCtx, env: BuildEnv, id: string, 
           }
         });
         if (label && lbox) {
-          label.textContent = [L.text, L.showWeight && strengths[0] ? fmtW(strengths[0]!.get()) : ''].filter(Boolean).join(' ');
+          label.textContent = [L.text, L.showWeight && strengths[0] ? fmtW(strengths[0]!, env) : ''].filter(Boolean).join(' ');
           setAttrs(label, { x: lbox.x + lbox.w / 2, y: lbox.y + lbox.h / 2, opacity: tr >= 1 && !sameBox(...endsNow(0)) ? 1 : 0 });
         }
       };
@@ -467,7 +472,8 @@ setSceneLink(async (from, to, label, ctx, env, pace) => {
   if (typeof plan !== 'string') await plan.draw(new AbortController().signal, pace);
 });
 
-const fmtW = (v: number) => (Number.isFinite(v) ? (v <= 1 && v >= 0 ? `${Math.round(v * 100)}%` : fmt(v, 2)) : '');
+/** A link's shown weight: a 0–1 strength as a percentage, anything else as the kit shows it. */
+const fmtW = (s: Shown, env: BuildEnv) => { const v = s.get(); return v <= 1 && v >= 0 ? `${Math.round(v * 100)}%` : valueText(s, env); };
 
 function arrowTo(g: SVGGElement, a: P, b: P, color: string, w: number, head: number) {
   const dx = b.x - a.x, dy = b.y - a.y, n = Math.hypot(dx, dy) || 1, ux = dx / n, uy = dy / n;
@@ -535,6 +541,16 @@ export async function buildSceneRef(a: RefAction, env: BuildEnv): Promise<Elemen
         if (a.text != null && t.data!.kind === 'node') {
           const g = t.group; const tx = g?.querySelector('text');
           if (tx) { await tween(160 * k.speed, (x) => tx.setAttribute('opacity', String(1 - x))); tx.textContent = a.text; await tween(200 * k.speed, (x) => tx.setAttribute('opacity', String(x))); }
+        }
+        // A chip's value: the new one (a literal or a part it follows from now on), as the kit shows it.
+        const shown = t.data!.values as Shown[] | undefined, vt = (t.data!.vtexts as SVGTextElement[] | undefined)?.[0];
+        if (a.value != null && t.data!.kind === 'node' && shown && vt) {
+          const next = await valueOf(a.value, env);
+          await tween(160 * k.speed, (x) => vt.setAttribute('opacity', String(1 - x)));
+          shown[0] = next;
+          (t.data!.paint as () => void)();
+          if (next.src) kitStore(env.registry).listen(next.src, t.data!.paint as () => void);
+          await tween(200 * k.speed, (x) => vt.setAttribute('opacity', String(x)));
         }
         const link = t.data!.link as LinkState | undefined;
         if (link && a.weight != null) {
