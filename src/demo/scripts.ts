@@ -15,6 +15,7 @@ function example(title: string): Demo & { src: string; page: number } {
   return { src: '/fixtures/examples.pdf', page: ex.page, question: ex.question, script };
 }
 import { LEARNER_SCRIPT, type DevStep } from './learner';
+import { SVG_DEMOS } from './svg';
 
 /**
  * Dev-only named scripts for real PDFs: `?script=<name>` (optionally `&src=<pdf url>`) opens the
@@ -469,6 +470,8 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number;
       `{{connect from=p12:"with 20 N over 6 m:" to=sk:K[2]}} work done over a distance, as on this slide.`,
   },
   // The prompt's examples (server/prompt/examples.ts) on their own slides.
+  // The svg board (the default answer format, p6): the prompt's examples and the experiment's answers.
+  ...SVG_DEMOS,
   'ex-village': example('coins as marks'),
   'ex-lighthouse': example('made to happen'),
   'ex-counter': example("slide's own chart"),

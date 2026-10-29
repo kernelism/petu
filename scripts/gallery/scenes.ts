@@ -48,6 +48,14 @@ export const SCENES: Scene[] = [
   { name: 'gate', query: 'script=gate&gate=live', moments: [END], audit: false },
   { name: 'gate-repair', query: 'script=gate&gate=live&gatefail=2:skip&repair=fake&repairms=1500', moments: [END], audit: false },
   // The prompt's few-shot examples on their own slides (public/fixtures/examples.pdf): what the model is shown, as a student sees it.
+  // The svg board (p6, the default answer format): the prompt's two examples and the svgboard
+  // experiment's four recorded answers, streamed as beats through the server's own filter.
+  { name: 'svg-ferry', query: 'script=svg-ferry', moments: [mid(14000), mid(30000), END] },
+  { name: 'svg-dough', query: 'script=svg-dough', moments: [mid(14000), mid(30000), END] },
+  { name: 'svg-skater', query: 'script=svg-skater', moments: [mid(12000), END] },
+  { name: 'svg-tunnel', query: 'script=svg-tunnel', moments: [mid(12000), END] },
+  { name: 'svg-rent', query: 'script=svg-rent', moments: [mid(12000), END] },
+  { name: 'svg-sinx', query: 'script=svg-sinx', moments: [mid(12000), END] },
   { name: 'ex-village', query: 'script=ex-village', moments: [mid(14000), mid(30000), END] },
   { name: 'ex-lighthouse', query: 'script=ex-lighthouse', moments: [mid(16000), mid(24000), END] },
   { name: 'ex-counter', query: 'script=ex-counter', moments: [mid(22000), END] },

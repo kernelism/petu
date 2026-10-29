@@ -1,4 +1,5 @@
 // src/desk/elements.ts
+import { buildSvgGroup } from '../svgboard/element';
 import type { SPt, SRect } from '../geometry/space';
 import type { DrawAction, End, InkAction, RefAction, Target, Weight } from '../script/types';
 import { inkBoxes, pageInkOf } from './pageInk';
@@ -74,6 +75,7 @@ const where = (t: Target) => (t.region != null ? `region ${t.region}` : `page ${
 
 /** Resolves one ink action into a plan (see ElementPlan). Strings are skip reasons. */
 export const buildElement: BuildElement = async (a, env) => {
+  if (a.kind === 'svg') return buildSvgGroup(a, env);
   if (a.kind === 'connect') return connect(a, env);
   if ('ref' in a) {
     // A scene thing's verb waits for the thing (it may still be building on its own word).

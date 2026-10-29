@@ -7,6 +7,7 @@
 // The tag scanner mirrors ScriptParser's rules (src/script/parser.ts): a tag closes at `}}` outside
 // quotes; a newline, a second `{{` or MAX_TAG_CHARS fails it and its text is narration.
 import { MAX_TAG_CHARS } from '../script/parser';
+import { isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
 import { parseTag } from '../script/parseTag';
 import type { RawAction } from '../script/types';
 
@@ -17,14 +18,15 @@ export type Tok = Word | Tag;
 const QUOTE_CLOSE: Record<string, string> = { '"': '"', '“': '”' };
 
 function scan(buf: string, open: number): { close: number } | { fail: number } {
-  const limit = open + MAX_TAG_CHARS;
+  const svg = isSvgTagBody(buf.slice(open + 2, open + 8));
+  const limit = open + (svg ? SVG_TAG_MAX : MAX_TAG_CHARS);
   let quote: string | null = null;
   for (let i = open + 2; i < buf.length; i++) {
     if (i >= limit) { const ws = Math.max(buf.lastIndexOf(' ', limit), buf.lastIndexOf('\t', limit)); return { fail: ws > open + 2 ? ws : limit }; }
     const c = buf[i];
     if (c === '\n' || c === '\r') return { fail: i };
     if (quote) { if (c === quote) quote = null; continue; }
-    if (c in QUOTE_CLOSE) { quote = QUOTE_CLOSE[c]; continue; }
+    if (c in QUOTE_CLOSE && !svg) { quote = QUOTE_CLOSE[c]; continue; }
     if (c === '}' && buf[i + 1] === '}') return { close: i + 2 };
     if (c === '{' && buf[i + 1] === '{') return { fail: i };
   }
@@ -78,7 +80,12 @@ export function units(script: string, toks = tokenize(script)): Unit[] {
     if (/\n/.test(script.slice(lastEnd, t.start))) { close(); para = true; }
     lastEnd = t.end;
     if (t.kind === 'tag') {
-      if (cur) cur.tags.push(t); else pendingTags.push(t);
+      if (cur) cur.tags.push(t);
+      // The svg board's group follows its beat's sentences: it belongs to the sentence before it.
+      else if (t.action?.kind === 'svg' && !pendingTags.length && out.length) { const last = out[out.length - 1]; last.tags.push(t); last.end = t.end; }
+      // A group with no sentence before it in this text (its words went out already): a unit of its own.
+      else if (t.action?.kind === 'svg' && !pendingTags.length) out.push({ words: [], tags: [t], start: t.start, end: t.end, text: '', paraBefore: para });
+      else pendingTags.push(t);
       continue;
     }
     if (!cur) { cur = { words: [], tags: pendingTags, start: pendingTags[0]?.start ?? t.start, end: t.end, text: '', paraBefore: para }; pendingTags = []; para = false; }
@@ -213,7 +220,7 @@ export class BeatSplitter {
         pos = s.close;
         continue;
       }
-      if (s.fail >= buf.length && buf.length < open + MAX_TAG_CHARS) { if (open < cut) cut = open; break; }
+      if (s.fail >= buf.length && buf.length < open + (isSvgTagBody(buf.slice(open + 2, open + 8)) ? SVG_TAG_MAX : MAX_TAG_CHARS)) { if (open < cut) cut = open; break; }
       pos = s.fail;
     }
     return cut;
@@ -231,12 +238,21 @@ export class BeatSplitter {
       let end = u.end;
       if (i === us.length - 1 && !final) {
         const lw = u.words[u.words.length - 1];
+        // A beat's svg group that arrives after its sentences went out is a unit of its own (its words
+        // are already playing; the scheduler draws it on the word that named it, if still to come).
+        if (!lw && u.tags.length && u.tags.every((t) => t.action?.kind === 'svg')) {
+          sents.push({ raw: this.buf.slice(consumed, u.end), u, para: false });
+          consumed = u.end;
+          continue;
+        }
         if (!lw) break;
         const done = endsSentence(lw.text) || /\n/.test(prefix.slice(lw.end));
         if (!done) break;
-        // Tags after the last word fire with the next sentence's first word: they stay buffered.
+        // Tags after the last word fire with the next sentence's first word: they stay buffered —
+        // except the svg board's groups right after it, which close its beat (units()).
         end = lw.end;
-        if (u.tags.some((t) => t.start > lw.end)) u.tags = u.tags.filter((t) => t.start < lw.end);
+        for (const t of u.tags) if (t.start >= end && t.action?.kind === 'svg' && !/\S/.test(this.buf.slice(end, t.start))) end = t.end;
+        if (u.tags.some((t) => t.start >= end)) u.tags = u.tags.filter((t) => t.start < end);
         u.end = end;
       }
       const para = this.first || (i === 0 ? /\n/.test(prefix.slice(0, u.words[0]?.start ?? u.end)) : u.paraBefore);
@@ -257,13 +273,14 @@ export class BeatSplitter {
       const n = this.cur.reduce((k, x) => k + x.u.words.length, 0);
       if (this.cur.length && this.split(s, n)) out.push(...this.flush());
       this.cur.push(s);
-      if (this.cur.reduce((k, x) => k + x.u.words.length, 0) >= this.o.maxWords) out.push(...this.flush());
+      if (this.cur.reduce((k, x) => k + x.u.words.length, 0) >= this.o.maxWords || s.u.tags.some((t) => t.action?.kind === 'svg')) out.push(...this.flush());
     }
     return out;
   }
 
   private split(s: Sent, n: number): boolean {
     const o = this.o;
+    if (!s.u.words.length && s.u.tags.every((t) => t.action?.kind === 'svg')) return false; // a group closes its beat, never opens one
     if (o.rule === 'sentence') return true;
     if (o.rule === 'para') return s.para;
     if (o.rule === 'ink') return leadsWithInk(s.u) || s.para;

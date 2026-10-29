@@ -14,12 +14,15 @@ import { randomUUID } from 'node:crypto';
 import { costUsd, worstCaseUsd, PRICES, type Usage } from './prices';
 import { estimatedUsage } from './cacheStats';
 import { ScriptFilter } from './scriptFilter';
+import { SvgBeatFilter } from './svgBeats';
+import { isSvgMode } from './prompt/system';
+import { rawSvgScript } from '../src/svgboard/wire';
 import { Lint } from './lint';
 import { capHint, endpointOf, estimateFor, newRead, readUpstream, scrub, systemTokensLow, tokens, TIMEOUTS, type AnswerBody, type CacheKey, type Deps, type ModelConfig } from './openai';
 import { toAnthropicRequest } from './anthropic';
 import { PROMPT_VERSION } from './prompt/system';
-import { repairNote, REPAIR_VERSION } from './prompt/repair';
-import { MAX_REPAIRS, REPAIR_MAX_OUTPUT } from './limits';
+import { repairNote, svgRepairNote, REPAIR_VERSION } from './prompt/repair';
+import { MAX_REPAIRS, REPAIR_MAX_OUTPUT, SVG_REPAIR_MAX_OUTPUT } from './limits';
 import type { RepairWire, RepairWireEvent } from '../src/agent/protocol';
 import type { RepairReport } from '../src/gate/events';
 
@@ -51,17 +54,19 @@ export class RepairCache {
  * The repair's OpenAI-format body: stage 2's request unchanged, then the released text (assistant, when
  * non-empty), then the repair note (user); small output budget, the repair's effort, streamed.
  */
-export function buildRepairRequest(oa: AnswerBody, w: Pick<RepairWire, 'committed' | 'report'>, cfg: Pick<ModelConfig, 'effort'>): AnswerBody {
+export function buildRepairRequest(oa: AnswerBody, w: Pick<RepairWire, 'committed' | 'report'>, cfg: Pick<ModelConfig, 'effort'>, svg = false): AnswerBody {
   const input: unknown[] = [...oa.input];
-  if (w.committed.trim()) input.push({ role: 'assistant', content: [{ type: 'output_text', text: w.committed }] });
-  input.push({ role: 'user', content: [{ type: 'input_text', text: repairNote(w.report) }] });
-  return { ...oa, input, max_output_tokens: REPAIR_MAX_OUTPUT, reasoning: { effort: cfg.effort }, stream: true, metadata: { prompt: PROMPT_VERSION, repair: REPAIR_VERSION } } as unknown as AnswerBody;
+  // The svg mode: the model sees its own format (raw <g> groups), never the wire tags.
+  const committed = svg ? rawSvgScript(w.committed) : w.committed;
+  if (committed.trim()) input.push({ role: 'assistant', content: [{ type: 'output_text', text: committed }] });
+  input.push({ role: 'user', content: [{ type: 'input_text', text: svg ? svgRepairNote(w.report) : repairNote(w.report) }] });
+  return { ...oa, input, max_output_tokens: svg ? SVG_REPAIR_MAX_OUTPUT : REPAIR_MAX_OUTPUT, reasoning: { effort: cfg.effort }, stream: true, metadata: { prompt: PROMPT_VERSION, repair: REPAIR_VERSION } } as unknown as AnswerBody;
 }
 
 /** The body for the answer model's provider (Anthropic: converted block for block). */
-export function repairBody(oa: AnswerBody, w: Pick<RepairWire, 'committed' | 'report'>, cfg: ModelConfig): any {
-  const body = buildRepairRequest(oa, w, cfg);
-  return cfg.model.startsWith('claude-') ? toAnthropicRequest(body as never, { model: cfg.model, effort: cfg.effort, maxOutput: REPAIR_MAX_OUTPUT }) : body;
+export function repairBody(oa: AnswerBody, w: Pick<RepairWire, 'committed' | 'report'>, cfg: ModelConfig, svg = false): any {
+  const body = buildRepairRequest(oa, w, cfg, svg);
+  return cfg.model.startsWith('claude-') ? toAnthropicRequest(body as never, { model: cfg.model, effort: cfg.effort, maxOutput: svg ? SVG_REPAIR_MAX_OUTPUT : REPAIR_MAX_OUTPUT }) : body;
 }
 
 /** A repair line in .petu/answers.jsonl. */
@@ -83,15 +88,16 @@ export async function repair(w: RepairWire, cfg: ModelConfig | null, d: RepairDe
   const entry = d.repairs.get(w.reqId);
   if (!entry) return refuse(404, 'not_found', 'Unknown or expired answer (reqId).');
   if (entry.repairs >= MAX_REPAIRS) return refuse(429, 'too_many', `At most ${MAX_REPAIRS} repairs per answer.`);
-  const rc: ModelConfig = { ...cfg, model: entry.cfg.model, fast: entry.cfg.fast, maxOutput: REPAIR_MAX_OUTPUT };
+  const svg = isSvgMode(entry.cfg.promptVariant);
+  const rc: ModelConfig = { ...cfg, model: entry.cfg.model, fast: entry.cfg.fast, maxOutput: svg ? SVG_REPAIR_MAX_OUTPUT : REPAIR_MAX_OUTPUT };
   const ep = endpointOf(rc.model, d);
   if (!ep.key) return refuse(503, 'no_key', 'No key for the answer model.');
   if (!PRICES[rc.model]) return refuse(400, 'bad_request', `No price for ${rc.model}.`);
-  const body = repairBody(entry.oa, w, rc);
+  const body = repairBody(entry.oa, w, rc, svg);
   const est = estimateFor(ep, body, entry.images);
   const cachedGuess = d.cache?.expectedCached(entry.ck, est) ?? 0;
   const id = randomUUID();
-  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(rc.model, est, REPAIR_MAX_OUTPUT, rc.fast), { kind: 'repair', model: rc.model, estUsd: costUsd(rc.model, estimatedUsage(est, cachedGuess, REPAIR_MAX_OUTPUT), '12h', rc.fast) });
+  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(rc.model, est, rc.maxOutput, rc.fast), { kind: 'repair', model: rc.model, estUsd: costUsd(rc.model, estimatedUsage(est, cachedGuess, rc.maxOutput), '12h', rc.fast) });
   if (refused) return refuse(402, 'cap', capHint(refused.code, refused.message, d.phase));
   entry.repairs++;
 
@@ -104,7 +110,7 @@ export async function repair(w: RepairWire, cfg: ModelConfig | null, d: RepairDe
   if (signal.aborted) up.abort();
   let late = false;
   const deadline = setTimeout(() => { late = true; up.abort(); }, Math.max(0, Math.min(w.deadlineMs, T.callMs)));
-  const filter = new ScriptFilter(), lint = new Lint(), read = newRead();
+  const filter = svg ? new SvgBeatFilter() : new ScriptFilter(), lint = new Lint(), read = newRead();
   let text = '', failed: Extract<RepairWireEvent, { t: 'error' }> | null = null, sent = false;
   const send = (s: string) => { if (!s) return; text += s; if (!signal.aborted && !late) emit({ t: 'text', d: s }); };
   try {

@@ -134,7 +134,9 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
       let plan = '';
       let relation: ScoutResult['relation'];
       let story: Storyboard | undefined;
-      const handlers: AskHandlers = { ...a.handlers, onStoryboard: (e) => { if (e.board) story = e.board; a.handlers.onStoryboard?.(e); } };
+      // The answer's own plan (done.plan): the svg board's layout, kept for a follow-up that extends it.
+      let answerPlan = '';
+      const handlers: AskHandlers = { ...a.handlers, onStoryboard: (e) => { if (e.board) story = e.board; a.handlers.onStoryboard?.(e); }, onDone: (e) => { answerPlan = e.plan ?? ''; a.handlers.onDone?.(e); } };
       const stream = twoStage({
         live, visible: vis.ground, handlers, since, ...(sc0 ? { ctx: sc0.info } : {}),
         build: async (sc) => {
@@ -155,7 +157,7 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
       } finally {
         // What played, not what was streamed: a unit the gate dropped was never said or drawn.
         const said = a.released ? a.released() : script;
-        if (said.trim()) memory.add(recordOf({ question: a.question, page: a.page, pages: taught, plan, script: said, ...(relation ? { relation } : {}), ...(story ? { storyboard: story } : {}), ...(signal.aborted ? { stopped: true } : {}) }));
+        if (said.trim()) memory.add(recordOf({ question: a.question, page: a.page, pages: taught, plan, script: said, ...(answerPlan ? { answerPlan } : {}), ...(relation ? { relation } : {}), ...(story ? { storyboard: story } : {}), ...(signal.aborted ? { stopped: true } : {}) }));
       }
     } finally {
       inFlight.current--;

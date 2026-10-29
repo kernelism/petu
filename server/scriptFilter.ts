@@ -1,4 +1,5 @@
 // server/scriptFilter.ts
+import { tagLimit } from '../src/svgboard/wire.ts';
 /**
  * Streaming clean-up between the model and the client parser, applied identically by the dev
  * server and the eval runner:
@@ -14,6 +15,8 @@ export class ScriptFilter {
   private inTag = false;
   /** Characters of the current tag passed so far, `{{` included. */
   private tagLen = 0;
+  /** The current tag's length limit (an svg group tag is long: src/svgboard/wire.ts). */
+  private tagMax = MAX_TAG;
   plan = '';
   push(chunk: string): string { this.buf += chunk; return this.drain(false); }
   end(): string { return this.drain(true); }
@@ -38,7 +41,7 @@ export class ScriptFilter {
       if (this.inTag) {
         // The same rule as Lint (and, within its tighter length, the parser): a tag ends at `}}`;
         // a newline or MAX_TAG characters without one means it was never a tag.
-        const room = MAX_TAG - this.tagLen;
+        const room = this.tagMax - this.tagLen;
         const close = this.buf.indexOf('}}'), nl = this.buf.indexOf('\n');
         if (close >= 0 && (nl < 0 || close < nl) && close + 2 <= room) {
           out += this.buf.slice(0, close + 2);
@@ -65,7 +68,7 @@ export class ScriptFilter {
         return out;
       }
       out += clean(this.buf.slice(0, next));
-      if (next === tag) { this.inTag = true; this.tagLen = 2; out += '{{'; this.buf = this.buf.slice(next + 2); }
+      if (next === tag) { this.inTag = true; this.tagLen = 2; out += '{{'; this.buf = this.buf.slice(next + 2); this.tagMax = tagLimit(this.buf, MAX_TAG); }
       else { this.inPlan = true; this.buf = this.buf.slice(next + 6); }
     }
   }

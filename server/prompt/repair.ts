@@ -3,6 +3,7 @@
 // model writes one replacement beat. Principles only, no per-subject wording; bump REPAIR_VERSION on any
 // change (it is recorded with every repair in .petu/answers.jsonl).
 import type { RepairReport } from '../../src/gate/events';
+import { rawSvgScript } from '../../src/svgboard/wire';
 
 export const REPAIR_VERSION = 'r1';
 /** The scene report (ON THE BOARD NOW) is cut at this many characters. */
@@ -39,5 +40,21 @@ export function repairNote(r: RepairReport): string {
     'Fix every problem; use only ids listed or ones you create (create every id in LATER BEATS USE); every board number via {{val}};',
     "never clear, fade or move earlier ink; don't repeat what was said. If it can't be drawn with your tags, say the point",
     'plainly with no pointing words and no tags.',
+  ].join('\n');
+}
+
+/**
+ * The svg answer mode's note (r1-svg): the failed beat as the model wrote it (raw <g> groups), the
+ * problems the gate found, and the board's groups so far; the replacement is a beat in the same format.
+ */
+export function svgRepairNote(r: RepairReport): string {
+  return [
+    `GATE REPORT (${REPAIR_VERSION}-svg). The beat below was NOT shown: none of it was said or drawn.`,
+    `FAILED BEAT:\n${rawSvgScript(r.beat).trim()}`,
+    `PROBLEMS:\n${r.problems.length ? r.problems.map(problemLine).join('\n') : '- (none listed)'}`,
+    `ON THE BOARD NOW:\n${boardReport(r)}`,
+    `WRITE only the replacement beat, continuing right after "…${r.tail}": the same point in ≤ ${r.maxWords} spoken words, then its <g id="…"> group (the same id unless the problem is the id).`,
+    'Fix every problem: move or shorten text so no text overlaps text or crosses a line, keep everything inside the BOARD viewBox, use an id not on the board.',
+    "Never redraw or erase earlier groups; don't repeat what was said. If it can't be drawn cleanly, say the point plainly with no group.",
   ].join('\n');
 }

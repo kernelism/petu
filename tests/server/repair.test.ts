@@ -12,7 +12,7 @@ import { createApi, validateRepair, LIMITS } from '../../server/plugin';
 import { buildRequest, cacheKey, type ModelConfig } from '../../server/openai';
 import { RepairCache, buildRepairRequest, repairBody, REPAIR_TTL_MS, REPAIR_CACHE_MAX } from '../../server/repair';
 import { repairNote, boardReport, REPAIR_VERSION, BOARD_CHARS } from '../../server/prompt/repair';
-import { MAX_REPAIRS, REPAIR_MAX_OUTPUT } from '../../server/limits';
+import { MAX_REPAIRS, REPAIR_MAX_OUTPUT, SVG_REPAIR_MAX_OUTPUT } from '../../server/limits';
 import type { AskRequest, RepairWire } from '../../src/agent/protocol';
 import type { RepairReport } from '../../src/gate/events';
 
@@ -203,9 +203,10 @@ describe('POST /api/repair', () => {
     expect(done.estimated).toBe(false);
     // Same prefix and key as the answer.
     const [a, r] = calls.map((c) => c.body);
+    // The default answer mode is the svg board (p6): its repairs carry a group, so they get the svg cap.
     expect(r.prompt_cache_key).toBe(a.prompt_cache_key);
     expect(r.input.slice(0, a.input.length)).toEqual(a.input);
-    expect(r.max_output_tokens).toBe(REPAIR_MAX_OUTPUT);
+    expect(r.max_output_tokens).toBe(SVG_REPAIR_MAX_OUTPUT);
     const entry = spend().entries.find((e: any) => e.kind === 'repair');
     expect(entry).toMatchObject({ kind: 'repair', model: 'gpt-6.1-terra', phase: 'dev', estimated: false });
     expect(spend().open ?? {}).toEqual({});
@@ -223,7 +224,7 @@ describe('POST /api/repair', () => {
     expect(calls[1].url).toMatch(/anthropic/);
     expect(calls[1].body.system).toEqual(calls[0].body.system);
     expect(calls[1].body.messages.map((m: any) => m.role).slice(-3)).toEqual(['user', 'assistant', 'user']);
-    expect(calls[1].body.max_tokens).toBe(REPAIR_MAX_OUTPUT);
+    expect(calls[1].body.max_tokens).toBe(SVG_REPAIR_MAX_OUTPUT);
     expect(calls[1].headers['x-api-key']).toBe(AKEY);
   });
 

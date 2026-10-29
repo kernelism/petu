@@ -1,5 +1,6 @@
 // server/lint.ts
 import { parseTag } from '../src/script/parseTag';
+import { isSvgTagBody, tagLimit } from '../src/svgboard/wire';
 /** Every tag name the parser knows (src/script/parseTag.ts). */
 export const TAG_NAMES = new Set(['scroll', 'highlight', 'underline', 'circle', 'box', 'line', 'arrow', 'point', 'label', 'curve', 'shade', 'angle', 'brace', 'write', 'math', 'axes', 'plot', 'let', 'sketch', 'connect', 'emph', 'move', 'fade', 'clear',
   // the visual kit (src/script/parseKit.ts)
@@ -15,7 +16,9 @@ export const TAG_NAMES = new Set(['scroll', 'highlight', 'underline', 'circle', 
   // the slide as canvas: a page region onto the board
   'lift',
   // slips the parser reads as another tag ({{arc center= from= to=}} is an angle's arc when exact)
-  'arc']);
+  'arc',
+  // the svg board (src/svgboard/wire.ts)
+  'svgboard', 'svg']);
 /** A curve through this many hand-placed points or more is probably something that follows from a formula. */
 const HAND_CURVE_PTS = 4;
 /** Kit tags whose values come from the engine: a literal result in them (`result=`, `=…` after an op) is the model computing by hand. */
@@ -46,7 +49,7 @@ export class Lint {
       }
       this.buf += c;
       if (this.buf.endsWith('}}')) { out += this.tag(this.buf); this.buf = ''; this.inTag = false; }
-      else if (this.buf.length > 800 || c === '\n') { // not a tag (parser rule)
+      else if (this.buf.length > tagLimit(this.buf.slice(2, 8), 800) || c === '\n') { // not a tag (parser rule)
         if (this.buf.length > 800) this.notes.push(`tag over 800 characters (spoken as words, not drawn): ${this.buf.slice(0, 60)} — ${/^\{\{\s*curve\b/i.test(this.buf) ? 'draw a curve from its formula with {{plot fn=}}' : 'split it into several tags'}`);
         out += this.buf; this.buf = ''; this.inTag = false;
       }
@@ -55,6 +58,8 @@ export class Lint {
   }
   end(): string { const b = this.buf; this.buf = ''; this.inTag = false; return b; }
   private tag(t: string): string {
+    // An svg group: the gate checks it (src/svgboard/check.ts); its quotes and numbers are SVG's.
+    if (isSvgTagBody(t.slice(2))) return t;
     const name = /^\{\{\s*([A-Za-z]+)/.exec(t)?.[1]?.toLowerCase();
     if (!name || !TAG_NAMES.has(name)) this.notes.push(`unknown tag ${JSON.stringify(t.slice(0, 40))}`);
     const quotes = (t.match(/"/g) ?? []).length;

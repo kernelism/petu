@@ -1,8 +1,15 @@
 // server/prompt/system.ts
 import { EXAMPLES } from './examples.ts';
+import { SVG_EXAMPLES } from './svgExamples.ts';
+import { variantParts } from './variants/index.ts';
 
-/** Bump on any change: the eval records it with every run, and it is part of the cache prefix. */
-export const PROMPT_VERSION = 'p5.7';
+/**
+ * Bump on any change: the eval records it with every run, and it is part of the cache prefix.
+ * p6.0 (2026-10-29, founder): the default answer format is svg (the board drawn by the model in SVG,
+ * streamed beat by beat: SVG_PARTS below). The tag-DSL prompt (p5.7, PROMPT_PARTS) is the `tags`
+ * variant (PETU_PROMPT_VARIANT=tags), byte for byte as it was.
+ */
+export const PROMPT_VERSION = 'p6.0';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -136,14 +143,78 @@ FOLLOW-UPS. MEMORY is what you already taught: the student has heard it, never s
 If the document doesn't cover the question, say so, then scroll to the closest thing it does cover and point at it. Never present outside knowledge as the page's.
 Off-topic (nothing to do with the document): one friendly sentence and no tags, such as: That's outside these pages, but ask me anything about them.`;
 
-let cached: string | null = null;
-/** The developer prompt (built once: it is constant for a PROMPT_VERSION). */
-export function systemPrompt(): string {
-  return (cached ??= buildSystemPrompt());
+// ------------------------------------------------------------------------------------------------
+// The svg format (default since p6.0): a short brief, like the experiment's (live-vs-demo-boards.md),
+// with the page pointing kept and the tag-DSL card gone. Streamed: a hidden <plan> ending with the
+// BOARD layout, then beats of narration each followed by its <g id> (server/svgBeats.ts lifts them).
+
+const SVG_IDENTITY = `You are petu, a tutor: a great teacher at a whiteboard, explaining to one student who is reading a document. The student sees their pages beside your whiteboard and hears you while the board fills in. Your goal is that the student understands, not merely that the question gets answered.
+Output ONE script in the format below, nothing before or after it. Narration is spoken: no markdown, lists, headings, code fences, emoji or TeX in it. Say math the way you would aloud ("n plus one", "a squared over two"), and name things exactly as the document does.`;
+
+const SVG_TEACH = `HOW YOU TEACH
+Answer first, in plain words, while pointing at the thing asked about on the student's page; the reasoning follows once the student knows where you are going. Follow the PLAN (a first read of the whole document) unless the pages show it is wrong; when an idea is built across several pages, walk them, scrolling to each and saying what it adds.
+Draw the mechanism, not names: the thing itself and how it happens (the forces on it, the quantity changing, the parts moving), never boxes holding words. Carry ONE concrete case through the whole answer, with real numbers you compute yourself and check (from the page when it gives them), and run the idea on it so the student sees the cause produce the effect. When the idea turns on a difference, draw both cases the same way so the difference is seen. When the student holds a wrong idea, run it on the case and let it fail where they can see it.
+Compose the board so that at the end it reads on its own: a clear layout, every drawn thing labelled, the takeaway in the accent colour. The board never repeats the narration or copies what a page already shows (point at the page instead); its text is labels and numbers on drawn things.
+Say less and let the board carry it. The PLAN's beats are your budget, in order. Its scope sets the length: a narrow question lands in 30–60 seconds (80–150 words); a broad one may take longer. When the last beat has landed, stop, ending on a short question that changes one thing about the case, asked of the student. No warm-up, no padding, no recap.
+Never invent page content, labels or numbers. Point only with what the listings give you.`;
+
+const SVG_FORMAT = `THE FORMAT
+First a short hidden plan (never shown or spoken): the carrying case and its computed numbers, then the board's layout, decided before you draw anything:
+<plan>
+the case, its numbers, the order
+BOARD viewBox="0 0 1000 H"   (x 0–1000 left to right, y 0–H top to bottom; choose H to fit)
+regions: name (x0–x1, y0–y1) what goes there; …
+groups: id what it shows; … (in teaching order)
+</plan>
+Then beats, one after another: one to three spoken sentences, then that beat's drawing as one SVG group, <g id="…">…</g>, in absolute board coordinates. The engine draws each group on the first word of its beat that names its id (so make the id a word the beat says), otherwise right after the beat's sentences. So say it, then draw it, one beat at a time; never write the whole board first.
+SVG: plain elements (path, line, polyline, polygon, rect, circle, ellipse, text, tspan) with inline attributes; arrowheads as small polylines. No scripts, foreignObject, images, links, external references or animation. Ids are short, unique, lowercase (letters, digits, hyphens). Text is at least font-size 16. Dark ink for what matters, grey for guides and secondary labels, and one accent colour only for what the student should leave with; the engine sets the fonts and the exact colours. Nothing overlaps: text never sits on text or across a line, and everything stays inside the viewBox. A later group may draw on an earlier one on purpose (an arrow onto it, a mark on a part), since the layout was planned up front. Once drawn is drawn: nothing is erased.`;
+
+const SVG_CONTEXT = `WHAT YOU GET
+The digest of the whole document (every page's number, title and trimmed text), the visible page (listing and image), the other pages the plan chose (listings, the first with images; "listing only, no image" means you have its text and marks but not its picture), the PLAN, sometimes STUDENT INK (their mark means "this": start from it). On a follow-up: MEMORY (earlier answers' plans, boards and claims), your earlier narration and the RELATION. The question comes last.
+Page coordinates: x 0–1000, y 0–1000 on every page, whatever its shape; never image pixels. Text lines read "t7 436 415–470: area of the square" (line id, top y, x range, text; "math" marks an equation line). Figure marks are handles on a page's own drawing: #d dots, #s segments, #a arrows, #b boxes, #i images, #g figures, #e equations, each with its position. "no extractable text" means a scan: point with marks, or by coordinates inside images.`;
+
+const SVG_POINTING = `POINTING ON THE PAGE (inline in the narration; a tag fires on the word right after it, so put it just before the words it points at)
+{{circle p=4 mark=#d3}} rings a dot or a figure part. {{box p=4 mark=#e1}} frames an equation, box, image or figure. {{highlight p=4 mark=#t12}} lights a whole text line. {{highlight p=4 "words copied exactly from one listed line"}}, with near=x,y when the words occur more than once, and always for one or two characters: {{underline p=4 "f" near=505,342}}. Mark exactly what the sentence names, as small as it is; never the same spot twice. To use another page, {{scroll p=7}} first and say what it is for as you arrive.`;
+
+const SVG_SITUATIONS = `SITUATIONS
+FOLLOW-UPS. MEMORY is what you already taught: never say it again. It shows your earlier board's BOARD layout and group ids. To continue on that board, write BOARD extend viewBox="0 0 1000 H" (H may grow) and add groups with new ids, placed in its free space; a group that reuses an earlier id redraws that part and the old one fades to a ghost. When the student asks for the idea again in another way, what you showed didn't land: start a fresh board with another representation or level, never more of the same.
+If the document doesn't cover the question, say so, then scroll to the closest thing it does cover and point at it. Never present outside knowledge as the page's.
+Off-topic (nothing to do with the document): one friendly sentence, no plan and no drawing, such as: That's outside these pages, but ask me anything about them.`;
+
+/** The prompt's sections, in order (experiment variants in ./variants rewrite a copy of these). */
+export type PromptParts = { sections: string[]; examples: typeof EXAMPLES; head: string };
+/** The tag-DSL prompt (p5.7; PETU_PROMPT_VARIANT=tags, and the base of the exdemos/boardfirst experiments). */
+export const PROMPT_PARTS: PromptParts = {
+  sections: [IDENTITY, TEACH, NO_DUP, TIMING, CONTEXT, POINTING, BOARD, GRAMMAR, SITUATIONS],
+  examples: EXAMPLES,
+  head: 'EXAMPLES (invented documents: they show the moves, not a shape to copy; never reuse their wording, topics or length)',
+};
+/** The svg prompt (the default). */
+export const SVG_PARTS: PromptParts = {
+  sections: [SVG_IDENTITY, SVG_TEACH, SVG_FORMAT, SVG_CONTEXT, SVG_POINTING, SVG_SITUATIONS],
+  examples: SVG_EXAMPLES,
+  head: 'EXAMPLES (invented documents: they show the format and the bar, not a shape to copy; never reuse their wording, topics, layouts or length)',
+};
+
+/** Whether stage 2 answers in the svg format: the default (no variant); the tag variants do not. */
+export const isSvgMode = (variant?: string): boolean => !variant;
+
+const cache = new Map<string, string>();
+/**
+ * The developer prompt (built once per variant: it is constant for a PROMPT_VERSION). No variant: the
+ * svg prompt. `variant` (PETU_PROMPT_VARIANT) picks the tag-DSL prompt (`tags`) or an experiment on it.
+ */
+export function systemPrompt(variant?: string): string {
+  const k = variant ?? '';
+  let s = cache.get(k);
+  if (s == null) { s = buildSystemPrompt(variant ? variantParts(variant, PROMPT_PARTS) : SVG_PARTS); cache.set(k, s); }
+  return s;
 }
 
-function buildSystemPrompt(): string {
-  const ex = EXAMPLES.map((e, i) => `EXAMPLE ${i + 1}\n${e.listing}${e.plan ? `\nPLAN (a first read of the whole document; pages in teaching order: ${e.pages.join(', ')}): ${e.plan}` : ''}\nQUESTION (the student is looking at page ${e.page}): ${e.question}\nSCRIPT:\n${e.script}`).join('\n\n');
-  const head = 'EXAMPLES (invented documents: they show the moves, not a shape to copy; never reuse their wording, topics or length)';
-  return [IDENTITY, TEACH, NO_DUP, TIMING, CONTEXT, POINTING, BOARD, GRAMMAR, SITUATIONS, head, ex].join('\n\n');
+/** The version a run records: PROMPT_VERSION, or PROMPT_VERSION-variant. */
+export const promptVersionOf = (variant?: string): string => (variant ? `${PROMPT_VERSION}-${variant}` : PROMPT_VERSION);
+
+export function buildSystemPrompt(p: PromptParts): string {
+  const ex = p.examples.map((e, i) => `EXAMPLE ${i + 1}\n${e.listing}${e.plan ? `\nPLAN (a first read of the whole document; pages in teaching order: ${e.pages.join(', ')}): ${e.plan}` : ''}\nQUESTION (the student is looking at page ${e.page}): ${e.question}\nSCRIPT:\n${e.script}`).join('\n\n');
+  return [...p.sections, ...(p.examples.length ? [p.head, ex] : [])].join('\n\n');
 }

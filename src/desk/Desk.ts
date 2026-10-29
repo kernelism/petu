@@ -188,6 +188,17 @@ export class Desk implements DeskApi {
     // Board v2: a scene continues by its id. A later answer (a follow-up that continues) or a repeated
     // scene tag naming a scene already on the board draws on into it; a scene tag with a new id (a
     // revision) starts a fresh section below, and the old scene stays above, untouched.
+    // The svg board: a follow-up that extends it draws on into the same section (uncropped again).
+    if (spec.svg && spec.extend) {
+      const old = this.ids.get(spec.id) ?? [...this.sections].reverse().find((s) => s.id === spec.id && !s.scene);
+      if (old) {
+        this.ids.set(spec.id, old);
+        if (old.y0 !== 0 || old.y1 !== old.full) { old.y0 = 0; old.y1 = old.full; old.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${old.full}`)); this.position(); }
+        this.last = { t: { region: spec.id }, r: WHOLE_REGION };
+        if (!this.open) await this.openBoard('normal', before);
+        return ep === this.epoch ? this.region(spec.id) ?? 'desk reset' : 'desk reset';
+      }
+    }
     const prev = spec.scene ? this.sceneNamed(spec.id) : undefined;
     if (!prev && this.ids.has(spec.id)) return 'duplicate region id';
     if (prev) {
@@ -253,7 +264,7 @@ export class Desk implements DeskApi {
     const sec = this.ids.get(id);
     if (!sec || sec.scene || !(h > sec.full) || sec.y0 !== 0 || sec.y1 !== sec.full) return;
     sec.full = sec.y1 = Math.ceil(Math.min(h, 4 * REGION_H));
-    sec.el.querySelectorAll('svg').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${sec.full}`));
+    sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${sec.full}`));
     this.position();
   }
 
@@ -422,7 +433,7 @@ export class Desk implements DeskApi {
     } else {
       for (const s of this.held) {
         s.y0 = 0; s.y1 = s.full;
-        s.el.querySelectorAll('svg').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${s.full}`));
+        s.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${s.full}`));
       }
       this.held.clear();
     }
@@ -580,10 +591,11 @@ export class Desk implements DeskApi {
     return createSection(spec, (sec, paper) => this.makeScene(sec, paper));
   }
 
-  metrics(): { boardPx: number; bodyPx: (body: number | null) => number } {
-    // Before the board opens: the board the normal split would give (what the first section lands in).
+  metrics(split?: Split): { boardPx: number; bodyPx: (body: number | null) => number } {
+    // Before the board opens: the board the normal split would give (what the first section lands in);
+    // `split`: the board that split would give (the svg board opens wide).
     const { W, H } = this.host.viewport();
-    const f = this.open ? this.frame() : frameFor(W, H, 'normal', this.host.aspect(1));
+    const f = this.open && !split ? this.frame() : frameFor(W, H, split ?? 'normal', this.host.aspect(1));
     return { boardPx: f.board?.w ?? 0, bodyPx: (b) => bodyPx(b, f.page.pageW) };
   }
 
@@ -601,7 +613,7 @@ export class Desk implements DeskApi {
     }
     const { y0, y1 } = cropSpan(ink, sec.full);
     sec.y0 = y0; sec.y1 = y1;
-    sec.el.querySelectorAll('svg').forEach((svg) => svg.setAttribute('viewBox', `0 ${y0} ${REGION_W} ${y1 - y0}`));
+    sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 ${y0} ${REGION_W} ${y1 - y0}`));
   }
 
   /** Opens the board (or changes its ratio): one movement, the slide column and the board together. */
@@ -883,7 +895,7 @@ export class Desk implements DeskApi {
   private applyCam(sec: Section) {
     const v = this.camRect(sec);
     const vb = `${v.x.toFixed(2)} ${v.y.toFixed(2)} ${v.w.toFixed(2)} ${v.h.toFixed(2)}`;
-    sec.el.querySelectorAll('svg').forEach((svg) => { if (!svg.classList.contains('desk-wire')) svg.setAttribute('viewBox', vb); });
+    sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => { if (!svg.classList.contains('desk-wire')) svg.setAttribute('viewBox', vb); });
   }
 
   /** Brings a scene's window onto the board (it fills the board's visible height). */

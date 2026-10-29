@@ -23,7 +23,9 @@ const em = (as: Action[]) => as.filter((a) => 'em' in a && a.em).map((a) => a.ki
 // checks them against their own listings and the prompt's rules, not the hand-written demos' style.
 /** Answers kept exactly as a model wrote them (founder live tests): agent grammar and tag stacking included. */
 const VERBATIM = new Set(['tunnel', 'live-econ', 'live-calc', 'live-calc-zoom']);
-const ALL = [DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.entries(SCRIPTS).filter(([k]) => !k.startsWith('ex-') && !VERBATIM.has(k)).map(([, x]) => x.script)];
+// ex- and svg- scripts are verbatim model output (prompt examples, the svgboard experiment's answers):
+// tests/server/examples.test.ts and tests/svgboard/beats.test.ts hold them to their own format's rules.
+const ALL = [DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.entries(SCRIPTS).filter(([k]) => !k.startsWith('ex-') && !k.startsWith('svg-') && !VERBATIM.has(k)).map(([, x]) => x.script)];
 /** A simulated session's later answers (asides, follow-ups, check replies). */
 const ANSWERS = Object.values(SCRIPTS).flatMap((x) => Object.values(x.answers ?? {}));
 

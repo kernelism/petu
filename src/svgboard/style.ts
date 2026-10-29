@@ -1,0 +1,114 @@
+// src/svgboard/style.ts — the board's palette and type for the model's SVG (pure: no DOM).
+/**
+ * The model draws with whatever colours and fonts it likes; the board keeps its structure and
+ * normalises its styling: greys and blacks become the board's ink tiers, near-white stays paper, the
+ * answer's first chromatic hue becomes the tutor's accent (settings ink, violet by default) and every
+ * other hue a neutral grey (one accent per board: founder rule), light tints keep their lightness as
+ * a tint of their new colour.
+ */
+export const INK = { ink: '#1D1D1F', ink2: '#3A3A3C', muted: '#6E6E73', faint: '#8E8E93', line: '#D9D6CF', sheet: '#F7F6F2', paper: '#FFFFFE' } as const;
+export const FONT_SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif';
+export const FONT_MATH = 'KaTeX_Math, KaTeX_Main, "Times New Roman", serif';
+
+export type Rgb = { r: number; g: number; b: number; a: number };
+
+const NAMED: Record<string, string> = {
+  black: '#000000', white: '#ffffff', red: '#ff0000', green: '#008000', blue: '#0000ff', orange: '#ffa500', purple: '#800080',
+  gray: '#808080', grey: '#808080', darkgray: '#a9a9a9', darkgrey: '#a9a9a9', lightgray: '#d3d3d3', lightgrey: '#d3d3d3', silver: '#c0c0c0',
+  dimgray: '#696969', dimgrey: '#696969', navy: '#000080', teal: '#008080', crimson: '#dc143c', steelblue: '#4682b4', royalblue: '#4169e1',
+  darkred: '#8b0000', darkblue: '#00008b', darkgreen: '#006400', gold: '#ffd700', yellow: '#ffff00', brown: '#a52a2a', pink: '#ffc0cb',
+  magenta: '#ff00ff', cyan: '#00ffff', tomato: '#ff6347', coral: '#ff7f50', firebrick: '#b22222', seagreen: '#2e8b57', indigo: '#4b0082',
+  violet: '#ee82ee', tan: '#d2b48c', beige: '#f5f5dc', ivory: '#fffff0', whitesmoke: '#f5f5f5', gainsboro: '#dcdcdc', slategray: '#708090',
+  lightblue: '#add8e6', lightgreen: '#90ee90', lightyellow: '#ffffe0', lavender: '#e6e6fa', salmon: '#fa8072', olive: '#808000', maroon: '#800000',
+};
+
+export function parseColor(v: string | null | undefined): Rgb | null {
+  if (!v) return null;
+  const s = v.trim().toLowerCase();
+  if (!s || s === 'none' || s === 'transparent' || s.startsWith('url(') || s === 'currentcolor' || s === 'inherit') return null;
+  const hex = NAMED[s] ?? s;
+  let m = /^#([0-9a-f]{3,8})$/.exec(hex);
+  if (m) {
+    let h = m[1];
+    if (h.length === 3 || h.length === 4) h = h.split('').map((c) => c + c).join('');
+    if (h.length !== 6 && h.length !== 8) return null;
+    return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16), a: h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1 };
+  }
+  m = /^rgba?\(\s*([\d.]+)%?[\s,]+([\d.]+)%?[\s,]+([\d.]+)%?(?:[\s,/]+([\d.]+%?))?\s*\)$/.exec(s);
+  if (m) {
+    const a = m[4] == null ? 1 : m[4].endsWith('%') ? parseFloat(m[4]) / 100 : parseFloat(m[4]);
+    return { r: +m[1], g: +m[2], b: +m[3], a };
+  }
+  m = /^hsla?\(\s*([\d.]+)(?:deg)?[\s,]+([\d.]+)%[\s,]+([\d.]+)%(?:[\s,/]+([\d.]+%?))?\s*\)$/.exec(s);
+  if (m) {
+    const [r, g, b] = hslToRgb(+m[1], +m[2] / 100, +m[3] / 100);
+    const a = m[4] == null ? 1 : m[4].endsWith('%') ? parseFloat(m[4]) / 100 : parseFloat(m[4]);
+    return { r, g, b, a };
+  }
+  return null;
+}
+
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  const k = (n: number) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+  const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+}
+
+/** Hue (deg), saturation and lightness (0–1). */
+export function hsl(c: Rgb): { h: number; s: number; l: number } {
+  const r = c.r / 255, g = c.g / 255, b = c.b / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+  if (d < 1e-6) return { h: 0, s: 0, l };
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = max === r ? 60 * (((g - b) / d) % 6) : max === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4);
+  return { h: (h + 360) % 360, s, l };
+}
+
+/** The answer's palette: which hue became the accent (the first chromatic one seen). */
+export type Palette = { accent: string; hue: number | null };
+
+const hueDist = (a: number, b: number) => { const d = Math.abs(a - b) % 360; return Math.min(d, 360 - d); };
+
+/**
+ * One colour value → the board's. `role`: a stroke or text keeps a readable ink; a fill keeps its
+ * lightness as an opacity of the new colour (a pale wash stays pale). Returns the colour and an
+ * opacity factor to multiply into the element's own (1 = unchanged).
+ */
+export function mapColor(v: string | null | undefined, role: 'stroke' | 'fill' | 'text', pal: Palette): { color: string; alpha: number } | null {
+  const c = parseColor(v);
+  if (!c) return null;
+  const { h, s, l } = hsl(c);
+  const a = c.a;
+  const chroma = s * (1 - Math.abs(2 * l - 1));
+  // Paper: near-white stays the board's paper (a backing behind a label, a light card).
+  if (l > 0.94 && (chroma < 0.08 || l > 0.97)) return { color: INK.paper, alpha: a };
+  if (chroma < 0.12) {
+    // Neutral: the ink tiers.
+    if (role === 'fill' && l > 0.8) return { color: INK.sheet, alpha: a };
+    const color = l < 0.3 ? INK.ink : l < 0.5 ? INK.ink2 : l < 0.7 ? INK.muted : role === 'fill' ? INK.line : INK.faint;
+    return { color, alpha: a };
+  }
+  // Chromatic: the first hue is the accent; any other is neutral grey (one accent colour per board).
+  if (pal.hue == null) pal.hue = h;
+  const isAccent = hueDist(h, pal.hue) <= 25;
+  if (role === 'fill' && l > 0.72) {
+    // A pale wash: the same colour at the wash's strength.
+    const k = Math.max(0.1, Math.min(0.3, (1 - l) * 1.2));
+    return { color: isAccent ? pal.accent : INK.muted, alpha: a * k };
+  }
+  if (isAccent) return { color: pal.accent, alpha: a };
+  return { color: role === 'fill' ? INK.faint : INK.ink2, alpha: a };
+}
+
+/** The board's font for a model font-family: math-ish faces → the math font, everything else the sans. */
+export function mapFont(family: string | null | undefined): string {
+  const f = (family ?? '').toLowerCase();
+  if (/katex|math|cambria|times|georgia|(^|[\s,"'])serif/.test(f) && !/sans-serif/.test(f)) return FONT_MATH;
+  return FONT_SANS;
+}
+
+/** A model stroke width (user units, default 1) → the board's tiers in CSS px (non-scaling strokes). */
+export function mapStrokeWidth(w: number | null): number {
+  const v = w == null || !Number.isFinite(w) ? 1 : w;
+  return v <= 1.5 ? 1.25 : v <= 3 ? 2 : 3;
+}

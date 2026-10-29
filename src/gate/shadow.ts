@@ -53,8 +53,9 @@ export class ShadowDesk implements DeskApi {
 
   async addRegion(spec: RegionSpec): Promise<RegionInfo | string> {
     const prev = this.secs.get(spec.id);
-    if (prev) return spec.scene && prev.spec.scene ? this.region(spec.id)! : 'duplicate region id';
-    const scene = spec.scene ? [...this.all].reverse().find((s) => s.spec.scene && s.spec.id === spec.id) : undefined;
+    const cont = (x: RegionSpec) => (spec.scene && x.scene) || (spec.svg && spec.extend && x.svg);
+    if (prev) return cont(prev.spec) ? this.region(spec.id)! : 'duplicate region id';
+    const scene = spec.scene || (spec.svg && spec.extend) ? [...this.all].reverse().find((s) => cont(s.spec) && s.spec.id === spec.id) : undefined;
     if (scene) { this.secs.set(spec.id, scene); return this.region(spec.id)!; }
     const sec = createSection(spec);
     this.host.appendChild(sec.el);

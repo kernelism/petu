@@ -1,6 +1,7 @@
 // src/gate/verdict.ts — one beat's verdict: the composition of the gate's checks (check.ts,
 // layout.ts) over a beat whose actions are applied to the engine state here. One implementation for
 // the offline gate (scripts/gate-beats/gateRun.ts) and the live gate's preflight (src/gate/live.ts).
+import { svgTextWords } from '../svgboard/check';
 import { checkDeixis, checkDirections, checkErasure, checkCounts, checkGeometry, checkNamed, checkNumbers, checkOrder, checkTags, checkThresholds, checkUnbound, derivedValues, type Flag, type NamedScene, type Verdict } from './check';
 import { checkLayout, checkPageText, type El, type LayoutFlag, type Rect } from './layout';
 import type { GateState } from './engine';
@@ -17,8 +18,8 @@ import type { RawAction } from '../script/types';
  */
 export type Severity = 'default' | 'design';
 export const SEVERITY: Record<Severity, Record<Flag['check'], 'fail' | 'note'>> = {
-  default: { tag: 'fail', unbound: 'fail', erasure: 'fail', named: 'fail', deixis: 'note', number: 'note', threshold: 'note', direction: 'note', geometry: 'note', layout: 'note', order: 'note' },
-  design: { tag: 'fail', unbound: 'fail', erasure: 'fail', named: 'fail', deixis: 'fail', number: 'fail', threshold: 'fail', direction: 'fail', geometry: 'fail', layout: 'fail', order: 'note' },
+  default: { tag: 'fail', unbound: 'fail', erasure: 'fail', named: 'fail', deixis: 'note', number: 'note', threshold: 'note', direction: 'note', geometry: 'note', layout: 'note', order: 'note', svg: 'fail' },
+  design: { tag: 'fail', unbound: 'fail', erasure: 'fail', named: 'fail', deixis: 'fail', number: 'fail', threshold: 'fail', direction: 'fail', geometry: 'fail', layout: 'fail', order: 'note', svg: 'fail' },
 };
 
 /** A verdict under a severity: flags whose check only notes move to the notes. */
@@ -65,6 +66,7 @@ export function namedScene(drawn: readonly RawAction[], pageWords?: Set<string>)
     if (typeof x.text === 'string') for (const t of x.text.split(/[\s,=()]+/)) if (t) labels.add(t);
     if (typeof x.label === 'string') labels.add(x.label);
     if (a.kind === 'let' && x.names) for (const n of Object.keys(x.names)) labels.add(n);
+    if (a.kind === 'svg') for (const w of svgTextWords(a.svg)) labels.add(w);
     if (a.kind === 'let' && Array.isArray(x.defs)) for (const [n] of x.defs) labels.add(n);
     if (a.kind === 'point') bump('point');
     else if (a.kind === 'line') bump('line');

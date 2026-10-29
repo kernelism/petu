@@ -10,12 +10,14 @@
 //   I3 words and ink together: a unit's words and tags are released as one piece, in stream order.
 import { BeatSplitter, BEAT_DEFAULTS, NEW_INK, tokenize, units, type Beat, type Tag, type Word } from './segment';
 import { MAX_TAG_CHARS, ScriptParser } from '../script/parser';
+import { isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
 import { GateState } from './engine';
 import { checkBeat, namedScene, withSeverity, type Severity } from './verdict';
 import { textNumbers } from './numbers';
 import type { El, Rect } from './layout';
 import type { Grounding } from '../geometry/resolve';
 import type { RawAction } from '../script/types';
+import { acceptGroups, checkGroups, newBoardState, type BoardState, type GroupGeo } from '../svgboard/check';
 import type { NarrationClock } from '../playback/clock';
 import type { FaultMode, Faults, GateFlag, GateLogEvent, GateMode, GateSetting, RepairFn, RepairReport, RepairResult } from './events';
 
@@ -71,6 +73,8 @@ export type PreflightEnv = {
   severity?: Severity;
   /** Offline: a recorded board's skip reason for a tag (by its body), standing in for the shadow board. */
   recorded?: (body: string) => string | undefined;
+  /** The svg board's smallest text in its units (the renderer raises smaller text to it); default 16. */
+  svgMinFont?: () => number;
 };
 
 /** Kinds a strip may remove: pointing at the page, or an accent. */
@@ -120,7 +124,9 @@ export class GatePreflight implements Preflight {
   private beats: RawAction[][] = [];
   private consts: { name: string; v: number; beat: number }[] = [];
   private drawn: El[] = [];
-  private last: { u: PreflightUnit; acts: RawAction[]; added: El[]; consts: { name: string; v: number }[] } | null = null;
+  private last: { u: PreflightUnit; acts: RawAction[]; added: El[]; consts: { name: string; v: number }[]; svg?: { board: BoardState; geos: GroupGeo[]; grow?: number } } | null = null;
+  /** The svg board as accepted so far (its groups' text and strokes, ids, canvas). */
+  private svg: BoardState | null = null;
   private dirty = false;
   constructor(private env: PreflightEnv = {}) {}
 
@@ -202,7 +208,24 @@ export class GatePreflight implements Preflight {
     });
     const v = withSeverity(v0, this.env.severity ?? 'default');
     if (board?.drift?.length) v.notes.push(...board.drift.splice(0));
-    this.last = { u, acts: kept, added, consts: unitConsts };
+    // The svg board: each group parses, its id is new, text clears text and strokes, it stays on the canvas.
+    let svg: { board: BoardState; geos: GroupGeo[]; grow?: number } | undefined;
+    {
+      let sb = this.svg;
+      const srcs: string[] = [];
+      for (const t of tags) for (const a of tagActs.get(t) ?? []) {
+        if (a.kind === 'sketch' && a.svgboard) sb = a.svgboard.extend && sb ? sb : newBoardState(a.svgboard.w, a.svgboard.h);
+        if (a.kind === 'svg') srcs.push(a.svg);
+      }
+      if (srcs.length) {
+        sb ??= newBoardState();
+        const r = checkGroups(srcs, sb, this.env.svgMinFont?.() ?? 16);
+        v.flags.push(...r.flags);
+        v.notes.push(...r.notes);
+        svg = { board: sb, geos: r.geos, ...(r.grow ? { grow: r.grow } : {}) };
+      } else if (sb !== this.svg && sb) svg = { board: sb, geos: [] };
+    }
+    this.last = { u, acts: kept, added, consts: unitConsts, ...(svg ? { svg } : {}) };
     const scene = board?.scene?.();
     return {
       flags: v.flags.map((f) => ({ check: f.check, detail: f.detail })),
@@ -224,6 +247,7 @@ export class GatePreflight implements Preflight {
     this.acts.push(...(l?.acts ?? []));
     this.drawn.push(...(l?.added ?? []));
     this.consts.push(...(l?.consts ?? []).map((c) => ({ ...c, beat: k })));
+    if (l?.svg) { acceptGroups(l.svg.board, l.svg.geos, l.svg.grow); this.svg = l.svg.board; }
     this.last = null;
     this.dirty = false;
   }
@@ -285,7 +309,7 @@ function openTag(s: string): boolean {
   const open = s.lastIndexOf('{{');
   if (open < 0) return false;
   const rest = s.slice(open);
-  return !/\}\}/.test(rest) && !/[\n\r]/.test(rest) && rest.length < MAX_TAG_CHARS;
+  return !/\}\}/.test(rest) && !/[\n\r]/.test(rest) && rest.length < (isSvgTagBody(rest.slice(2, 8)) ? SVG_TAG_MAX : MAX_TAG_CHARS);
 }
 
 export class LiveGate {

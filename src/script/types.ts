@@ -266,10 +266,11 @@ export type LayoutAction =
    * Appends section `id` to the board. `page` (from `near=pN`) is the slide it explains (default: the
    * one in view); its body text sets the section's type size. `place=` is accepted and ignored.
    */
-  | { kind: 'sketch'; id: string; page?: number; size: RegionSize; fit?: boolean; /** Board v2: one 2-D scene with a camera ({{scene}}). */ scene?: boolean }
+  | { kind: 'sketch'; id: string; page?: number; size: RegionSize; fit?: boolean; /** Board v2: one 2-D scene with a camera ({{scene}}). */ scene?: boolean;
+      /** The svg board (src/svgboard): the section holds the model's SVG, `w`×`h` units; `extend` draws on into the last one. */ svgboard?: { w: number; h: number; extend?: boolean } }
   | { kind: 'clear' };
 
-export type Action = LayoutAction | DrawAction | RefAction | ConnectAction;
+export type Action = LayoutAction | DrawAction | RefAction | ConnectAction | SvgAction;
 export type InkAction = Exclude<Action, LayoutAction>;
 
 export type ScriptEvent =
@@ -349,4 +350,10 @@ export type MoveAction =
   | { kind: 'beforeafter'; ref: string; set: [string, string]; text?: string };
 export const MOVE_KINDS = new Set(['contrast', 'limit', 'beforeafter']);
 
-export type RawAction = LayoutAction | (DrawAction<PtArg>) | RefAction | RawConnect | LetAction | MarkShape | RayShape | ConstAction | ValAction | FindAction;
+/**
+ * One group of the svg board (`{{svg <g id="arm">…</g>}}`, src/svgboard/wire.ts): raw SVG, sanitized
+ * and drawn by src/svgboard/render.ts. `anchor`: the words that name it (from its id); the scheduler
+ * draws it on the first of them still to be spoken in its beat, else where the tag stands.
+ */
+export type SvgAction = { kind: 'svg'; id?: string; svg: string; anchor?: string[]; /** The board section it draws in (set by the director when it fires). */ region?: string; /** never set: a group is never on a page */ page?: undefined };
+export type RawAction = SvgAction | LayoutAction | (DrawAction<PtArg>) | RefAction | RawConnect | LetAction | MarkShape | RayShape | ConstAction | ValAction | FindAction;

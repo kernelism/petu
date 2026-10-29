@@ -1,6 +1,8 @@
-// @vitest-environment node
+// @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest';
 import { systemPrompt, PROMPT_VERSION } from '../../server/prompt/system';
+import { SVG_EXAMPLES } from '../../server/prompt/svgExamples';
+import { parseTag } from '../../src/script/parseTag';
 import { ScriptParser } from '../../src/script/parser';
 import { ScriptFilter } from '../../server/scriptFilter';
 
@@ -20,11 +22,14 @@ export const EVAL_VOCAB = [
   /inhibit/i, /enzyme/i, /Michaelis/i, /substrate/i, /like I'm 5/i,
 ];
 
-describe('system prompt', () => {
-  const s = systemPrompt();
+// The tag-DSL prompt (p5.7, PETU_PROMPT_VARIANT=tags). Founder decision 2026-10-29: these tag-DSL
+// prompt rules (grammar card executable, every grammar piece taught, the 8300-token bound) apply to the
+// tag prompt only, not to the svg prompt (the default since p6.0), which has its own suite below.
+describe('system prompt (tags)', () => {
+  const s = systemPrompt('tags');
 
   it('is stable (one cacheable prefix) and within budget', () => {
-    expect(systemPrompt()).toBe(s);
+    expect(systemPrompt('tags')).toBe(s);
     expect(PROMPT_VERSION).toMatch(/^p\d+\.\d+$/);
     expect(s.length / 3.6).toBeLessThan(8300); // ~tokens (the slide as canvas — charts, lifts, page notes — ~250 more; the visual kit's card added ~1,000; views, plots and FORMULAS ~400; Board v2's scene ~700; bound numbers, readouts, moves and a fifth example ~650; p5.6: four examples, chart-first and beats in TEACH, amounts/counts/histograms in the card, wave-1 helpers — 8,208; p5.7: live geometry in the card and TEACH, a moving example, the scope-relative length budget — 8,274)
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
@@ -47,7 +52,7 @@ describe('system prompt', () => {
   });
 
   it('is a brief, not a rulebook: no modes, no per-question-type recipes, no element caps; length only as the scope-relative beat budget', () => {
-    let s = systemPrompt();
+    let s = systemPrompt('tags');
     expect(s).not.toMatch(/ANSWER SHAPE|BY QUESTION TYPE|hard rules/i);
     // Founder 2026-10-29: live answers ran 94–160 s on narrow questions; "cap answer length by the
     // question's scope (narrow question → 30–60 s, not minutes)". So ONE length budget is allowed, and only
@@ -114,5 +119,136 @@ describe('system prompt', () => {
     expect(s).toMatch(/PLAN/); // the scout's plan
     expect(s).toMatch(/listing only, no image/); // other pages
     expect(s).toMatch(/digest/i);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------
+// The svg prompt (the default, p6.0): the board drawn by the model in SVG, streamed beat by beat.
+// Founder decision 2026-10-29: the tag-DSL rules above don't apply here; these do.
+
+/** The BOARD height a script's plan declares. */
+const boardH = (script: string) => Number(/BOARD (?:extend )?viewBox="0 0 1000 (\d+)"/.exec(script)?.[1]);
+/** A script's beats: narration, then its top-level <g id> group (nested groups stay inside). */
+function beatsOf(script: string): { narration: string; id: string; svg: string }[] {
+  const body = script.slice(script.indexOf('</plan>') + 7);
+  const out: { narration: string; id: string; svg: string }[] = [];
+  let pos = 0;
+  for (;;) {
+    const open = body.indexOf('<g id="', pos);
+    if (open < 0) break;
+    let depth = 0, end = -1;
+    for (const m of body.slice(open).matchAll(/<g[\s>]|<\/g>/g)) {
+      depth += m[0] === '</g>' ? -1 : 1;
+      if (depth === 0) { end = open + m.index! + 4; break; }
+    }
+    expect(end, 'unbalanced <g>').toBeGreaterThan(open);
+    out.push({ narration: body.slice(pos, open), id: /<g id="([^"]+)"/.exec(body.slice(open))![1], svg: body.slice(open, end) });
+    pos = end;
+  }
+  return out;
+}
+
+describe('system prompt (svg, default)', () => {
+  const s = systemPrompt();
+
+  it('is stable, versioned and within budget', () => {
+    expect(systemPrompt()).toBe(s);
+    expect(PROMPT_VERSION).toBe('p6.0');
+    expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
+    expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
+  });
+
+  it('has nothing dynamic and never leaks eval material', () => {
+    expect(s).not.toMatch(/\b20\d\d-\d\d-\d\d\b/);
+    expect(s).not.toMatch(/\.pdf\b/i);
+    for (const banned of EVAL_VOCAB) expect(s).not.toMatch(banned);
+    // nor the experiment's bench topics (the examples must not teach the bench's answers)
+    for (const banned of [/skater/i, /tunnel/i, /\brent\b/i, /sin x|sine/i, /satellite/i]) expect(s).not.toMatch(banned);
+  });
+
+  it('has no tag-DSL card: only page pointing tags', () => {
+    expect(s).not.toMatch(/\bTAGS \(|KIT \(|SCENE \(|\{\{(sketch|scene|let|const|plot|grid|bars|node|val|show|svgboard)\b/);
+    const kinds = new Set([...s.matchAll(/\{\{(\w+)/g)].map((m) => m[1]));
+    for (const k of kinds) expect(['scroll', 'highlight', 'underline', 'circle', 'box'], k).toContain(k);
+  });
+
+  it('every pointing tag it shows parses', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const tags = [...s.matchAll(/\{\{([^}]*)\}\}/g)].map((m) => m[1]);
+    expect(tags.length).toBeGreaterThan(6);
+    for (const t of tags) expect(parseTag(t), t).not.toBeNull();
+    warn.mockRestore();
+  });
+
+  it('is a brief, not a rulebook: no modes or recipes; length only as the scope-relative beat budget', () => {
+    let t = s;
+    const budget = /Say less and let the board carry it\. The PLAN's beats are your budget[^\n]*?a broad one may take longer\./;
+    expect(t).toMatch(budget);
+    expect(t.match(budget)![0]).toMatch(/narrow question lands in 30–60 seconds/);
+    t = t.replace(budget, '');
+    expect(t).not.toMatch(/ANSWER SHAPE|BY QUESTION TYPE|hard rules/i);
+    expect(t).not.toMatch(/\b(point-at|what-if|derive|compare|navigation)\s*[:(]/i);
+    expect(t).not.toMatch(/\bat most \d|\bat least \d|\d+\s*[–-]\s*\d+ (words|elements|drawn|groups|beats)|\bexactly one\b|\bmax(imum)? \d/i);
+    expect(t).not.toMatch(/\b(quick|lesson) mode\b|\bmode\b/i);
+  });
+
+  it('states the teacher-at-a-whiteboard brief and the streamed beat format', () => {
+    for (const p of [/great teacher at a whiteboard/, /Draw the mechanism, not names/, /ONE concrete case/, /real numbers you compute/, /reads on its own/, /beats are your budget/,
+      /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 1000 H"/, /regions:/, /groups:/, /<g id=/, /names its id/, /never write the whole board first/i,
+      /No scripts, foreignObject/, /font-size 16/, /one accent colour/, /Nothing overlaps/, /inside the viewBox/, /BOARD extend/, /ghost/]) expect(s).toMatch(p);
+  });
+
+  it('covers the answer situations beyond a single question', () => {
+    for (const p of [/STUDENT INK/, /MEMORY/, /RELATION/, /doesn't cover/, /Off-topic/, /no extractable text/, /listing only, no image/, /digest/i, /scroll p=7/]) expect(s).toMatch(p);
+  });
+
+  // (Needs DOMParser: tests/server/storyboard.test.ts imports EVAL_VOCAB from here under the node environment.)
+  describe.skipIf(typeof DOMParser === 'undefined').each(SVG_EXAMPLES.map((e) => [e.title, e] as const))('example: %s', (_t, ex) => {
+    it('has a plan ending with the BOARD layout: viewBox, regions, groups in teaching order', () => {
+      const plan = /<plan>([\s\S]*?)<\/plan>/.exec(ex.script)?.[1] ?? '';
+      expect(ex.script.trimStart().startsWith('<plan>')).toBe(true);
+      expect(boardH(plan)).toBeGreaterThan(0);
+      expect(plan).toMatch(/\nregions: /);
+      const listed = /\ngroups: (.*)/.exec(plan)![1].split(';').map((g) => g.trim().split(/\s/)[0]);
+      expect(listed).toEqual(beatsOf(ex.script).map((b) => b.id));
+    });
+
+    it('beats: narration, then one well-formed group; ids unique; every coordinate inside the viewBox; text ≥ 16', () => {
+      const H = boardH(ex.script), bs = beatsOf(ex.script);
+      expect(bs.length).toBeGreaterThanOrEqual(4);
+      expect(new Set(bs.map((b) => b.id)).size).toBe(bs.length);
+      for (const b of bs) {
+        expect(b.id).toMatch(/^[a-z][a-z0-9-]*$/);
+        expect(b.narration.trim().split(/\s+/).length, b.id).toBeGreaterThan(8); // say it, then draw it
+        const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${b.svg}</svg>`, 'image/svg+xml');
+        expect(doc.querySelector('parsererror'), b.id).toBeNull();
+        expect(b.svg).not.toMatch(/<(script|foreignObject|image|animate|a)\b|\bon\w+=|href=/i);
+        for (const el of Array.from(doc.querySelectorAll('*'))) {
+          for (const a of ['x', 'cx', 'x1', 'x2']) { const v = el.getAttribute(a); if (v != null) { expect(Number(v), `${b.id} ${a}`).toBeGreaterThanOrEqual(0); expect(Number(v)).toBeLessThanOrEqual(1000); } }
+          for (const a of ['y', 'cy', 'y1', 'y2']) { const v = el.getAttribute(a); if (v != null) { expect(Number(v), `${b.id} ${a}`).toBeGreaterThanOrEqual(0); expect(Number(v)).toBeLessThanOrEqual(H); } }
+          const pts = el.getAttribute('points');
+          if (pts) for (const [x, y] of pts.trim().split(/\s+/).map((p) => p.split(',').map(Number))) { expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThanOrEqual(1000); expect(y).toBeGreaterThanOrEqual(0); expect(y).toBeLessThanOrEqual(H); }
+          const fs = el.getAttribute('font-size');
+          if (fs) expect(Number(fs), b.id).toBeGreaterThanOrEqual(16);
+        }
+        expect(doc.querySelectorAll('text').length + doc.querySelectorAll('[font-size] text').length, b.id).toBeGreaterThan(0); // every group is labelled
+      }
+    });
+
+    it('each group id is a word its beat says (the engine draws it on that word)', () => {
+      for (const b of beatsOf(ex.script)) expect(b.narration.toLowerCase().split(/[^a-z0-9-]+/), b.id).toContain(b.id);
+    });
+
+    it('points at the page with tags that parse and quote listed text, and ends on a question to the student', () => {
+      const tags = [...ex.script.matchAll(/\{\{([^}]*)\}\}/g)].map((m) => m[1]);
+      expect(tags.length).toBeGreaterThan(0);
+      for (const t of tags) {
+        expect(parseTag(t), t).not.toBeNull();
+        const q = /"([^"]+)"/.exec(t)?.[1];
+        if (q) expect(ex.listing, q).toContain(q);
+      }
+      expect(ex.script.trim()).toMatch(/\?$/);
+      expect(ex.script.slice(ex.script.lastIndexOf('</g>'))).not.toMatch(/<g/);
+    });
   });
 });
