@@ -5,8 +5,13 @@ import './app.css';
 import { loadPdf, type PdfDoc } from './pdf/loadPdf';
 import { PdfViewer } from './pdf/PdfViewer';
 import type { ViewerApi } from './pdf/viewerApi';
-import { Director, type ActionTiming } from './playback/director';
-import { AnswerSession, type SessionState } from './playback/session';
+import { Director, type ActionTiming, type Journey } from './playback/director';
+import { AnswerSession, type ParsedScript, type SessionState } from './playback/session';
+import { deriveParts, partAt, partText, partTitle, type Part } from './playback/parts';
+import { SectionLabels } from './pdf/sections';
+import { RouteChip, type Route } from './ui/RouteChip';
+import { DeeperInset, type Deeper } from './ui/DeeperInset';
+import type { PartsView } from './ui/PartsBar';
 import { PacedClock } from './playback/clock';
 import { getSettings, setSettings } from './settings/settings';
 import { DEMOS, DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo } from './demo/demoScript';
@@ -74,6 +79,10 @@ const STILL_THINKING_MS = 4000;
 const STILL_THINKING = 'Still thinking…';
 /** All words spoken and no new one for this long, mid-answer: the caption shows a faint ellipsis. */
 const PAUSE_GRACE_MS = 350;
+/** A journey's route stays up this long after it starts (the travel, the arrival beat, a read). */
+const ROUTE_MS = 4000;
+/** ← within this many words of a part's start goes to the part before; later, to its own start. */
+const PART_RESTART_WORDS = 8;
 /** Demos and dev scripts send no page marks: every `mark=` is skipped. */
 const NO_MARKS: Grounding = { mark: () => undefined };
 
@@ -307,6 +316,27 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | undefined>();
   const [dragging, setDragging] = useState(false);
   const [debug, setDebug] = useState<DebugState>({ log: [] });
+  /** Flow across the document: the journey in progress, and the page the answer started on once it has travelled. */
+  const [route, setRoute] = useState<Route | null>(null);
+  const routeTimer = useRef<number>();
+  const [travelledFrom, setTravelledFrom] = useState<number | null>(null);
+  const originRef = useRef(1);
+  /** The answer's parts (journeys split it), the part playing, and whether the student paused it. */
+  const [parts, setParts] = useState<Part[]>([]);
+  const partsRef = useRef<Part[]>([]);
+  const scriptRef = useRef<ParsedScript | null>(null);
+  const [partIdx, setPartIdx] = useState(0);
+  const partIdxRef = useRef(0);
+  partIdxRef.current = partIdx;
+  const [userPaused, setUserPaused] = useState(false);
+  /** Go deeper: the inset (one level) and its own narration-only session. */
+  const [deeper, setDeeper] = useState<Deeper | null>(null);
+  const deeperRef = useRef<Deeper | null>(null);
+  deeperRef.current = deeper;
+  const deeperSession = useRef<AnswerSession | null>(null);
+  const labelsRef = useRef<SectionLabels | null>(null);
+  const [, setLabelTick] = useState(0);
+  const journeyRef = useRef<(j: Journey) => void>(() => {});
   const [askT0, setAskT0] = useState(0);
 
   const viewerRef = useRef<ViewerApi | null>(null);
@@ -341,6 +371,8 @@ export default function App() {
       grounding: () => groundingRef.current ?? NO_MARKS,
       settings: getSettings,
       onScrolledTo: () => setPageTick((n) => n + 1),
+      onJourney: (j) => journeyRef.current(j),
+      hold: (at, ms) => sessionRef.current?.hold(at, ms),
       onTiming: (t) => {
         logRef.current?.timing(t);
         recRef.current?.timing(t);
@@ -442,6 +474,10 @@ export default function App() {
     const s = sessionRef.current;
     sessionRef.current = null;
     s?.stop();
+    deeperSession.current?.stop();
+    deeperSession.current = null;
+    setDeeper(null);
+    setUserPaused(false);
     director.stop();
     deskRef.current?.follow.setAnswering(false);
     clearPause();
@@ -460,6 +496,11 @@ export default function App() {
     setAnswerError(null);
     setTranscript(null);
     setLiveText('');
+    window.clearTimeout(routeTimer.current);
+    setRoute(null);
+    setTravelledFrom(null);
+    setParts([]);
+    partsRef.current = [];
   }, []);
 
   // ---------------------------------------------------------------------------------------------
@@ -550,6 +591,19 @@ export default function App() {
     recRef.current = run.rec ?? null;
     setTranscript(null);
     setAnswerError(null);
+    // Flow: a new answer starts where the student is; its parts and route start over.
+    deeperSession.current?.stop();
+    deeperSession.current = null;
+    setDeeper(null);
+    setUserPaused(false);
+    originRef.current = pageRef.current;
+    window.clearTimeout(routeTimer.current);
+    setRoute(null);
+    setTravelledFrom(null);
+    setParts([]);
+    partsRef.current = [];
+    scriptRef.current = null;
+    setPartIdx(0);
     // The old ink fades at the head of the director's queue while the request goes out.
     void director.begin(300);
     groundingRef.current = undefined;
@@ -645,6 +699,17 @@ export default function App() {
     const session: AnswerSession = new AnswerSession({
       clock,
       onParsed: (a) => director.prefetch(a),
+      onScript: (sc) => {
+        if (sessionRef.current !== session) return;
+        scriptRef.current = sc;
+        const ps = deriveParts(sc, page);
+        const prev = partsRef.current;
+        if (ps.length === prev.length && ps.every((p, i) => p.start === prev[i].start && p.page === prev[i].page && p.back === prev[i].back)) return;
+        partsRef.current = ps;
+        setParts(ps);
+        const labels = labelsRef.current;
+        for (const p of ps) if (labels && labels.get(p.page) == null) void labels.load(p.page).then((l) => { if (l) setLabelTick((n) => n + 1); });
+      },
       onAction: (a, at) => {
         if (sessionRef.current !== session) return;
         if (a.kind !== 'scroll' && a.kind !== 'clear') drew = true;
@@ -655,6 +720,7 @@ export default function App() {
         if (sessionRef.current !== session) return;
         if (DEBUG && words.length === 1) { const t = performance.now(); setDebug((d) => ({ ...d, word: t })); }
         if (!spoke) { spoke = true; setWaiting(false); clearThink(); }
+        setPartIdx(partAt(partsRef.current, words.length - 1));
         // Once these words are spoken, a faint ellipsis if nothing new has come (a gap in the stream).
         window.clearTimeout(pauseTimer.current);
         setPausing(false);
@@ -672,6 +738,7 @@ export default function App() {
         if (sessionRef.current !== session) return;
         if (st === 'loading' || st === 'playing') { setBusy(true); return; }
         clearPause();
+        setUserPaused(false);
         setBusy(false);
         setWaiting(false);
         clearThink();
@@ -728,6 +795,126 @@ export default function App() {
   const closeRef = useRef(onStop);
   closeRef.current = onStop;
 
+  // ---------------------------------------------------------------------------------------------
+  // Flow across the document: journeys, parts, pause, go deeper
+
+  /** A journey started (the director is about to travel): show the route; leaving the start page offers the way back. */
+  journeyRef.current = (j: Journey) => {
+    const back = j.to === originRef.current;
+    const labels = labelsRef.current;
+    setRoute({ from: j.from, to: j.to, label: labels?.get(j.to), back });
+    if (!back) setTravelledFrom(originRef.current);
+    if (labels && !back) void labels.load(j.to).then((label) => setRoute((r) => (r && r.to === j.to && label ? { ...r, label } : r)));
+    window.clearTimeout(routeTimer.current);
+    routeTimer.current = window.setTimeout(() => setRoute(null), ROUTE_MS);
+  };
+
+  const onBack = useCallback(() => {
+    const p = travelledFrom;
+    if (p == null) return;
+    // Mid-answer this is the student taking the view (rule 6): the answer goes on, "Back to answer" shows.
+    if (busyRef.current) deskRef.current?.follow.userTookOver();
+    void viewerRef.current?.scrollToPage(p);
+  }, [travelledFrom]);
+
+  const togglePause = useCallback(() => {
+    const s = sessionRef.current;
+    if (!s || deeperRef.current) return;
+    if (s.isPaused()) { if (s.resume()) setUserPaused(false); return; }
+    if (s.pause()) { setUserPaused(true); clearPause(); }
+  }, []);
+
+  /** Plays on from part i: forward fast-forwards the board, back repeats the narration (its ink stays) and returns to its page. */
+  const jumpTo = useCallback((i: number) => {
+    const s = sessionRef.current, p = partsRef.current[i];
+    if (!s || !p || deeperRef.current) return;
+    const back = p.start < s.position();
+    if (!s.seek(p.start)) return;
+    setUserPaused(false);
+    setPartIdx(i);
+    deskRef.current?.follow.resume();
+    if (back) director.run({ kind: 'scroll', page: p.page }, performance.now());
+  }, [director]);
+
+  const stepPart = useCallback((dir: -1 | 1) => {
+    const s = sessionRef.current, ps = partsRef.current;
+    if (!s || ps.length < 2) return;
+    const pos = s.position();
+    const i = partAt(ps, Math.max(0, pos - 1));
+    if (dir > 0) { if (i + 1 < ps.length) jumpTo(i + 1); return; }
+    jumpTo(pos - ps[i].start > PART_RESTART_WORDS || i === 0 ? i : i - 1);
+  }, [jumpTo]);
+
+  const titleOf = (p: Part) => partTitle(p, originRef.current, labelsRef.current?.get(p.page));
+
+  const openDeeper = useCallback(() => {
+    const s = sessionRef.current;
+    if (!s || deeperRef.current) return;
+    if (!s.isPaused() && !s.pause()) return;
+    setUserPaused(true);
+    clearPause();
+    const p = partsRef.current[partIdxRef.current];
+    setDeeper({ title: p ? partTitle(p, originRef.current, labelsRef.current?.get(p.page)) : 'this answer', words: [], state: 'ask' });
+  }, []);
+
+  /**
+   * The follow-up plays in the inset, narration only (its drawings would land on the paused answer's
+   * board). Agent answers go through the normal ask flow with the part as context; dev scripts play
+   * their canned `deeper` text.
+   */
+  const askDeeper = useCallback((q: string) => {
+    const cur = deeperRef.current;
+    if (!cur) return;
+    const said = scriptRef.current ? partText(scriptRef.current, partsRef.current, partIdxRef.current) : '';
+    setDeeper({ ...cur, question: q, state: 'thinking', words: [] });
+    const question = `${q}\n\n(A follow-up while the answer is paused, about its part "${cur.title}", which said: "${said.slice(-1200)}". Answer just this; the answer resumes after.)`;
+    const source: (signal: AbortSignal) => AsyncIterable<string> = DEMO_PATH
+      ? (signal) => streamDemo(signal, DEV_SCRIPT?.deeper ?? `Here the follow-up about ${q} would play, with this part as its context. Close this to go back to the answer.`)
+      : agentRef.current.source({ question, page: pageRef.current, ink: () => ink.get().strokes, handlers: {}, onGrounding: () => {} });
+    deeperSession.current?.stop();
+    const sess: AnswerSession = new AnswerSession({
+      clock: new PacedClock(() => getSettings().wpm),
+      onAction: () => {},
+      onWord: (words) => { if (deeperSession.current === sess) setDeeper((d) => d && { ...d, words, state: 'playing' }); },
+      onState: (st) => {
+        if (deeperSession.current !== sess) return;
+        if (st === 'done') setDeeper((d) => d && { ...d, state: 'done' });
+        else if (st === 'error') setDeeper((d) => d && { ...d, state: 'error', error: "That follow-up couldn't be answered. Close this to go back to the answer." });
+      },
+    });
+    deeperSession.current = sess;
+    void sess.start(source);
+  }, []);
+
+  /** Closes the inset; the answer resumes from the word where it paused, its board untouched. */
+  const closeDeeper = useCallback(() => {
+    deeperSession.current?.stop();
+    deeperSession.current = null;
+    setDeeper(null);
+    sessionRef.current?.resume();
+    setUserPaused(false);
+  }, []);
+
+  // Space pause/resume, ←/→ parts, Esc closes the inset. Capture phase, so the keys never also scroll
+  // the slides (follow mode would read that as the student taking over) or stop the answer (Esc).
+  const keysRef = useRef({ togglePause, stepPart, closeDeeper });
+  keysRef.current = { togglePause, stepPart, closeDeeper };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = keysRef.current;
+      const swallow = () => { e.preventDefault(); e.stopImmediatePropagation(); };
+      if (e.key === 'Escape' && deeperRef.current) { swallow(); k.closeDeeper(); return; }
+      const t = e.target as HTMLElement | null;
+      const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+      if (typing || deeperRef.current || !sessionRef.current || document.querySelector('.popover')) return;
+      if (e.key === ' ' || e.key === 'Spacebar') { swallow(); k.togglePause(); }
+      else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && partsRef.current.length > 1) { swallow(); k.stepPart(e.key === 'ArrowLeft' ? -1 : 1); }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+
   // Dev-only: the eval runner's backend (window.__petu), over the real agent path.
   const evalReady = useRef<{ promise: Promise<void>; resolve(): void } | null>(null);
   if (EVAL && !evalReady.current) {
@@ -779,6 +966,8 @@ export default function App() {
     desk.subscribe((s) => { setDesk(s); setPaused(desk.follow.paused()); });
     if (import.meta.env.DEV) { window.__viewer = api; window.__desk = desk; }
     setNumPages(api.numPages());
+    const d = docRef.current;
+    labelsRef.current = d ? new SectionLabels(d, (p) => api.textRuns(p), (p) => api.spaceHeight(p) / 1000) : null;
     if (EVAL) {
       // ?page=N: show that page, let the context warm, then tell the runner.
       const p = Math.max(1, Math.min(api.numPages(), Number(params.get('page')) || 1));
@@ -789,7 +978,10 @@ export default function App() {
     if (autoplay && !demoStarted.current && !params.has('noplay')) {
       demoStarted.current = true;
       window.clearTimeout(autoplayTimer.current);
-      autoplayTimer.current = window.setTimeout(() => onAsk(autoplay), 800);
+      // A dev script may be asked from a given page (?script=flow: p9).
+      const at = DEV_SCRIPT?.page;
+      const ready = at && at <= api.numPages() ? api.scrollToPage(at).then(() => { pageRef.current = at; }) : Promise.resolve();
+      void ready.then(() => { autoplayTimer.current = window.setTimeout(() => onAsk(autoplay), 800); });
     }
   }, [onAsk]);
 
@@ -853,6 +1045,10 @@ export default function App() {
   }, [director, fileName]);
 
   const dock = dockPlacement(viewportW, desk);
+  // The stepper shows while an answer plays and has parts (or is paused, for the controls).
+  const partsView: PartsView | undefined = busy && !waiting && (parts.length > 1 || userPaused)
+    ? { titles: parts.map(titleOf), current: Math.min(partIdx, parts.length - 1), paused: userPaused, onJump: jumpTo, onTogglePause: togglePause, onDeeper: openDeeper }
+    : undefined;
 
   if (!doc) return <EmptyState onFile={openFile} onSample={openSample} error={loadError} />;
 
@@ -883,19 +1079,22 @@ export default function App() {
         report={import.meta.env.DEV ? captureReport : undefined}
       />
       <FollowPill visible={paused} onResume={resumeFollow} x={dock.x} />
+      <RouteChip route={route} backTo={travelledFrom != null && page !== travelledFrom ? travelledFrom : null} onBack={onBack} x={dock.x} />
       <SettingsPopover open={settingsOpen} onClose={closeSettings} />
       <CanvasToolbar />
       {/* left/width are set directly rather than through custom properties, so the dock's glide never
           depends on var() invalidation (suspected in a Safari report of the dock staying left; not
           reproduced in Playwright WebKit). */}
       <div ref={dockRef} className="dock" style={{ left: `${dock.x}px`, width: `${dock.w}px`, '--glide': `${GLIDE_MS}ms` } as CSSProperties}>
+        {deeper && <DeeperInset deeper={deeper} onAsk={askDeeper} onClose={closeDeeper} />}
         <Caption
           words={captionWords}
-          visible={captionVisible}
+          visible={captionVisible && !deeper}
           question={question}
           waiting={waiting}
           hint={hint}
-          pausing={pausing}
+          pausing={pausing && !userPaused}
+          parts={partsView}
           error={answerError ? { message: answerError.message, onRetry: answerError.retry ? onRetry : undefined } : undefined}
         />
         <AskBar

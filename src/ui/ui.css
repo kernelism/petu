@@ -775,3 +775,160 @@
   overflow-wrap: anywhere;
 }
 .report-line.is-error { color: #B3261E; }
+
+/* ───────── Answer parts (in the caption, in place of the question line) ───────── */
+.parts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  margin: -2px 0 2px -6px;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: rgba(255,255,255,.52);
+  pointer-events: auto;
+  min-width: 0;
+}
+.parts button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+.parts-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 6px;
+  transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+.parts-btn:hover, .parts-step:hover { background: rgba(255,255,255,.1); color: rgba(255,255,255,.9); }
+.parts-btn:active, .parts-step:active { background: rgba(255,255,255,.16); }
+.parts-btn:focus-visible, .parts-step:focus-visible { outline: 2px solid #fff; outline-offset: 0; }
+.parts-deeper { margin-left: auto; }
+.parts-list { display: flex; align-items: center; gap: 2px; min-width: 0; margin: 0; padding: 0; list-style: none; overflow: hidden; }
+.parts-item { display: flex; align-items: center; min-width: 0; }
+.parts-item + .parts-item::before { content: '·'; padding: 0 2px; color: rgba(255,255,255,.3); }
+.parts-step { display: inline-flex; align-items: center; gap: 5px; min-width: 0; height: 22px; padding: 0 6px; border-radius: 6px; transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out); }
+.parts-n {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.35);
+}
+.parts-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 22ch; }
+.parts-item.is-current .parts-step { color: #fff; }
+.parts-item.is-current .parts-n { background: #fff; color: var(--ink); box-shadow: none; }
+.parts-item.is-done .parts-n { box-shadow: inset 0 0 0 1px rgba(255,255,255,.6); }
+.parts-status { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* ───────── Journey route + "Back to pN" (top of the slide column) ───────── */
+.route {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translate(-50%, -4px);
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  font: 500 13px/1.3 var(--font);
+  color: var(--ink-2);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out), left var(--glide, 420ms) var(--ease-out);
+}
+.route.is-visible { opacity: 1; transform: translate(-50%, 0); }
+.route-trip, .route-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.86);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-float), 0 0 0 0.5px var(--hairline);
+  white-space: nowrap;
+}
+.route-trip { animation: route-in 220ms var(--ease-out) both; }
+@keyframes route-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.route-pages { font-variant-numeric: tabular-nums; color: var(--ink); }
+.route-arrow { color: var(--muted); margin: 0 2px; }
+.route-label { max-width: 280px; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-weight: 400; }
+.route-label::before { content: '·'; margin-right: 8px; color: rgba(0,0,0,.25); }
+.route-back {
+  border: 0;
+  gap: 6px;
+  font: inherit;
+  color: var(--ink-2);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out), transform 120ms var(--ease-out);
+}
+.route:not(.is-visible) .route-back { pointer-events: none; }
+.route-back:hover { background: #fff; color: var(--ink); }
+.route-back:active { transform: scale(.97); }
+.route-back:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* ───────── Go deeper: an inset in the dock's caption slot; the answer waits ───────── */
+.deeper {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  padding: 10px 14px 12px 16px;
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  background: var(--surface);
+  box-shadow: var(--shadow-float), 0 0 0 0.5px var(--hairline), inset 3px 0 0 var(--focus);
+  font-family: var(--font);
+  color: var(--ink);
+  animation: route-in 200ms var(--ease-out) both;
+}
+.dock:has(.deeper) .askbar { border-top-left-radius: 0; border-top-right-radius: 0; }
+.deeper-head { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.deeper-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 500; }
+.deeper-close {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out);
+}
+.deeper-close:hover { background: var(--hover); }
+.deeper-close:active { background: var(--press); }
+.deeper-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+.deeper-ask { margin-top: 8px; }
+.deeper-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-m);
+  background: var(--hover);
+  font: 15px/1.4 var(--font);
+  color: var(--ink);
+  outline: none;
+  box-sizing: border-box;
+}
+.deeper-input:focus-visible { box-shadow: 0 0 0 2px var(--focus); }
+.deeper-q { margin-top: 6px; font-size: 12.5px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.deeper-text { margin-top: 4px; max-height: 7.5em; overflow-y: auto; scrollbar-width: none; font-size: 15px; line-height: 1.5; }
+.deeper-text::-webkit-scrollbar { display: none; }
+.deeper-think, .deeper-error { color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .route, .route-trip, .deeper { transition: none; animation: none; } }

@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { primes } from './text';
 import { countLines, windowStart } from './captionWindow';
+import { PartsBar, type PartsView } from './PartsBar';
 import './ui.css';
 
 const PUNCT_ONLY = /^[\p{P}…]+$/u;
@@ -38,6 +39,8 @@ type Props = {
    * caption takes pointer events then).
    */
   error?: { message: string; onRetry?(): void };
+  /** A playing answer's parts and controls (src/ui/PartsBar.tsx): shown in place of the question line. */
+  parts?: PartsView;
 };
 
 /** The cross-fade between reading windows (ui.css .caption-text / .caption-leaving). */
@@ -60,7 +63,7 @@ function makeMeasure(el: HTMLElement): (s: string) => number {
   };
 }
 
-export function Caption({ words, visible, question, waiting = false, hint, pausing = false, error }: Props) {
+export function Caption({ words, visible, question, waiting = false, hint, pausing = false, error, parts }: Props) {
   const tokens = groupWords(words);
   const viewRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -117,7 +120,7 @@ export function Caption({ words, visible, question, waiting = false, hint, pausi
   const visibleTokens = tokens.slice(Math.min(start, tokens.length));
   return (
     <div className={`caption${shown ? ' is-visible' : ''}${error?.onRetry ? ' has-error' : ''}`} aria-hidden={!shown}>
-      {question && (
+      {parts && !error ? <PartsBar {...parts} /> : question && (
         <div className={`caption-q${waiting && !error ? ' is-waiting' : ''}`} title={question}>{question}</div>
       )}
       {error ? (

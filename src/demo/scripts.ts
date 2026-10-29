@@ -6,7 +6,31 @@ import type { Demo } from './demoScript';
  * PDF and plays the script. Anchored quotes are written against the PDF's actual text runs.
  * public/dev/ is git-ignored: the lecture PDFs are the user's course files and are never committed.
  */
-export const SCRIPTS: Record<string, Demo & { src: string }> = {
+export const SCRIPTS: Record<string, Demo & { src: string; page?: number; deeper?: string }> = {
+  /**
+   * Flow across the document (econ.pdf, asked on p9): a lead-in on p9, a journey to p2 (the demand
+   * line's equation) and back. Exercises the route chip, the arrival beat, answer parts (three:
+   * p9 · The Law of Demand · Back to p9), "Back to p9", and highlight units: "slope is constant"
+   * grows to its sentence, "a higher price" to its two-line bullet, "P/Q is not" stays inside its
+   * sentence. `page` is where the question is asked; `deeper` plays in the go-deeper inset.
+   */
+  flow: {
+    src: '/fixtures/econ.pdf',
+    page: 9,
+    question: 'Why does elasticity change along a straight demand line?',
+    deeper: 'Take two points on the line. At a price of 10, a one dollar cut is a ten percent cut, and the five extra units are a fifty percent rise on ten. ' +
+      'At a price of 2, the same dollar is half the price, and five more units on fifty is only ten percent. Same step, very different percentages.',
+    script:
+      `Along a straight demand line {{highlight p=9 "slope is constant"}} the slope never changes, but elasticity is a ratio of percentages, so it keeps changing as you slide down the line. ` +
+      `To see why, go back to where this line comes from. {{scroll p=2}} ` +
+      `This is the demand curve from the start of the lecture, {{highlight p=2 "Qd = 60 – 5P"}} quantity is sixty minus five times price. ` +
+      `{{highlight p=2 "a higher price"}} Every dollar off the price adds the same five units, wherever you are on it. ` +
+      `That fixed step is the slope. {{scroll p=9}} ` +
+      `Back on this slide, elasticity multiplies that slope by {{underline p=9 "P/Q is not"}} price over quantity. ` +
+      `{{highlight p=9 "above M: |Ed| > 1"}} High up the line, price is large and quantity small, so demand is elastic; ` +
+      `{{highlight p=9 "below M: |Ed| < 1"}} low down it is the reverse, and demand is inelastic. ` +
+      `{{highlight p=9 "at M (Q = 30, P = 6)"}} They balance exactly at the midpoint.`,
+  },
   /**
    * lec09 p40 "Depth from disparity" (1920 × 1080; page model coords from pdf.js text runs).
    * The slide already draws the cameras, baseline B, f and image planes, so the sketch draws none of
