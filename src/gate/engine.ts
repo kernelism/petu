@@ -16,6 +16,7 @@ import type { FindAction, KitSource, MoveAction, RawAction, ValAction } from '..
 import { Figures, type Grounding } from '../geometry/resolve';
 import { curveOf, read, yAt, type Curve, type FitData, type Reading } from '../values/readout';
 import { sayNumber } from '../values/say';
+import { latestCharts } from '../agent/context/charts';
 
 export type ValueSource = 'page' | 'question' | 'literal' | 'const' | 'computed' | 'derived';
 export type Value = { v: number; source: ValueSource; /** block id, page, const name… */ of: string; beat: number; row?: { table: string; r: number; cells: number[] } };
@@ -34,7 +35,7 @@ export type PlotFn = { id: string; f: (x: number) => number; x0: number; x1: num
 export type Circle = { id: string; region: string; cx: number; cy: number; r: number };
 export type Seg = { id: string; region: string; kind: string; a: { x: number; y: number }; b: { x: number; y: number } };
 export type PointG = { id: string; region: string; x: number; y: number; text?: string };
-type PlotSrc = Extract<RawAction, { kind: 'plot' }> & { id?: string };
+type PlotSrc = Extract<RawAction, { kind: 'plot' }> & { id?: string; chart?: string; page?: number };
 
 /**
  * What the caption shows for a {{val}} the engine cannot resolve: a neutral dash, never a guessed
@@ -63,7 +64,11 @@ export class GateState {
   lastId: string | undefined;
   private anon = 0;
 
-  constructor(grounding: Grounding = { mark: () => undefined }) { this.figures = new Figures(grounding); }
+  /**
+   * `grounding`: page marks and calibrated charts. Without one (the live parser), charts come from the
+   * latest grounding the app built (charts.ts latestCharts), so a chart plot's readouts are said at parse time.
+   */
+  constructor(private grounding: Grounding = latestCharts) { this.figures = new Figures(grounding); }
 
   addValues(vs: number[], source: ValueSource, of: string, beat: number): void {
     for (const v of vs) if (Number.isFinite(v)) this.values.push({ v, source, of, beat });
@@ -111,7 +116,8 @@ export class GateState {
     }
     if (a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table' || a.kind === 'calc' || a.kind === 'scatter' || a.kind === 'fit' || a.kind === 'shares') return this.kit(a, beat);
     if ('ref' in a) return this.verb(a, beat);
-    if (a.kind === 'plot' && x.region != null) { this.plot(a as PlotSrc); return; }
+    // A plot on a board section, or on a slide's calibrated chart (p=N on=#c1: data units, the chart's axes).
+    if (a.kind === 'plot' && (x.region != null || (a as PlotSrc).chart)) { this.plot(a as PlotSrc); return; }
     // Plain shapes: resolve names for geometry checks.
     if (x.region != null) {
       const r = this.figures.resolve(a);
@@ -219,7 +225,19 @@ export class GateState {
   /** A plot's curve with the current constants. */
   curve(id: string): Curve | undefined {
     const p = this.plotSrc.get(id);
-    return p ? curveOf(p.a, this.consts) ?? undefined : undefined;
+    const a = p ? this.onChart(p.a) : undefined;
+    return a ? curveOf(a, this.consts) ?? undefined : undefined;
+  }
+
+  /**
+   * A chart plot as the board draws it: with no domain= it spans the chart's x axis (as the resolver
+   * gives it). Undefined when the chart is not calibrated in the grounding (skip, never guess).
+   */
+  private onChart(a: PlotSrc): PlotSrc | undefined {
+    if (!a.chart || a.domain || a.domainSrc || a.t) return a;
+    const c = a.page != null ? this.grounding.mark(a.page, a.chart) : undefined;
+    if (c?.kind !== 'chart') return undefined;
+    return { ...a, domain: [Math.min(c.x.lo, c.x.hi), Math.max(c.x.lo, c.x.hi)] };
   }
 
   /** What a readout computed: not the input it was asked at (the level, the x), which the model chose. */
@@ -389,7 +407,8 @@ export class GateState {
   private plot(a: PlotSrc): void {
     if (!a.fn && !(a.x && a.y && a.t)) return;
     const id = a.id ?? `_${++this.anon}`;
-    const group = a.axes ? (this.plotSrc.get(a.axes)?.group ?? a.axes) : id;
+    // Plots on one calibrated chart share its axes.
+    const group = a.axes ? (this.plotSrc.get(a.axes)?.group ?? a.axes) : a.chart ? `${a.page}:${a.chart}` : id;
     this.plotSrc.set(id, { a, group });
     this.ids.add(id);
     this.lastId = id;

@@ -59,12 +59,14 @@ export function metrics(scale: number, bodyPx: number): Metrics {
 type Win = { over: string; kernel?: string; spec: C.WinSpec; geo: { R: number; C: number; pr: number; pc: number; stride: number }; filled: boolean[][]; pos: [number, number] | null; calc: string | null; rect: Box | null; cur: [number, number] | null };
 type Group = { pos: number; neg: number; members: Block[] };
 /** Axes shared by line blocks (the first is the host; axes=v overlays onto v's). */
-type Plot = { host: Block; dom: { x0: number; x1: number; y0: number; y1: number }; members: Block[]; axes: SVGGElement | null; xLabel?: string; yLabel?: string };
+type Plot = { host: Block; dom: { x0: number; x1: number; y0: number; y1: number }; members: Block[]; axes: SVGGElement | null; xLabel?: string; yLabel?: string; /** On a slide's calibrated chart: its axes are the slide's, the domain never moves. */ fixed?: boolean };
 
 export type Block = {
   id: string;
   kind: 'grid' | 'bars' | 'scatter' | 'table' | 'calc' | 'fit' | 'shares';
   region: string;
+  /** Where it draws when not a board section (a chart plot on a page). */
+  target?: Target;
   placed: Placed;
   m: Metrics;
   deps: string[];
@@ -390,6 +392,8 @@ export const isVarName = (s: string) => /^[A-Za-z][′']*$/.test(s);
 // Building: placement happens here (on the block's word), drawing in plan.draw.
 
 const regionOf = (t: Target) => t.region!;
+/** A block's drawing target: its section, or the page of the chart it is drawn on. */
+const tgtOf = (b: Block): Target => b.target ?? { region: b.region };
 /** What a block will show once everything fills: a table column's computed values, else its values. */
 function eventual(src: KitSource, shown: C.Mat, get: (id: string) => Block | undefined): C.Mat {
   if ('col' in src) { const t = get(src.col[0]); if (t?.full && src.col[1] >= 0) return [t.full.map((r) => r[src.col[1]])]; }
@@ -644,6 +648,8 @@ function planFor(b: Block, aid: string | undefined, ctx: TargetCtx, env: BuildEn
   store.add(b);
   b.el.accent = env.settings.inkColor;
   if (ctx.scene) { const claim = ctx.scene.claim(b.placed.rect); sceneStore(env.registry).put(b.id, { rect: b.placed.rect, claim, moved: new Set(), data: { kind: 'kit' } }); }
+  // A chart plot draws on its page: no section to grow or centre.
+  if (b.target && b.target.region == null) return chartPlan(b, aid, ctx, env, c);
   grow(env, region, b.placed.rect);
   const reach = (x: Block) => union([x.placed.rect, ...(x.placed.op ? [{ x: x.placed.op.x - x.m.opW / 2, y: x.placed.op.y - x.m.num, w: x.m.opW, h: 2 * x.m.num }] : [])]);
   const bbox = pad(union([b.placed.rect, ...(b.placed.op ? [{ x: b.placed.op.x - m.opW, y: b.placed.op.y - m.num, w: 2 * m.opW, h: 2 * m.num }] : [])]), m.u(8));
@@ -713,7 +719,7 @@ export async function setCaption(id: string, text: string, env: BuildEnv): Promi
   if (!b.el.caption) return `${id} has no caption to set (name it with "…" on its tag)`;
   const accent = env.settings.inkColor;
   return {
-    target: { region: b.region }, bbox: pad(b.placed.rect, b.m.u(8)),
+    target: tgtOf(b), bbox: pad(b.placed.rect, b.m.u(8)),
     draw: async (_signal, k) => {
       await b.ready;
       const c = col(), m = b.m;
@@ -1114,6 +1120,61 @@ export async function buildKitPlot(a: Extract<DrawAction, { kind: 'plot' }> & { 
 }
 
 /**
+ * {{plot p=N on=#c1}}: a curve on a slide's calibrated chart, as a kit line whose axes are the slide's
+ * own (fixed: the domain is the chart's, values off its y axis are cut). Being a kit block, readout
+ * points, beforeafter, limit and contrast work on it as on a board plot. Null: a log axis (the
+ * stroke path in elements.ts draws it).
+ */
+export function buildChartPlot(a: Extract<DrawAction, { kind: 'plot' }> & { id?: string; em?: boolean }, ctx: TargetCtx, env: BuildEnv): Promise<ElementPlan | string> | null {
+  const ch = a.onChart;
+  if (!ch || ch.x.log || ch.y.log || a.page == null) return null;
+  return (async () => {
+    const store = kitStore(env.registry);
+    const id = a.id ?? store.anonId();
+    if (a.id && store.get(a.id)) return 'duplicate id';
+    const got = samplePlot(a, withConsts(store.consts, a.with));
+    if (typeof got === 'string') return got;
+    if (got.ys.filter(Number.isFinite).length < 2) return 'nothing to plot on the chart';
+    const m = metrics(ctx.scale(), 15);
+    // The chart's axis ends in this page's space: data (lo, hi) map linearly onto them.
+    const lo = ctx.toSpace({ x: ch.x.p0, y: ch.y.p0 }), hi = ctx.toSpace({ x: ch.x.p1, y: ch.y.p1 });
+    const body = { x: lo.x, y: hi.y, w: hi.x - lo.x, h: lo.y - hi.y };
+    const region = `chart:${a.page}:${ch.rect.x},${ch.rect.y}`;
+    const b = newBlock(id, 'bars', region, { body, rect: ctx.rectToSpace(ch.rect) }, m, []);
+    b.target = ctx.target;
+    // Every plot on one chart shares its (fixed) axes.
+    const host = store.all().find((x) => x.region === region && x.plot?.host === x);
+    b.plot = host?.plot ?? { host: b, dom: { x0: ch.x.lo, x1: ch.x.hi, y0: ch.y.lo, y1: ch.y.hi }, members: [], axes: null, fixed: true };
+    b.plot.members.push(b);
+    Object.assign(b, { full: [got.ys.slice()], vals: [got.ys.slice()], view: 'line', xs: got.xs, group: { pos: 0, neg: 0, members: [] }, em: a.em });
+    b.group!.members.push(b);
+    // The slide names its own curves: a chart plot is labelled only when the tag says so (never by its id).
+    b.el.caption = a.label ?? '';
+    b.el.labelAt = a.labelAt;
+    b.el.curve = true;
+    b.el.plotSrc = a;
+    b.el.store = store;
+    if (a.dash) b.el.dash = true;
+    return planFor(b, a.id, ctx, env, store, region, m, col());
+  })();
+}
+
+/** A chart plot's plan: drawn on the page's own layer (planFor's part for board sections does not apply). */
+function chartPlan(b: Block, aid: string | undefined, ctx: TargetCtx, env: BuildEnv, c: ReturnType<typeof col>): ElementPlan {
+  return {
+    target: ctx.target,
+    bbox: b.placed.rect,
+    draw: async (signal, k) => {
+      const g = svg(ctx.layers.agent, 'g', { class: 'kit-block', 'data-kit': 'chart-plot' });
+      b.g = g;
+      env.registry.define({ id: aid, kind: 'plot', target: ctx.target, bbox: b.placed.rect, boxes: [], anchor: { x: b.placed.body.x + b.placed.body.w, y: b.placed.body.y }, group: g });
+      b.markReady();
+      await drawLine(b, c, env, signal.aborted ? { speed: 0, fadeMs: 0 } : k);
+    },
+  };
+}
+
+/**
  * A plot's samples with these constants: fn= over domain= (or x=, y= over t=); a pole or a value
  * outside range= breaks the curve there (NaN). A string says why nothing can be drawn.
  */
@@ -1218,6 +1279,11 @@ function lineColor(b: Block, c: ReturnType<typeof col>, accent: string): string 
   return b === ms[ms.length - 1] ? c.ink : c.muted;
 }
 
+/** Each line of a plot in its colour (the newest in ink, earlier ones muted), but `skip`. */
+function recolorLines(pl: Plot, c: ReturnType<typeof col>, accent: string, skip?: Block) {
+  for (const o of pl.members) if (o !== skip && o.el.line) { const oc = lineColor(o, c, accent); const oe = o.el.line as LineEls; oe.path.setAttribute('stroke', oc); oe.dots.forEach((d) => d.setAttribute('fill', oc)); oe.label?.setAttribute('fill', oc); }
+}
+
 /** End labels of a plot's lines never overlap: sorted by height, pushed apart by a line's height. */
 function spreadLabels(pl: Plot) {
   const st = pl.host.el.store as KitStore | undefined;
@@ -1235,7 +1301,7 @@ function spreadLabels(pl: Plot) {
 async function drawLine(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: Pace) {
   const pl = b.plot!, g = b.g!, m = b.m, accent = env.settings.inkColor;
   if (pl.host !== b) await pl.host.ready;
-  if (pl.host === b || pl.axes) drawPlotAxes(pl, c);
+  if (!pl.fixed && (pl.host === b || pl.axes)) drawPlotAxes(pl, c);
   const ys = b.vals![0];
   const color = lineColor(b, c, accent);
   const ghost = svg(g, 'path', { d: '', fill: 'none', stroke: c.muted, 'stroke-dasharray': '4 4', ...hair(1.2) });
@@ -1246,7 +1312,8 @@ async function drawLine(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: P
   if (label && isVarName(name!)) { label.setAttribute('font-style', 'italic'); label.setAttribute('font-family', 'KaTeX_Math, "STIX Two Math", "Cambria Math", "Times New Roman", serif'); }
   b.el.line = { path, ghost, dots, label, rings: svg(g, 'g') } satisfies LineEls;
   // Earlier lines on this plot: back to muted, and onto the (maybe widened) axes.
-  for (const o of pl.members) if (o !== b && o.el.line) { const oc = lineColor(o, c, accent); const oe = o.el.line as LineEls; oe.path.setAttribute('stroke', oc); oe.dots.forEach((d) => d.setAttribute('fill', oc)); oe.label?.setAttribute('fill', oc); paintLine(o, o.vals![0], c); }
+  recolorLines(pl, c, accent, b);
+  for (const o of pl.members) if (o !== b && o.el.line) paintLine(o, o.vals![0], c);
   // The line draws in from the left.
   const fast = k.fadeMs != null || prefersReducedMotion();
   await tween(fast ? 0 : Math.min(1400, 300 + ys.length * 25) * k.speed, (t) => paintLine(b, ys, c, 1 + t * (ys.length - 1)));
@@ -1260,7 +1327,7 @@ async function setLineVals(b: Block, next: C.Mat, ms: number, ctl: Ctl | undefin
   b.vals = [to.slice()];
   b.full = [to.slice()];
   const pl = b.plot!;
-  const old = pl.dom, dom = domOf(pl.members.map((x) => ({ xs: x.xs!, ys: [...x.vals![0], ...(x.ghost ?? [])] })));
+  const old = pl.dom, dom = pl.fixed ? old : domOf(pl.members.map((x) => ({ xs: x.xs!, ys: [...x.vals![0], ...(x.ghost ?? [])] })));
   const moved = dom.y0 !== old.y0 || dom.y1 !== old.y1 || dom.x0 !== old.x0 || dom.x1 !== old.x1;
   if (!b.el.line) { pl.dom = dom; return; }
   await tween(ms, (t) => {
@@ -1438,7 +1505,7 @@ async function band(v: Extract<KitVerb, { kind: 'band' }>, env: BuildEnv, store:
   const ins = new Set(C.inliers(sc.data!, f.line!, v.w));
   const c = col();
   return {
-    target: { region: sc.region }, bbox: sc.placed.rect,
+    target: tgtOf(sc), bbox: sc.placed.rect,
     draw: async (signal, k) => {
       await f.ready;
       const se = sc.el.scatter as ScatterEls, l = f.line!, d = sc.dom!;
@@ -1488,7 +1555,7 @@ async function dist(v: Extract<KitVerb, { kind: 'dist' }>, env: BuildEnv, store:
   const foot = C.footOn(p, f.line!), dv = C.distTo(p, f.line!);
   const c = col();
   return {
-    target: { region: sc.region }, bbox: sc.placed.rect,
+    target: tgtOf(sc), bbox: sc.placed.rect,
     draw: async (_s, k) => {
       await f.ready;
       const se = sc.el.scatter as ScatterEls, m = sc.m;
@@ -1499,7 +1566,7 @@ async function dist(v: Extract<KitVerb, { kind: 'dist' }>, env: BuildEnv, store:
       const L = Math.hypot(b.x - a.x, b.y - a.y) || 1, nx = -(b.y - a.y) / L, ny = (b.x - a.x) / L;
       const off = m.label * 1.1;
       kitText(g, mid.x + nx * off, mid.y + ny * off, C.fmt(dv), { size: m.label, fill: c.ink, halo: c.halo });
-      env.registry.define({ kind: 'kit-dist', target: { region: sc.region }, bbox: union([{ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) }]), boxes: [], anchor: mid, group: g });
+      env.registry.define({ kind: 'kit-dist', target: tgtOf(sc), bbox: union([{ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) }]), boxes: [], anchor: mid, group: g });
       await appear(g, 260, k);
     },
   };
@@ -1710,7 +1777,7 @@ async function stepOrSweep(v: Extract<KitVerb, { kind: 'step' | 'sweep' }>, env:
   const bbox = union([input.placed.rect, out.placed.rect, calc.placed.rect, ...(w.kernel ? [store.get(w.kernel)!.placed.rect] : [])]);
   const c = col();
   return {
-    target: { region: out.region }, bbox,
+    target: tgtOf(out), bbox,
     draw: async (signal) => {
       await Promise.all([out.ready, input.ready, w.kernel ? store.get(w.kernel)?.ready : null]);
       calc.g ??= svg(out.g!.parentNode as SVGGElement, 'g', { class: 'kit-block', 'data-kit': 'calc' });
@@ -1774,7 +1841,7 @@ async function setVerb(v: Extract<KitVerb, { kind: 'set' }>, env: BuildEnv, stor
   const c = col();
   const bbox = union([b.placed.rect, ...deps.filter((d) => d.region === b.region).map((d) => d.placed.rect)]);
   return {
-    target: { region: b.region }, bbox,
+    target: tgtOf(b), bbox,
     draw: async (signal) => {
       await b.ready;
       void store.anim.run([b.id, ...deps.map((d) => d.id)], async (ctl) => {
@@ -1943,7 +2010,7 @@ async function emphFade(a: Extract<RefAction, { kind: 'emph' | 'fade' }>, env: B
   const { b, box, part } = r;
   const c = col(), accent = env.settings.inkColor;
   return {
-    target: { region: b.region }, bbox: pad(box, b.m.u(8)),
+    target: tgtOf(b), bbox: pad(box, b.m.u(8)),
     draw: async (_signal, k) => {
       if (a.kind === 'fade') { await fadePart(b, part, k); return; }
       if (b.kind === 'bars' && b.view === 'line' && part) {
@@ -2152,7 +2219,7 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
   const c = col(), accent = env.settings.inkColor;
   const dur = v.dur;
   return {
-    target: { region: t.region }, bbox: union([t.placed.rect, cb.placed.rect]),
+    target: tgtOf(t), bbox: union([t.placed.rect, cb.placed.rect]),
     draw: async (signal) => {
       await t.ready;
       cb.g = svg(t.g!.parentNode as SVGGElement, 'g', { class: 'kit-block', 'data-kit': 'calc' });
@@ -2235,13 +2302,13 @@ async function levelVerb(v: Extract<KitVerb, { kind: 'level' }>, env: BuildEnv, 
   const accent = env.settings.inkColor;
   const labelW = v.label ? m.u(textWidth(v.label, m.labelPx)) + m.label : 0;
   return {
-    target: { region: b.region }, bbox: { x: x0, y: y - m.label, w: x1 - x0 + labelW, h: 2 * m.label },
+    target: tgtOf(b), bbox: { x: x0, y: y - m.label, w: x1 - x0 + labelW, h: 2 * m.label },
     draw: async (_s, k) => {
       await b.ready;
       const g = svg(b.g!, 'g');
       const ln = svg(g, 'line', { x1: x0, x2: x0, y1: y, y2: y, stroke: accent, 'stroke-dasharray': '5 4', ...hair(1.5) });
       if (v.label) kitText(g, x1 + m.label * 0.5, y, v.label, { size: m.label, fill: accent, anchor: 'start', halo: col().halo });
-      env.registry.define({ kind: 'kit-level', target: { region: b.region }, bbox: { x: x0, y: y - m.label, w: x1 - x0 + labelW, h: 2 * m.label }, boxes: [{ x: x1, y: y - m.label, w: labelW, h: 2 * m.label }], anchor: { x: x1, y }, group: g });
+      env.registry.define({ kind: 'kit-level', target: tgtOf(b), bbox: { x: x0, y: y - m.label, w: x1 - x0 + labelW, h: 2 * m.label }, boxes: [{ x: x1, y: y - m.label, w: labelW, h: 2 * m.label }], anchor: { x: x1, y }, group: g });
       await tween(k.fadeMs != null ? 0 : 380 * k.speed, (t) => ln.setAttribute('x2', String(x0 + (x1 - x0) * t)));
     },
   };
@@ -2276,7 +2343,7 @@ async function emphWhere(a: Extract<RefAction, { kind: 'emph' }>, env: BuildEnv,
   const accent = env.settings.inkColor;
   if (b.kind === 'bars' || b.kind === 'shares') return emphWhereVector(b, hits.map(([, q]) => q), accent);
   return {
-    target: { region: b.region }, bbox: b.placed.rect,
+    target: tgtOf(b), bbox: b.placed.rect,
     draw: async (_s, k) => {
       await b.ready;
       const over = b.kind === 'grid' ? (b.el.grid as GridEls).over : (b.el.table as TableEls).over;
@@ -2305,7 +2372,7 @@ async function emphWhere(a: Extract<RefAction, { kind: 'emph' }>, env: BuildEnv,
 /** where= on a vector: exactly the matching bars (points on a line, parts of a share) take the accent; an earlier where's marks go. */
 function emphWhereVector(b: Block, hits: number[], accent: string): ElementPlan {
   return {
-    target: { region: b.region }, bbox: b.placed.rect,
+    target: tgtOf(b), bbox: b.placed.rect,
     draw: async (_s, k) => {
       await b.ready;
       const c = col();
@@ -2467,7 +2534,10 @@ const valueOf = (src: string, consts: Record<string, number>) => { const f = for
 function moveReadout(w: Block, text: string, c: ReturnType<typeof col>, accent: string): SVGTextElement {
   const host = w.plot?.host ?? w, m = host.m, { body } = host.placed;
   (host.el.moveReadout as SVGElement | undefined)?.remove();
-  const t = kitText(host.g!, body.x + body.w, body.y - m.label * 1.0, text, { size: m.num, fill: accent, anchor: 'end', halo: c.halo });
+  // On a slide's chart the space above the plot holds the slide's own curve labels: inside its top-left corner instead.
+  const t = w.plot?.fixed
+    ? kitText(host.g!, body.x + m.label * 0.8, body.y + m.label * 0.9, text, { size: m.num, fill: accent, anchor: 'start', halo: c.halo })
+    : kitText(host.g!, body.x + body.w, body.y - m.label * 1.0, text, { size: m.num, fill: accent, anchor: 'end', halo: c.halo });
   host.el.moveReadout = t;
   return t;
 }
@@ -2489,7 +2559,7 @@ async function limitMove(v: Extract<MoveV, { kind: 'limit' }>, env: BuildEnv, st
     return `${name} = ${C.fmt(x)}${r && typeof r !== 'string' ? ` · ${v.show} = ${C.fmt(r.v)}` : ''}`;
   };
   return {
-    target: { region: host.region }, bbox: host.placed.rect,
+    target: tgtOf(host), bbox: host.placed.rect,
     draw: async (signal) => {
       await w.ready;
       let first!: () => void;
@@ -2502,6 +2572,7 @@ async function limitMove(v: Extract<MoveV, { kind: 'limit' }>, env: BuildEnv, st
         const pls = [...new Set(plots.map((b) => b.plot!))];
         const vs = Array.from({ length: 13 }, (_, i) => from + ((to - from) * i) / 12);
         for (const pl of pls) {
+          if (pl.fixed) continue; // the slide's own axes
           const old = pl.dom, d = domFor(pl, store, key, vs);
           await tween(prefersReducedMotion() ? 0 : 280, (k) => {
             pl.dom = { x0: old.x0 + (d.x0 - old.x0) * k, x1: old.x1 + (d.x1 - old.x1) * k, y0: old.y0 + (d.y0 - old.y0) * k, y1: old.y1 + (d.y1 - old.y1) * k };
@@ -2542,13 +2613,15 @@ async function beforeAfter(v: Extract<MoveV, { kind: 'beforeafter' }>, env: Buil
   const c = col(), accent = env.settings.inkColor;
   const host = w.plot?.host ?? w;
   return {
-    target: { region: host.region }, bbox: host.placed.rect,
+    target: tgtOf(host), bbox: host.placed.rect,
     draw: async (signal, k) => {
       await w.ready;
       const ms = signal.aborted || k.fadeMs != null ? 0 : SET_MS * 1.4;
       await store.anim.run([...plots, ...blocks].map((b) => b.id), async (ctl) => {
         if (signal.aborted) ctl.ff = true;
         const before = w.vals!.map((r) => r.slice()), beforeXs = w.xs?.slice();
+        // On a slide's chart the curve that changes is the one in ink (traced curves are drawn in any order).
+        if (w.plot?.fixed && w.plot.members.includes(w)) { const ms = w.plot.members; ms.splice(ms.indexOf(w), 1); ms.push(w); recolorLines(w.plot, c, accent); }
         // The snapshot: the watched thing's old state stays, dashed and muted.
         w.ghost = before[0].slice();
         if (beforeXs) w.el.ghostXs = beforeXs;
@@ -2574,14 +2647,16 @@ async function beforeAfter(v: Extract<MoveV, { kind: 'beforeafter' }>, env: Buil
             if (pts.length > 3) {
               const band = svg(g, 'polygon', { points: pts.map((p) => `${p.x},${p.y}`).join(' '), fill: accent, 'fill-opacity': 0, stroke: 'none' });
               g.parentNode?.insertBefore(g, g.parentNode.firstChild);
-              await tween(ms ? 320 : 0, (t) => band.setAttribute('fill-opacity', String(0.13 * t)), ctl);
+              const op = w.plot.fixed ? 0.09 : 0.13; // lighter over a slide's own shading
+              await tween(ms ? 320 : 0, (t) => band.setAttribute('fill-opacity', String(op * t)), ctl);
             }
           }
-          // The ghost is named by the old value, at its end.
+          // The ghost is named by the old value, at its end (on a slide's chart the curve ends hold the
+          // slide's own labels, and the readout already says old → new).
           let i = before[0].length - 1;
           while (i > 0 && !Number.isFinite(before[0][i])) i--;
           const p = linePt(w.plot, gx[i], before[0][i]);
-          kitText(host.g!, p.x + m.label * 0.5, p.y + m.label * 1.1, v.text ?? `${name} = ${C.fmt(from)}`, { size: m.label, fill: c.muted, anchor: 'start', halo: c.halo });
+          if (!w.plot.fixed) kitText(host.g!, p.x + m.label * 0.5, p.y + m.label * 1.1, v.text ?? `${name} = ${C.fmt(from)}`, { size: m.label, fill: c.muted, anchor: 'start', halo: c.halo });
           spreadLabels(w.plot);
         } else if (w.kind === 'grid' && w.el.grid) {
           // The cells that changed, tinted.
@@ -2610,7 +2685,8 @@ type ReadoutPt = { ref: string; dot: SVGCircleElement; drops: SVGPathElement; la
 /** Whether a region point names a readout (`at=E`). */
 export function isReadoutPoint(a: InkAction, registry: Registry): boolean {
   const at = (a as { at?: { ref?: string } }).at;
-  return a.kind === 'point' && (a as { region?: string }).region != null && !!at && typeof at === 'object' && 'ref' in at && !!at.ref && kitStore(registry).finds.has(at.ref);
+  const onBoard = (a as { region?: string }).region != null || !!(a as { onChart?: unknown }).onChart;
+  return a.kind === 'point' && onBoard && !!at && typeof at === 'object' && 'ref' in at && !!at.ref && kitStore(registry).finds.has(at.ref);
 }
 
 function readoutXY(store: KitStore, ref: string): { pl: Plot; x: number; y: number } | null {
@@ -2659,7 +2735,7 @@ export async function buildReadoutPoint(a: Extract<InkAction, { kind: 'point' }>
   const lab = text ? { x: p.x + m.label * 0.55, y: p.y - m.label * 1.3, w: lw, h: m.label * 1.1 } : null;
   const c = col(), color = a.em ? env.settings.inkColor : c.ink;
   return {
-    target: { region: host.region }, bbox: union([dot, ...(lab ? [lab] : [])]),
+    target: tgtOf(host), bbox: union([dot, ...(lab ? [lab] : [])]),
     draw: async (_s, k) => {
       await host.ready;
       const g = svg(host.g!, 'g', { opacity: 0 });
@@ -2672,7 +2748,7 @@ export async function buildReadoutPoint(a: Extract<InkAction, { kind: 'point' }>
       if (o.label && isVarName(text!)) { o.label.setAttribute('font-style', 'italic'); o.label.setAttribute('font-family', 'KaTeX_Math, "STIX Two Math", "Cambria Math", "Times New Roman", serif'); }
       paintReadoutPt(o, pl, p.x, p.y);
       host.el.readoutPts = [...((host.el.readoutPts as ReadoutPt[] | undefined) ?? []), o];
-      env.registry.define({ id: a.id, kind: 'point', target: { region: host.region }, bbox: union([dot, ...(lab ? [lab] : [])]), boxes: [dot, ...(lab ? [lab] : [])], anchor: p, group: g });
+      env.registry.define({ id: a.id, kind: 'point', target: tgtOf(host), bbox: union([dot, ...(lab ? [lab] : [])]), boxes: [dot, ...(lab ? [lab] : [])], anchor: p, group: g });
       await appear(g, 260, k);
     },
   };

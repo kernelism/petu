@@ -22,7 +22,7 @@ import { anchorBox, sceneStore } from './scene/store';
 
 /** Waits briefly for a scene thing (or block) named by a ref. */
 async function sceneWait(ref: string, env: BuildEnv) { await anchorBox(ref, env.registry, REF_WAIT_MS); }
-import { buildBlock, buildKitPlot, buildKitRef, buildReadoutPoint, formula, isKitRef, isReadoutPoint, kitEndBox, kitStore, resolveKitPoints, samplePlot } from './kit/kit';
+import { buildBlock, buildChartPlot, buildKitPlot, buildKitRef, buildReadoutPoint, formula, isKitRef, isReadoutPoint, kitEndBox, kitStore, resolveKitPoints, samplePlot } from './kit/kit';
 import { withConsts } from '../values/readout';
 import { chartToPage } from '../agent/context/charts';
 import { placeNote } from './annotate';
@@ -326,7 +326,8 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
     }
     case 'plot': {
       // On a slide's calibrated chart: the curve in its data coordinates, on the page itself.
-      if (a.onChart) return chartPlot(a, ctx, env);
+      // A kit line on the chart's own axes (readouts and moves follow it); a log axis: hand strokes.
+      if (a.onChart) return (await buildChartPlot(a, ctx, env)) ?? chartPlot(a, ctx, env);
       // On a hand-drawn {{axes}} (named, or the region's latest when none is named): sampled into
       // strokes as before. Otherwise the engine draws the graph with its own axes (kit line view).
       const ax = a.axes ? await env.registry.wait(a.axes, REF_WAIT_MS) : env.registry.latest(ctx.target, 'axes');
