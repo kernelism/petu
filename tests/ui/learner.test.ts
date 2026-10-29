@@ -82,3 +82,16 @@ describe('session trail', () => {
     expect(headed.height).toBeLessThan(plain.height);
   });
 });
+
+// Founder test 2026-10-29: after "Check yourself: …?", a student typed "wait, why is gravity weaker
+// inside the Earth?" — a question of their own, filed as the check's answer. The shape decides,
+// never the words: a reply that is itself a question is a follow-up.
+describe('a reply to a check question', () => {
+  it('is an answer unless it is itself a question', async () => {
+    const { repliesToCheck } = await import('../../src/ui/barMode');
+    expect(repliesToCheck('about 9')).toBe(true);
+    expect(repliesToCheck('shorter, because g scales with R')).toBe(true);
+    expect(repliesToCheck('wait, why is gravity weaker inside the Earth?')).toBe(false);
+    expect(repliesToCheck('  is it the same?  ')).toBe(false);
+  });
+});

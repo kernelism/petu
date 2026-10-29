@@ -11,7 +11,7 @@ import { deriveParts, nextSentence, partAt, partProgress, partText, partTitle, r
 import { SectionLabels } from './pdf/sections';
 import { RouteChip, type Route } from './ui/RouteChip';
 import type { PartsView } from './ui/PartsBar';
-import { barMode, closingQuestion } from './ui/barMode';
+import { barMode, closingQuestion, repliesToCheck } from './ui/barMode';
 import { answerHead, asideHead, clockOf, trailTitle, type TrailHead } from './ui/trail';
 import { aboutContext, asideContext, bboxOf, isLoop, pointedLabel, type Pointed } from './agent/moment';
 import { playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
@@ -998,7 +998,7 @@ export default function App() {
   const onAsk = useCallback((q: string) => {
     if (asideRef.current || sessionRef.current) { askAsideRef.current(q); return; }
     const c = checkRef.current;
-    void runAnswer(q, c ? { check: c } : {});
+    void runAnswer(q, c && repliesToCheck(q) ? { check: c } : {});
   }, [runAnswer]);
   /** The trail: a header clicked replays its answer from the recorded script (no new call). */
   const replayRef = useRef<(e: TrailEntry) => void>(() => {});
