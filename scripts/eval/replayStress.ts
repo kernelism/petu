@@ -289,6 +289,9 @@ const liveOf = (timings: unknown) => Array.isArray(timings)
   ? { live: (timings as Timing[]).filter((t) => t.skipped).map((t) => ({ tag: t.action?.kind ?? '?', reason: normReason(t.skipped!) })), liveActions: (timings as Timing[]).filter((t) => t.action?.kind !== 'let').length }
   : {};
 
+/** Run dirs of experiments: prompt variants (`-exdemos-`, `-boardfirst-`, `-svgboard-`), the end-state replay (`-replay-e5-`), hand demos replayed as answers (`-replay-gateoff-`). */
+export const EXPERIMENT_RUN = /-p\d+\.\d+-(exdemos|boardfirst|svgboard)-|-replay-(e5|gateoff)-/;
+
 /** Eval runs: every `<run>/<Q>/result.json` (one recording per turn). `srcToPdf` maps the app's src to a local PDF path. */
 export function collectEval(runsDir: string, srcToPdf: (src: string) => string | null): Recording[] {
   const out: Recording[] = [];
@@ -296,6 +299,8 @@ export function collectEval(runsDir: string, srcToPdf: (src: string) => string |
   for (const run of readdirSync(runsDir).sort()) {
     const rd = join(runsDir, run);
     if (!isDir(rd)) continue;
+    // Prompt-variant experiments (PETU_PROMPT_VARIANT: other output formats) aren't the production grammar.
+    if (EXPERIMENT_RUN.test(run)) continue;
     for (const q of readdirSync(rd).sort()) {
       const f = join(rd, q, 'result.json');
       if (!existsSync(f)) continue;
