@@ -65,6 +65,8 @@ export type PreflightEnv = {
   grounding?: () => Grounding | undefined;
   /** A page's text lines in target space (annotations covering page text). */
   lines?: (page: number) => Rect[] | undefined;
+  /** Offline: a recorded board's skip reason for a tag (by its body), standing in for the shadow board. */
+  recorded?: (body: string) => string | undefined;
 };
 
 /** Kinds a strip may remove: pointing at the page, or an accent. */
@@ -140,6 +142,7 @@ export class GatePreflight implements Preflight {
     const shadow = board ? await board.apply(unitActs) : { skipped: new Map<RawAction, string>() };
     if (board && unitActs.length) this.dirty = true;
     for (const t of tags) for (const a of tagActs.get(t) ?? []) { const r = shadow.skipped.get(a); if (r && !skipped.has(t)) skipped.set(t, r); }
+    if (this.env.recorded) for (const t of tags) { const r = this.env.recorded(t.body); if (r && !skipped.has(t)) skipped.set(t, r); }
     if (u.fault) {
       const t = tags.find((x) => x.action && NEW_INK.has(x.action.kind) && !skipped.has(x));
       if (t) skipped.set(t, 'injected');
@@ -462,7 +465,8 @@ export class LiveGate {
     let text = res.text;
     if (!/^\s/.test(text)) text = (leadWs(u.text) || ' ') + text;
     this.d.onEvent({ t: 'repair', k: u.key, phase: 'ok', ms: Math.round(ms), text: res.text, ...(res.usd != null ? { usd: res.usd } : {}) });
-    const ru: PreflightUnit = { key: u.key, kind: u.kind, text };
+    // `&gatefail=K:bad`: the original comes back and its injected skip with it.
+    const ru: PreflightUnit = { key: u.key, kind: u.kind, text, ...(u.fault === 'bad' ? { fault: 'skip' as const } : {}) };
     const t1 = this.now();
     const r2 = await this.d.preflight.check(ru);
     if (signal.aborted) return;
