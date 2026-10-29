@@ -72,7 +72,7 @@ describe('question set q2 (Eval v3)', () => {
   it('covers every course deck and both synthetic decks, never an excluded page', () => {
     const decks = new Set(q2.map((x) => x.deck));
     for (const d of Object.keys(DECK_FILES)) expect(decks.has(d), d).toBe(true);
-    for (const d of Object.keys(FIXTURE_DECKS)) expect(decks.has(d), d).toBe(true);
+    for (const d of ['econ', 'mechanics']) expect(decks.has(d), d).toBe(true);
     for (const x of q2) { expect(knownDeck(x.deck), x.id).toBe(true); expect(EXCLUDED.has(`${x.deck}:${x.page}`), x.id).toBe(false); }
   });
   it('is stratified by deck: per deck the splits differ by at most one', () => {
@@ -131,3 +131,18 @@ describe('question set q3 (hard corpus)', () => {
   });
 });
 const PINNED_Q3 = 'q3-b4dcdcc0';
+
+describe('question set fu (follow-ups)', () => {
+  const fu = QSETS.fu;
+  it('is all dev, valid, every row has a scripted follow-up, the bio deck is a fixture', () => {
+    expect(questionSet('fu')).toBe(fu);
+    expect(fu).toHaveLength(4);
+    expect(bySplitOf('test', fu)).toHaveLength(0);
+    expect(validateSet(fu)).toEqual([]);
+    for (const x of fu) { expect(x.followUp, x.id).toBeTruthy(); expect(x.type).toBe('follow-up'); }
+    expect(FIXTURE_DECKS.bio).toBe('bio');
+    expect(new Set(fu.map((x) => x.deck))).toEqual(new Set(['bio', 'econ', 'mechanics', 'ost-econ']));
+  });
+  it('is frozen (pin below)', () => { expect(qsetId(fu, 'fu')).toBe(PINNED_FU); });
+});
+const PINNED_FU = 'fu-69a34e51';

@@ -289,6 +289,8 @@ async function main(): Promise<void> {
       const id = d.rep ? `${d.q.id}.${d.rep + 1}` : d.q.id;
       const metrics = d.stored.turns.map(computeMetrics);
       writeJson(join(d.qdir, 'metrics.json'), { turns: metrics });
+      // A follow-up's judge also sees the turn before it (judge.ts FOLLOW_UP_RUBRIC).
+      let before: { question: string; tf: TurnFrames; res: EvalResult } | null = null;
       for (let t = 0; t < d.stored.turns.length; t++) {
         const res = d.stored.turns[t];
         const last = t === d.stored.turns.length - 1;
@@ -312,7 +314,8 @@ async function main(): Promise<void> {
         } else if (judge && last && tf && tf.frames.length) {
           const src = pathOfSrc(d.stored.open.src);
           const digest = src ? await pdfDigest(src, { visible: d.stored.open.page, touched: pagesTouched(res) }) : '(document text unavailable)';
-          req = buildJudgeRequestR3({ phase, question: res.question, result: res, page, digest, frames: tf.frames, final: tf.final, board: tf.board });
+          const previous = before && d.q.followUp ? { question: before.question, frames: before.tf.frames, final: before.tf.final, board: before.tf.board, result: before.res } : undefined;
+          req = buildJudgeRequestR3({ phase, question: res.question, result: res, page, digest, frames: tf.frames, final: tf.final, board: tf.board, ...(previous ? { previous } : {}) });
           key = sha(`${req.instructions}|${JSON.stringify(req.content)}`);
           writeJson(join(d.qdir, `${pre}judge-request.json`), { estTokens: estimateJudgeTokens(req), worstUsd: worstCaseUsd(JUDGE_MODEL, estimateJudgeTokens(req), JUDGE_MAX_OUTPUT),
             content: req.content.map((c) => (c.type === 'input_text' ? c : { type: c.type, w: c.w, h: c.h, detail: c.detail, bytes: Math.round(c.b64.length * 0.75) })) });
@@ -334,6 +337,7 @@ async function main(): Promise<void> {
           }
           if (judgeRes) writeJson(join(d.qdir, 'judge.json'), { key, judge: judgeRes, usd: judgeUsd, ...(args.fakeJudge ? { fake: true } : {}) });
         }
+        if (tf) before = { question: res.question, tf, res };
         const qsum: QuestionSummary = { id, split: d.q.split, type: d.q.type, ...(t ? { turn: t } : {}), metrics: metrics[t], judge: judgeRes, judgeUsd };
         summaries.push(qsum);
         const n = res.sentences.length;

@@ -131,7 +131,7 @@ export function renderTranscript(r: Pick<EvalResult, 'chunks' | 'timings'>): str
 // ---------------------------------------------------------------------------------------------
 // r3 (Eval v3): does the answer teach? Judged on a timeline of frames + the transcript.
 export const CRITERIA_R3 = ['understanding', 'illustration', 'deck', 'craft', 'economy'] as const;
-export const DEFECTS_R3 = ['board_copies_page', 'board_repeats_narration', 'written_not_drawn', 'drawing_appears_at_once', 'single_slide', 'wrong_page', 'padded', 'too_shallow', 'out_of_sync', 'cluttered', 'skipped_actions'] as const;
+export const DEFECTS_R3 = ['board_copies_page', 'board_repeats_narration', 'written_not_drawn', 'drawing_appears_at_once', 'single_slide', 'wrong_page', 'padded', 'too_shallow', 'out_of_sync', 'cluttered', 'skipped_actions', 'followup_repeats'] as const;
 
 export const RUBRIC_R3 = `You are judging a tutor. A student opened a PDF (lecture slides, a handout or a book), was looking at one page, and asked a question. The tutor answers by talking (the transcript) while it acts on screen: it scrolls to pages, highlights and marks things on the slides, and draws on a board beside them (sketches, plots, labelled diagrams, short equations). The bar is a great teacher at a whiteboard with the slides projected next to it: the student should come away understanding, not just holding an answer.
 
@@ -169,7 +169,7 @@ Score each criterion 1-5 (integers). Give a 5 only when you cannot name a concre
 Off-topic questions (nothing to do with the document): one polite sentence that redirects to the document, with no drawing, is the intended answer. Score it 4-5 on every criterion and do not flag ignored_question.
 
 "defects": every one that applies, else an empty list:
-board_copies_page (board text repeats a formula or sentence that is on the page), board_repeats_narration (board text writes out what is being said), written_not_drawn (a list or text block where a drawing was needed), drawing_appears_at_once (the main illustration appears finished instead of building), single_slide (stays on one page when the idea needs others), wrong_page (goes to a page that does not help), padded, too_shallow, out_of_sync (ink lands away from its words), cluttered (overlapping, cramped or cut-off elements), skipped_actions (more than two actions skipped, or a skipped one that the narration or later drawing depends on: the student never saw it).
+board_copies_page (board text repeats a formula or sentence that is on the page), board_repeats_narration (board text writes out what is being said), written_not_drawn (a list or text block where a drawing was needed), drawing_appears_at_once (the main illustration appears finished instead of building), single_slide (stays on one page when the idea needs others), wrong_page (goes to a page that does not help), padded, too_shallow, out_of_sync (ink lands away from its words), cluttered (overlapping, cramped or cut-off elements), skipped_actions (more than two actions skipped, or a skipped one that the narration or later drawing depends on: the student never saw it), followup_repeats (a follow-up only: it keeps the previous answer's picture or level and adds more of the same, or says again what the previous answer said, instead of changing them as the student asked).
 "fatal": every one that applies, else an empty list: wrong_fact, mark_on_wrong_thing, drawing_contradicts_narration, unreadable_overlap, ignored_question.
 "notes": at most 400 characters: the single change that would most improve this as a lesson.`;
 
@@ -246,14 +246,34 @@ type Img = { b64: string; w: number; h: number };
 /** One timeline frame for the r3 judge: its caption (when it was taken, what was said since the last one) and the image. */
 export type JudgeFrame = Img & { caption: string };
 
-/** r3: question, visible page, deck digest, the frame timeline, final state, whole board, transcript. */
-export function buildJudgeRequestR3(a: { phase: string; question: string; result: Pick<EvalResult, 'chunks' | 'timings'>; page: Img; digest: string; frames: JudgeFrame[]; final?: Img; board?: Img }): JudgeRequest {
-  const content: JudgePart[] = [
-    { type: 'input_text', text: `Question: ${a.question}\n\nThe page the student was looking at:` },
+/**
+ * Appended to the r3 instructions when the judged answer is a follow-up (a revision request such as
+ * "simpler", "a better picture", "another example", "I still don't get it"). The judge then also sees
+ * the previous answer: its question, frames, final state, board and transcript.
+ */
+export const FOLLOW_UP_RUBRIC = `This answer is a FOLLOW-UP: the student watched the previous answer (shown first, as PREVIOUS ANSWER) and then asked the follow-up. Judge the follow-up as a lesson in its own right and as a response to that request. When the student asks for a better picture, a simpler or more basic version, another example, more depth, or says they still don't get it, the follow-up must change the representation or the level as asked: a genuinely different picture or worked case (or a clearly simpler or deeper one), not the previous scene with more of the same added, and not the previous narration said again. Reusing the previous picture is right only when the student asked to continue it. Flag followup_repeats when it doesn't change as asked; then illustration and understanding are at most 3.`;
+
+/** The previous answer a follow-up is judged against: what the student asked and saw. */
+export type JudgePrevious = { question: string; frames: JudgeFrame[]; final?: Img; board?: Img; result: Pick<EvalResult, 'chunks' | 'timings'> };
+
+/** r3: question, visible page, deck digest, the frame timeline, final state, whole board, transcript (a follow-up: the previous answer's first). */
+export function buildJudgeRequestR3(a: { phase: string; question: string; result: Pick<EvalResult, 'chunks' | 'timings'>; page: Img; digest: string; frames: JudgeFrame[]; final?: Img; board?: Img; previous?: JudgePrevious }): JudgeRequest {
+  const content: JudgePart[] = [];
+  const p = a.previous;
+  if (p) {
+    // The previous answer is context, not what is scored: its frames at low detail, its board and transcript.
+    content.push({ type: 'input_text', text: `PREVIOUS ANSWER. The student first asked: ${p.question}\nIts timeline (${p.frames.length} frames, in order):` });
+    p.frames.forEach((f, i) => content.push({ type: 'input_text', text: `Previous frame ${i + 1}. ${f.caption}` }, { type: 'input_image', b64: f.b64, w: f.w, h: f.h, detail: 'low' }));
+    if (p.final) content.push({ type: 'input_text', text: 'Previous answer, final state:' }, { type: 'input_image', ...p.final, detail: 'low' });
+    if (p.board) content.push({ type: 'input_text', text: 'Previous answer, the whole board:' }, { type: 'input_image', ...p.board, detail: 'high' });
+    content.push({ type: 'input_text', text: `Previous transcript:\n${renderTranscript(p.result)}\n\nTHE FOLLOW-UP (the answer you score) starts here.` });
+  }
+  content.push(
+    { type: 'input_text', text: `${p ? 'Follow-up question' : 'Question'}: ${a.question}\n\nThe page the student was looking at:` },
     { type: 'input_image', ...a.page, detail: 'low' },
     { type: 'input_text', text: `Document digest:\n${a.digest}` },
     { type: 'input_text', text: `Timeline (${a.frames.length} frames, in order):` },
-  ];
+  );
   a.frames.forEach((f, i) => {
     content.push({ type: 'input_text', text: `Frame ${i + 1}. ${f.caption}` });
     content.push({ type: 'input_image', b64: f.b64, w: f.w, h: f.h, detail: 'high' });
@@ -263,7 +283,7 @@ export function buildJudgeRequestR3(a: { phase: string; question: string; result
   content.push({ type: 'input_text', text: `Transcript:\n${renderTranscript(a.result)}` });
   const sk = skippedOf(a.result);
   content.push({ type: 'input_text', text: sk.length ? `Engine: ${sk.length} action(s) were skipped and never appeared: ${sk.join('; ')}.` : 'Engine: no action was skipped.' });
-  return { phase: a.phase, instructions: RUBRIC_R3, schema: JUDGE_SCHEMA_R3.schema, name: JUDGE_SCHEMA_R3.name, content };
+  return { phase: a.phase, instructions: p ? `${RUBRIC_R3}\n\n${FOLLOW_UP_RUBRIC}` : RUBRIC_R3, schema: JUDGE_SCHEMA_R3.schema, name: JUDGE_SCHEMA_R3.name, content };
 }
 
 /** The engine's skip reasons for one turn ("grid id=o: unknown block img"), in order. */
@@ -306,7 +326,7 @@ export async function judgeAnswer(req: JudgeRequest, o: { base: string; token: s
     if (!res.ok && body.error) throw new Error(`judge http ${res.status}: ${typeof body.error === 'string' ? body.error : JSON.stringify(body.error)}`);
     if (body.ok === false) { if ((body.code === 'upstream' || body.code === 'network' || body.code === 'rate_limited') && attempt === 0) { usd += body.usd; lastErr = new Error(`judge ${body.code}: ${body.message}`); continue; } throw new Error(`judge ${body.code}: ${body.message}`); }
     usd += body.usd;
-    try { return { judge: parseJudge(body.output, o.rubric ?? (req.instructions === RUBRIC_R3 ? R3 : R2)), usd }; } catch (e) { lastErr = e; }
+    try { return { judge: parseJudge(body.output, o.rubric ?? (req.instructions.startsWith(RUBRIC_R3) ? R3 : R2)), usd }; } catch (e) { lastErr = e; }
   }
   throw lastErr instanceof Error ? lastErr : new Error('judge failed');
 }

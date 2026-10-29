@@ -25,6 +25,7 @@ export const DECK_FILES: Record<string, string> = {
 export const FIXTURE_DECKS: Record<string, string> = {
   econ: 'econ',
   mechanics: 'mechanics',
+  bio: 'bio',
 };
 export const isFixtureDeck = (deck: string): boolean => deck in FIXTURE_DECKS;
 /** The hard corpus (q3): openly licensed documents in .petu/corpus, served like the course PDFs at /api/dev-pdf/. */
