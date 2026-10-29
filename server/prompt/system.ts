@@ -1,5 +1,6 @@
 // server/prompt/system.ts
 import { EXAMPLES } from './examples.ts';
+import { variantParts } from './variants/index.ts';
 
 /** Bump on any change: the eval records it with every run, and it is part of the cache prefix. */
 export const PROMPT_VERSION = 'p5.7';
@@ -136,14 +137,30 @@ FOLLOW-UPS. MEMORY is what you already taught: the student has heard it, never s
 If the document doesn't cover the question, say so, then scroll to the closest thing it does cover and point at it. Never present outside knowledge as the page's.
 Off-topic (nothing to do with the document): one friendly sentence and no tags, such as: That's outside these pages, but ask me anything about them.`;
 
-let cached: string | null = null;
-/** The developer prompt (built once: it is constant for a PROMPT_VERSION). */
-export function systemPrompt(): string {
-  return (cached ??= buildSystemPrompt());
+/** The prompt's sections, in order (experiment variants in ./variants rewrite a copy of these). */
+export type PromptParts = { sections: string[]; examples: typeof EXAMPLES; head: string };
+export const PROMPT_PARTS: PromptParts = {
+  sections: [IDENTITY, TEACH, NO_DUP, TIMING, CONTEXT, POINTING, BOARD, GRAMMAR, SITUATIONS],
+  examples: EXAMPLES,
+  head: 'EXAMPLES (invented documents: they show the moves, not a shape to copy; never reuse their wording, topics or length)',
+};
+
+const cache = new Map<string, string>();
+/**
+ * The developer prompt (built once per variant: it is constant for a PROMPT_VERSION). `variant`
+ * (PETU_PROMPT_VARIANT, experiments only) picks a rewrite from ./variants; none is the default p5.x.
+ */
+export function systemPrompt(variant?: string): string {
+  const k = variant ?? '';
+  let s = cache.get(k);
+  if (s == null) { s = buildSystemPrompt(variant ? variantParts(variant, PROMPT_PARTS) : PROMPT_PARTS); cache.set(k, s); }
+  return s;
 }
 
-function buildSystemPrompt(): string {
-  const ex = EXAMPLES.map((e, i) => `EXAMPLE ${i + 1}\n${e.listing}${e.plan ? `\nPLAN (a first read of the whole document; pages in teaching order: ${e.pages.join(', ')}): ${e.plan}` : ''}\nQUESTION (the student is looking at page ${e.page}): ${e.question}\nSCRIPT:\n${e.script}`).join('\n\n');
-  const head = 'EXAMPLES (invented documents: they show the moves, not a shape to copy; never reuse their wording, topics or length)';
-  return [IDENTITY, TEACH, NO_DUP, TIMING, CONTEXT, POINTING, BOARD, GRAMMAR, SITUATIONS, head, ex].join('\n\n');
+/** The version a run records: PROMPT_VERSION, or PROMPT_VERSION-variant. */
+export const promptVersionOf = (variant?: string): string => (variant ? `${PROMPT_VERSION}-${variant}` : PROMPT_VERSION);
+
+export function buildSystemPrompt(p: PromptParts): string {
+  const ex = p.examples.map((e, i) => `EXAMPLE ${i + 1}\n${e.listing}${e.plan ? `\nPLAN (a first read of the whole document; pages in teaching order: ${e.pages.join(', ')}): ${e.plan}` : ''}\nQUESTION (the student is looking at page ${e.page}): ${e.question}\nSCRIPT:\n${e.script}`).join('\n\n');
+  return [...p.sections, ...(p.examples.length ? [p.head, ex] : [])].join('\n\n');
 }

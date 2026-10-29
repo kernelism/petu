@@ -25,7 +25,17 @@ const BLEED = 40;
 const TRACE_STEP_PX = 2.5;
 const TRACE_MAX = 4000;
 
+/**
+ * EXPERIMENT E5 (live-vs-demo-boards.md §8.5), off unless the page URL has `e5`: a moving element
+ * keeps a faint ghost of where it started, every moving point leaves a trace, and a live readout sits
+ * as a labelled chip beside its figure instead of where the script wrote it. Ghosts are not registered.
+ */
+export const E5 = { on: typeof location !== 'undefined' && /[?&]e5(?:[=&]|$)/.test(location.search) };
+const GHOST_OPACITY = 0.3;
+
 type Item = {
+  /** E5: its start state has been ghosted. */
+  ghosted?: boolean;
   id: string;
   resolve: () => Action | null | string;
   ctx: TargetCtx;
@@ -35,6 +45,8 @@ type Item = {
   /** text/write: where it was first written (its `at`), and its words (a readout's number follows them). */
   text?: { at0: SPt; words: string; unit?: string; num: string; g: SVGGElement; box0: SRect };
   trace?: { path: SVGPathElement; pts: SPt[]; id: string };
+  /** E5: a readout placed as a chip. */
+  chip?: boolean;
 };
 
 const children = (g: Element, tag: string) => Array.from(g.children).filter((c) => c.tagName.toLowerCase() === tag);
@@ -75,7 +87,8 @@ export class LiveGeo {
         const num = a.text.length > words.length ? a.text.slice(words.length + 1, r.unit ? -(r.unit.length + 1) : undefined) : '';
         it.text = { at0: ctx.toSpace(a.at), words, unit: r.unit, num, g: tg, box0: e.bbox };
       }
-      if (a.kind === 'point' && (raw as { trace?: boolean }).trace) {
+      if (E5.on && it.text && (raw as { value?: string }).value) this.chip(it, e.target, ctx);
+      if (a.kind === 'point' && ((raw as { trace?: boolean }).trace || E5.on)) {
         const c = ctx.toSpace(a.at);
         const ws = weightStyle('faint', env.settings.inkStyle === 'hand');
         const path = document.createElementNS(SVG, 'path') as SVGPathElement;
@@ -118,6 +131,40 @@ export class LiveGeo {
     if (!a || typeof a !== 'object' || !e) return;
     const { ctx } = it;
     const P = (p: { x: number; y: number }) => ctx.toSpace(p);
+    const before = E5.on && !it.ghosted && !it.text ? (e.group.cloneNode(true) as SVGGElement) : null;
+    this.apply(it, a, e, ctx, P);
+    if (before && before.innerHTML !== e.group.innerHTML) {
+      it.ghosted = true;
+      before.querySelectorAll('text').forEach((t) => t.remove());
+      before.removeAttribute('id');
+      before.setAttribute('opacity', String(GHOST_OPACITY));
+      before.setAttribute('data-ghost', '');
+      before.querySelectorAll('path').forEach((x) => x.setAttribute('stroke-dasharray', '5 4'));
+      e.group.parentNode?.insertBefore(before, e.group);
+    }
+  }
+
+  /** E5: a readout as a chip in a column beside its section's figure (below it when the side has no room). */
+  private chip(it: Item, target: Target, ctx: TargetCtx): void {
+    const T = it.text!;
+    const figs = this.items.filter((x) => !x.text).map((x) => this.registry.get(x.id)).filter((x): x is NonNullable<typeof x> => !!x && sameTarget(x.target, target));
+    const k = this.items.filter((x) => x.text && x.chip && sameTarget(x.ctx.target, target)).length;
+    const tb = textBox(T.g, T.at0) ?? T.box0;
+    if (!figs.length || !tb.w) return;
+    const fb = union(figs.map((x) => x.bbox)), pad = 14, gap = 8, b = bounds(ctx);
+    let x = fb.x + fb.w + pad, y = fb.y + k * (tb.h + gap + 6);
+    if (x + tb.w + 8 > b.x + b.w) { x = fb.x; y = fb.y + fb.h + pad + k * (tb.h + gap + 6); }
+    const dx = x - tb.x, dy = y - tb.y;
+    const r = document.createElementNS(SVG, 'rect');
+    for (const [kk, v] of Object.entries({ x: tb.x - 6, y: tb.y - 3, width: tb.w + 12, height: tb.h + 6, rx: 5, fill: 'rgba(120,120,120,0.10)', stroke: 'currentColor', 'stroke-opacity': 0.35, 'vector-effect': 'non-scaling-stroke', 'data-chip': '' })) r.setAttribute(kk, String(v));
+    T.g.insertBefore(r, T.g.firstChild);
+    // update() translates by (at − at0): moving at0 back by the shift keeps the chip where it was put.
+    T.at0 = { x: T.at0.x - dx, y: T.at0.y - dy };
+    T.box0 = { ...T.box0, x: T.box0.x + dx, y: T.box0.y + dy };
+    it.chip = true;
+  }
+
+  private apply(it: Item, a: Action, e: NonNullable<ReturnType<Registry['get']>>, ctx: TargetCtx, P: (p: { x: number; y: number }) => SPt): void {
     const setPaths = (strokes: Stroke[]) => {
       const ps = children(e.group, 'path');
       strokes.forEach((s, i) => ps[i]?.setAttribute('d', toD(s)));

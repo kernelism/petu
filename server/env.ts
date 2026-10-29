@@ -15,6 +15,7 @@ import { HARD_STOP_USD } from '../src/agent/protocol';
 import type { Caps, Phase } from './ledger';
 import type { Effort, ModelConfig } from './openai';
 import { ANTHROPIC_NO_NONE, isAnthropicModel } from './anthropic';
+import { VARIANT_NAMES } from './prompt/variants/index';
 
 /** The $60 hard stop (prior spike spend included; $40 until 2026-10-28). PETU_TOTAL_CAP_USD may only lower it. */
 export const MAX_TOTAL_USD = HARD_STOP_USD;
@@ -113,6 +114,9 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   const scoutEffort = oneOf('PETU_SCOUT_EFFORT', EFFORTS, 'none');
   if (scoutEffort === 'none' && NO_NONE.has(scoutModel)) throw new Error(`petu: ${scoutModel} does not accept reasoning effort none; set PETU_SCOUT_EFFORT=low`);
   const explicitCache = str('PETU_EXPLICIT_CACHE') !== '0';
+  // EXPERIMENT: a stage-2 prompt variant (server/prompt/variants); unset = the default prompt, unchanged.
+  const promptVariant = str('PETU_PROMPT_VARIANT');
+  if (promptVariant && !VARIANT_NAMES.includes(promptVariant)) throw new Error(`petu: PETU_PROMPT_VARIANT must be one of ${VARIANT_NAMES.join(' | ')} (got "${promptVariant}")`);
   const storyModel = str('PETU_STORYBOARD_MODEL') ?? DEFAULT_STORYBOARD_MODEL;
   if (!PRICES[storyModel]) throw new Error(`petu: PETU_STORYBOARD_MODEL "${storyModel}" has no price in server/prices.ts`);
   if (isAnthropicModel(storyModel)) throw new Error('petu: the storyboard runs on OpenAI only (PETU_STORYBOARD_MODEL)');
@@ -140,7 +144,7 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   return {
     key: get('OPENAI_API_KEY')?.trim() ?? '',
     anthropicKey: anthropicKeyOf(opts.fileEnv),
-    model: { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) },
+    model: { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(promptVariant ? { promptVariant } : {}), ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) },
     scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, fast: str('PETU_SCOUT_FAST') === '1', explicitCache },
     storyboard: storyOn ? { model: storyModel, effort: storyEffort, maxOutput: STORYBOARD_MAX_OUTPUT, fast: false, explicitCache, ...(str('PETU_STORYBOARD_TIMEOUT_MS') ? { timeoutMs: num('PETU_STORYBOARD_TIMEOUT_MS', 12_000) } : {}) } : null,
     repair: repairOn ? { model, effort: repairEffort, maxOutput: REPAIR_MAX_OUTPUT, fast: str('PETU_FAST') === '1', explicitCache } : null,

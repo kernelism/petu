@@ -25,7 +25,9 @@ import { checkBudget, gateQuery, parseArgs, selectQuestions, spendsOnRepairs, wa
 import { renderReport, type ReportItem } from './report.ts';
 import { composeScript, pickStills } from './sheet.ts';
 import { buildSummary, runIdOf, type QuestionSummary } from './summary.ts';
-import { PROMPT_VERSION } from '../../server/prompt/system.ts';
+import { promptVersionOf } from '../../server/prompt/system.ts';
+/** The prompt this run's server uses (PETU_PROMPT_VARIANT: an experiment variant, recorded in the run id). */
+const PROMPT_VERSION = promptVersionOf(process.env.PETU_PROMPT_VARIANT?.trim() || undefined);
 import type { EvalResult } from '../../src/agent/evalHooks.ts';
 import type { SpendSummary } from '../../src/agent/protocol.ts';
 
@@ -103,7 +105,9 @@ export async function captureEnd(chrome: Chrome, qdir: string, prefix: string): 
 
 /** PETU_CTX=old|new: which scout context the app builds (?ctx=; src/agent/context/tiers.ts). */
 const CTX = process.env.PETU_CTX === 'new' ? '&ctx=new' : '';
-const urlFor = (base: string, open: StoredQuestion['open'], nogen: boolean, gate = '') => `${base}/?src=${encodeURIComponent(open.src)}&page=${open.page}&eval${nogen ? '&nogen' : ''}${CTX}${gate}`;
+/** EXPERIMENT: PETU_EVAL_URL_EXTRA (e.g. `&e5`) is appended to the app's URL, and PETU_EVAL_TAG to the run id. */
+const URL_EXTRA = process.env.PETU_EVAL_URL_EXTRA ?? '';
+const urlFor = (base: string, open: StoredQuestion['open'], nogen: boolean, gate = '') => `${base}/?src=${encodeURIComponent(open.src)}&page=${open.page}&eval${nogen ? '&nogen' : ''}${CTX}${gate}${URL_EXTRA}`;
 const sha = (b: Buffer | string) => createHash('sha1').update(b).digest('hex');
 
 type Ctx = { base: string; dir: string; args: Args; phase: string; judge: boolean; replay: Record<string, StoredQuestion> | null };
@@ -235,7 +239,7 @@ async function main(): Promise<void> {
   const judge = wantsJudge(args, cfg);
 
   const date = new Date().toISOString().slice(0, 10);
-  const tag = args.config + (args.ask ? '-ask' : '') + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '') + (args.gate ? `-gate${args.gate}` : '') + (args.gatefail ? '-gatefail' : '') + (args.rubric !== 'r3' ? `-${args.rubric}` : '');
+  const tag = args.config + (args.ask ? '-ask' : '') + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '') + (args.gate ? `-gate${args.gate}` : '') + (args.gatefail ? '-gatefail' : '') + (args.rubric !== 'r3' ? `-${args.rubric}` : '') + (process.env.PETU_EVAL_TAG ? `-${process.env.PETU_EVAL_TAG}` : '');
   let runId = args.finish ?? runIdOf(date, tag, PROMPT_VERSION, QSET);
   if (!args.finish) for (let i = 2; existsSync(join(RUNS, runId)); i++) runId = `${runIdOf(date, tag, PROMPT_VERSION, QSET)}-${i}`;
   const dir = join(RUNS, runId);
