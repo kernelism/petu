@@ -126,7 +126,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       const { text, grounds, pdf } = await g.pages(rec);
       if (!pdf) noPdf++;
       const t0 = performance.now();
-      const res = gateAnswer(rec, { pages: text, grounding: groundingOf(grounds) });
+      const byPage = new Map(grounds.map((g) => [g.page, g.lines.map((l) => ({ x: l.rect.x, y: l.rect.y * g.aspect, w: l.rect.w, h: l.rect.h * g.aspect }))]));
+      const res = gateAnswer(rec, { pages: text, grounding: groundingOf(grounds), lines: (p) => byPage.get(p) });
       const ms = performance.now() - t0;
       results.push(res);
       console.log(printAnswer(res, argv.includes('--quiet')) + `\n    (${res.beats.length} beats, gate ${ms.toFixed(1)} ms for the answer; live skips ${liveSkips(rec.script, rec.timings).size})`);

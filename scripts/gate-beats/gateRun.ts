@@ -4,7 +4,7 @@
 import { beats as segment, tokenize, type Beat, type Tag } from '../../src/gate/segment.ts';
 import { GateState } from '../../src/gate/engine.ts';
 import { checkDeixis, checkDirections, checkErasure, checkGeometry, checkNumbers, checkOrder, checkTags, checkThresholds, checkUnbound, derivedValues, type Flag, type Verdict } from '../../src/gate/check.ts';
-import { checkLayout, type El } from '../../src/gate/layout.ts';
+import { checkLayout, checkPageText, type El, type Rect } from '../../src/gate/layout.ts';
 import { textNumbers } from '../../src/gate/numbers.ts';
 import type { Grounding } from '../../src/geometry/resolve.ts';
 import type { RawAction } from '../../src/script/types.ts';
@@ -14,7 +14,7 @@ export type BeatResult = { k: number; opener: boolean; text: string; tags: strin
 export type AnswerResult = { label: string; question: string; beats: BeatResult[] };
 export type PageText = Map<number, string>;
 
-const CREATES = new Set(['highlight', 'underline', 'circle', 'box', 'line', 'arrow', 'curve', 'point', 'write', 'math', 'shade', 'angle', 'brace', 'axes', 'plot', 'grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'connect', 'label']);
+const CREATES = new Set(['annot', 'lift', 'highlight', 'underline', 'circle', 'box', 'line', 'arrow', 'curve', 'point', 'write', 'math', 'shade', 'angle', 'brace', 'axes', 'plot', 'grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'connect', 'label']);
 const normId = (s?: string) => s?.replace(/-/g, '_');
 
 /** Global actions in stream order, each with the live skip reason (timings exclude let/const and malformed tags). */
@@ -51,7 +51,7 @@ export function entriesByTag(script: string, registry: RecEntry[], skips: Map<nu
 
 function toEl(e: RecEntry, a: RawAction): El {
   const kit = e.kind.startsWith('kit-');
-  const textKinds = new Set(['write', 'label', 'math']);
+  const textKinds = new Set(['write', 'label', 'math', 'annot']);
   const text = kit ? [e.bbox] : e.kind === 'point' ? e.boxes.slice(1) : textKinds.has(e.kind) ? e.boxes : [];
   const x = a as unknown as { labels?: string[]; ref?: string; at?: { ref?: string }; axes?: string; id?: string };
   return {
@@ -63,7 +63,8 @@ function toEl(e: RecEntry, a: RawAction): El {
   };
 }
 
-export type GateEnv = { pages: PageText; grounding?: Grounding };
+/** `lines`: a page's text lines in target space (x 0–1000, y × the page's aspect), for page annotations. */
+export type GateEnv = { pages: PageText; grounding?: Grounding; lines?: (page: number) => Rect[] | undefined };
 
 /** Beats of an answer: the opener's (spoken before stage 2; reported, not gated) then stage 2's. */
 export function answerBeats(rec: Pick<Recording, 'script' | 'stage2At'>): { beat: Beat; base: number; opener: boolean }[] {
@@ -120,7 +121,7 @@ export function gateAnswer(rec: Recording, env: GateEnv): AnswerResult {
     flags.push(...checkErasure(beat), ...checkTags(beat, skipped));
     const added: El[] = [];
     for (const t of beat.tags) { const e = entries.get(base + t.start); if (e && t.action) added.push(toEl(e, t.action)); }
-    for (const f of checkLayout(added, drawn)) flags.push({ check: 'layout', detail: `${f.kind}: ${f.detail}` });
+    for (const f of [...checkLayout(added, drawn), ...(env.lines ? checkPageText(added, env.lines) : [])]) flags.push({ check: 'layout', detail: `${f.kind}: ${f.detail}` });
     drawn.push(...added);
     results.push({ k, opener, text: beat.text, tags: beat.tags.map((t) => t.action?.kind ?? '?malformed'), verdict: { ok: flags.length === 0, flags, notes }, start: base + beat.start, end: base + beat.end });
   }

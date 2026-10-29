@@ -6,7 +6,7 @@
 // Deterministic: fixed metadata dates, so a re-run produces the same bytes.
 //   npm run decks
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const W = 800;
 const H = 560;
@@ -720,8 +720,30 @@ async function bio(): Promise<void> {
   await d.save('public/fixtures/bio.pdf');
 }
 
-// `npm run decks` writes every deck; `... make-decks.ts bio` (or econ, mechanics) writes only those.
-const decks: Record<string, () => Promise<void>> = { econ, mechanics, bio };
+// Deck 4: three slides from the decks above in one file, for the ?script=canvas demo (drawing on a
+// slide's own chart, lifting its figure onto the board, annotating its equations): econ p12 (a tax
+// wedge), bio p4 (competitive inhibition), mechanics p2 (velocity as a slope). Built from the
+// generated decks, so run after them.
+async function canvas(): Promise<void> {
+  const out = await PDFDocument.create();
+  out.setTitle('Three sample slides: a tax, an inhibitor, a slope (sample deck)');
+  out.setAuthor('petu synthetic deck');
+  out.setCreator('scripts/make-decks.ts');
+  out.setProducer('pdf-lib');
+  const t = new Date('2026-10-28T00:00:00Z');
+  out.setCreationDate(t);
+  out.setModificationDate(t);
+  for (const [file, page] of [['econ', 12], ['bio', 4], ['mechanics', 2]] as const) {
+    const src = await PDFDocument.load(readFileSync(`public/fixtures/${file}.pdf`));
+    const [p] = await out.copyPages(src, [page - 1]);
+    out.addPage(p);
+  }
+  writeFileSync('public/fixtures/canvas.pdf', await out.save({ useObjectStreams: false }));
+  console.log('wrote public/fixtures/canvas.pdf (3 pages)');
+}
+
+// `npm run decks` writes every deck; `... make-decks.ts bio` (or econ, mechanics, canvas) writes only those.
+const decks: Record<string, () => Promise<void>> = { econ, mechanics, bio, canvas };
 const only = process.argv.slice(2);
 for (const name of only) if (!decks[name]) throw new Error(`unknown deck ${name} (${Object.keys(decks).join(', ')})`);
 for (const [name, make] of Object.entries(decks)) if (!only.length || only.includes(name)) await make();
