@@ -7,7 +7,6 @@ import { weightOf, weightStyle } from '../ink/agent/weights';
 import { token, tokenNum } from '../ink/agent/tokens';
 import { drawHighlight } from '../ink/agent/marks';
 import { locateQuote } from '../locate/locateQuote';
-import { compile } from './expr';
 import { plotStrokes } from './plot';
 import { nudge, placeClear, placeLabel, type Seg } from './nudge';
 import { boxOf, strokeBoxes, union, type ElementEntry } from './registry';
@@ -17,7 +16,7 @@ import type { BuildElement, BuildEnv, ElementPlan, Pace, TargetCtx } from './typ
 import { MIN_TEXT_PX } from './layout';
 import { KIT_BLOCKS, type KitBlock } from '../script/types';
 import { isBlockRef } from '../script/pointExpr';
-import { buildBlock, buildKitPlot, buildKitRef, isKitRef, kitEndBox, resolveKitPoints } from './kit/kit';
+import { buildBlock, buildKitPlot, buildKitRef, formula, isKitRef, kitEndBox, kitStore, resolveKitPoints } from './kit/kit';
 
 /** Closed shapes (circle, box) read as rushed below this, however small… */
 export const CLOSED_MIN_MS = 400;
@@ -311,10 +310,15 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       // On a hand-drawn {{axes}} (named, or the region's latest when none is named): sampled into
       // strokes as before. Otherwise the engine draws the graph with its own axes (kit line view).
       const ax = a.axes ? await env.registry.wait(a.axes, REF_WAIT_MS) : env.registry.latest(ctx.target, 'axes');
-      if (!ax || ax.kind !== 'axes' || !a.fn || !a.domain) return buildKitPlot(a as Parameters<typeof buildKitPlot>[0], ctx, env);
-      let fn;
-      try { fn = compile(a.fn); } catch (e) { console.warn('[desk] plot: bad fn', a.fn, e); return 'bad fn'; }
-      const strokes = plotStrokes(fn, a.domain, { x: ax.bbox.x, y: ax.bbox.y + ax.bbox.h, w: ax.bbox.w, h: ax.bbox.h }, a.range);
+      if (!ax || ax.kind !== 'axes' || !a.fn) return buildKitPlot(a as Parameters<typeof buildKitPlot>[0], ctx, env);
+      // The answer's constants reach this path too: in fn= and in a domain written with them (0,T).
+      const K = kitStore(env.registry).consts;
+      const val = (src: string) => { const f = formula(src, [], K); return f ? f({}) : NaN; };
+      const domain = a.domainSrc ? [val(a.domainSrc[0]), val(a.domainSrc[1])] as [number, number] : a.domain;
+      if (!domain || !(Number.isFinite(domain[0]) && Number.isFinite(domain[1]) && domain[1] > domain[0])) return `bad domain ${(a.domainSrc ?? a.domain ?? []).join(',')}`;
+      const f = formula(a.fn, ['x'], K);
+      if (!f) { console.warn('[desk] plot: bad fn', a.fn); return 'bad fn'; }
+      const strokes = plotStrokes((x) => f({ x }), domain, { x: ax.bbox.x, y: ax.bbox.y + ax.bbox.h, w: ax.bbox.w, h: ax.bbox.h }, a.range);
       if (!strokes.length) return 'nothing to plot';
       return strokePlan(a, ctx, env, { strokes, dash: a.dash });
     }

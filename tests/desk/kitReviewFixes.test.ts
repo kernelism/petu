@@ -55,4 +55,17 @@ describe('kit review fixes', () => {
     const t = kitStore(e.registry).get('t')!;
     expect(t.full!.map((r) => r[1])).toEqual([Math.PI, 4 * Math.PI, 9 * Math.PI]);
   });
+
+  it('a plot on hand-drawn axes uses the answer\'s constants, in fn= and in its domain', async () => {
+    const { e, layers } = env();
+    kitStore(e.registry).defineConsts([['v', '20'], ['g', '9.8'], ['t', '2*v/g']]);
+    await tag(e, 'axes on=s id=ax at=100,600 size=600,400');
+    const strokes = () => layers.agent.querySelectorAll('path').length;
+    const before = strokes();
+    expect(typeof (await tag(e, 'plot on=s axes=ax fn="v*x-g*x^2/2" domain=0,4'))).not.toBe('string');
+    expect(typeof (await tag(e, 'plot on=s axes=ax fn="x^2" domain=0,T'))).not.toBe('string');
+    expect(strokes()).toBeGreaterThan(before + 1);
+    expect(kitStore(e.registry).get('ax')).toBeUndefined(); // drawn on the hand axes, not a kit plot
+    expect(await tag(e, 'plot on=s axes=ax fn="q*x" domain=0,1')).toBe('bad fn');
+  });
 });
