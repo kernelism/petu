@@ -629,5 +629,99 @@ async function mechanics(): Promise<void> {
   await d.save('public/fixtures/mechanics.pdf');
 }
 
-await econ();
-await mechanics();
+// ---------------------------------------------------------------------------------------------
+// Deck 3: intro biology, enzyme kinetics. Michaelis–Menten with Vmax = 10, Km = 2; a competitive
+// inhibitor at [I]/Ki = 1 doubles the apparent Km to 4 and leaves Vmax at 10. Quotable lines are
+// drawn as single text runs so the locator finds them verbatim.
+async function bio(): Promise<void> {
+  const d = await Deck.create('Intro Biology - Enzyme Kinetics and Inhibition (sample deck)');
+  const { f } = d;
+  const Vmax = 10, Km = 2, ratio = 1;
+  const mm = (km: number) => (s: number) => (Vmax * s) / (km + s);
+
+  { // 1 title
+    const p = d.page();
+    d.text(p, 'Enzymes and Their Kinetics', 60, 240, 38, f.bold);
+    d.text(p, 'BIO 110 - Lecture 7', 60, 282, 20, f.sans, GRAY);
+    d.text(p, 'How enzymes speed up reactions, how fast they can go, and how inhibitors slow them', 60, 330, 15, f.sans, BODY);
+  }
+  { // 2 enzyme basics
+    const p = d.page('Enzymes Bind Their Substrates');
+    d.bullets(p, [
+      'An enzyme binds its substrate at the active site',
+      '- The active site is a pocket shaped to fit the substrate',
+      '- Binding forms the enzyme-substrate complex ES',
+      '- The enzyme converts S to product P and is released unchanged',
+    ], 100, 16, 40, 28);
+    // E + S <-> ES -> E + P, drawn as shapes
+    const y = 330;
+    const enzyme = (x: number) => d.poly(p, [[x, y - 40], [x + 90, y - 40], [x + 90, y + 40], [x, y + 40], [x, y + 12], [x + 30, y + 12], [x + 30, y - 12], [x, y - 12]], TINT_B, BLUE, 1.4);
+    enzyme(70); d.text(p, 'E', 128, y + 6, 18, f.bold, BLUE);
+    d.text(p, '+', 178, y + 6, 22, f.sans, INK);
+    d.rect(p, 205, y - 12, 30, 24, TINT_G, GREEN, 1.4); d.text(p, 'S', 214, y + 6, 15, f.bold, GREEN);
+    d.arrow(p, [255, y - 4], [315, y - 4], 1.6, INK, 8);
+    d.arrow(p, [315, y + 6], [255, y + 6], 1.6, INK, 8);
+    enzyme(335); d.rect(p, 335, y - 12, 30, 24, TINT_G, GREEN, 1.4);
+    d.text(p, 'ES', 385, y + 6, 18, f.bold, BLUE);
+    d.arrow(p, [440, y], [500, y], 1.6, INK, 8);
+    enzyme(520); d.text(p, 'E', 578, y + 6, 18, f.bold, BLUE);
+    d.text(p, '+', 628, y + 6, 22, f.sans, INK);
+    d.ring(p, 670, y, 15, RED, 1.4, TINT_R); d.text(p, 'P', 665, y + 6, 15, f.bold, RED);
+    d.text(p, 'active site', 72, y + 66, 13, f.sans, GRAY);
+    d.text(p, 'enzyme-substrate complex', 330, y + 66, 13, f.sans, GRAY);
+    d.text(p, 'The enzyme is a catalyst: it lowers the activation energy, not the overall energy change.', 40, 470, 14, f.sans, BODY);
+  }
+  { // 3 Michaelis-Menten curve
+    const p = d.page('The Michaelis-Menten Curve');
+    const m = d.axes(p, { x: 90, y: 140, w: 330, h: 290, xmax: 20, ymax: 12, xLabel: '[S]', yLabel: 'v', xTicks: [2, 5, 10, 15, 20], yTicks: [5, 10] });
+    d.line(p, m(0, Vmax), m(20, Vmax), 1, GRAY, [5, 3]);
+    d.plot(p, m, mm(Km), 0, 20, BLUE);
+    d.guides(p, m, Km, Vmax / 2);
+    d.dot(p, ...m(Km, Vmax / 2), 4.5);
+    d.label(p, 'Vmax', m(20, Vmax), -40, -8, 14, GRAY);
+    d.label(p, 'Vmax/2', m(Km, Vmax / 2), 8, -6, 13);
+    d.text(p, 'v = Vmax [S] / (Km + [S])', 470, 140, 20, f.serif);
+    d.bullets(p, [
+      '- Low [S]: v rises almost linearly',
+      '- High [S]: the active sites are full,',
+      '  v levels off at Vmax',
+      '- Km is the [S] that gives half of Vmax',
+      '- A small Km means tight binding',
+    ], 200, 15, 470, 26);
+    d.text(p, 'Here Vmax = 10 and Km = 2: at [S] = 2, v = 5', 470, 360, 14, f.bold, BODY);
+  }
+  { // 4 competitive inhibition
+    const p = d.page('Competitive inhibition');
+    d.text(p, 'The inhibitor competes for the active site', 40, 100, 16, f.sans, BODY);
+    d.text(p, 'Vmax is unchanged', 40, 128, 16, f.sans, BODY);
+    d.text(p, 'Km rises by (1 + [I]/Ki)', 40, 156, 16, f.sans, BODY);
+    d.text(p, 'v = Vmax [S] / (Km + [S])', 40, 196, 18, f.serif);
+    d.text(p, 'Vmax = 10, Km = 2, [I]/Ki = 1', 40, 226, 15, f.sans, BODY);
+    // enzyme with S or I in the pocket
+    const y = 330;
+    const enzyme = (x: number) => d.poly(p, [[x, y - 40], [x + 90, y - 40], [x + 90, y + 40], [x, y + 40], [x, y + 12], [x + 30, y + 12], [x + 30, y - 12], [x, y - 12]], TINT_B, BLUE, 1.4);
+    d.rect(p, 40, y - 12, 30, 24, TINT_G, GREEN, 1.4); d.text(p, 'S', 49, y + 6, 15, f.bold, GREEN);
+    enzyme(110); d.text(p, 'E', 168, y + 6, 18, f.bold, BLUE);
+    d.rect(p, 250, y - 12, 30, 24, TINT_R, RED, 1.4); d.text(p, 'I', 262, y + 6, 15, f.bold, RED);
+    d.arrow(p, [80, y + 30], [104, y + 8], 1.2, GREEN, 7);
+    d.arrow(p, [244, y + 30], [146, y + 8], 1.2, RED, 7);
+    d.text(p, 'S and I bind the same pocket:', 40, y + 80, 13, f.sans, GRAY);
+    d.text(p, 'only one at a time', 40, y + 98, 13, f.sans, GRAY);
+    const m = d.axes(p, { x: 400, y: 120, w: 320, h: 290, xmax: 20, ymax: 12, xLabel: '[S]', yLabel: 'v', xTicks: [2, 4, 10, 15, 20], yTicks: [5, 10] });
+    d.line(p, m(0, Vmax), m(20, Vmax), 1, GRAY, [5, 3]);
+    d.plot(p, m, mm(Km), 0, 20, BLUE);
+    d.plot(p, m, mm(Km * (1 + ratio)), 0, 20, RED, 2.2, [6, 4]);
+    d.guides(p, m, Km, Vmax / 2); d.dot(p, ...m(Km, Vmax / 2), 4);
+    d.guides(p, m, Km * (1 + ratio), Vmax / 2); d.dot(p, ...m(Km * (1 + ratio), Vmax / 2), 4, RED);
+    d.label(p, 'no inhibitor', m(13, mm(Km)(13)), -10, -10, 13, BLUE);
+    d.label(p, 'with inhibitor', m(13, mm(Km * (1 + ratio))(13)), 0, 22, 13, RED);
+    d.text(p, 'apparent Km = 2 x (1 + 1) = 4', 400, 490, 14, f.bold, BODY);
+  }
+  await d.save('public/fixtures/bio.pdf');
+}
+
+// `npm run decks` writes every deck; `... make-decks.ts bio` (or econ, mechanics) writes only those.
+const decks: Record<string, () => Promise<void>> = { econ, mechanics, bio };
+const only = process.argv.slice(2);
+for (const name of only) if (!decks[name]) throw new Error(`unknown deck ${name} (${Object.keys(decks).join(', ')})`);
+for (const [name, make] of Object.entries(decks)) if (!only.length || only.includes(name)) await make();
