@@ -7,7 +7,7 @@ import { PdfViewer } from './pdf/PdfViewer';
 import type { ViewerApi } from './pdf/viewerApi';
 import { Director, type ActionTiming, type Journey } from './playback/director';
 import { AnswerSession, type ParsedScript, type SessionState } from './playback/session';
-import { deriveParts, partAt, partText, partTitle, type Part } from './playback/parts';
+import { deriveParts, partAt, partText, partTitle, returnTarget, type Part } from './playback/parts';
 import { SectionLabels } from './pdf/sections';
 import { RouteChip, type Route } from './ui/RouteChip';
 import { DeeperInset, type Deeper } from './ui/DeeperInset';
@@ -316,10 +316,14 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | undefined>();
   const [dragging, setDragging] = useState(false);
   const [debug, setDebug] = useState<DebugState>({ log: [] });
-  /** Flow across the document: the journey in progress, and the page the answer started on once it has travelled. */
+  /**
+   * Flow across the document: the journey in progress; the page in view when the question was asked
+   * (the "Back to pN" target, null once stopped) and the furthest part played (returnTarget).
+   */
   const [route, setRoute] = useState<Route | null>(null);
   const routeTimer = useRef<number>();
-  const [travelledFrom, setTravelledFrom] = useState<number | null>(null);
+  const [askedOn, setAskedOn] = useState<number | null>(null);
+  const [reached, setReached] = useState(0);
   const originRef = useRef(1);
   /** The answer's parts (journeys split it), the part playing, and whether the student paused it. */
   const [parts, setParts] = useState<Part[]>([]);
@@ -373,6 +377,7 @@ export default function App() {
       onScrolledTo: () => setPageTick((n) => n + 1),
       onJourney: (j) => journeyRef.current(j),
       hold: (at, ms) => sessionRef.current?.hold(at, ms),
+      spoken: () => sessionRef.current?.position() ?? 0,
       onTiming: (t) => {
         logRef.current?.timing(t);
         recRef.current?.timing(t);
@@ -498,7 +503,8 @@ export default function App() {
     setLiveText('');
     window.clearTimeout(routeTimer.current);
     setRoute(null);
-    setTravelledFrom(null);
+    setAskedOn(null);
+    setReached(0);
     setParts([]);
     partsRef.current = [];
   }, []);
@@ -599,7 +605,8 @@ export default function App() {
     originRef.current = pageRef.current;
     window.clearTimeout(routeTimer.current);
     setRoute(null);
-    setTravelledFrom(null);
+    setAskedOn(pageRef.current);
+    setReached(0);
     setParts([]);
     partsRef.current = [];
     scriptRef.current = null;
@@ -720,7 +727,9 @@ export default function App() {
         if (sessionRef.current !== session) return;
         if (DEBUG && words.length === 1) { const t = performance.now(); setDebug((d) => ({ ...d, word: t })); }
         if (!spoke) { spoke = true; setWaiting(false); clearThink(); }
-        setPartIdx(partAt(partsRef.current, words.length - 1));
+        const idx = partAt(partsRef.current, words.length - 1);
+        setPartIdx(idx);
+        setReached((r) => Math.max(r, idx));
         // Once these words are spoken, a faint ellipsis if nothing new has come (a gap in the stream).
         window.clearTimeout(pauseTimer.current);
         setPausing(false);
@@ -798,24 +807,24 @@ export default function App() {
   // ---------------------------------------------------------------------------------------------
   // Flow across the document: journeys, parts, pause, go deeper
 
-  /** A journey started (the director is about to travel): show the route; leaving the start page offers the way back. */
+  /** A journey started (the director is about to travel): show the route. */
   journeyRef.current = (j: Journey) => {
     const back = j.to === originRef.current;
     const labels = labelsRef.current;
     setRoute({ from: j.from, to: j.to, label: labels?.get(j.to), back });
-    if (!back) setTravelledFrom(originRef.current);
     if (labels && !back) void labels.load(j.to).then((label) => setRoute((r) => (r && r.to === j.to && label ? { ...r, label } : r)));
     window.clearTimeout(routeTimer.current);
     routeTimer.current = window.setTimeout(() => setRoute(null), ROUTE_MS);
   };
 
+  const backTo = askedOn == null ? null : returnTarget(askedOn, page, reached);
   const onBack = useCallback(() => {
-    const p = travelledFrom;
+    const p = backTo;
     if (p == null) return;
     // Mid-answer this is the student taking the view (rule 6): the answer goes on, "Back to answer" shows.
     if (busyRef.current) deskRef.current?.follow.userTookOver();
     void viewerRef.current?.scrollToPage(p);
-  }, [travelledFrom]);
+  }, [backTo]);
 
   const togglePause = useCallback(() => {
     const s = sessionRef.current;
@@ -832,6 +841,7 @@ export default function App() {
     if (!s.seek(p.start)) return;
     setUserPaused(false);
     setPartIdx(i);
+    setReached((r) => Math.max(r, i));
     deskRef.current?.follow.resume();
     if (back) director.run({ kind: 'scroll', page: p.page }, performance.now());
   }, [director]);
@@ -1079,7 +1089,7 @@ export default function App() {
         report={import.meta.env.DEV ? captureReport : undefined}
       />
       <FollowPill visible={paused} onResume={resumeFollow} x={dock.x} />
-      <RouteChip route={route} backTo={travelledFrom != null && page !== travelledFrom ? travelledFrom : null} onBack={onBack} x={dock.x} />
+      <RouteChip route={route} backTo={backTo} onBack={onBack} x={dock.x} />
       <SettingsPopover open={settingsOpen} onClose={closeSettings} />
       <CanvasToolbar />
       {/* left/width are set directly rather than through custom properties, so the dock's glide never

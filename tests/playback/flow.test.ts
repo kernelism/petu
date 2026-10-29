@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Scheduler, RESUME_GAP_MS, SEEK_LAG_MS } from '../../src/playback/scheduler';
 import { PacedClock } from '../../src/playback/clock';
 import { Director, JOURNEY_HOLD_MS, ARRIVAL_MS, type Journey } from '../../src/playback/director';
-import { deriveParts, partAt, partTitle, partText, MIN_PART_WORDS } from '../../src/playback/parts';
+import { deriveParts, partAt, partTitle, partText, MIN_PART_WORDS, journeyBeat, returnTarget } from '../../src/playback/parts';
+import { pageFrameTop, SAFE_TOP, STACK_PAD, frameFor } from '../../src/desk/layout';
 import type { ParsedScript } from '../../src/playback/session';
 import type { Action, InkAction, RawAction, ScriptEvent } from '../../src/script/types';
 import type { ViewerApi } from '../../src/pdf/viewerApi';
@@ -136,6 +137,47 @@ describe('deriveParts', () => {
   it('no journey: one part', () => {
     expect(deriveParts(script([...n(50), END]), 7)).toEqual([{ start: 0, page: 7, back: false }]);
   });
+
+  it('an answer that opens by moving to its page is one part on that page', () => {
+    expect(deriveParts(script([scroll(3), ...n(50), END]), 1)).toEqual([{ start: 0, page: 3, back: false }]);
+  });
+});
+
+describe('journey beat and the way back', () => {
+  it('a journey needs a far page and words already said: the opening move frames the answer', () => {
+    expect(journeyBeat(1, 3, 0)).toBe(false);
+    expect(journeyBeat(1, 3, 12)).toBe(true);
+    expect(journeyBeat(3, 4, 12)).toBe(false);
+  });
+
+  it('"Back to pN" is the page asked on, once the answer has moved on to a later part and the view left it', () => {
+    // Opened on p1, the answer moved to p3 before speaking: one part, no way back offered.
+    const opening = deriveParts(script([scroll(3), ...n(50), END]), 1);
+    expect(returnTarget(1, 3, partAt(opening, 49))).toBeNull();
+    // Asked on p9, a journey to p2: offered while p2 plays, gone once the view is back on p9.
+    const flow = deriveParts(script([...n(24), scroll(2), ...n(30), scroll(9), ...n(20), END]), 9);
+    expect(returnTarget(9, 9, 0)).toBeNull();
+    expect(returnTarget(9, 2, partAt(flow, 30))).toBe(9);
+    expect(returnTarget(9, 9, partAt(flow, 70))).toBeNull();
+    // The student scrolled away during the first part: not the answer's journey, no pill.
+    expect(returnTarget(9, 5, 0)).toBeNull();
+  });
+});
+
+describe('page framing', () => {
+  const page = { top: 2000, h: 500 };
+  it('split: the page top sits on the board top (SAFE_TOP), with no sliver of the page above', () => {
+    for (const split of ['normal', 'wide'] as const) {
+      expect(page.top - pageFrameTop(page, 1440, 900, split, 0.5625)).toBe(SAFE_TOP);
+      expect(page.top - pageFrameTop(page, 2560, 1440, split, 0.5625)).toBe(SAFE_TOP);
+    }
+    // Stacked (narrow window): the page's slot padding is skipped too.
+    expect(frameFor(700, 900, 'normal', 0.5625).stacked).toBe(true);
+    expect(page.top - pageFrameTop(page, 700, 900, 'normal', 0.5625)).toBe(SAFE_TOP + STACK_PAD);
+  });
+  it('reading: a page that fits is centred between the chrome', () => {
+    expect(page.top - pageFrameTop(page, 1440, 900, 'none', 0.5625)).toBeGreaterThan(SAFE_TOP);
+  });
 });
 
 describe('section labels', () => {
@@ -183,7 +225,7 @@ describe('Director journeys', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
-  function make(start = 3) {
+  function make(start = 3, spoken = 10) {
     let page = start;
     const journeys: Journey[] = [];
     const holds: [number, number][] = [];
@@ -191,7 +233,7 @@ describe('Director journeys', () => {
     const build: BuildElement = async (a) => ({ target: { page: (a as { page: number }).page }, bbox: { x: 0, y: 0, w: 1, h: 1 }, draw: async () => { drawn.push(performance.now()); } } as ElementPlan);
     const d = new Director({
       viewer: () => viewer(() => page), desk: () => desk((p) => { page = p; }), settings: () => DEFAULTS, onScrolledTo: () => {}, build,
-      onJourney: (j) => journeys.push(j), hold: (at, ms) => holds.push([at, ms]),
+      onJourney: (j) => journeys.push(j), hold: (at, ms) => holds.push([at, ms]), spoken: () => spoken,
     });
     return { d, journeys, holds, drawn };
   }
@@ -207,6 +249,29 @@ describe('Director journeys', () => {
     // The ink fired before the hold moves with its word: it lands on the word as now spoken.
     expect(drawn[0]).toBeGreaterThanOrEqual(450 + JOURNEY_HOLD_MS);
     expect(drawn[0]).toBeLessThan(450 + JOURNEY_HOLD_MS + 50);
+  });
+
+  it('the opening move (before the first word) is no journey: no route, no hold, no arrival rest', async () => {
+    const { d, journeys, holds, drawn } = make(1, 0);
+    d.run({ kind: 'scroll', page: 3 }, 450);
+    d.run({ kind: 'circle', page: 3, at: { x: 1, y: 1 }, r: 10 } as unknown as RawAction, 450);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(journeys).toEqual([]);
+    expect(holds).toEqual([]);
+    expect(drawn[0]).toBeLessThan(500 + ARRIVAL_MS);
+  });
+
+  it('a journey frames its page like any scroll (the desk\'s scrollToPage: the viewer\'s pageFrameTop)', async () => {
+    const calls: unknown[][] = [];
+    let page = 3;
+    const dk = desk((p) => { page = p; });
+    (dk.scrollToPage as ReturnType<typeof vi.fn>).mockImplementation(async (...args: unknown[]) => { calls.push(args); page = args[0] as number; });
+    const d = new Director({ viewer: () => viewer(() => page), desk: () => dk, settings: () => DEFAULTS, onScrolledTo: () => {}, hold: () => {}, spoken: () => 10 });
+    d.run({ kind: 'scroll', page: 42 }, 0);
+    await vi.advanceTimersByTimeAsync(2000);
+    d.run({ kind: 'scroll', page: 43 }, performance.now());
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(calls).toEqual([[42, undefined], [43, undefined]]);
   });
 
   it('an adjacent page is not a journey', async () => {

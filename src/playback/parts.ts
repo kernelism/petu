@@ -12,6 +12,23 @@ export const MIN_PART_WORDS = 12;
 /** A move between pages that aren't next to each other. */
 export const isJourney = (from: number, to: number) => Math.abs(to - from) > 1;
 
+/**
+ * Whether a move gets the journey beat (route, hold, arrival rest): it travels (isJourney) and the
+ * answer has already said something where it was. An answer's opening move, before its first word,
+ * goes to the page the question is about: it frames the answer, it isn't a journey (the same rule
+ * as deriveParts, where a move at word 0 replaces the starting part).
+ */
+export const journeyBeat = (from: number, to: number, spoken: number) => spoken > 0 && isJourney(from, to);
+
+/**
+ * "Back to pN": N is the page in view when the question was asked. It shows only once the answer
+ * has moved on to a later part (`reached` = the furthest part played) and the view is elsewhere; an
+ * answer that opens by moving to the page it is about has one part and never offers it.
+ */
+export function returnTarget(askedOn: number, inView: number, reached: number): number | null {
+  return reached > 0 && inView !== askedOn ? askedOn : null;
+}
+
 /** `start`: the index of its first word; `page`: where it plays; `back`: it returns to the page the answer started on. */
 export type Part = { start: number; page: number; back: boolean };
 

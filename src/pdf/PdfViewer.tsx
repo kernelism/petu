@@ -11,7 +11,7 @@ import { animateScrollTo } from './scroll';
 import { prefersReducedMotion } from '../ink/agent/animate';
 import { ink } from '../ink/student/store';
 import { PageSlot, type SlotHandle } from './PageSlot';
-import { computeLayout, frameFor, pageAt, SAFE_TOP, safeBottom, setStackBottom, STACK_PAD, type PageLayout, type Split } from '../desk/layout';
+import { computeLayout, frameFor, pageAt, pageFrameTop, SAFE_TOP, safeBottom, setStackBottom, type PageLayout, type Split } from '../desk/layout';
 import { ScrollOwner, isScrollKey } from '../desk/follow';
 import type { DeskHost } from '../desk/types';
 import './viewer.css';
@@ -453,19 +453,10 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     };
     /** Whether `page` fits whole between the top bar and the caption. */
     const fits = (page: number) => layoutRef.current!.heights[page - 1] <= el.clientHeight - SAFE_TOP - safeBottom();
-    /**
-     * Scroll top that shows `page` whole. Reading: centred in the room between the chrome (top
-     * aligned when it doesn't fit). Split: its top edge on the board's top edge, always, so the slide
-     * column and the board read as one fitted frame and no sliver of the page above shows.
-     */
+    /** Scroll top that shows `page` whole (pageFrameTop: split = its top on the board's top). */
     const framedTop = (page: number) => {
       const L = layoutRef.current!;
-      if (splitRef.current !== 'none') {
-        const f = frameFor(el.clientWidth, el.clientHeight, splitRef.current, aspectsRef.current![0]);
-        return L.tops[page - 1] - SAFE_TOP - (f.stacked ? STACK_PAD : 0);
-      }
-      const room = el.clientHeight - SAFE_TOP - safeBottom();
-      return L.tops[page - 1] - SAFE_TOP - Math.max(0, (room - L.heights[page - 1]) / 2);
+      return pageFrameTop({ top: L.tops[page - 1], h: L.heights[page - 1] }, el.clientWidth, el.clientHeight, splitRef.current, aspectsRef.current![0]);
     };
     /** The comfortable band for ink: clear of the chrome, and of the outer 15% when `strict`. */
     const inBand = (at: number, strict: boolean) => {

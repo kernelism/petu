@@ -241,6 +241,19 @@ export const bodyPx = (frac: number | null | undefined, pageW: number) => clamp(
 
 export type View = { top: number; H: number; max: number };
 
+/**
+ * Scroll top that shows a page whole (`top`, `h`: its slot in the page column; W × H the scroller).
+ * Reading: centred in the room between the chrome (top-aligned when it doesn't fit). Split: its top
+ * edge on the board's top edge, always, so the slide column and the board read as one fitted frame
+ * and no sliver of the page above shows. Every move to a page (a scroll, a journey, the reframe when
+ * the board opens) lands here.
+ */
+export function pageFrameTop(page: { top: number; h: number }, W: number, H: number, split: Split, aspect: number): number {
+  if (split !== 'none') return page.top - SAFE_TOP - (frameFor(W, H, split, aspect).stacked ? STACK_PAD : 0);
+  const room = H - SAFE_TOP - safeBottom();
+  return page.top - SAFE_TOP - Math.max(0, (room - page.h) / 2);
+}
+
 /** Whether a desk rect is on screen clear of the chrome. A rect taller than the band counts when its top is in the band's top 15%. */
 export function inView(r: DeskRect, v: View): boolean {
   const lo = v.top + SAFE_TOP, hi = v.top + v.H - safeBottom();
