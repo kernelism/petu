@@ -169,6 +169,14 @@ export class GatePreflight implements Preflight {
     else shadow = board ? await board.apply(unitActs) : { skipped: new Map<RawAction, string>() };
     if (board && unitActs.length) this.dirty = true;
     for (const t of tags) for (const a of tagActs.get(t) ?? []) { const r = shadow.skipped.get(a); if (r && !skipped.has(t)) skipped.set(t, r); }
+    // A section must be declared in this answer (the live desk frees ids at a new answer): a tag drawing
+    // into a section no released or earlier tag of this unit opened is skipped, without asking the board.
+    const regions = new Set(this.acts.filter((a) => a.kind === 'sketch').map((a) => (a as { id: string }).id));
+    for (const t of tags) for (const a of tagActs.get(t) ?? []) {
+      if (a.kind === 'sketch') { regions.add((a as { id: string }).id); continue; }
+      const r = (a as { region?: string }).region;
+      if (r != null && !regions.has(r) && !skipped.has(t)) skipped.set(t, 'unknown region');
+    }
     if (this.env.recorded) for (const t of tags) { const r = this.env.recorded(t.body); if (r && !skipped.has(t)) skipped.set(t, r); }
     if (u.fault) {
       const t = tags.find((x) => x.action && NEW_INK.has(x.action.kind) && !skipped.has(x));
