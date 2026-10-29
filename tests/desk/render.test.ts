@@ -1,6 +1,6 @@
 // tests/desk/render.test.ts
 import { describe, it, expect } from 'vitest';
-import { textUnits, unitStarts, reveal, makeText, own } from '../../src/desk/render';
+import { textUnits, unitStarts, reveal, makeText, own, measureText, heightKey } from '../../src/desk/render';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -53,5 +53,36 @@ describe('label halo', () => {
     expect(t.getAttribute('stroke')).toBeTruthy();
     expect(Number(t.getAttribute('stroke-width'))).toBeCloseTo(4.4);
     expect(t.getAttribute('stroke-linejoin')).toBe('round');
+  });
+});
+
+describe('measureText', () => {
+  // An engine that rounds the font's ascent (1.07 em) and descent (0.3 em) up to whole device px at a
+  // 0.666 layer scale, as Gecko does: the measured height is not proportional to the size.
+  const roundingBBox = function (this: SVGTextElement) {
+    const size = Number(this.getAttribute('font-size'));
+    const dev = 0.666 * size;
+    return { x: 0, y: 0, width: 0.5 * size * (this.textContent ?? '').length, height: (Math.ceil(1.07 * dev) + Math.ceil(0.3 * dev)) / 0.666 } as DOMRect;
+  };
+  const withBBox = <T,>(f: () => T): T => {
+    const proto = SVGElement.prototype as unknown as { getBBox?: unknown };
+    const was = proto.getBBox;
+    proto.getBBox = roundingBBox;
+    try { return f(); } finally { if (was) proto.getBBox = was; else delete proto.getBBox; }
+  };
+  const layer = () => own(document.createElementNS(SVG, 'svg').appendChild(document.createElementNS(SVG, 'g')) as SVGGElement);
+  const o = { size: 22, style: 'clean' as const, color: '#000' };
+
+  it('keeps the measured width and scales the height linearly from a large reference size', () => {
+    const [a, b] = withBBox(() => [measureText(layer(), 'average from', o), measureText(layer(), 'average from', { ...o, size: 11 })]);
+    expect(a.w).toBeCloseTo(0.5 * 22 * 12);
+    // At 22 this engine says (16 + 5) / 0.666 = 31.5 (1.43 em); at the reference size, 1.38 em.
+    expect(a.h / 22).toBeCloseTo((Math.ceil(1.07 * 66.6) + Math.ceil(0.3 * 66.6)) / 66.6, 3);
+    expect(b.h / 11).toBeCloseTo(a.h / 22, 6);
+  });
+  it('keys the height by font setup, not glyphs', () => {
+    expect(heightKey('Hxg', o)).toBe(heightKey('ace', o));
+    expect(heightKey('x_1 rises', o)).not.toBe(heightKey('rises', o));
+    expect(heightKey('rises', { ...o, weight: 600 })).not.toBe(heightKey('rises', o));
   });
 });
