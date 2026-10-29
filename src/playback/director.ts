@@ -272,7 +272,11 @@ export class Director {
 
   /** {{clear}}: fades the page marks and resets the desk. */
   async clear(ms = 300): Promise<void> {
+    // The answer's constants were taken when parsed, ahead of playback (some after this clear):
+    // {{clear}} wipes the board, not them. begin() resets them with the registry.
+    const kit = kitStore(this.registry), consts = kit.consts;
     this.registry.clear();
+    kit.consts = consts;
     const desk = this.desk();
     await Promise.all([this.fadePage(ms), desk ? desk.reset(ms) : null]);
   }
