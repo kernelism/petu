@@ -1,6 +1,6 @@
 // scripts/eval/configs.ts — named model configs. Each sets env for the dev server the runner starts.
 import { PRICES, worstCaseUsd } from '../../server/prices.ts';
-import { JUDGE_MAX_OUTPUT, SCOUT_MAX_OUTPUT, STORYBOARD_MAX_OUTPUT } from '../../server/limits.ts';
+import { JUDGE_MAX_OUTPUT, MAX_REPAIRS, REPAIR_MAX_OUTPUT, SCOUT_MAX_OUTPUT, STORYBOARD_MAX_OUTPUT } from '../../server/limits.ts';
 export { JUDGE_MAX_OUTPUT };
 
 export type Config = {
@@ -100,7 +100,16 @@ export const SCOUT_INPUT_TOKENS = 8000;
 export const STORYBOARD_MODEL = 'gpt-6.1-terra';
 const storyboardWorst = () => (process.env.PETU_STORYBOARD !== '1' ? 0 : worstCaseUsd(process.env.PETU_STORYBOARD_MODEL || STORYBOARD_MODEL, ASSUMED_INPUT_TOKENS, STORYBOARD_MAX_OUTPUT));
 
-export function plannedWorstUsd(c: Config, answers: number, judged: number, rubric: 'r2' | 'r3' = 'r2'): number {
-  return answers * (worstCaseUsd(c.model, ASSUMED_INPUT_TOKENS, ASSUMED_MAX_OUTPUT, !!c.fast) + worstCaseUsd(SCOUT_MODEL, SCOUT_INPUT_TOKENS, SCOUT_MAX_OUTPUT) + storyboardWorst()) +
+/** One live-gate repair at worst: stage 2's input again (the prefix, released text and note) + REPAIR_MAX_OUTPUT. */
+export const worstRepairUsd = (c: Config): number => worstCaseUsd(c.model, Math.ceil(ASSUMED_INPUT_TOKENS * inputFactor(c)), REPAIR_MAX_OUTPUT, !!c.fast);
+/**
+ * What the preflight sets aside per answer for repairs: 0.3 × the worst case of MAX_REPAIRS repairs
+ * (design §8; most units pass, and the ledger still reserves every repair at its own worst case).
+ */
+export const REPAIR_SHARE = 0.3;
+export const plannedRepairUsd = (c: Config): number => REPAIR_SHARE * MAX_REPAIRS * worstRepairUsd(c);
+
+export function plannedWorstUsd(c: Config, answers: number, judged: number, rubric: 'r2' | 'r3' = 'r2', repairs = false): number {
+  return answers * (worstCaseUsd(c.model, ASSUMED_INPUT_TOKENS, ASSUMED_MAX_OUTPUT, !!c.fast) + worstCaseUsd(SCOUT_MODEL, SCOUT_INPUT_TOKENS, SCOUT_MAX_OUTPUT) + storyboardWorst() + (repairs ? plannedRepairUsd(c) : 0)) +
     judged * worstCaseUsd('gpt-6.1-sol', rubric === 'r3' ? JUDGE_INPUT_TOKENS_R3 : JUDGE_INPUT_TOKENS, JUDGE_MAX_OUTPUT);
 }

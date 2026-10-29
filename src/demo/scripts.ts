@@ -1,12 +1,17 @@
 // src/demo/scripts.ts
 import type { Demo } from './demoScript';
+import { GATE_SCRIPT } from './gate';
 
 /**
  * Dev-only named scripts for real PDFs: `?script=<name>` (optionally `&src=<pdf url>`) opens the
  * PDF and plays the script. Anchored quotes are written against the PDF's actual text runs.
  * public/dev/ is git-ignored: the lecture PDFs are the user's course files and are never committed.
  */
-export const SCRIPTS: Record<string, Demo & { src: string; page?: number; deeper?: string }> = {
+export const SCRIPTS: Record<string, Demo & { src: string; page?: number; deeper?: string;
+  /** The fake repair's replacement per stage-2 unit index (`&repair=fake`; src/agent/repair.ts fakeRepair `text`). */
+  repairs?: Record<number, string> }> = {
+  /** The live commit gate's demo (src/demo/gate.ts): beat 3 names a point nothing carries. */
+  gate: GATE_SCRIPT,
   /**
    * Flow across the document (econ.pdf, asked on p9): a lead-in on p9, a journey to p2 (the demand
    * line's equation) and back. Exercises the route chip, the arrival beat, answer parts (three:

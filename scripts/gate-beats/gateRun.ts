@@ -3,8 +3,9 @@
 // recorded timings. Pure given its inputs (the PDF grounding is passed in).
 import { beats as segment, tokenize, type Beat, type Tag } from '../../src/gate/segment.ts';
 import { GateState } from '../../src/gate/engine.ts';
-import { checkDeixis, checkDirections, checkErasure, checkGeometry, checkNumbers, checkOrder, checkTags, checkThresholds, checkUnbound, derivedValues, type Flag, type Verdict } from '../../src/gate/check.ts';
-import { checkLayout, checkPageText, type El, type Rect } from '../../src/gate/layout.ts';
+import type { Verdict } from '../../src/gate/check.ts';
+import type { El, Rect } from '../../src/gate/layout.ts';
+import { checkBeat, namedScene, toEl } from '../../src/gate/verdict.ts';
 import { textNumbers } from '../../src/gate/numbers.ts';
 import type { Grounding } from '../../src/geometry/resolve.ts';
 import type { RawAction } from '../../src/script/types.ts';
@@ -49,20 +50,6 @@ export function entriesByTag(script: string, registry: RecEntry[], skips: Map<nu
   return out;
 }
 
-function toEl(e: RecEntry, a: RawAction): El {
-  const kit = e.kind.startsWith('kit-');
-  const textKinds = new Set(['write', 'label', 'math', 'annot']);
-  const text = kit ? [e.bbox] : e.kind === 'point' ? e.boxes.slice(1) : textKinds.has(e.kind) ? e.boxes : [];
-  const x = a as unknown as { labels?: string[]; ref?: string; at?: { ref?: string }; axes?: string; id?: string };
-  return {
-    id: e.id, kind: e.kind, region: e.target.region, page: e.target.page, bbox: e.bbox, boxes: e.boxes, strokes: e.strokes ?? [], text,
-    ...(x.axes || a.kind === 'plot' ? { group: normId(x.axes) ?? e.id } : {}),
-    ...(a.kind === 'bars' && x.labels?.length ? { barLabels: x.labels } : {}),
-    ...(a.kind === 'label' && x.ref ? { annotates: normId(x.ref) } : {}),
-    ...(a.kind === 'box' && x.at && typeof x.at === 'object' && 'ref' in x.at && x.at.ref ? { annotates: String(x.at.ref).replace(/\[.*$/, '') } : {}),
-  };
-}
-
 /** `lines`: a page's text lines in target space (x 0–1000, y × the page's aspect), for page annotations. */
 export type GateEnv = { pages: PageText; grounding?: Grounding; lines?: (page: number) => Rect[] | undefined };
 
@@ -87,43 +74,17 @@ export function gateAnswer(rec: Recording, env: GateEnv): AnswerResult {
   const drawn: El[] = [];
   const results: BeatResult[] = [];
   // Lookahead: the director notes names a little ahead; the gate sees the whole beat before release.
+  const pageWords = new Set([...env.pages.values()].flatMap((t) => t.split(/[^\p{L}\p{N}′']+/u)).filter(Boolean));
+  const acted: RawAction[] = [];
   for (const [k, { beat, base, opener }] of all.entries()) {
     const skipped = new Map<Tag, string>();
     for (const t of beat.tags) { const r = skips.get(base + t.start); if (r) skipped.set(t, r); }
-    for (const t of beat.tags) if (t.action) state.note(t.action);
-    const segsBefore = new Set(state.segs.map((s) => s.id)), ptsBefore = new Set(state.points.map((p) => p.id));
-    const flags: Flag[] = [];
-    const notes: string[] = [];
-    const made = new Map<Tag, string>();
-    for (const t of beat.tags) {
-      if (!t.action || skipped.has(t)) continue;
-      const why = state.apply(t.action, k);
-      if (state.lastId) made.set(t, state.lastId);
-      // A bound number the engine cannot resolve is shown as a dash: the beat fails.
-      if (why && t.action.kind === 'val') flags.push({ check: 'tag', detail: `{{val id=${t.action.ref}}} unbound: ${why}` });
-      else if (why) notes.push(`offline engine could not apply ${t.action.kind}: ${why}`);
-    }
-    // Shapes drawn within 4 words of a word (for claims like "tangent").
-    const near = (re: RegExp) => {
-      const b0 = beat.words[0]?.i ?? 0;
-      const at = beat.words.filter((w) => re.test(w.text)).map((w) => w.i);
-      return new Set([...made].filter(([t]) => at.some((i) => Math.abs((t.at < 0 ? b0 + beat.words.length : t.at) - i) <= 4)).map(([, id]) => id));
-    };
-    const ws = beat.words.map((w) => w.text);
-    const core = state.values.filter((v) => v.source !== 'page').map((v) => v.v);
-    const inter = state.intersections().flatMap((p) => [p.x, p.y]);
-    const num = checkNumbers(ws, { known: state.values, derived: derivedValues([...core, ...inter], pageVals), intersections: inter, pageImage: beat.tags.some((t) => /\bmark=#[eig]\d/.test(t.body)) });
-    flags.push(...num.flags, ...checkThresholds(ws, state, k), ...checkDirections(ws, state, k));
-    flags.push(...checkUnbound(ws, state.values), ...checkOrder(ws, k, consts));
-    notes.push(...num.notes);
-    flags.push(...checkDeixis(beat, 8, new Set(skipped.keys())));
-    flags.push(...checkGeometry(beat, state, { segs: state.segs.filter((s) => !segsBefore.has(s.id)).map((s) => s.id), points: state.points.filter((p) => !ptsBefore.has(p.id)).map((p) => p.id) }, 0.02, near));
-    flags.push(...checkErasure(beat), ...checkTags(beat, skipped));
+    for (const t of beat.tags) if (t.action && !skipped.has(t)) acted.push(t.action);
     const added: El[] = [];
     for (const t of beat.tags) { const e = entries.get(base + t.start); if (e && t.action) added.push(toEl(e, t.action)); }
-    for (const f of [...checkLayout(added, drawn), ...(env.lines ? checkPageText(added, env.lines) : [])]) flags.push({ check: 'layout', detail: `${f.kind}: ${f.detail}` });
+    const verdict = checkBeat({ beat, k, state, skipped, added, drawn, pageVals, consts, lines: env.lines, scene: namedScene(acted, pageWords) });
     drawn.push(...added);
-    results.push({ k, opener, text: beat.text, tags: beat.tags.map((t) => t.action?.kind ?? '?malformed'), verdict: { ok: flags.length === 0, flags, notes }, start: base + beat.start, end: base + beat.end });
+    results.push({ k, opener, text: beat.text, tags: beat.tags.map((t) => t.action?.kind ?? '?malformed'), verdict, start: base + beat.start, end: base + beat.end });
   }
   return { label: `${rec.run}/${rec.q}`, question: rec.question, beats: results };
 }

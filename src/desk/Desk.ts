@@ -27,6 +27,8 @@ const WHOLE_REGION = { x: 0, y: 0, w: REGION_W, h: REGION_H };
  * `full`: the section's height in units (700, or more once kit blocks grow it). `y0`–`y1`: the part
  * of it it shows (all of it until a later section crops it to its ink).
  */
+/** One board section (DOM + state); `createSection` builds it (the gate's shadow board builds the same). */
+export type DeskSection = Section;
 type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; full: number; y0: number; y1: number; dx: number | null; scene?: Scene };
 /** A scene section's world: its camera (world units, zoom), its claims, the last thing framed. */
 type Scene = { cam: Cam; claims: SceneClaim[]; space: SceneSpace; focus: SRect | null; glide: AbortController | null; paper: SVGRectElement | null };
@@ -399,22 +401,14 @@ export class Desk implements DeskApi {
   }
 
   private makeSection(spec: RegionSpec): Section {
-    const el = document.createElement('div');
-    el.className = 'desk-region';
-    el.dataset.id = spec.id;
-    const layer = (cls: string) => {
-      const svg = document.createElementNS(SVG, 'svg');
-      svg.setAttribute('class', `desk-region-layer ${cls}`);
-      svg.setAttribute('viewBox', `0 0 ${REGION_W} ${REGION_H}`);
-      svg.setAttribute('aria-hidden', 'true');
-      el.appendChild(svg);
-      return svg.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
-    };
-    const paper = spec.scene ? layer('desk-region-paper') : null;
-    const layers = { highlight: layer('desk-region-hl'), agent: layer('desk-region-ink') };
-    const sec: Section = { id: spec.id, page: spec.page, size: spec.size, body: spec.body ?? null, el, layers, full: REGION_H, y0: 0, y1: REGION_H, dx: null };
-    if (spec.scene) this.makeScene(sec, paper!);
-    return sec;
+    return createSection(spec, (sec, paper) => this.makeScene(sec, paper));
+  }
+
+  metrics(): { boardPx: number; bodyPx: (body: number | null) => number } {
+    // Before the board opens: the board the normal split would give (what the first section lands in).
+    const { W, H } = this.host.viewport();
+    const f = this.open ? this.frame() : frameFor(W, H, 'normal', this.host.aspect(1));
+    return { boardPx: f.board?.w ?? 0, bodyPx: (b) => bodyPx(b, f.page.pageW) };
   }
 
   /** Crops a finished section to its ink (once): its svg shows only that band, the section's box shrinks to it. */
@@ -637,17 +631,7 @@ export class Desk implements DeskApi {
     sec.el.classList.add('is-scene');
     const claims: SceneClaim[] = [];
     const sc: Scene = { cam: { x: 0, y: 0, z: 1 }, claims, focus: null, glide: null, paper: null, space: null as unknown as SceneSpace };
-    sc.space = {
-      claim: (r, minor) => {
-        const c: SceneClaim = { r: { ...r }, move: (n) => { c.r = { ...n }; }, drop: () => { const i = claims.indexOf(c); if (i >= 0) claims.splice(i, 1); }, ...(minor ? { minor } : {}) };
-        claims.push(c);
-        return c;
-      },
-      rects: (o) => (o?.lines === false ? claims.filter((c) => c.minor !== 'line') : claims).map((c) => c.r),
-      view: () => this.camRect(sec),
-      last: () => [...claims].reverse().find((c) => !c.minor)?.r ?? null,
-      extent: () => (claims.length ? unionR(claims.map((c) => c.r)) : null),
-    };
+    sc.space = sceneSpaceOf(claims, () => this.camRect(sec));
     sec.scene = sc;
     // The paper's dot grid lives in the world, so it pans with the camera (the scene moves, not the ink).
     const svgEl = paper.ownerSVGElement!;
@@ -783,3 +767,38 @@ const box0 = (b: SectionBox | null) => b?.s ?? 1;
 
 
 const toD = (s: Stroke) => s.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');
+
+/** A section's DOM: its two layers (and a scene's paper, handed to `scene`). */
+export function createSection(spec: RegionSpec, scene?: (sec: DeskSection, paper: SVGGElement) => void): DeskSection {
+  const el = document.createElement('div');
+  el.className = 'desk-region';
+  el.dataset.id = spec.id;
+  const layer = (cls: string) => {
+    const svg = document.createElementNS(SVG, 'svg');
+    svg.setAttribute('class', `desk-region-layer ${cls}`);
+    svg.setAttribute('viewBox', `0 0 ${REGION_W} ${REGION_H}`);
+    svg.setAttribute('aria-hidden', 'true');
+    el.appendChild(svg);
+    return svg.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
+  };
+  const paper = spec.scene ? layer('desk-region-paper') : null;
+  const layers = { highlight: layer('desk-region-hl'), agent: layer('desk-region-ink') };
+  const sec: Section = { id: spec.id, page: spec.page, size: spec.size, body: spec.body ?? null, el, layers, full: REGION_H, y0: 0, y1: REGION_H, dx: null };
+  if (spec.scene && paper && scene) scene(sec, paper);
+  return sec;
+}
+
+/** A scene's world over `claims`, seen through `view` (the camera's world rect). */
+export function sceneSpaceOf(claims: SceneClaim[], view: () => SRect): SceneSpace {
+  return {
+    claim: (r, minor) => {
+      const c: SceneClaim = { r: { ...r }, move: (n) => { c.r = { ...n }; }, drop: () => { const i = claims.indexOf(c); if (i >= 0) claims.splice(i, 1); }, ...(minor ? { minor } : {}) };
+      claims.push(c);
+      return c;
+    },
+    rects: (o) => (o?.lines === false ? claims.filter((c) => c.minor !== 'line') : claims).map((c) => c.r),
+    view,
+    last: () => [...claims].reverse().find((c) => !c.minor)?.r ?? null,
+    extent: () => (claims.length ? unionR(claims.map((c) => c.r)) : null),
+  };
+}

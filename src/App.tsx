@@ -35,13 +35,18 @@ import { takeSentences } from './ui/text';
 import type { Action, RawAction } from './script/types';
 import type { Grounding } from './geometry/resolve';
 import type { AskEvent } from './agent/protocol';
-import { AskError, askErrorLine, capLine, type AskHandlers } from './agent/client';
+import { AskError, askErrorLine, capLine, spendPhase, type AskHandlers } from './agent/client';
+import { fakeRepair, makeRepair, recordedRepair } from './agent/repair';
 import { useAgent, type MakeContext } from './agent/useAgent';
 import { ContextBuilder, groundPage } from './agent/context/build';
-import { installEvalHooks, outOfFrameOf, type EvalBackend, type Recorder, type RegistryRow } from './agent/evalHooks';
+import { installEvalHooks, outOfFrameOf, publishGate, type EvalBackend, type Recorder, type RegistryRow } from './agent/evalHooks';
 import type { Registry } from './desk/registry';
 import { groundingOf, type PageGround } from './agent/context/types';
 import { AnswerLog, boardOf, buildReport } from './report/capture';
+import { LiveGate, GatePreflight, HEADROOM_MS, HEADROOM_OPUS_MS } from './gate/live';
+import { ShadowStage } from './gate/shadow';
+import { parseFaults } from './gate/faults';
+import type { GateEvent, GateLogEvent, GateSetting, RepairFn } from './gate/events';
 import { screenshot } from './report/screenshot';
 
 const params = new URLSearchParams(location.search);
@@ -107,6 +112,15 @@ function fileNameOf(src: string): string {
 const styleParam = import.meta.env.DEV ? params.get('style') : null;
 if (styleParam === 'live' || styleParam === 'hand' || styleParam === 'clean') setSettings({ inkStyle: styleParam });
 
+// The live commit gate (src/gate/live.ts): &gate=off|shadow|live|audit (default live for agent answers,
+// audit for dev scripts), &gatefail=K[:mode] (injected faults), &repair=fake|off, &repairms= (the fake's delay).
+const GATE_PARAM = ((p) => (p === 'off' || p === 'shadow' || p === 'live' || p === 'audit' ? p : null))(params.get('gate')) as GateSetting | null;
+const GATE_FAULTS = parseFaults(params.get('gatefail'));
+/** `&gatelog`: every gate and repair event to the console. */
+const GATE_LOG = params.has('gatelog');
+const GATE_CHECK_ALL = params.get('gatecheck') === 'all';
+const REPAIR_PARAM = params.get('repair');
+const REPAIR_MS = Number(params.get('repairms')) || 1500;
 const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
 const hasFiles = (e: DragEvent) => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
 
@@ -128,7 +142,18 @@ type DebugState = {
   storyboard?: Extract<AskEvent, { t: 'storyboard' }>;
   /** Stage 2's first text reached the player (absolute ms), and when the opener's words were due to end then. */
   handoff?: number; openerEnd?: number;
+  /** The live gate's verdicts and repairs. */
+  gate?: GateLogEvent[];
 };
+
+/** ?debug gate row: units, fails, strips, repairs, drops. */
+function gateSummary(es: GateLogEvent[]): string {
+  const g = es.filter((e): e is GateEvent => e.t === 'gate');
+  const n = (f: (e: GateEvent) => boolean) => g.filter(f).length;
+  const units = new Set(g.map((e) => e.k)).size;
+  const reps = es.filter((e) => e.t === 'repair' && e.phase === 'sent').length;
+  return `${units} units · ${n((e) => e.result === 'fail')} fail · ${n((e) => e.result === 'strip')} strip · ${reps} repair · ${n((e) => e.action === 'drop')} drop · ${g.length ? Math.max(...g.map((e) => e.ms)) : 0}ms max`;
+}
 
 /** When the first ink of the answer started (the first drawing action, not layout). */
 function firstInk(log: ActionTiming[]): number | undefined {
@@ -193,6 +218,8 @@ function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
       {sc?.find?.length ? <div className="debug-row"><span>scout find</span><span>{sc.find.map((f) => `"${f}"`).join(' · ')}</span></div> : null}
       {sc?.atMs != null && <div className="debug-row"><span>scout verdict</span><span>{sc.atMs}ms{sc.input ? ` · cached ${Math.round((100 * (sc.cached ?? 0)) / sc.input)}%` : ''}</span></div>}
       {opener != null && <div className="debug-row"><span>opener</span><span>{ms(opener)}</span></div>}
+      {d.gate?.length ? <div className="debug-row" title={d.gate.filter((e): e is GateEvent => e.t === 'gate' && e.action === 'drop').map((e) => `${e.k}: ${e.flags.map((f) => `${f.check}: ${f.detail}`).join('; ')}`).join('\n')}><span>gate</span><span>{gateSummary(d.gate)}</span></div> : null}
+      {d.gate?.filter((e): e is GateEvent => e.t === 'gate' && e.action === 'drop').map((e, i) => <div key={`g${i}`} className="debug-row is-skipped" title={e.flags.map((f) => `${f.check}: ${f.detail}`).join('\n')}><span>dropped {e.k}</span><span><s>{(e.text ?? '').slice(0, 80)}</s></span></div>)}
       {d.handoff != null && <div className="debug-row"><span>stage 2 first text</span><span>{ms(d.handoff)}</span></div>}
       {gap != null && <div className="debug-row" title="+: silence between the opener's last word and stage 2's first; early: stage 2 was ready that long before the opener ended"><span>handoff gap</span><span>{gap >= 0 ? `+${gap}ms` : `0 (${-gap}ms early)`}</span></div>}
       {sc?.plan && (
@@ -248,10 +275,14 @@ function replaySource(chunks: { t: number; d: string }[], events: AskEvent[], h:
   return async function* (signal: AbortSignal): AsyncGenerator<string> {
     const t0 = performance.now();
     for (const e of events) { if (e.t === 'meta') h.onMeta?.(e); else if (e.t === 'scout') h.onScout?.(e); else if (e.t === 'storyboard') h.onStoryboard?.(e); }
-    for (const c of chunks) {
+    // Stage 2 starts at the first chunk at or after the recorded handoff (the gate's opener ends there).
+    const ho = events.find((e) => e.t === 'handoff');
+    const s2 = ho?.t === 'handoff' ? chunks.findIndex((c) => c.t >= ho.ms - 1) : -1;
+    for (const [i, c] of chunks.entries()) {
       const wait = c.t - (performance.now() - t0);
       if (wait > 0) await new Promise((r) => window.setTimeout(r, wait));
       if (signal.aborted) return;
+      if (i === s2 && ho?.t === 'handoff') h.onHandoff?.({ ...ho });
       yield c.d;
     }
     for (const e of events) {
@@ -373,6 +404,8 @@ export default function App() {
   /** The current (or last) answer's record, for the Report button (src/report/capture.ts). */
   const logRef = useRef<AnswerLog | null>(null);
 
+  /** Released scripts of the answers whose board is still up: the gate's shadow board starts from them. */
+  const boardScripts = useRef<string[]>([]);
   const directorRef = useRef<Director>();
   if (!directorRef.current) {
     directorRef.current = new Director({
@@ -650,12 +683,61 @@ export default function App() {
     const log = new AnswerLog(q, page, toAgent ? 'agent' : 'script', t0);
     logRef.current = log;
 
+    // The live commit gate: every unit is checked on the shadow board before it plays.
+    // Dev scripts: off unless asked (&gate=audit): their audit still fails on shadow-fidelity gaps (scene
+    // sections measured without a camera, kit blocks without the live board's centring) and on checks
+    // written after the scripts. Agent answers: live.
+    const setting: GateSetting = GATE_PARAM ?? (toAgent ? 'live' : 'off');
+    let gate: LiveGate | null = null;
+    let shadow: ShadowStage | null = null;
+    const pageTexts = new Map<number, string>();
+    const gateEvent = (e: GateLogEvent) => {
+      // Gate events ride the answer's event log (recordings, Report); protocol.ts types them (Task B).
+      log.event(e as never);
+      run.rec?.event(e as never);
+      if (DEBUG) setDebug((d) => ({ ...d, gate: [...(d.gate ?? []), e] }));
+      publishGate(e); // __petu.gate() and the gallery's audit
+      if (GATE_LOG) console.info('[gate]', JSON.stringify(e));
+    };
+    // Repairs: &repair=fake (no network) | off; replays use the recording's repairs; live answers ask the server.
+    const repairFor = (): RepairFn | undefined => {
+      if (REPAIR_PARAM === 'off') return undefined;
+      if (REPAIR_PARAM === 'fake') return fakeRepair({ delayMs: REPAIR_MS, text: DEV_SCRIPT?.repairs });
+      if (run.replay) return recordedRepair(run.replay.events ?? []);
+      if (!toAgent) return undefined;
+      const phase = spendPhase(ag.spend);
+      return (req, signal) => (gate?.reqId ? makeRepair({ reqId: gate.reqId, ...(phase ? { phase } : {}) })(req, signal) : Promise.resolve({ ok: false, reason: 'refused', detail: 'no reqId' }));
+    };
+    if (setting !== 'off') {
+      shadow = new ShadowStage({ desk: () => deskRef.current, viewer: () => viewerRef.current, settings: getSettings, grounding: () => groundingRef.current ?? NO_MARKS });
+      if (boardScripts.current.length) void shadow.seed(boardScripts.current);
+      // verdict.ts SEVERITY: `default` fails only skipped/unparsable actions, unbound numbers, erasure and
+      // labelled references to nothing; &gatecheck=all is the design's table.
+      const preflight = new GatePreflight({ board: shadow, pages: () => pageTexts, question: q, grounding: () => groundingRef.current, severity: GATE_CHECK_ALL ? 'design' : 'default' });
+      gate = new LiveGate({
+        clock: { now: () => performance.now(), endsAt: () => clock.endsAt() }, preflight,
+        repair: repairFor(),
+        faults: GATE_FAULTS, setting: setting === 'shadow' ? 'shadow' : 'live', onEvent: gateEvent,
+        headroomMs: HEADROOM_MS,
+      });
+    }
+    // Warm the pages the first units point at (the visible page; a dev script's own pages): the gate
+    // vouches for page pointing from their text, so the first word never waits on loading them.
+    if (gate) {
+      const v = viewerRef.current;
+      const want = new Set<number>([page, ...(!toAgent && DEV_SCRIPT ? [...DEV_SCRIPT.script.matchAll(/\bp=(\d+)/g)].map((m) => Number(m[1])) : [])]);
+      if (v) for (const p of want) if (p >= 1 && p <= v.numPages()) void v.textRuns(p).then((rs) => { if (!pageTexts.has(p)) pageTexts.set(p, rs.map((r) => r.text).join(' ')); }).catch(() => {});
+    }
     const handlers: AskHandlers = {
       onEvent: (e) => { log.event(e); run.rec?.event(e); },
-      onMeta: (e) => { if (DEBUG) setDebug((d) => ({ ...d, meta: e })); },
+      onMeta: (e) => {
+        if (gate) { gate.setReq(e.reqId); if (/opus/i.test(e.model)) gate.setHeadroom(HEADROOM_OPUS_MS); }
+        if (DEBUG) setDebug((d) => ({ ...d, meta: e }));
+      },
       onScout: (e) => { if (DEBUG) setDebug((d) => ({ ...d, scout: e })); },
       onStoryboard: (e) => { if (DEBUG) setDebug((d) => ({ ...d, storyboard: e })); },
       onHandoff: (e) => {
+        gate?.handoff();
         // When the words queued so far (the opener) end: past it, the student heard a gap.
         const end = clock.endsAt();
         const tNow = performance.now();
@@ -680,12 +762,21 @@ export default function App() {
       ? async function* (signal) {
         // A replay resolves page marks against the same grounding the recorded question had.
         const sc = replay.events?.find((e) => e.t === 'scout');
-        groundingRef.current = groundingOf(await ag.grounds(page, sc?.t === 'scout' ? sc.pages : []));
+        const gs = await ag.grounds(page, sc?.t === 'scout' ? sc.pages : []);
+        for (const g of gs) pageTexts.set(g.page, g.lines.map((l) => l.text).join('\n'));
+        groundingRef.current = groundingOf(gs);
+        // A recording with no handoff had no opener: all of it is stage 2.
+        if (!replay.events?.some((e) => e.t === 'handoff')) gate?.handoff();
         yield* replaySource(replay.chunks, replay.events ?? [], handlers)(signal);
       }
       : toAgent
-        ? ag.source({ question: q, page, ink: () => ink.get().strokes, handlers, onGrounding: (g) => { groundingRef.current = g; } })
+        ? ag.source({
+          question: q, page, ink: () => ink.get().strokes, handlers, onGrounding: (g) => { groundingRef.current = g; },
+          onGrounds: (gs) => { for (const g of gs) pageTexts.set(g.page, g.lines.map((l) => l.text).join('\n')); },
+          ...(gate ? { released: () => gate!.releasedText() } : {}),
+        })
         : async function* (signal) {
+          gate?.handoff(); // dev scripts have no opener
           // checkpoint 1: demos play the closest script. A dev script that points with page marks
           // (?script=relational) resolves them against the pages' own grounding, as an answer would.
           const script = (DEV_SCRIPT ?? pickDemo(q)).script;
@@ -800,7 +891,12 @@ export default function App() {
       },
     });
     sessionRef.current = session;
-    void session.start(source);
+    const finishGate = () => {
+      if (gate) { const t = gate.releasedText(); if (t.trim()) boardScripts.current.push(t); }
+      shadow?.destroy();
+      shadow = null;
+    };
+    void session.start(gate ? gate.wrap(source) : source).finally(finishGate);
   }), [director, flash]);
 
   const onAsk = useCallback((q: string) => { void runAnswer(q); }, [runAnswer]);
@@ -1010,8 +1106,9 @@ export default function App() {
     viewerRef.current = api;
     // One desk per viewer (a new document remounts the viewer): the board, its sections, connectors.
     deskRef.current?.destroy();
+    boardScripts.current = [];
     // The board's ×: an answer still playing stops first (its ink would have nowhere to go).
-    const desk = new Desk(api.deskHost(), stageRef.current!, { onClose: () => { if (busyRef.current) closeRef.current(); void deskRef.current?.dismiss(); } });
+    const desk = new Desk(api.deskHost(), stageRef.current!, { onClose: () => { if (busyRef.current) closeRef.current(); boardScripts.current = []; void deskRef.current?.dismiss(); } });
     deskRef.current = desk;
     desk.subscribe((s) => { setDesk(s); setPaused(desk.follow.paused()); });
     if (import.meta.env.DEV) { window.__viewer = api; window.__desk = desk; }
@@ -1049,7 +1146,7 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-      if (e.key === 'Escape' && !busyRef.current && !e.defaultPrevented && !typing && !document.querySelector('.popover')) void deskRef.current?.dismiss();
+      if (e.key === 'Escape' && !busyRef.current && !e.defaultPrevented && !typing && !document.querySelector('.popover')) { boardScripts.current = []; void deskRef.current?.dismiss(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

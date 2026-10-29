@@ -45,7 +45,7 @@ export const DEFAULT_MAX_OUTPUT = 3200;
 /** Stage 1 (spec A): the fast model at effort none; its JSON is the opener (one or two sentences), ≤ 6 pages and ≤ 80 words. */
 export const DEFAULT_SCOUT_MODEL = 'gpt-6.1-terra';
 export { SCOUT_MAX_OUTPUT } from './limits';
-import { SCOUT_MAX_OUTPUT, STORYBOARD_MAX_OUTPUT } from './limits';
+import { REPAIR_MAX_OUTPUT, SCOUT_MAX_OUTPUT, STORYBOARD_MAX_OUTPUT } from './limits';
 /**
  * The storyboard (spec "Board v2" 5): a reasoning model designs the lesson while the opener plays.
  * Off by default until it lands within the opener: the first live runs (2026-10-28) timed out at 12s
@@ -65,6 +65,11 @@ export type PetuEnv = {
   scout: ModelConfig;
   /** The lesson designer between the scout and stage 2; null when PETU_STORYBOARD=0. */
   storyboard: ModelConfig | null;
+  /**
+   * The live gate's repairs (design §6; server/repair.ts): stage 2's model at PETU_REPAIR_EFFORT (default
+   * stage 2's effort) with REPAIR_MAX_OUTPUT; null when PETU_REPAIR=off (every /api/repair is refused).
+   */
+  repair: ModelConfig | null;
   phase: Phase;
   caps: Caps;
   priorUsd: number;
@@ -114,6 +119,9 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   const storyEffort = oneOf('PETU_STORYBOARD_EFFORT', EFFORTS, DEFAULT_STORYBOARD_EFFORT);
   if (storyEffort === 'none' && NO_NONE.has(storyModel)) throw new Error(`petu: ${storyModel} does not accept reasoning effort none; set PETU_STORYBOARD_EFFORT=low`);
   const storyOn = oneOf('PETU_STORYBOARD', ['0', '1'] as const, '0') === '1';
+  const repairOn = oneOf('PETU_REPAIR', ['on', 'off'] as const, 'on') === 'on';
+  const repairEffort = oneOf('PETU_REPAIR_EFFORT', EFFORTS, effort);
+  if (repairEffort === 'none' && (NO_NONE.has(model) || ANTHROPIC_NO_NONE.has(model))) throw new Error(`petu: ${model} does not accept effort none; set PETU_REPAIR_EFFORT=low`);
 
   const phase = oneOf('PETU_PHASE', PHASES, 'founder');
   const phaseUsd = Object.fromEntries(PHASES.map((p) => [p, num(`PETU_CAP_${p.toUpperCase()}`, PHASE_CAPS[p])])) as Record<Phase, number>;
@@ -135,6 +143,7 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
     model: { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) },
     scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, fast: str('PETU_SCOUT_FAST') === '1', explicitCache },
     storyboard: storyOn ? { model: storyModel, effort: storyEffort, maxOutput: STORYBOARD_MAX_OUTPUT, fast: false, explicitCache, ...(str('PETU_STORYBOARD_TIMEOUT_MS') ? { timeoutMs: num('PETU_STORYBOARD_TIMEOUT_MS', 12_000) } : {}) } : null,
+    repair: repairOn ? { model, effort: repairEffort, maxOutput: REPAIR_MAX_OUTPUT, fast: str('PETU_FAST') === '1', explicitCache } : null,
     phase, caps,
     priorUsd: num('PETU_PRIOR_USD', 0.0076),
     pdfDirs,

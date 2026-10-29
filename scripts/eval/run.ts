@@ -21,7 +21,7 @@ import { worstCaseUsd } from '../../server/prices.ts';
 import { readCalibration } from './calibrate.ts';
 import { assertSplitAllowed, QSETS, SHARED_PAGES_OK, qsetId, validateSet, freeze, type Question } from './questions.ts';
 import { boardProbeScript, boardScrollScript, boardSegments, downscaleScript, frameCaptions, frameSchedule, pagesTouched, pdfDigest, stitchScript } from './frames.ts';
-import { checkBudget, parseArgs, selectQuestions, wantsJudge, type Args } from './plan.ts';
+import { checkBudget, gateQuery, parseArgs, selectQuestions, spendsOnRepairs, wantsJudge, type Args } from './plan.ts';
 import { renderReport, type ReportItem } from './report.ts';
 import { composeScript, pickStills } from './sheet.ts';
 import { buildSummary, runIdOf, type QuestionSummary } from './summary.ts';
@@ -103,7 +103,7 @@ export async function captureEnd(chrome: Chrome, qdir: string, prefix: string): 
 
 /** PETU_CTX=old|new: which scout context the app builds (?ctx=; src/agent/context/tiers.ts). */
 const CTX = process.env.PETU_CTX === 'new' ? '&ctx=new' : '';
-const urlFor = (base: string, open: StoredQuestion['open'], nogen: boolean) => `${base}/?src=${encodeURIComponent(open.src)}&page=${open.page}&eval${nogen ? '&nogen' : ''}${CTX}`;
+const urlFor = (base: string, open: StoredQuestion['open'], nogen: boolean, gate = '') => `${base}/?src=${encodeURIComponent(open.src)}&page=${open.page}&eval${nogen ? '&nogen' : ''}${CTX}${gate}`;
 const sha = (b: Buffer | string) => createHash('sha1').update(b).digest('hex');
 
 type Ctx = { base: string; dir: string; args: Args; phase: string; judge: boolean; replay: Record<string, StoredQuestion> | null };
@@ -120,7 +120,7 @@ async function runQuestion(chrome: Chrome, ctx: Ctx, q: Question, rep: number): 
     const t = turn, i = Number(payload);
     shots.push(chrome.shot().then((b) => writeFileSync(join(qdir, `${t ? `t${t + 1}-` : ''}s${i}.png`), b)));
   });
-  await chrome.goto(urlFor(ctx.base, open, !!prior));
+  await chrome.goto(urlFor(ctx.base, open, !!prior, gateQuery(ctx.args)));
   await chrome.eval(`new Promise((r) => { const t = setInterval(() => { if (window.__petu) { clearInterval(t); r(); } }, 100); setTimeout(r, 30000); })`);
   await chrome.eval('window.__petu.ready()');
   const pageShot = await chrome.shot();
@@ -195,7 +195,7 @@ export function jpegDims(b: Buffer): { w: number; h: number } {
 }
 
 /** Renders each final state in WebKit by replay (no generation). playwright-core is looked up, not installed. */
-async function webkitStills(base: string, items: { id: string; stored: StoredQuestion; qdir: string }[]): Promise<void> {
+async function webkitStills(base: string, items: { id: string; stored: StoredQuestion; qdir: string }[], gate = ''): Promise<void> {
   const req = createRequire(process.env.PLAYWRIGHT_DIR ?? '/Users/arjuns/.npm/_npx/9833c18b2d85bc59/node_modules/');
   const { webkit } = req('playwright-core');
   const browser = await webkit.launch();
@@ -203,7 +203,7 @@ async function webkitStills(base: string, items: { id: string; stored: StoredQue
     for (const it of items) {
       const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
       const page = await ctx.newPage();
-      await page.goto(urlFor(base, it.stored.open, true), { waitUntil: 'commit' });
+      await page.goto(urlFor(base, it.stored.open, true, gate), { waitUntil: 'commit' });
       await page.waitForFunction('window.__petu', null, { timeout: 30000 });
       await page.evaluate('window.__petu.ready()');
       for (let t = 0; t < it.stored.turns.length; t++) {
@@ -235,7 +235,7 @@ async function main(): Promise<void> {
   const judge = wantsJudge(args, cfg);
 
   const date = new Date().toISOString().slice(0, 10);
-  const tag = args.config + (args.ask ? '-ask' : '') + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '') + (args.rubric !== 'r3' ? `-${args.rubric}` : '');
+  const tag = args.config + (args.ask ? '-ask' : '') + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '') + (args.gate ? `-gate${args.gate}` : '') + (args.gatefail ? '-gatefail' : '') + (args.rubric !== 'r3' ? `-${args.rubric}` : '');
   let runId = args.finish ?? runIdOf(date, tag, PROMPT_VERSION, QSET);
   if (!args.finish) for (let i = 2; existsSync(join(RUNS, runId)); i++) runId = `${runIdOf(date, tag, PROMPT_VERSION, QSET)}-${i}`;
   const dir = join(RUNS, runId);
@@ -255,7 +255,7 @@ async function main(): Promise<void> {
   try {
     const spend = (await (await fetch(`${server.base}/api/spend`)).json()) as SpendSummary;
     const planGenerates = !replay && !args.finish;
-    const budget = checkBudget(spend, cfg, planGenerates ? todo : [], args.n, judge && !args.fakeJudge, args.rubric);
+    const budget = checkBudget(spend, cfg, planGenerates ? todo : [], args.n, judge && !args.fakeJudge, args.rubric, spendsOnRepairs(args));
     console.log(`budget: ${budget.message}`);
     if (!budget.ok) throw new Error(`refusing to start: ${budget.message}`);
     if (planGenerates && cfg.model.startsWith('claude-') && spend.keys && !spend.keys.anthropic) throw new Error('refusing to start: the config is a Claude model and the server found no Anthropic key in .env (PETU_ANTHROPIC_KEY or ANTHROPIC_API_KEY)');
@@ -358,14 +358,14 @@ async function main(): Promise<void> {
       }
     }
     if (args.webkit) {
-      await webkitStills(server.base, done.map((d) => ({ id: d.q.id, stored: d.stored, qdir: d.qdir })));
+      await webkitStills(server.base, done.map((d) => ({ id: d.q.id, stored: d.stored, qdir: d.qdir })), gateQuery({ ...args, repair: args.repair ?? 'recorded', replay: args.replay ?? 'webkit' }));
     }
     const summary = buildSummary({ runId, config: args.config, qset: QSET, promptVersion: PROMPT_VERSION, phase, rubric: rubric.version, questions: summaries });
     if (args.fakeJudge) summary.fakeJudge = true;
     writeJson(join(dir, 'summary.json'), summary);
     writeJson(join(dir, 'run.json'), { args, config: cfg, phase, replayOf: args.replay, ...(args.finish ? { finishedAt: new Date().toISOString() } : {}) });
     writeFileSync(join(dir, 'report.html'), renderReport(summary, items, readCalibration(dir, args.fakeJudge)));
-    console.log(`run ${runId}\n  skipped ${summary.run.sum.skippedTotal}  malformed ${summary.run.sum.malformed}  skip defects ${summary.run.skipDefects}/${summary.run.n}  first word p50 ${summary.run.firstWordMs.p50?.toFixed(0) ?? '-'} p90 ${summary.run.firstWordMs.p90?.toFixed(0) ?? '-'} ms  spoken mean ${summary.run.meanSpokenMs != null ? (summary.run.meanSpokenMs / 1000).toFixed(1) : '-'} s\n  answers ${summary.run.n}  judge mean ${summary.judge.mean?.toFixed(2) ?? '-'}  fatal ${summary.judge.fatal}  gen $${summary.genUsd.toFixed(3)}  judge $${summary.judge.usd.toFixed(3)}\n  open ${join(dir, 'report.html')}`);
+    console.log(`run ${runId}\n  skipped ${summary.run.sum.skippedTotal}  malformed ${summary.run.sum.malformed}  skip defects ${summary.run.skipDefects}/${summary.run.n}  first word p50 ${summary.run.firstWordMs.p50?.toFixed(0) ?? '-'} p90 ${summary.run.firstWordMs.p90?.toFixed(0) ?? '-'} ms  spoken mean ${summary.run.meanSpokenMs != null ? (summary.run.meanSpokenMs / 1000).toFixed(1) : '-'} s\n${summary.run.gate ? `  gate units ${summary.run.gate.sum.units}  fails ${summary.run.gate.sum.fails}  strips ${summary.run.gate.sum.strips}  drops ${summary.run.gate.sum.drops} (${summary.run.gate.sum.droppedWords} words)  repairs ${summary.run.gate.sum.repairOk}/${summary.run.gate.sum.repairs} ok, ${summary.run.gate.sum.repairLate} late  repair p50/p95 ${summary.run.gate.repairMs.p50 ?? '-'}/${summary.run.gate.repairMs.p95 ?? '-'} ms  holds>1s ${summary.run.gate.sum.holds}  live skips after pass ${summary.run.gate.sum.liveSkipAfterPass}  check p95 ${summary.run.gate.shadowMs.p95 ?? '-'} ms  repair $${summary.run.gate.repairUsd.toFixed(3)}\n` : ''}  answers ${summary.run.n}  judge mean ${summary.judge.mean?.toFixed(2) ?? '-'}  fatal ${summary.judge.fatal}  gen $${summary.genUsd.toFixed(3)}  judge $${summary.judge.usd.toFixed(3)}\n  open ${join(dir, 'report.html')}`);
   } finally {
     for (const c of chromes) await c.close();
     server.stop();

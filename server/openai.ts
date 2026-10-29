@@ -70,7 +70,16 @@ export type Deps = {
   timeouts?: Partial<Timeouts>;
   /** The answer record (plugin: .petu/answers.jsonl): question, page, the script as sent, lint notes with any malformed tag's raw text. */
   log?: (rec: AnswerRecord) => void;
+  /**
+   * Stage 2's request as built, in the OpenAI format (before any Anthropic conversion), with its config
+   * and cache key: the repair cache (server/repair.ts) keeps it so a repair resends the same prefix.
+   */
+  onBody?: (reqId: string, oa: AnswerBody, cfg: ModelConfig, ck: CacheKey, images: { w: number; h: number }[]) => void;
 };
+/** Stage 2's OpenAI-format body (buildRequest's result). */
+export type AnswerBody = ReturnType<typeof buildRequest>;
+/** What the cache stats key an answer by. */
+export type CacheKey = { model: string; version: string; docHash: string; page: number };
 export type AnswerRecord = { at: string; phase: string; model: string; effort: string; page: number; question: string; script: string; lint: string[]; usd: number; error?: string;
   /** The storyboard stage 2 performed (or why it ran on the scout's plan alone), its latency and cost. */
   storyboard?: { model: string; effort: string; version: string; ms: number; usd: number; board?: Storyboard; fallback?: string } };
@@ -94,10 +103,10 @@ export const systemTokensLow = () => Math.floor(systemPrompt().length / 4);
 const bp = (on: boolean, ttl: '30m' | '12h') => (on ? { prompt_cache_breakpoint: { mode: 'explicit', ttl } } : {});
 const img = (b64: string) => `data:image/jpeg;base64,${b64}`;
 const sleepDefault = (ms: number) => new Promise<void>((ok) => setTimeout(ok, ms));
-const scrub = (s: string, key: string) => (key ? s.split(key).join('***') : s);
+export const scrub = (s: string, key: string) => (key ? s.split(key).join('***') : s);
 const headers = (key: string) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' });
 /** Where a model's calls go: OpenAI's Responses API, or Anthropic's Messages API for claude-* (stage 2 and its prewarm only). */
-type Endpoint = { anthropic: boolean; vendor: string; url: string; key: string; headers: Record<string, string> };
+export type Endpoint = { anthropic: boolean; vendor: string; url: string; key: string; headers: Record<string, string> };
 export const endpointOf = (model: string, d: Pick<Deps, 'key' | 'anthropicKey'>): Endpoint => (isAnthropicModel(model)
   ? { anthropic: true, vendor: 'Anthropic', url: ANTHROPIC_URL, key: d.anthropicKey ?? '', headers: anthropicHeaders(d.anthropicKey ?? '') }
   : { anthropic: false, vendor: 'OpenAI', url: URL_, key: d.key, headers: headers(d.key) });
@@ -106,7 +115,7 @@ const noKeyMessage = (ep: Endpoint) => (ep.anthropic ? NO_ANTHROPIC_KEY : 'Add O
  * Input tokens of a provider's request body, upper bound. Anthropic's tokenizer on current models
  * counts up to ~1.35× what an older tokenizer does: its estimate is scaled by that.
  */
-const estimateFor = (ep: Endpoint, body: any, images: { w: number; h: number }[]) =>
+export const estimateFor = (ep: Endpoint, body: any, images: { w: number; h: number }[]) =>
   (ep.anthropic ? Math.ceil(estimateInputTokens(anthropicInput(body), images) * 1.35) : estimateInputTokens(body, images));
 /** Stage 2's request for the model's provider (the Anthropic body keeps the same blocks and breakpoints). */
 export function buildAnswerRequest(r: Parameters<typeof buildRequest>[0], cfg: ModelConfig, prewarm = false): any {
@@ -536,9 +545,12 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
     }
     emit(sb);
   }
-  const body = buildAnswerRequest({ ...r, ...(sb?.board ? { storyboard: sb.board } : {}) }, cfg);
-  const est = estimateFor(ep, body, askImages(r.context));
-  const ck = { model: cfg.model, version: PROMPT_VERSION, docHash: r.context.docHash, page: r.context.page };
+  const oa = buildRequest({ ...r, ...(sb?.board ? { storyboard: sb.board } : {}) }, cfg);
+  const body = ep.anthropic ? toAnthropicRequest(oa as never, cfg) : oa;
+  const images = askImages(r.context);
+  const est = estimateFor(ep, body, images);
+  const ck: CacheKey = { model: cfg.model, version: PROMPT_VERSION, docHash: r.context.docHash, page: r.context.page };
+  try { d.onBody?.(reqId, oa, cfg, ck, images); } catch { /* the repair cache never fails an answer */ }
   const cachedGuess = d.cache?.expectedCached(ck, est) ?? 0;
   const estUsd = costUsd(cfg.model, estimatedUsage(est, cachedGuess, cfg.maxOutput), '12h', cfg.fast);
   const refused = d.ledger.reserve(reqId, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput, cfg.fast), { kind: 'answer', model: cfg.model, estUsd });
@@ -553,8 +565,9 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const onAbort = () => up.abort();
   signal.addEventListener('abort', onAbort);
   if (signal.aborted) up.abort();
-  const filter = new ScriptFilter(), lint = new Lint(), sse = new SseParser(), events = ep.anthropic ? new AnthropicEvents() : new ResponseEvents();
-  let outChars = 0, rawChars = 0, ttft = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
+  const filter = new ScriptFilter(), lint = new Lint();
+  const read = newRead();
+  let outChars = 0, ttft = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
   let sent = false, terminal = false, complete = false, idle = false, script = '';
   const send = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; script += s; if (Number.isNaN(ttft)) ttft = now() - t0; emit({ t: 'text', d: s }); };
   try {
@@ -592,25 +605,9 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
       // have reached OpenAI, so it is booked as an estimate below.
       if (failed && failed.code !== 'network') { d.ledger.release(reqId); emit(failed); signal.removeEventListener('abort', onAbort); return; }
     } else {
-      const dec = new TextDecoder();
-      const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-      for (;;) {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const r = await Promise.race([reader.read(), new Promise<'idle'>((ok) => { timer = setTimeout(() => ok('idle'), T.idleMs); })]);
-        clearTimeout(timer);
-        if (r === 'idle') { idle = true; live?.abort(); reader.cancel().catch(() => undefined); break; }
-        if (r.done || signal.aborted) break;
-        for (const ev of sse.push(dec.decode(r.value, { stream: true }))) {
-          if ((ev as { type?: string })?.type === 'response.output_text.delta') rawChars += String((ev as { delta?: unknown }).delta ?? '').length;
-          else if ((ev as { type?: string })?.type === 'content_block_delta') { const dl = (ev as { delta?: { text?: string; thinking?: string } }).delta; rawChars += String(dl?.text ?? dl?.thinking ?? '').length; }
-          for (const u of events.handle(ev)) {
-            if (u.t === 'text') send(lint.push(filter.push(u.d)));
-            else if (u.t === 'note') emit({ t: 'note', message: u.message });
-            else if (u.t === 'usage') { usage = u.usage; terminal = true; complete = u.complete; }
-            else if (u.t === 'error') { terminal = true; failed = { t: 'error', code: 'upstream', message: scrub(u.message, ep.key), retryable: true }; }
-          }
-        }
-      }
+      const r = await readUpstream(res, ep, { signal, idleMs: T.idleMs, filter, lint, send, onNote: (m) => emit({ t: 'note', message: m }), stop: () => live?.abort() }, read);
+      idle = r.idle; usage = r.usage; terminal = r.terminal; complete = r.complete;
+      if (r.failed) failed = { t: 'error', code: 'upstream', message: r.failed, retryable: true };
       if (signal.aborted) up.abort();
       send(lint.push(filter.end()) + lint.end());
       // Stalled, cut short upstream (response.incomplete), or ended without a terminal event: what
@@ -631,7 +628,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const estimated = !usage;
   if (!sent) { d.ledger.release(reqId); return; }
   if (usage) d.cache?.observe(ck, usage, systemTokensLow());
-  const u: Usage = usage ?? estimatedUsage(est, cachedGuess, Math.ceil(Math.max(rawChars, outChars) / 3.2));
+  const u: Usage = usage ?? estimatedUsage(est, cachedGuess, Math.ceil(Math.max(read.rawChars, outChars) / 3.2));
   const usd = costUsd(cfg.model, u, '12h', cfg.fast);
   d.ledger.settle({ id: reqId, phase: d.phase, kind: 'answer', model: cfg.model, usd, estimated, tokens: tokens(u) });
   try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
@@ -640,6 +637,41 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const s = d.ledger.summary();
   emit({ t: 'done', usage, usd, estimated, spentUsd: s.totalUsd, capUsd: s.capUsd, ttftMs: Math.round(ttft), plan: filter.plan || undefined, lint: lint.notes.length ? lint.notes : undefined });
   if (failed) emit({ ...failed, code: 'cut_off', message: 'The answer was cut off.' });
+}
+
+/** What reading one upstream stream produced (readUpstream). */
+export type UpstreamRead = { usage?: Usage; terminal: boolean; complete: boolean; idle: boolean; rawChars: number; failed?: string };
+export const newRead = (): UpstreamRead => ({ terminal: false, complete: false, idle: false, rawChars: 0 });
+/**
+ * Reads an upstream answer stream (OpenAI Responses or Anthropic Messages SSE) through the script
+ * filter and lint: each cleaned piece goes to `send`. Shared by stage 2 (`ask`) and repairs
+ * (server/repair.ts). Stops on the client's abort, on `idleMs` without bytes (calls `stop` to abort
+ * the upstream), or at the end. Never throws on upstream errors: `failed` carries the scrubbed message.
+ */
+export async function readUpstream(res: Response, ep: Endpoint, o: { signal: AbortSignal; idleMs: number; filter: ScriptFilter; lint: Lint; send: (s: string) => void; onNote?: (m: string) => void; stop?: () => void },
+  /** Filled as the stream is read, so a read that throws (an abort) still tells what arrived. */
+  out: UpstreamRead = newRead()): Promise<UpstreamRead> {
+  const sse = new SseParser(), events = ep.anthropic ? new AnthropicEvents() : new ResponseEvents();
+  const dec = new TextDecoder();
+  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+  for (;;) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const r = await Promise.race([reader.read(), new Promise<'idle'>((ok) => { timer = setTimeout(() => ok('idle'), o.idleMs); })]);
+    clearTimeout(timer);
+    if (r === 'idle') { out.idle = true; o.stop?.(); reader.cancel().catch(() => undefined); break; }
+    if (r.done || o.signal.aborted) break;
+    for (const ev of sse.push(dec.decode(r.value, { stream: true }))) {
+      if ((ev as { type?: string })?.type === 'response.output_text.delta') out.rawChars += String((ev as { delta?: unknown }).delta ?? '').length;
+      else if ((ev as { type?: string })?.type === 'content_block_delta') { const dl = (ev as { delta?: { text?: string; thinking?: string } }).delta; out.rawChars += String(dl?.text ?? dl?.thinking ?? '').length; }
+      for (const u of events.handle(ev)) {
+        if (u.t === 'text') o.send(o.lint.push(o.filter.push(u.d)));
+        else if (u.t === 'note') o.onNote?.(u.message);
+        else if (u.t === 'usage') { out.usage = u.usage; out.terminal = true; out.complete = u.complete; }
+        else if (u.t === 'error') { out.terminal = true; out.failed = scrub(u.message, ep.key); }
+      }
+    }
+  }
+  return out;
 }
 
 export type PrewarmResult = { ok: boolean; usd: number; reason?: string };
@@ -764,7 +796,7 @@ function outputText(json: any): string {
   return '';
 }
 
-function tokens(u: Usage) {
+export function tokens(u: Usage) {
   return { in: u.input_tokens, cached: u.input_tokens_details?.cached_tokens ?? 0, out: u.output_tokens };
 }
 

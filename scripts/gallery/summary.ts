@@ -1,9 +1,11 @@
 // scripts/gallery/summary.ts — the gate's verdict and printed summary (pure; scripts/gate.ts runs the steps).
 import { expectedBy, unexpectedChanges, type ShotRow } from './diff.ts';
+import { AUDIT_PREFIX } from './audit.ts';
 
 export type StepResult = { name: string; ok: boolean; ms: number; detail?: string; skipped?: boolean };
 
-/** The gallery step: fails on changed/missing/errored shots no `--expect` covers, or with no baseline. */
+/** The gallery step: fails on changed/missing/errored shots no `--expect` covers, with no baseline, or on a gate audit failure. */
+
 export function galleryStep(rows: ShotRow[], expect: string[], o: { ms: number; baseline: string | null; sheet: string; errors?: string[] }): StepResult {
   if (!o.baseline) return { name: 'gallery', ok: false, ms: o.ms, detail: `no baseline: run \`npm run gallery -- --baseline\` on main first (sheet ${o.sheet})` };
   const bad = unexpectedChanges(rows, expect);
@@ -19,7 +21,9 @@ export function galleryStep(rows: ShotRow[], expect: string[], o: { ms: number; 
   const same = rows.filter((r) => r.status === 'same').length;
   lines.unshift(`${same}/${rows.length} shots unchanged vs ${o.baseline}`);
   lines.push(`sheet: ${o.sheet}`);
-  return { name: 'gallery', ok: bad.length === 0, ms: o.ms, detail: lines.join('\n') };
+  // A dev script the live gate flagged, dropped or saw drift on (scripts/gallery/audit.ts) fails the gallery.
+  const audit = (o.errors ?? []).filter((e) => e.includes(AUDIT_PREFIX));
+  return { name: 'gallery', ok: bad.length === 0 && audit.length === 0, ms: o.ms, detail: lines.join('\n') };
 }
 
 /** The replay-stress step: the skip rate must not rise above the last recorded value (a tiny epsilon for float noise). */

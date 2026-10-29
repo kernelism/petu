@@ -4,7 +4,15 @@
 // on every run.
 /** `keys`: pressed (Playwright key names) when the moment is reached, before the shot (playback controls). */
 export type Moment = { name: string; after: 'start' | 'done'; ms: number; keys?: string[] };
-export type Scene = { name: string; query: string; moments: Moment[]; /** A local file the scene needs (skipped when absent). */ needs?: string };
+export type Scene = { name: string; query: string; moments: Moment[]; /** A local file the scene needs (skipped when absent). */ needs?: string;
+  /**
+   * Audit the live gate (design 2026-10-29 §8): dev scripts play under `&gate=audit` (the app's default
+   * for them), and any gate flag, drop or shadow drift the app publishes (window.__petuGateLog) fails the
+   * gallery. Default: on for `script=` scenes; the gate demo itself fails beat 3 on purpose.
+   */
+  audit?: boolean };
+/** Is the scene's gate log audited? */
+export const audited = (s: Scene): boolean => s.audit ?? s.query.startsWith('script=');
 
 const mid = (ms: number): Moment => ({ name: `${Math.round(ms / 1000)}s`, after: 'start', ms });
 const END: Moment = { name: 'end', after: 'done', ms: 3000 };
@@ -28,6 +36,10 @@ export const SCENES: Scene[] = [
   { name: 'moves', query: 'script=moves', moments: [mid(12000), mid(26000), END] },
   // The slide as canvas: on the chart (data units), the enzyme lifted and acted out, notes in place.
   { name: 'canvas', query: 'script=canvas', moments: [mid(16000), mid(23500), mid(42000), mid(62000), END] },
+  // The live gate: beat 3 names a point nothing carries. Live: it is dropped (no words, no ink). With an
+  // injected skip and the fake repair (1.5 s), the demo's replacement plays in its place.
+  { name: 'gate', query: 'script=gate&gate=live', moments: [END], audit: false },
+  { name: 'gate-repair', query: 'script=gate&gate=live&gatefail=2:skip&repair=fake&repairms=1500', moments: [END], audit: false },
   { name: 'lec09', query: 'script=lec09', moments: [mid(14000), END], needs: 'public/dev/lec09_optical_flow.pdf' },
 ];
 

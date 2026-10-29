@@ -37,6 +37,7 @@ PETU_PHASE=iterate npm run eval -- --split dev --config terra-none [--n 2] [--on
 npm run eval -- --split dev --replay <runId> [--no-judge]       # re-play a recording: $0 generation
 npm run eval -- --split dev --replay <runId> --fake-judge       # full judge path, placeholder judgement, $0
 npm run eval -- --split dev --finish <runId>                    # redo missing judgements/summary, no generation
+npm run eval -- --replay <runId> --no-judge --gate live [--gatefail 2:skip] [--repair fake|recorded|off]   # live gate offline, $0
 npm run eval -- … --webkit                                      # also WebKit stills (playwright-core)
 npm run eval -- … --prewarm                                     # focus ask bar, wait 4s, then ask (latency)
 npm run eval -- … --qset q1 --rubric r2                         # checkpoint-2 set/rubric
@@ -63,6 +64,11 @@ Run dir: `.petu/eval/runs/<date>-<config>-<promptVersion>-<qset>[-N]/` (gitignor
   terra) and per r3 judgement `worstCaseUsd(sol, 16k in, 800 out)` (~$0.09), and refuses a run that
   doesn't fit the remaining cap. Real answers cost about half a cent (scout + stage 2).
 - The server ledger is the real guard: each call is reserved again at its own worst case.
+- Live gate: a generating, gated run with live repairs sets aside 0.3 × `MAX_REPAIRS` worst-case repairs per answer
+  (`plannedRepairUsd`); replays default to `--repair recorded` ($0). Gate metrics per answer (`Metrics.gate`: units,
+  fails, strips, drops, droppedWords, repairs by outcome, repairUsd, holds > 1 s, seamMs, liveSkipAfterPass,
+  shadowDrift) and per run (`RunMetrics.gate`); `compare.ts` rejects drops up > 1, holds up > 2, or any live skip
+  after a pass. The gallery audits dev scripts (`&gate=audit`, `scripts/gallery/audit.ts`): any flag, drop or drift fails.
 - Replays and `--fake-judge` cost $0 for generation; judging a replay still spends unless `--no-judge`.
 
 ## Invariants / contracts
