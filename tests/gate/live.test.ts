@@ -188,6 +188,24 @@ describe('LiveGate', () => {
     expect(h.gates()[0]).toMatchObject({ result: 'fail', action: 'release' });
   });
 
+  // Evidence: draw run 5b74be89 D1/D3/D5 — the opener's last word ("…once it is bound.") was released
+  // without the space after it, so the session's parser held the word until stage 2's first sentence
+  // was released 2.3 s later: a hold at the seam the gate made. A closed unit carries its boundary.
+  it('a released unit ends on a word boundary: its last word never waits for the next unit', async () => {
+    const h = harness({ preflight: fakePreflight() });
+    await h.play(['The pocket is shared, ', 'more substrate wins once it is bound.', { wait: 3000 }, { handoff: true }, ' ', { wait: 800 }, 'This time, count them. ', { wait: 2000 }, 'Then more. ']);
+    expect(h.out.join('')).toBe('The pocket is shared, more substrate wins once it is bound. This time, count them. Then more. ');
+    // every piece released before the stream's end closes its last word
+    for (const piece of h.out.slice(0, -1)) expect(piece, JSON.stringify(piece)).toMatch(/\s$/);
+  });
+
+  it('a stage-2 sentence closes its last word on release even when the next one is slow', async () => {
+    const h = harness({ preflight: fakePreflight() });
+    await h.play([{ handoff: true }, 'First sentence here. Sec', { wait: 3000 }, 'ond sentence. ']);
+    expect(h.out[0]).toBe('First sentence here. ');
+    expect(h.out.join('')).toBe('First sentence here. Second sentence. ');
+  });
+
   it('the trailing partial text at the end is one unit', async () => {
     const h = harness({ preflight: fakePreflight() });
     await h.play([{ handoff: true }, 'Done. And then the stream was cut']);

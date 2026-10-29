@@ -32,6 +32,8 @@ export const SCENES: Scene[] = [
   { name: 'scene', query: 'script=scene', moments: [mid(20000), END] },
   { name: 'scene-econ', query: 'script=scene-econ', moments: [mid(20000), END] },
   { name: 'scene-bio', query: 'script=scene-bio', moments: [mid(20000), END] },
+  // A scene whose content is small: composed into the board at the end, id labels shown with spaces.
+  { name: 'scene-small', query: 'script=scene-small', moments: [END] },
   // Demonstration moves and bound numbers: beforeafter (market), contrast (colony), limit (drag).
   { name: 'moves', query: 'script=moves', moments: [mid(12000), mid(26000), END] },
   // The slide as canvas: on the chart (data units), the enzyme lifted and acted out, notes in place.
