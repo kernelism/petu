@@ -78,6 +78,16 @@ export class ScriptParser {
       out.push({ type: 'action', action: e });
       return;
     }
+    if (a.kind === 'val' && a.x != null) {
+      // {{val id=p.y x=0}}: the readout {{find id=… of=p x=0}} would name, said here.
+      const [plot, field] = a.ref.split('.');
+      let id = `${plot}_at`;
+      for (let i = 2; this.values.ids.has(id) || this.values.finds.has(id); i++) id = `${plot}_at${i}`;
+      const find: RawAction = { kind: 'find', id, of: [plot], mode: 'at', x: a.x };
+      this.take(find, out, false);
+      const { x: _x, ...rest } = a;
+      a = { ...rest, ref: `${id}.${field ?? 'y'}` };
+    }
     if (a.kind === 'val') {
       const s = this.values.say(a);
       const v: ValAction = s ? { ...a, ...s } : a;
@@ -89,9 +99,17 @@ export class ScriptParser {
       this.held = text;
       return;
     }
+    if (a.kind === 'plot' && a.axes && !a.domainSrc && !a.domain && !a.t && !a.onChart) a = this.hostDomain(a);
     this.values.note(a);
     try { this.values.apply(a, k); } catch (e) { console.warn('[script] value model:', e); }
     out.push({ type: 'action', action: a });
+  }
+
+  /** A plot drawn onto another plot's axes without its own domain= takes the host's (its x axis). */
+  private hostDomain(a: Extract<RawAction, { kind: 'plot' }>): RawAction {
+    const host = this.values.plotSrc.get(a.axes!)?.a;
+    if (!host || host.t) return a; // unknown or parametric host: no x domain to share; the board says why
+    return { ...a, ...(host.domainSrc ? { domainSrc: host.domainSrc } : {}), ...(host.domain ? { domain: host.domain } : {}) };
   }
 
   /** Emits a held val word, glued to a word touching it on the right. False: wait for more text. */
@@ -130,7 +148,7 @@ export class ScriptParser {
         continue;
       }
       const body = this.buf.slice(2, s.end - 2);
-      const action = parseTag(body);
+      const action = parseTag(body, { isConst: (n) => n.toLowerCase() in this.values.consts });
       if (action) this.take(action, out, open > 0 && /\S/.test(before.slice(-1)));
       else console.warn('[script] skipped malformed tag:', body);
       this.buf = this.buf.slice(s.end);

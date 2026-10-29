@@ -18,6 +18,17 @@ export type Tokens = {
 };
 
 const POINT = /^-?\d*\.?\d+,-?\d*\.?\d+$/;
+/** Bare words that are real flags of some tag: never taken as a value after a key missing its `=`. */
+const FLAG_WORDS = new Set(['em', 'dash', 'outline', 'fit', 'same', 'flip', 'shade', 'area', 'slope', 'max', 'min', 'residual']);
+/**
+ * A slip: a point key written without its `=` (`{{line on=t from=Ps to Pb}}`). Recovered only when
+ * the bare word is a point key of that tag, not given already, and the next token is a bare value
+ * (no quote, no `=`, not a flag word). Anything else stays as written (a flag, or malformed).
+ */
+const POINT_KEYS: Record<string, string[]> = {
+  line: ['from', 'to', 'through'], arrow: ['from', 'to', 'through'], brace: ['from', 'to'], angle: ['at', 'from', 'to'],
+  point: ['at'], label: ['at'], circle: ['at'], shade: ['at'], write: ['at', 'center'], math: ['at', 'center'], box: ['at', 'center'],
+};
 
 /**
  * Splits a tag body into name, args, quotes and flags. Quoted spans ("…" or “…”) may contain
@@ -44,7 +55,8 @@ export function tokenize(body: string): Tokens | null {
   }
   const out: Tokens = { name: '', args: {}, quotes: [], flags: new Set(), rawArgs: {}, dupKeys: new Set() };
   let lastKey = '';
-  for (const t of raw) {
+  for (let i = 0; i < raw.length; i++) {
+    const t = raw[i];
     if (t[0] in QUOTES) { out.quotes.push(unquote(t)); lastKey = ''; continue; }
     const eq = t.indexOf('=');
     const q = t.search(/["“]/);
@@ -57,6 +69,15 @@ export function tokenize(body: string): Tokens | null {
       continue;
     }
     if (!out.name) { out.name = t.toLowerCase(); continue; }
+    const k = t.toLowerCase(), next = raw[i + 1];
+    if (POINT_KEYS[out.name]?.includes(k) && !(k in out.args) && next && !raw.slice(i + 2).some((r) => r.toLowerCase().startsWith(`${k}=`))
+      && !/["“=]/.test(next) && !FLAG_WORDS.has(next.toLowerCase())) {
+      out.args[k] = next;
+      out.rawArgs[k] = next;
+      lastKey = '';
+      i++;
+      continue;
+    }
     if (lastKey === 'pts' && (POINT.test(t) || /^[A-Za-z#(]/.test(t) && !/^(em|dash|outline|fit)$/i.test(t))) { out.args.pts += ` ${t}`; continue; }
     out.flags.add(t.toLowerCase());
     lastKey = '';

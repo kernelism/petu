@@ -76,7 +76,8 @@ export type Shape<P = Pt> =
   | { kind: 'shade'; pts: P[]; outline?: boolean }
   | { kind: 'shade'; at: P; rx: number; ry: number; outline?: boolean }
   /** Arc between the rays at→from and at→to (the smaller sweep). r in x units, default 30. */
-  | ({ kind: 'angle'; at: P; from: P; to: P; r?: number; text?: string } & W)
+  /** `arc`: written as {{arc center= from= to=}}: the resolver draws it only when from and to are equally far from the centre (r = that distance). */
+  | ({ kind: 'angle'; at: P; from: P; to: P; r?: number; text?: string; arc?: boolean } & W)
   /** Curly brace from `from` to `to`; its tip points to the left of the direction from → to. */
   | ({ kind: 'brace'; from: P; to: P; text?: string } & W)
   /** Region only. at = origin (bottom-left); the x axis runs w right, the y axis h up. */
@@ -244,7 +245,7 @@ export function targetOf(a: Action): Target | null {
 // Agent v2: relational geometry and page marks. The parser emits RawAction; the director resolves
 // it (src/geometry/resolve.ts) into an Action with plain points just before building it.
 
-import type { PtArg } from './pointExpr';
+import type { PtArg, PtExpr } from './pointExpr';
 type Ink = { id?: string; em?: boolean; weight?: Weight; dash?: boolean };
 /** `{{let on=R A=x,y B=mid(A,C)}}`: names points without drawing anything. */
 export type LetAction = { kind: 'let'; defs: [string, PtArg][]; /** names of data points on a page's calibrated chart */ chart?: string } & Target;
@@ -253,7 +254,8 @@ export type MarkShape = { kind: 'circle' | 'box' | 'highlight' | 'underline' | '
 /** A ray: from A through B, to the frame edge (regions) or `len` × |AB| (pages default 1.5). */
 export type RayShape = { kind: 'line' | 'arrow'; from: PtArg; through: PtArg; len?: number } & Target & Ink;
 /** A connector end as written: also a page mark (`p4:#d3`, `p4:#s2.a`), resolved by the resolver. */
-export type RawEnd = End | { page: number; mark: string };
+/** Before resolving: a page mark, or a section point named by a construction (`w:mid(A,B)`). */
+export type RawEnd = End | { page: number; mark: string } | { region: string; at: PtExpr };
 export type RawConnect = { kind: 'connect'; from: RawEnd; to: RawEnd; id?: string };
 /**
  * {{const v=20 g=9.8 T=2*v/g}}: named numbers for every kit formula in this answer (plots, fn=, col).
@@ -272,7 +274,8 @@ export type ValFormat = { fmt?: number; as?: 'percent' | 'abs' };
  * The parser resolves it against the value model (src/values/model.ts) when it is parsed: `said` is
  * the caption text, `spoken` the TTS form; both absent = unresolved (the caption shows `UNBOUND_TEXT`).
  */
-export type ValAction = { kind: 'val'; ref: string; said?: string; spoken?: string } & ValFormat;
+/** `x`: a plot read at x (`{{val id=p.y x=0}}`), as `{{find … x=}}` would; the parser expands it into that find. */
+export type ValAction = { kind: 'val'; ref: string; x?: string; said?: string; spoken?: string } & ValFormat;
 /** What a readout finds on a plot (or a fit): see FindAction. */
 export type FindMode = 'cross' | 'level' | 'max' | 'min' | 'at' | 'slope' | 'area' | 'inside' | 'residual';
 /**
