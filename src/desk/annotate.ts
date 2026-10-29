@@ -2,7 +2,7 @@
 // page's own text or figures, with a leader line when it has to sit apart. Pure (target space).
 import type { SPt, SRect } from '../geometry/space';
 
-export type NotePlace = { box: SRect; /** from the note's edge to the target's edge; absent when they touch */ leader?: [SPt, SPt] };
+export type NotePlace = { box: SRect; /** from the note's edge to the target's edge; absent when they touch */ leader?: [SPt, SPt]; /** lower is better: distance, plus what its leader crosses */ score: number };
 
 const inter = (a: SRect, b: SRect) => {
   const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x), h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
@@ -49,7 +49,10 @@ export function placeNote(target: SRect, w: number, h: number, obstacles: SRect[
       { x: target.x - off - w, y: target.y - off - h }, // above left
       { x: target.x - off - w, y: target.y + target.h + off }, // below left
     ];
-    place.forEach((p, i) => cands.push({ r: { x: p.x, y: p.y, w, h }, d: off + (i < 2 ? 0 : i < 4 ? h * 0.5 : h) }));
+    // Above and below, also flush with the target's left or right edge (a note over a line of an
+    // equation reads with it, and fits between the page's lines where a centred one would not).
+    for (const y of [target.y - off - h, target.y + target.h + off]) place.push({ x: target.x, y }, { x: target.x + target.w - w, y });
+    place.forEach((p, i) => cands.push({ r: { x: p.x, y: p.y, w, h }, d: off + (i < 2 ? 0 : i < 4 || i >= 8 ? h * 0.5 : h) }));
   }
   // The margins: at the target's height, in the free column on either side of everything.
   const content = solid.reduce((u, o) => ({ x0: Math.min(u.x0, o.x), x1: Math.max(u.x1, o.x + o.w) }), { x0: target.x, x1: target.x + target.w });
@@ -61,11 +64,11 @@ export function placeNote(target: SRect, w: number, h: number, obstacles: SRect[
     if (!free(c.r)) continue;
     const a = nearestOn(c.r, tc), b = nearestOn(target, a);
     const crossed = solid.filter((o) => crosses(a, b, o)).length;
-    const score = c.d + crossed * 4 * h;
+    const score = c.d + crossed * 12 * h; // a leader through the page's words reads as crossing them out
     if (!best || score < best.score) best = { r: c.r, score };
   }
   if (!best) return null;
   const a = nearestOn(best.r, tc), b = nearestOn(target, a);
   const far = Math.hypot(a.x - b.x, a.y - b.y) > gap * 3;
-  return { box: best.r, ...(far ? { leader: [a, b] as [SPt, SPt] } : {}) };
+  return { box: best.r, score: best.score, ...(far ? { leader: [a, b] as [SPt, SPt] } : {}) };
 }

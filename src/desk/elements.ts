@@ -450,8 +450,8 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
   }
 }
 
-/** A page note's widest line, CSS px (it wraps under itself past this). */
-const NOTE_MAX_PX = 210;
+/** A page note's widest line, CSS px (it wraps under itself past this): tried wide, then narrow. */
+const NOTE_WRAP_PX = [210, 110];
 /** Air between a page note and the page's own text and figures, CSS px. */
 const NOTE_GAP_PX = 5;
 
@@ -474,12 +474,18 @@ async function pageNote(a: Extract<DrawAction, { kind: 'annot' }>, ctx: TargetCt
   await fontsFor(a.text);
   const page = [...runs.map((r) => ctx.rectToSpace(r.rect)), ...(a.avoid ?? []).map((r) => ctx.rectToSpace(r))];
   const px = (n: number) => n / Math.max(ctx.scale(), 1e-3);
+  // One line where it fits; wrapped narrower when that sits closer (a note in a tight margin).
   const fit = (layer: SVGGElement) => {
     const o = textOpts(ctx, env, textPx(ctx, 'label'), a.em);
-    const lines = wrapLines(layer, a.text, o, px(NOTE_MAX_PX));
-    const b = linesBox(layer, lines, o, { x: 0, y: 0 });
-    const place = placeNote(target, b.w, b.h, [...page, ...env.registry.obstacles(ctx.target)], bounds(ctx), px(NOTE_GAP_PX));
-    return place ? { o, lines, place, h0: -b.y * 2 } : null;
+    let best: { o: TextOpts; lines: string[]; place: NonNullable<ReturnType<typeof placeNote>>; h0: number } | null = null;
+    for (const maxPx of NOTE_WRAP_PX) {
+      const lines = wrapLines(layer, a.text, o, px(maxPx));
+      const b = linesBox(layer, lines, o, { x: 0, y: 0 });
+      const place = placeNote(target, b.w, b.h, [...page, ...env.registry.obstacles(ctx.target)], bounds(ctx), px(NOTE_GAP_PX));
+      // A wrapped note must win clearly: one line reads better at the same distance.
+      if (place && (!best || place.score + (lines.length - best.lines.length) * b.h < best.place.score)) best = { o, lines, place, h0: -b.y * 2 };
+    }
+    return best;
   };
   const est = fit(ctx.layers.agent);
   if (!est) return 'no free room for the note';
@@ -561,7 +567,11 @@ function chartPlot(a: Extract<DrawAction, { kind: 'plot' }>, ctx: TargetCtx, env
   return strokePlan(a, ctx, env, { strokes, dash: a.dash }, [], async (g, sig, k) => {
     await fontsFor(label);
     const o = textOpts(ctx, env, textPx(ctx, 'label'), a.em);
-    const box = placeText(ctx, env, g, label, o, end, a.labelAt === 'top' ? 'n' : 'e', 4);
+    // Clear of the slide's own words too (its labels sit right where a new curve ends).
+    const air = 6 / Math.max(ctx.scale(), 1e-3);
+    const page = (await ctx.runs()).map((r) => ctx.rectToSpace(r.rect)).map((r) => ({ x: r.x - air, y: r.y - air, w: r.w + 2 * air, h: r.h + 2 * air }));
+    const m = measureText(g, label, o);
+    const box = placeClear(end, m.w, m.h, a.labelAt === 'top' ? 'n' : 'e', 4, env.registry.segments(ctx.target), [...env.registry.obstacles(ctx.target), ...page], bounds(ctx));
     await writeLabel(g, box, label, o, env, sig, k);
   });
 }
