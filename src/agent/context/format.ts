@@ -1,5 +1,6 @@
 // src/agent/context/format.ts
 import { formatMarks } from './marks.ts';
+import { formatCharts } from './charts.ts';
 import type { PageGround } from './types';
 
 const shape = (aspect: number) => (Math.abs(aspect - 0.5625) < 0.03 ? '16:9 slide' : Math.abs(aspect - 0.75) < 0.03 ? '4:3 slide' : aspect > 1.2 ? 'portrait page' : 'page');
@@ -23,7 +24,7 @@ export function formatPage(g: PageGround, o: { visible?: boolean; image: boolean
   const what = (g.noText ? 'no extractable text: point with marks, or by coordinates inside images' : o.image ? 'image attached' : 'listing only, no image')
     + (g.mathOutlines ? '; its equations are drawn as outlines: they are missing from the lines and appear only in the image (#e boxes)' : '');
   const head = `PAGE ${g.page} (${o.visible ? 'visible; ' : ''}${shape(g.aspect)}; ${what})`;
-  const marks = formatMarks(g.marks);
+  const marks = [formatMarks(g.marks), g.charts?.length ? formatCharts(g.charts) : ''].filter(Boolean).join('\n');
   const lines: string[] = [];
   const max = o.maxChars ?? VISIBLE_CHARS;
   let n = head.length + marks.length + 4;
