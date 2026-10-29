@@ -166,6 +166,26 @@ Work on the slide and from it, rather than drawing a disconnected copy.
    ends (`desk.frameBoth`); `plan.draw` animates strokes/text. A string anywhere = skipped, with reason
    (shown in `?debug` and recorded by the eval).
 
+## Forgiven slips (skip, never guess)
+
+Small slips whose intent is unambiguous are read as meant; anything ambiguous stays a skip, and
+`server/lint.ts` says what to write instead.
+- Parser (`tokenize.ts`, `pointExpr.ts`, `parseTag.ts`, `parseKit.ts`, `parser.ts`): a point key
+  missing its `=` (`from=Ps to Pb`: only a point key of that tag, followed by a bare value that is
+  no flag word); a literal in one pair of parentheses (`at=(0,-150)`); a connector end that is a
+  construction (`to=w:mid(A,B)`); plot `axes=` without `domain=` takes the host plot's domain;
+  `{{val id=p.y x=0}}` expands into `{{find … x=0}}`; `vals=<block id>` is `map=<id> fn="x"` (a
+  constant's name is left to the constants path); `op=<one-block op> vals=<literals>` applies the op
+  (shares normalise anyway); `{{arc center=P from=D to=B}}` is an angle whose radius reaches D and
+  B — the resolver draws it only when |PD| = |PB| (±2%) and D, B are less than a half turn apart.
+- Resolver: `highlight`/`underline` on a mark with no words boxes it / runs a line under it.
+- Director: a connector naming a section a later tag declares waits for it (≤ `REGION_WAIT_MS`).
+- Board: `emph` on a section id flashes a frame around its ink (`fade` on one skips: which
+  elements?); `bars axes=<bar chart>` draws bars on that chart's y scale.
+- Stay drops: two columns in `vals=` (lint: map= or two blocks), a tag over 800 characters (lint:
+  a hand curve should be `plot fn=`), a half-turn or unequal arc, quotes of equations a page draws
+  as outlines (no text to find: the model should use `mark=#eN`).
+
 ## Invariants / contracts
 
 - Every action carries `at`. Ink starts on its word; target-visible → ink-visible p90 ≤ 150ms.
