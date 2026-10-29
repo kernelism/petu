@@ -13,6 +13,8 @@ import { buildElement } from '../desk/elements';
 import { preloadMath } from '../desk/math';
 import type { BuildElement, BuildEnv, DeskApi, ElementPlan, TargetCtx } from '../desk/types';
 import { bodyFraction } from '../desk/layout';
+import { meaningfulUnit, type Unit } from '../locate/unit';
+import { isJourney } from './parts';
 
 /** Ink actions sharing a word start this far apart, in order. */
 export const STAGGER_MS = 120;
@@ -20,6 +22,15 @@ export const STAGGER_MS = 120;
 export const ACTION_TIMEOUT_MS = 3000;
 /** Rule 1: before the view moves, ink in flight gets this long to land; then it completes at once. */
 export const LAND_MS = 150;
+/** A journey (a move to a page that isn't adjacent): the narration waits this long at the move's word. */
+export const JOURNEY_HOLD_MS = 800;
+/** After a journey's scroll lands, the view rests this long before the destination's first mark draws. */
+export const ARRIVAL_MS = 350;
+/** Actions this far behind their word (a seek's fast-forward) travel without a journey beat. */
+const LATE_MS = 1000;
+
+/** A move to another page that isn't next to the one in view: announced, held and rested on. */
+export type Journey = { from: number; to: number; at: number };
 
 /**
  * Timing of one action, for the ?debug panel and the audit. All times are performance.now() ms.
@@ -51,11 +62,18 @@ type Deps = {
   onTiming?(t: ActionTiming): void;
   /** Page marks (#d3, #s2, #t12) of the context sent with the question. Default: none. */
   grounding?: () => Grounding;
+  /** A journey starts (the view is about to travel): the app shows the route. */
+  onJourney?(j: Journey): void;
+  /** Asks the narration for `ms` of silence before the first word at or after `at` (the arrival beat). */
+  hold?(at: number, ms: number): void;
+  /** Highlights and underlines grow to meaningful units (src/locate/unit.ts). Default on. */
+  units?: boolean;
 };
 const NO_GROUNDING: Grounding = { mark: () => undefined };
 
 type LaneKind = 'scroll' | 'sketch' | 'clear' | 'reveal' | 'frame';
-type LaneEntry = { kind: LaneKind; started: Promise<void>; done: Promise<void> };
+/** `journey`: set when a scroll turns out to travel (ink after it waits for the arrival); `arrivedAt` then. */
+type LaneEntry = { kind: LaneKind; started: Promise<void>; done: Promise<void>; journey?: boolean; arrivedAt?: number };
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.max(0, ms)));
 const now = () => performance.now();
@@ -110,9 +128,9 @@ export class Director {
     const t: ActionTiming = { action: a, firedAt: at, queuedAt: now(), startedAt: NaN };
     if (this.pendingReset != null) this.resetFor(a, signal);
     if (isLayout(a)) {
-      const e = this.enqueueLayout(a.kind, async (sig) => {
+      const e: LaneEntry = this.enqueueLayout(a.kind, async (sig) => {
         this.report(t, { startedAt: now() });
-        const skipped = await this.execLayout(a, sig);
+        const skipped = await this.execLayout(a, sig, e, at);
         this.report(t, { endedAt: now(), skipped: skipped || undefined });
       }, signal);
       this.track(e.done);
@@ -269,7 +287,7 @@ export class Director {
     for (const c of this.drawing.keys()) c.abort();
   };
 
-  private async execLayout(a: LayoutAction, signal: AbortSignal): Promise<string | void> {
+  private async execLayout(a: LayoutAction, signal: AbortSignal, entry?: LaneEntry, at = now()): Promise<string | void> {
     if (a.kind === 'clear') return this.clear();
     const desk = this.desk();
     if (!desk) return 'no desk';
@@ -287,10 +305,19 @@ export class Director {
     }
     if (a.page < 1 || a.page > v.numPages()) return 'page out of range';
     if (!desk.following()) return 'student is driving'; // rule 6
+    // A journey: the route is shown, the narration holds at the move's word, and ink waits for the arrival.
+    const from = v.currentPage();
+    const journey = isJourney(from, a.page) && now() - at < LATE_MS;
+    if (journey && entry) entry.journey = true;
+    if (journey) { this.d.onJourney?.({ from, to: a.page, at }); this.d.hold?.(at, JOURNEY_HOLD_MS); }
     await this.land(); // a scroll always moves the view
     if (signal.aborted) return;
     this.d.onScrolledTo(a.page); // the page indicator names the destination as the glide starts
     await desk.scrollToPage(a.page, a.y);
+    if (journey && !signal.aborted) {
+      await wait(ARRIVAL_MS); // the arrival beat: the page rests before anything draws on it
+      if (entry) entry.arrivedAt = now();
+    }
   }
 
   /** The slide's body text size (a fraction of the page width) from its text layer; null when it has none. Never waits long. */
@@ -334,15 +361,55 @@ export class Director {
 
   /** Builds with the per-step timeout. Strings are skip reasons. */
   private async buildPlain(a: InkAction, env: BuildEnv, signal: AbortSignal): Promise<ElementPlan | string> {
-    const r = await this.guarded(() => (this.d.build ?? buildElement)(a, env), signal);
+    const r = await this.guarded(() => this.buildUnit(a, env), signal);
     return r === 'timeout' ? 'timeout' : r;
+  }
+
+  /**
+   * Page highlights and underlines mark meaningful units: a fragment grows to its sentence, bullet
+   * or equation (one mark per line, swept in reading order), then the quoted words are highlighted
+   * again inside it (the multiply layer deepens them). The quoted words keep the action's id.
+   */
+  private async buildUnit(a: InkAction, env: BuildEnv): Promise<ElementPlan | string> {
+    const build = this.d.build ?? buildElement;
+    if ((a.kind !== 'highlight' && a.kind !== 'underline') || a.page == null || a.region != null || this.d.units === false) return build(a, env);
+    const unit = await this.unitOf(a.page, a.quote, a.near);
+    if (!unit) return build(a, env);
+    const pieces = (await Promise.all(unit.pieces.map((p) => build({ ...a, id: undefined, quote: p.quote, near: p.near } as InkAction, env))))
+      .filter((p): p is ElementPlan => typeof p === 'object');
+    if (!pieces.length) return build(a, env);
+    const inner = unit.inner ? await build({ ...a, kind: 'highlight', quote: unit.inner.quote, near: unit.inner.near } as InkAction, env) : null;
+    const plans = [...pieces, ...(inner && typeof inner === 'object' ? [inner] : [])];
+    const xs = plans.map((p) => p.bbox);
+    const x = Math.min(...xs.map((b) => b.x)), y = Math.min(...xs.map((b) => b.y));
+    const bbox = { x, y, w: Math.max(...xs.map((b) => b.x + b.w)) - x, h: Math.max(...xs.map((b) => b.y + b.h)) - y };
+    return {
+      target: pieces[0].target, bbox,
+      draw: async (signal, k) => {
+        for (const p of plans) {
+          if (signal.aborted) { await p.draw(signal, k); continue; } // aborted: each completes at once
+          const r = await p.draw(signal, k);
+          if (typeof r === 'string' && p === pieces[0]) return r;
+        }
+      },
+    };
+  }
+
+  private async unitOf(page: number, quote: string, near?: { x: number; y: number }): Promise<Unit | null> {
+    const v = this.d.viewer();
+    if (!v || page < 1 || page > v.numPages()) return null;
+    try {
+      await v.ensureSize(page);
+      return meaningfulUnit(await v.textRuns(page), quote, near, { aspect: v.spaceHeight(page) / 1000 });
+    } catch { return null; }
   }
 
   /** Waits until ink may start relative to the layout queued before it: the step is over, or its target is already on screen. */
   private async afterLayout(dep: LaneEntry, desk: DeskApi, t: Target | null, r: SRect | null, signal: AbortSignal) {
     if (!desk.following() && (dep.kind === 'scroll' || dep.kind === 'reveal' || dep.kind === 'frame')) return; // rule 6: no view to wait for
     if (t && r && desk.following() && (dep.kind === 'scroll' || dep.kind === 'reveal')) {
-      await Promise.race([dep.done, dep.started.then(() => (signal.aborted ? false : desk.whenVisible(t, r)))]);
+      // A journey's ink waits for the arrival beat, not just for its target to come into view.
+      await Promise.race([dep.done, dep.started.then(() => (signal.aborted ? false : dep.journey ? dep.done.then(() => true) : desk.whenVisible(t, r)))]);
     } else await dep.done;
   }
 
@@ -415,7 +482,8 @@ export class Director {
     if (typeof plan !== 'object') return finish('no plan');
     const p = plan;
     desk.noteInk?.(p.target, p.bbox);
-    const k = backlog(now() - t.firedAt);
+    // Ink after a journey's arrival is not behind: the narration held for it.
+    const k = backlog(now() - Math.max(t.firedAt, dep?.arrivedAt ?? -Infinity));
     this.report(t, { startedAt: now() });
     const own = new AbortController();
     const onAbort = () => own.abort();

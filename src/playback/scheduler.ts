@@ -28,6 +28,10 @@ export const RESUME_MS = 1000;
 export const FLUSH_MS = 200;
 /** A word arriving this soon after the narration ran dry plays at once (a hiccup, not a stall). */
 const GRACE_MS = 120;
+/** After a resume or a seek, the next word starts this much later (a breath, not a jolt). */
+export const RESUME_GAP_MS = 250;
+/** Actions skipped over by a forward seek fire this far "behind" their word: the director fades them in quickly. */
+export const SEEK_LAG_MS = 1500;
 
 type PendingAction = { action: Action; word: number };
 
@@ -49,6 +53,7 @@ export class Scheduler {
   private started = false;
   private ended = false;
   private stopped = false;
+  private paused = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private clock: NarrationClock, private cb: SchedulerCallbacks, private opts: SchedulerOptions = {}) {}
@@ -61,6 +66,77 @@ export class Scheduler {
       else this.acts.push({ action: e.action, word: this.words.length });
     }
     this.tick();
+  }
+
+  /** Whether pause, resume, hold and seek work (the clock can re-time its words). */
+  canPause(): boolean { return !!this.clock.retime; }
+  isPaused(): boolean { return this.paused; }
+  /** Index of the next word to be spoken (= the number spoken so far). */
+  position(): number { return this.spoken; }
+
+  /**
+   * Stops handing out words and actions at the current word. Words keep streaming in (buffered);
+   * ink already under way finishes.
+   */
+  pause(): boolean {
+    if (this.stopped || this.paused || !this.clock.retime) return false;
+    this.paused = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    return true;
+  }
+
+  /** Continues from the next unspoken word, after a short breath. */
+  resume(): boolean {
+    if (this.stopped || !this.paused) return false;
+    this.paused = false;
+    this.retimeFrom(this.spoken, this.clock.now() + RESUME_GAP_MS);
+    this.tick();
+    return true;
+  }
+
+  /**
+   * Inserts `ms` of silence before the first word that starts at or after `at` (a journey's arrival
+   * beat: the view travels and settles before the narration goes on).
+   */
+  hold(at: number, ms: number): void {
+    if (this.stopped || !this.clock.retime || ms <= 0) return;
+    let i = this.spoken;
+    while (i < this.released && (this.clock.wordStart(i) ?? Infinity) < at - 1) i++;
+    const base = i < this.released ? this.clock.wordStart(i)! : Math.max(at, this.clock.now(), this.clock.endsAt());
+    this.retimeFrom(i, base + ms);
+    if (!this.paused) this.tick();
+  }
+
+  /**
+   * Plays on from word `target`. Forward: the words in between are shown at once and their actions
+   * fire fast (they land quickly, so the board is what it would have been). Back: the narration
+   * repeats from there; actions already fired are not fired again (the ink is still on the page).
+   * Unpauses. False when the clock can't seek.
+   */
+  seek(target: number): boolean {
+    if (this.stopped || !this.clock.retime) return false;
+    const to = Math.max(0, Math.min(Math.round(target), this.words.length));
+    const now = this.clock.now();
+    this.paused = false;
+    if (to >= this.spoken) {
+      while (this.released < to) this.clock.enqueue(this.words[this.released++]);
+      this.started = true;
+      while (this.fired < this.acts.length && this.acts[this.fired].word < to) {
+        const a = this.acts[this.fired++];
+        this.cb.onAction(a.action, now - SEEK_LAG_MS);
+        if (this.stopped) return true;
+      }
+      while (this.spoken < to) { this.cb.onWord(this.words[this.spoken], this.spoken); this.spoken++; if (this.stopped) return true; }
+    } else this.spoken = to;
+    this.lastFire = Math.min(this.lastFire, now);
+    this.retimeFrom(to, now + RESUME_GAP_MS);
+    this.tick();
+    return true;
+  }
+
+  private retimeFrom(i: number, start: number) {
+    this.clock.retime?.(Math.min(i, this.released), start);
   }
 
   stop(): void {
@@ -119,7 +195,7 @@ export class Scheduler {
   private tick = (): void => {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    if (this.stopped) return;
+    if (this.stopped || this.paused) return;
     const now = this.clock.now();
 
     while (this.canRelease(now)) {

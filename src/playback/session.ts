@@ -16,21 +16,39 @@ type Deps = {
   idle?(): Promise<void>;
   /** How far ahead of its word each action fires. Defaults to actionLeadMs. */
   leadMs?(a: Action): number;
+  /** The script so far (all words parsed, every action with the index of the word it fires with), after each chunk. */
+  onScript?(s: ParsedScript): void;
 };
+
+/** The parsed script: `acts[i].word` is the index of the word the action fires with (= words.length for trailing actions). */
+export type ParsedScript = { words: string[]; acts: { action: Action; word: number }[]; ended: boolean };
 
 /** One answer: stream → parser → scheduler. Abortable. */
 export class AnswerSession {
   private ctrl = new AbortController();
   private scheduler: Scheduler | null = null;
   private words: string[] = [];
+  private script: ParsedScript = { words: [], acts: [], ended: false };
   constructor(private d: Deps) {}
+
+  /** Pause/resume/seek (see Scheduler). False when nothing changed. */
+  pause(): boolean { return this.scheduler?.pause() ?? false; }
+  resume(): boolean { return this.scheduler?.resume() ?? false; }
+  isPaused(): boolean { return this.scheduler?.isPaused() ?? false; }
+  canPause(): boolean { return this.scheduler?.canPause() ?? false; }
+  /** Index of the next word to be spoken. */
+  position(): number { return this.scheduler?.position() ?? 0; }
+  seek(word: number): boolean { return this.scheduler?.seek(word) ?? false; }
+  /** A journey's arrival beat: `ms` of silence before the first word at or after `at`. */
+  hold(at: number, ms: number): void { this.scheduler?.hold(at, ms); }
 
   async start(source: (signal: AbortSignal) => AsyncIterable<string>): Promise<void> {
     const parser = new ScriptParser();
     const signal = this.ctrl.signal;
     this.d.onState('loading');
     const scheduler = new Scheduler(this.d.clock, {
-      onWord: (w, i) => { if (i === 0) this.d.onState('playing'); this.words = [...this.words, w]; this.d.onWord(this.words); },
+      // A seek back repeats words: the shown narration is cut back to the word being spoken.
+      onWord: (w, i) => { if (i === 0 && !this.words.length) this.d.onState('playing'); this.words = [...this.words.slice(0, i), w]; this.d.onWord(this.words); },
       onAction: (a, at) => this.d.onAction(a, at),
       // Done means the narration has ended and the last ink has landed.
       onDone: () => {
@@ -42,6 +60,18 @@ export class AnswerSession {
     this.scheduler = scheduler;
     const feed = (events: ScriptEvent[]) => {
       if (this.d.onParsed) for (const e of events) if (e.type === 'action') this.d.onParsed(e.action);
+      if (this.d.onScript && events.length) {
+        const s = this.script;
+        const words = [...s.words], acts = [...s.acts];
+        let ended = s.ended;
+        for (const e of events) {
+          if (e.type === 'word') words.push(e.text);
+          else if (e.type === 'action') acts.push({ action: e.action, word: words.length });
+          else ended = true;
+        }
+        this.script = { words, acts, ended };
+        this.d.onScript(this.script);
+      }
       scheduler.push(events);
     };
     try {

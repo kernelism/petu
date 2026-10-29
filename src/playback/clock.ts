@@ -15,6 +15,12 @@ export interface NarrationClock {
   wordStart(i: number): number | null;
   /** When the last queued word finishes (≤ now() once everything has been spoken). */
   endsAt(): number;
+  /**
+   * Re-times the timeline from word `from` on: word `from` starts at `start`, the rest follow at their
+   * own pace (`from` = the number of queued words: the next word queued starts no earlier than
+   * `start`). Pause, seek and a journey's arrival beat use it; a clock without it can't pause.
+   */
+  retime?(from: number, start: number): void;
 }
 
 const SENTENCE_END = /[.!?:]["')\]’”]?$/;
@@ -44,6 +50,7 @@ export function syllables(word: string): number {
 
 export class PacedClock implements NarrationClock {
   private starts: number[] = [];
+  private words: string[] = [];
   private end = -Infinity;
   /** `duration` overrides the word-length model (tests). */
   constructor(
@@ -65,8 +72,15 @@ export class PacedClock implements NarrationClock {
   enqueue(word: string): number {
     const start = Math.max(this.now(), this.end);
     this.starts.push(start);
+    this.words.push(word);
     this.end = start + this.durationMs(word);
     return this.starts.length - 1;
+  }
+
+  retime(from: number, start: number): void {
+    let t = start;
+    for (let i = Math.max(0, from); i < this.starts.length; i++) { this.starts[i] = t; t += this.durationMs(this.words[i]); }
+    this.end = t;
   }
 
   wordStart(i: number): number | null { return this.starts[i] ?? null; }
