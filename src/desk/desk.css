@@ -188,5 +188,48 @@
 .desk-wire.is-hidden { opacity: 0; }
 
 @media (prefers-reduced-motion: reduce) {
-  .desk-board, .desk-board.is-resizing, .desk-region, .desk-region-layer, .desk-wire { transition: none !important; }
+  .desk-board, .desk-board.is-resizing, .desk-region, .desk-region-layer, .desk-wire, .desk-zoom-btn { transition: none !important; }
 }
+
+/* Board zoom: − NN% + | Fit, at the board's bottom-right (shown with the board). */
+.desk-zoom {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 34px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .9);
+  box-shadow: 0 0 0 .5px var(--hairline), 0 2px 8px rgba(0, 0, 0, .08);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.desk-zoom-btn {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out, ease-out), color 120ms var(--ease-out, ease-out), transform 120ms var(--ease-out, ease-out);
+}
+.desk-zoom-btn:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.desk-zoom-btn:active:not(:disabled) { background: var(--press); transform: scale(.94); }
+.desk-zoom-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+.desk-zoom-btn:disabled { color: rgba(0, 0, 0, .22); cursor: default; }
+.desk-zoom-fit { padding: 0 6px; font-weight: 500; }
+.desk-zoom-pct { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; font-weight: 500; }
+.desk-zoom-sep { width: 1px; height: 14px; margin: 0 2px; background: var(--hairline); }
+/* Zoomed past the board's width: it scrolls sideways too (no visible scrollbar). */
+.desk-board-scroll.is-wide { overflow-x: auto; }

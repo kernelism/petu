@@ -66,6 +66,8 @@ export type DeskState = {
   column: { x: number; w: number };
   /** The board in view px, while open. */
   board?: ViewRect;
+  /** The student's board zoom (1 = as laid out), while the board is open. */
+  zoom?: number;
 };
 
 /** What the drawing toolkit needs to draw into one target. */
