@@ -18,7 +18,9 @@
     "ctx-bench": "node --max-old-space-size=8192 --experimental-strip-types scripts/corpus/ctxBench.ts",
     "replay-stress": "node --import ./scripts/lib/tsResolve.mjs --experimental-transform-types --no-warnings scripts/eval/replayStress.ts",
     "gallery": "node --experimental-strip-types scripts/gallery/run.ts",
-    "gate": "node --experimental-strip-types scripts/gate.ts"
+    "gate": "node --experimental-strip-types scripts/gate.ts",
+    "gate-beats": "node --import ./scripts/lib/tsResolve.mjs --experimental-transform-types --no-warnings scripts/gate-beats/run.ts",
+    "gate-beats-timing": "node --import ./scripts/lib/tsResolve.mjs --experimental-transform-types --no-warnings scripts/gate-beats/timing.ts"
   },
   "dependencies": {
     "katex": "0.18.11",
