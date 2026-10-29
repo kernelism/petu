@@ -23,7 +23,8 @@
 // No server-side refusal fallback is requested: a benchmark answer must come from the model it names.
 // A `refusal` stop ends the answer as cut short (`complete: false`).
 //
-// Secrets: the key (PETU_ANTHROPIC_KEY, read only in server/env.ts) is used only in the header below.
+// Secrets: the key (PETU_ANTHROPIC_KEY or ANTHROPIC_API_KEY from the .env file only, read in server/env.ts)
+// is used only in the header below.
 import type { Usage } from './prices';
 import type { Upstream } from './sse';
 import type { Effort } from './openai';
@@ -33,7 +34,7 @@ export const ANTHROPIC_VERSION = '2023-06-01';
 export const isAnthropicModel = (model: string): boolean => model.startsWith('claude-');
 export const anthropicHeaders = (key: string) => ({ 'x-api-key': key, 'anthropic-version': ANTHROPIC_VERSION, 'content-type': 'application/json' });
 /** What a missing key says (the answer stops; no request is sent). */
-export const NO_ANTHROPIC_KEY = 'PETU_MODEL is a Claude model but PETU_ANTHROPIC_KEY is not set: add it to .env and restart (ANTHROPIC_API_KEY is deliberately not read).';
+export const NO_ANTHROPIC_KEY = 'PETU_MODEL is a Claude model but no Anthropic key was found: put PETU_ANTHROPIC_KEY (or ANTHROPIC_API_KEY) in .env and restart. Only the .env file is read for it; a key exported in the shell is ignored.';
 
 /** Models whose thinking cannot be turned off (petu effort `none` is refused). */
 export const ANTHROPIC_NO_NONE = new Set(['claude-opus-5-5']);

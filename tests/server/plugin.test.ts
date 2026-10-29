@@ -14,14 +14,14 @@ const KEY = 'sk-test-PLUGIN-xyz';
 describe('parseEnv', () => {
   const from = (o: Record<string, string>) => (k: string) => o[k];
   const opts = { root: '/repo', home: '/home/u' };
-  it('defaults: terra/none (answer and scout), founder phase with $3/day, phase caps incl. the lesson phases, $40 total, prior $0.0076', () => {
+  it('defaults: terra/none (answer and scout), founder phase with $3/day, phase caps incl. the lesson phases, $60 total, prior $0.0076', () => {
     const e = parseEnv(from({}), opts);
     expect(e.key).toBe('');
     expect(e.model).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 3200, fast: false, explicitCache: true });
     expect(e.scout).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600, fast: false, explicitCache: true });
     expect(e.phase).toBe('founder');
-    expect(e.caps).toEqual({ totalUsd: 40, dailyUsd: 3, phaseUsd: PHASE_CAPS });
-    expect(PHASE_CAPS).toEqual({ dev: 1, bakeoff: 6, iterate: 7, validate: 2, founder: 21.99, lessondev: 1.5, lessonbake: 3, lessoniter: 3.5, lessonval: 2 });
+    expect(e.caps).toEqual({ totalUsd: 60, dailyUsd: 3, phaseUsd: PHASE_CAPS });
+    expect(PHASE_CAPS).toEqual({ dev: 1, bakeoff: 6, iterate: 7, validate: 2, founder: 21.99, lessondev: 1.5, lessonbake: 3, lessoniter: 3.5, lessonval: 2, bench: 15 });
     expect(e.priorUsd).toBe(0.0076);
     expect(e.pdfDirs).toEqual(['/home/u/Documents/670/contents', '/repo/public/dev']);
   });
@@ -35,12 +35,12 @@ describe('parseEnv', () => {
     expect(e.key).toBe(KEY);
   });
   it('the lesson phases: selectable, no daily cap, their own budgets (overridable per run)', () => {
-    for (const [p, cap] of [['lessondev', 1.5], ['lessonbake', 3], ['lessoniter', 3.5], ['lessonval', 2]] as const) {
+    for (const [p, cap] of [['lessondev', 1.5], ['lessonbake', 3], ['lessoniter', 3.5], ['lessonval', 2], ['bench', 15]] as const) {
       const e = parseEnv(from({ PETU_PHASE: p }), opts);
       expect(e.phase).toBe(p);
       expect(e.caps.dailyUsd).toBeUndefined();
       expect(e.caps.phaseUsd?.[p]).toBe(cap);
-      expect(e.caps.totalUsd).toBe(40);
+      expect(e.caps.totalUsd).toBe(60);
     }
     expect(parseEnv(from({ PETU_PHASE: 'lessondev', PETU_CAP_LESSONDEV: '0.5' }), opts).caps.phaseUsd?.lessondev).toBe(0.5);
     // The founder reserve and daily cap are unchanged.
@@ -54,7 +54,7 @@ describe('parseEnv', () => {
     expect(() => parseEnv(from({ PETU_SCOUT_MODEL: 'gpt-9' }), opts)).toThrow(/PETU_SCOUT_MODEL/);
     expect(() => parseEnv(from({ PETU_SCOUT_MODEL: 'gpt-6.1-sol' }), opts)).toThrow(/none/);
   });
-  it('the total can be lowered but never raised past $40', () => {
+  it('the total can be lowered but never raised past $60', () => {
     expect(parseEnv(from({ PETU_TOTAL_CAP_USD: '0' }), opts).caps.totalUsd).toBe(0);
     expect(parseEnv(from({ PETU_TOTAL_CAP_USD: '100' }), opts).caps.totalUsd).toBe(MAX_TOTAL_USD);
   });
@@ -138,7 +138,7 @@ describe('createApi', () => {
     const api = createApi({ env: env(), root, fetch: upstream([]).f });
     expect(JSON.parse(readFileSync(join(root, '.petu/spend.json'), 'utf8')).priorUsd).toBe(0.0076);
     expect(readFileSync(join(root, '.petu/eval-token'), 'utf8')).toBe(api.token);
-    expect(api.statusLine()).toBe('petu: model gpt-6.1-terra/none · spent $0.01 of $40 · phase founder');
+    expect(api.statusLine()).toBe('petu: model gpt-6.1-terra/none · spent $0.01 of $60 · phase founder');
     expect(api.statusLine()).not.toContain(KEY);
   });
 
@@ -239,7 +239,7 @@ describe('createApi', () => {
     const res = fakeRes();
     await api.handle(fakeReq('GET', '/api/spend'), res, () => {});
     const s = JSON.parse(res.body());
-    expect(s).toMatchObject({ totalUsd: 0.0076, capUsd: 40, todayUsd: 0, dailyCapUsd: 3, phase: 'founder', phaseCapUsd: 21.99 });
+    expect(s).toMatchObject({ totalUsd: 0.0076, capUsd: 60, todayUsd: 0, dailyCapUsd: 3, phase: 'founder', phaseCapUsd: 21.99 });
     expect(s.blocked).toBeUndefined();
   });
 

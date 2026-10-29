@@ -50,7 +50,7 @@ Run dir: `.petu/eval/runs/<date>-<config>-<promptVersion>-<qset>[-N]/` (gitignor
 
 - The runner's phase is `PETU_PHASE` (default `dev`); it starts its server with that phase, so spend
   books against that phase's budget (see `agent-pipeline.md`: dev 1, bakeoff 6, iterate 7, validate 2,
-  lessondev 1.5, lessonbake 3, lessoniter 3.5, lessonval 2; $40 total).
+  lessondev 1.5, lessonbake 3, lessoniter 3.5, lessonval 2, bench 15; $60 total).
 - Test split: only `validate` / `lessonval` may always run it; `bakeoff` / `lessonbake` once per
   question set (the baseline). Everything else is refused by `assertSplitAllowed`. Iterate on dev only.
 

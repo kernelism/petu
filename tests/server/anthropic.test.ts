@@ -9,7 +9,7 @@ import { Ledger } from '../../server/ledger';
 import { PRICES, costUsd, worstCaseUsd } from '../../server/prices';
 import { ask, buildAnswerRequest, prewarm, prewarmSystem, type Deps, type ModelConfig } from '../../server/openai';
 import { AnthropicEvents, NO_ANTHROPIC_KEY, normalizeUsage, thinkingFor } from '../../server/anthropic';
-import { parseEnv } from '../../server/env';
+import { loadPetuEnv, parseEnv } from '../../server/env';
 import { systemPrompt } from '../../server/prompt/system';
 import type { AskContext, AskEvent, AskRequest } from '../../src/agent/protocol';
 
@@ -211,12 +211,26 @@ describe('Anthropic prices and env', () => {
     expect(costUsd('claude-haiku-5-5', big)).toBeCloseTo((120_000 * 0.5 + 1000 * 2.5) / 1e6, 12);
     expect(worstCaseUsd('claude-sonnet-5-5', 10_000, 1000)).toBeCloseTo((10_000 * 4 + 1000 * 10) / 1e6, 12);
   });
-  it('the key is read from PETU_ANTHROPIC_KEY only (never ANTHROPIC_API_KEY); Opus 5.5 refuses effort none; scout stays on OpenAI', () => {
+  it('the key comes from the .env file only: PETU_ANTHROPIC_KEY first, else ANTHROPIC_API_KEY; never from process.env, which is left untouched', () => {
+    // A fake loadEnv standing in for Vite's: it returns the file's values, overridden by the process's (prefix '').
+    const fakeLoad = (file: Record<string, string>, proc: Record<string, string>) => [((() => ({ ...file, ...proc })) as never), proc as NodeJS.ProcessEnv] as const;
+    const load = (file: Record<string, string>, proc: Record<string, string> = {}) => { const [l, p] = fakeLoad(file, proc); return loadPetuEnv('development', '/repo', '/repo', l, p); };
+    expect(load({ ANTHROPIC_API_KEY: 'file-a' }).anthropicKey).toBe('file-a');
+    expect(load({ PETU_ANTHROPIC_KEY: ' file-p ', ANTHROPIC_API_KEY: 'file-a' }).anthropicKey).toBe('file-p');
+    expect(load({}, { ANTHROPIC_API_KEY: 'shell', PETU_ANTHROPIC_KEY: 'shell2' }).anthropicKey).toBe('');
+    // The shell's ANTHROPIC_API_KEY shadows the file's (Vite's merge): skipped; the other name still works.
+    expect(load({ ANTHROPIC_API_KEY: 'file-a' }, { ANTHROPIC_API_KEY: 'shell' }).anthropicKey).toBe('');
+    expect(load({ PETU_ANTHROPIC_KEY: 'file-p' }, { ANTHROPIC_API_KEY: 'shell' }).anthropicKey).toBe('file-p');
+    const proc: Record<string, string> = {};
+    load({ PETU_ANTHROPIC_KEY: 'file-p' }, proc);
+    expect(proc).toEqual({});
+    // parseEnv on its own reads no Anthropic key from the general lookup.
+    expect(parseEnv((k) => ({ PETU_ANTHROPIC_KEY: 'x', ANTHROPIC_API_KEY: 'y' } as Record<string, string>)[k], { root: '/r', home: '/h' }).anthropicKey).toBe('');
+  });
+  it('Opus 5.5 refuses effort none; scout stays on OpenAI; Sonnet none is fine', () => {
     const opts = { root: '/repo', home: '/home/u' };
     const from = (o: Record<string, string>) => (k: string) => o[k];
-    expect(parseEnv(from({ ANTHROPIC_API_KEY: 'nope', PETU_MODEL: 'claude-sonnet-5-5' }), opts).anthropicKey).toBe('');
-    const e = parseEnv(from({ PETU_ANTHROPIC_KEY: ' k1 ', PETU_MODEL: 'claude-sonnet-5-5', PETU_EFFORT: 'none' }), opts);
-    expect(e.anthropicKey).toBe('k1');
+    const e = parseEnv(from({ PETU_MODEL: 'claude-sonnet-5-5', PETU_EFFORT: 'none' }), opts);
     expect(e.model.model).toBe('claude-sonnet-5-5');
     expect(() => parseEnv(from({ PETU_MODEL: 'claude-opus-5-5' }), opts)).toThrow(/thinking off/);
     expect(parseEnv(from({ PETU_MODEL: 'claude-opus-5-5', PETU_EFFORT: 'low' }), opts).model.effort).toBe('low');

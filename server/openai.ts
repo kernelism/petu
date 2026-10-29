@@ -35,7 +35,7 @@
 // Secrets: the key is used only in the Authorization header below. It is never logged, emitted or
 // booked; upstream error text is scrubbed of it.
 import { randomUUID } from 'node:crypto';
-import type { AskEvent, AskRequest, AskContext } from '../src/agent/protocol';
+import { HARD_STOP_USD, type AskEvent, type AskRequest, type AskContext } from '../src/agent/protocol';
 import { costUsd, worstCaseUsd, PRICES, type Usage } from './prices';
 import type { Ledger, Phase } from './ledger';
 import { SseParser, ResponseEvents } from './sse';
@@ -770,7 +770,7 @@ function tokens(u: Usage) {
 
 /** Caps are set per run on the command line (never by editing .env). */
 export function capHint(code: 'total' | 'daily' | 'phase', message: string, phase: Phase): string {
-  if (code === 'total') return `${message} PETU_TOTAL_CAP_USD=<dollars> npm run dev sets it for a run, up to the checkpoint's $40 hard stop.`;
+  if (code === 'total') return `${message} PETU_TOTAL_CAP_USD=<dollars> npm run dev sets it for a run, up to the $${HARD_STOP_USD} hard stop.`;
   if (code === 'daily') return `${message} It resets tomorrow, or raise it for this run: PETU_DAILY_CAP_USD=6 npm run dev.`;
   return `${message} Raise it for this run on the command line: PETU_CAP_${phase.toUpperCase()}=<dollars> npm run dev.`;
 }

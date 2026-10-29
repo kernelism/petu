@@ -159,8 +159,9 @@ describe('copy', () => {
   });
 
   it('capLine names the cap that is used up, in dollars, with the command-line knob', () => {
-    expect(capLine(spend({ totalUsd: 40, capUsd: 40 }))).toBe("Spending cap reached: $40.00 of $40.00 used. This is the checkpoint's $40.00 hard stop.");
-    expect(capLine(spend({ totalUsd: 0.0076, capUsd: 0 }))).toBe('Spending cap reached: $0.0076 of $0.00 used. Raise it for this run: PETU_TOTAL_CAP_USD=40 npm run dev.');
+    expect(capLine(spend({ totalUsd: 60, capUsd: 60 }))).toBe('Spending cap reached: $60.00 of $60.00 used. This is the $60.00 hard stop.');
+    expect(capLine(spend({ totalUsd: 40, capUsd: 40 }))).toBe('Spending cap reached: $40.00 of $40.00 used. Raise it for this run: PETU_TOTAL_CAP_USD=60 npm run dev.');
+    expect(capLine(spend({ totalUsd: 0.0076, capUsd: 0 }))).toBe('Spending cap reached: $0.0076 of $0.00 used. Raise it for this run: PETU_TOTAL_CAP_USD=60 npm run dev.');
     expect(capLine(spend({ totalUsd: 10, todayUsd: 3.01, dailyCapUsd: 3 }))).toBe("Today's spending cap reached: $3.01 of $3.00 used. Raise it for this run: PETU_DAILY_CAP_USD=6 npm run dev.");
     expect(capLine(null)).toBe('Spending cap reached. Raise it for this run on the command line, e.g. PETU_DAILY_CAP_USD=6 npm run dev.');
     // The server refuses for another reason (a phase budget): its line, which names the budget.
@@ -179,7 +180,7 @@ describe('copy', () => {
 
   it('askErrorLine follows the copy table, with Retry only where it helps', () => {
     expect(askErrorLine('no_key', null)).toEqual({ message: 'Add your OpenAI key to .env, then restart the dev server.', retry: false });
-    expect(askErrorLine('cap', spend({ totalUsd: 40, capUsd: 40 }))).toEqual({ message: "Spending cap reached: $40.00 of $40.00 used. This is the checkpoint's $40.00 hard stop.", retry: false });
+    expect(askErrorLine('cap', spend({ totalUsd: 60, capUsd: 60 }))).toEqual({ message: 'Spending cap reached: $60.00 of $60.00 used. This is the $60.00 hard stop.', retry: false });
     expect(askErrorLine('rate_limited', null)).toEqual({ message: 'The tutor is busy. Try again in a moment.', retry: true });
     expect(askErrorLine('network', null)).toEqual({ message: "Couldn't reach the tutor.", retry: true });
     expect(askErrorLine('upstream', null)).toEqual({ message: "Couldn't reach the tutor.", retry: true });

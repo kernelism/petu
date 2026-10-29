@@ -239,7 +239,7 @@ export function knobLine(code: 'total' | 'daily' | 'phase', s: SpendSummary): st
   }
   return s.capUsd < HARD_STOP_USD
     ? `Raise it for this run: PETU_TOTAL_CAP_USD=${HARD_STOP_USD} npm run dev.`
-    : `This is the checkpoint's ${usd(HARD_STOP_USD)} hard stop.`;
+    : `This is the ${usd(HARD_STOP_USD)} hard stop.`;
 }
 
 /** Which cap the server's refusal line names (older servers send only the line). */
