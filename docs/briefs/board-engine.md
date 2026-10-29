@@ -42,7 +42,7 @@ computes every coordinate and every number.
 | `src/desk/render.ts`, `math.ts`, `expr.ts`, `plot.ts`, `nudge.ts`, `follow.ts`, `runs.ts` | SVG text/dots/shade/emph; lazy KaTeX; safe expression parser (no eval); plot sampling; label nudging (≤ 3); follow mode (rule 6); region text runs. |
 | `src/ink/agent/*` | Stroke geometry (`strokes.ts`), pen motion (`animate.ts`, `PX_PER_SEC` 700), highlights/labels (`marks.ts`), CSS tokens (`tokens.ts`), line weights (`weights.ts`), pen cursor (`penCursor.ts`: a fixed nib on `document.body` placed via the stroke group's `getScreenCTM()`; `drawStrokes` and scene links call `penDown`/`penTo`/`penLift`; newest stroke wins, fades 400ms after the last lift; off under reduced motion, `?nopen`, or without `getScreenCTM`). |
 | `src/locate/locateQuote.ts` | Quote (+ `near=`) → rects on the page's text runs. |
-| `src/demo/demoScript.ts`, `src/demo/scripts.ts` | Hand-written scripts (`?demo=…`, `?script=kit|toolkit|relational|lec09|scene|scene-econ|scene-bio`). |
+| `src/demo/demoScript.ts`, `src/demo/scripts.ts` | Hand-written scripts (`?demo=…`, `?script=kit|toolkit|relational|lec09|scene|scene-econ|scene-bio|moves`). |
 
 ## Board v2: one connected scene
 
@@ -82,6 +82,50 @@ Demos: `?script=scene` (mechanics), `?script=scene-econ`, `?script=scene-bio` (f
 `tests/desk/sceneGeometry.test.ts` (routing, labels, ribbons, placement, lasso, bracket, overview,
 grammar), `tests/desk/route.test.ts` (connector board leg).
 
+## Bound numbers, readouts, demonstration moves (gated beats, step 2)
+
+Prevention by construction: the narration never types a number the engine computes.
+
+- **Value model** = `GateState` (`src/gate/engine.ts`): the engine's numbers, headless. Two users,
+  one implementation: `ScriptParser` applies every parsed tag to it in stream order, and the commit
+  gate replays recordings through it. `consts` are lowercase (the expression language lowercases
+  names); `plotSrc` keeps plot tags so curves are recomputed with the current constants.
+- **`{{val id=… fmt=1 as=percent|abs}}`** (`src/script/parseValues.ts`): the parser turns it into a
+  caption word with the engine's value at that point of the stream (`GateState.say` → `src/values/say.ts`:
+  the board's own `fmt`, plus a spoken form for TTS). It glues to touching text (`${{val id=c}}.` →
+  `$4.5.`) and is chunk-independent. Refs: a block's single value, a calc, a part (`v[2]`, `g[1,2]`,
+  `t[3].c` / `t[3].price`), a constant, a readout (`E`, `E.x`, `E.y`). **Unresolved → the caption shows
+  `UNBOUND_TEXT` (an em dash), never a guessed number**; the director records the val as skipped
+  (`unbound value …`) and the gate fails its beat. A val must come after what it names (no
+  look-ahead: the parser resolves on the spot).
+- **`{{find id=E of=…}}`** readouts (`src/values/readout.ts`, pure, used by the board's `KitStore.reading`
+  and the model alike): `cross` (two plots on shared axes, `n=` the k-th), `level=`, `max`/`min`,
+  `x=` (value), `x= slope`, `area from= to=` (under one plot or between two), and on a fit `inside=w`
+  (count) / `residual` (RMS, or `residual=k` one point's). fn= plots are exact; parametric plots use a
+  2000-step polyline. `x=`, `level=`, `from=`, `to=` may be formulas over constants. A find draws nothing.
+- **Readout points**: `{{point on=s at=E "E"}}` is drawn by the kit (`buildReadoutPoint`) on the
+  plot's layer with drop lines to both axes, and re-placed by `spreadLabels` whenever the plot redraws
+  (widened axes, limit frames, beforeafter glide). `Figures.note` records find ids so `at=E` passes the
+  resolver like a block part; `resolvePart` also resolves readouts (arrows, connectors).
+- **Moves** (`MoveAction`; `of=<plot|computed block> <const>=<value>`):
+  `contrast` is expanded by the parser (`GateState.expand`) into a copy with `with={k: v}`: a plot
+  on the same axes (dashed, labelled `k = v` or the quote), a computed block `right=` the original
+  (bars share one scale). `limit` (kit `limitMove`, `dur=` default 3s, `show=E`) settles the axes for
+  the whole sweep, then tweens the constant: every plot and computed block drawn from it repaints each
+  frame, readout points follow, a live readout (`k = 0.30 · E = 4.1`) sits above the plot; it ends on
+  the value. `beforeafter` (kit `beforeAfter`) keeps the watched plot's old curve as a dashed ghost
+  (labelled with the old value), tweens everything to the new constant, shades the band between old and
+  new (bars: ghosts + changed bars accented; grids: changed cells tinted) and shows `k: a → b`. Both
+  change the constant for the rest of the answer, as the value model does.
+- **Gate** (`src/gate/check.ts`, `scripts/gate-beats/gateRun.ts`): `checkUnbound` flags a typed number
+  that matches only computed values (page, question and literal matches pass; hedged numbers and
+  small counts are exempt); an unresolved val is a `tag` flag; `checkOrder` flags a number equal to a
+  constant's literal declared more than one beat later. `server/lint.ts` notes a formula or val naming
+  a constant before its `{{const}}`.
+- Demo: `?script=moves` (gallery scene `moves`): beforeafter on a market, contrast on a growing
+  colony, limit on a falling stone with drag; every number in its narration is a val.
+- Tests: `tests/values/values.test.ts`, `tests/gate/bound.test.ts`.
+
 ## How a tag becomes ink
 
 1. `ScriptParser.push(chunk)` → `parseTag(body)` → `RawAction`.
@@ -104,6 +148,8 @@ grammar), `tests/desk/route.test.ts` (connector board leg).
 - Skip, never guess: unknown mark/name/region, parallel `meet`, out-of-range page → skip with reason.
 - Board sections scale as a whole; elements are never shifted individually. Sections persist across
   answers until × / Esc; `reset` (new answer) frees ids and connectors only.
+- Bound numbers: the parser and the gate resolve `{{val}}` with the same `GateState`; the board's
+  readouts with the same `src/values/readout.ts`. Never compute a readout or a val anywhere else.
 - Kit: the model never writes a computed number; one state animation per block; reduced motion =
   discrete steps. Sections grow past 700 for tall kit content (`growRegion`, max 4×).
 - Demo scripts use literals and must stay byte-identical through the resolver.

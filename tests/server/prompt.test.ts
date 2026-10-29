@@ -78,6 +78,9 @@ describe('system prompt', () => {
     // Board v2: one connected scene
     for (const k of ['scene', 'node', 'flow', 'link', 'note', 'shares', 'blend', 'move', 'group', 'pair', 'split', 'merge']) expect(kinds, k).toContain(k);
     for (const w of ['beside=', 'near=', 'annotate=', 'strength=', 'op=softmax', 'matmul', 'reduce=wavg', 'Transform rather than redraw', 'Connect everything']) expect(s, w).toContain(w);
+    // Gated beats, step 2: bound numbers, readouts, demonstration moves
+    for (const k of ['val', 'find', 'contrast', 'limit', 'beforeafter']) expect(kinds, k).toContain(k);
+    for (const w of ['level=', 'slope', 'area', 'inside=', 'residual', 'as=percent', 'show=', 'NUMBERS YOU SAY', 'TEACHING MOVES', 'Each paragraph is a beat']) expect(s, w).toContain(w);
   });
 
   it('states the kit principles: the engine computes, visible values, page values, input-operation-output, step then sweep', () => {

@@ -16,7 +16,7 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 | `server/prices.ts` | `PRICES` per model (in/cached/out/write30m/write12h), `costUsd`, `worstCaseUsd`. A wrong price = a wrong ledger. |
 | `server/cacheStats.ts` | What the cache likely holds (`.petu/cache.json`): estimates for aborted calls, `systemFresh` (11.5h). |
 | `server/sse.ts`, `scriptFilter.ts`, `lint.ts` | SSE → `ResponseEvents`; strips `<plan>…</plan>` (kept for debug/eval) and markdown/TeX from narration; grammar notes (`TAG_NAMES`). |
-| `server/prompt/system.ts` | Stage-2 developer prompt, `PROMPT_VERSION` (p4.6). Sections: identity → teach → no-dup → timing → context → pointing → board → tags → situations → examples. |
+| `server/prompt/system.ts` | Stage-2 developer prompt, `PROMPT_VERSION` (p5.3). Sections: identity → teach (with the per-beat contract) → no-dup → timing → context → pointing → board (… NUMBERS YOU SAY, TEACHING MOVES) → tags → situations → examples (five). |
 | `server/prompt/scout.ts` | `SCOUT_SYSTEM`, `SCOUT_VERSION` (s2.1): opener, ≤ 6 pages, ≤ 80-word plan, JSON order opener→pages→plan. |
 | `server/prompt/examples.ts` | Few-shot `EXAMPLES` on invented documents (music notation, shadows, levers…), each executable. |
 | `src/agent/protocol.ts` | `AskRequest`, `AskContext`, `AskEvent` (NDJSON), `SpendSummary`, `HARD_STOP_USD` 40. |
@@ -92,7 +92,7 @@ previous exchange, question. The scout may name any page and an optional `find` 
 2. Principles only: no modes, recipes, counts or caps (`prompt.test.ts` greps for them); keep section order.
 3. No eval vocabulary: `EVAL_VOCAB` in `tests/server/prompt.test.ts` (course terms + econ/mechanics
    decks). Extend it when a new deck term shows up.
-4. Size: `length/3.6` must stay < 6200 and > 1100 tokens (cache minimum).
+4. Size: `length/3.6` must stay < 8100 and > 1100 tokens (cache minimum).
 5. Every `{{tag}}` in the prompt must parse; every grammar piece must appear.
 6. Examples: invented domains only; `tests/server/examples.test.ts` parses, resolves, lints each one
    and checks the board never copies page text or narration.
