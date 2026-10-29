@@ -13,13 +13,13 @@ function handlers(): PlaybackHandlers & { calls: string[] } {
     calls,
     togglePause: () => calls.push('pause'),
     stepPart: (d) => calls.push(`part${d}`),
-    closeDeeper: () => calls.push('close'),
+    closeAside: () => calls.push('close'),
     replay: () => calls.push('replay'),
     skip: () => calls.push('skip'),
     speed: (d) => calls.push(`speed${d}`),
   };
 }
-const PLAYING: PlaybackContext = { deeper: false, playing: true, parts: 3, popover: false };
+const PLAYING: PlaybackContext = { aside: false, playing: true, parts: 3, popover: false };
 const key = (k: string, o: Partial<KeyboardEvent> & { target?: EventTarget | null } = {}) =>
   ({ key: k, shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, defaultPrevented: false, target: document.body, ...o });
 
@@ -65,13 +65,16 @@ describe('playback keys', () => {
     expect(h.calls).toEqual(['skip']);
   });
 
-  it('with the Go deeper inset open, only Esc acts (it closes the inset), even from its input', () => {
+  it('with an aside open, Esc (even from the bar) and Return close it; ←/→ do not step the paused answer', () => {
     const h = handlers();
-    const deeper = { ...PLAYING, deeper: true };
-    expect(playbackKey(key(' '), deeper, h)).toBe(false);
-    expect(playbackKey(key('Escape', { target: document.createElement('input') }), deeper, h)).toBe(true);
+    const aside = { ...PLAYING, aside: true };
+    expect(playbackKey(key('Escape', { target: document.createElement('input') }), aside, h)).toBe(true);
+    expect(playbackKey(key('Enter'), aside, h)).toBe(true);
+    expect(playbackKey(key('Enter', { target: document.createElement('input') }), aside, h)).toBe(false);
+    expect(playbackKey(key('ArrowRight'), aside, h)).toBe(false);
+    expect(playbackKey(key(' '), aside, h)).toBe(true);
     expect(playbackKey(key('Escape'), PLAYING, h)).toBe(false);
-    expect(h.calls).toEqual(['close']);
+    expect(h.calls).toEqual(['close', 'close', 'pause']);
   });
 });
 
@@ -82,7 +85,7 @@ describe('PartsBar', () => {
 
   const view = (o: Partial<PartsView> = {}): PartsView => ({
     titles: ['Elasticity Changes Along a Straight Line', 'The Law of Demand', 'Back to p9'], current: 1, progress: 0.4,
-    paused: false, speed: 1, onJump: vi.fn(), onTogglePause: vi.fn(), onReplay: vi.fn(), onSpeed: vi.fn(), onDeeper: vi.fn(), ...o,
+    paused: false, speed: 1, onJump: vi.fn(), onTogglePause: vi.fn(), onReplay: vi.fn(), onSpeed: vi.fn(), onStop: vi.fn(), ...o,
   });
   const render = (v: PartsView) => act(() => root.render(createElement(PartsBar, v)));
 
@@ -123,12 +126,12 @@ describe('PartsBar', () => {
     act(() => btn(/^Resume/).click());
     act(() => btn(/^Replay/).click());
     act(() => btn(/^Speed/).click());
-    act(() => btn(/^Go deeper/).click());
+    act(() => btn(/^Stop/).click());
     act(() => (host.querySelectorAll('.pb-seg')[2] as HTMLButtonElement).click());
     expect(v.onTogglePause).toHaveBeenCalled();
     expect(v.onReplay).toHaveBeenCalled();
     expect(v.onSpeed).toHaveBeenCalled();
-    expect(v.onDeeper).toHaveBeenCalled();
+    expect(v.onStop).toHaveBeenCalled();
     expect(v.onJump).toHaveBeenCalledWith(2);
     expect(host.querySelector('.pb-speed')!.textContent).toBe('1.25×');
     expect(speedLabel(0.75)).toBe('0.75×');

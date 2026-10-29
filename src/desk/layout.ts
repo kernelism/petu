@@ -188,20 +188,50 @@ export type SectionBox = { x: number; y: number; w: number; h: number; s: number
  * Each section's scale s = min(width fit, type cap), uniform; sections are centred and stacked with
  * one even gap. `body`: the section's slide body text in px; `span`: the height it shows, in section
  * units (all 700 while it is being drawn; a finished section is cropped to its ink).
+ * `zoom` (the student's board zoom, 1 = as laid out) multiplies every section's size; the pads and
+ * the head row stay. A section wider than the content box starts at the pad (the board scrolls
+ * sideways); `width` is the content's width (≥ the board's).
  */
-export function boardLayout(boardW: number, secs: { body: number; span?: number; fill?: number }[]): { boxes: SectionBox[]; height: number; pad: number } {
+export function boardLayout(boardW: number, secs: { body: number; span?: number; fill?: number; head?: number; hidden?: boolean }[], zoom = 1): { boxes: SectionBox[]; height: number; pad: number; width: number } {
   const pad = boardPad(boardW);
   const cw = Math.max(1, boardW - 2 * pad);
-  let y = BOARD_HEAD;
-  const boxes = secs.map(({ body: b, span = SECTION_H, fill }) => {
-    const s = Math.min(cw / SECTION_W, Math.max(b, MIN_TEXT_PX) / TEXT_UNITS);
+  let y = BOARD_HEAD, width = boardW;
+  const boxes = secs.map(({ body: b, span = SECTION_H, fill, head = 0, hidden }) => {
+    // A head (the session trail's question header, an aside's title row) takes `head` px above its section.
+    y += head;
+    const s = Math.min(cw / SECTION_W, Math.max(b, MIN_TEXT_PX) / TEXT_UNITS) * zoom;
     // A scene fills the board's content width and `fill` px of height: a window onto its world.
-    const w = fill != null ? cw : SECTION_W * s, h = fill != null ? Math.max(1, fill) : span * s;
-    const box = { x: pad + (cw - w) / 2, y, w, h, s };
+    // A collapsed aside keeps only its head (the marker): its section takes no height.
+    const w = fill != null ? cw * zoom : SECTION_W * s, h = hidden ? 0 : fill != null ? Math.max(1, fill) * zoom : span * s;
+    const box = { x: pad + Math.max(0, (cw - w) / 2), y, w, h, s };
+    width = Math.max(width, w + 2 * pad);
     y += h + pad;
     return box;
   });
-  return { boxes, height: boxes.length ? y : BOARD_HEAD + pad, pad };
+  return { boxes, height: boxes.length ? y : BOARD_HEAD + pad, pad, width };
+}
+
+/** The board's zoom steps (1 = the board as laid out). */
+export const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.8, 1, 1.25, 1.5] as const;
+export const ZOOM_MIN = ZOOM_STEPS[0];
+export const ZOOM_MAX = ZOOM_STEPS[ZOOM_STEPS.length - 1];
+
+/** The next zoom step past `z` in direction `dir` (an off-step zoom, e.g. after Fit, goes to its neighbour); clamped to the ends. */
+export function zoomStepFrom(z: number, dir: -1 | 1): number {
+  const e = 1e-3;
+  if (dir > 0) return ZOOM_STEPS.find((v) => v > z + e) ?? ZOOM_MAX;
+  return [...ZOOM_STEPS].reverse().find((v) => v < z - e) ?? ZOOM_MIN;
+}
+
+/**
+ * Fit: the zoom at which the whole board content (laid out at zoom 1) fits a board `boardH` px tall,
+ * never above 1 and never below ZOOM_MIN. Only the sections scale; the head row and pads stay.
+ */
+export function fitZoom(boardH: number, laid: { boxes: SectionBox[]; height: number; pad: number }): number {
+  const scaled = laid.boxes.reduce((a, b) => a + b.h, 0);
+  if (!(scaled > 0) || laid.height <= boardH) return 1;
+  const room = boardH - (laid.height - scaled);
+  return Math.max(ZOOM_MIN, Math.min(1, Math.floor((room / scaled) * 100) / 100));
 }
 
 type Run = { text: string; rect: { y: number; h: number }; vertical?: boolean };

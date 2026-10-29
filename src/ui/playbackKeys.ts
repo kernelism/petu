@@ -7,7 +7,7 @@
  *   Shift+←       the same as R          Shift+→   on to the next sentence
  *   ← / →         previous / next part (answers with two or more parts)
  *   <  /  >       slower / faster (0.75× · 1× · 1.25× · 1.5×)
- *   Esc           closes the Go deeper inset (the answer resumes)
+ *   Esc / Return  close the aside (the paused answer resumes where it stopped)
  *
  * Never while typing (inputs, textareas, selects, contenteditable), with ⌘/Ctrl/Alt held, while a
  * popover is open, or when nothing is playing. Shift+R stays the Report shortcut.
@@ -15,15 +15,15 @@
 export type PlaybackHandlers = {
   togglePause(): void;
   stepPart(dir: -1 | 1): void;
-  closeDeeper(): void;
+  closeAside(): void;
   replay(): void;
   skip(): void;
   speed(dir: -1 | 1): void;
 };
 
 export type PlaybackContext = {
-  /** The Go deeper inset is open (the answer is paused under it). */
-  deeper: boolean;
+  /** An aside is open (the answer is paused under it): Space, R and speed act on the aside. */
+  aside: boolean;
   /** An answer is in progress. */
   playing: boolean;
   /** How many parts the answer has. */
@@ -40,8 +40,10 @@ export const isTypingTarget = (t: EventTarget | null): boolean =>
 /** Runs the key's command. True when the key was handled (the caller swallows it). */
 export function playbackKey(e: KeyLike, c: PlaybackContext, h: PlaybackHandlers): boolean {
   if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return false;
-  if (e.key === 'Escape' && c.deeper) { h.closeDeeper(); return true; }
-  if (isTypingTarget(e.target) || c.deeper || !c.playing || c.popover) return false;
+  if (e.key === 'Escape' && c.aside) { h.closeAside(); return true; }
+  if (isTypingTarget(e.target) || c.popover) return false;
+  if (e.key === 'Enter' && c.aside) { h.closeAside(); return true; }
+  if (!c.playing && !c.aside) return false;
   switch (e.key) {
     case ' ':
     case 'Spacebar':
@@ -54,7 +56,7 @@ export function playbackKey(e: KeyLike, c: PlaybackContext, h: PlaybackHandlers)
     case 'ArrowRight': {
       const dir = e.key === 'ArrowLeft' ? -1 : 1;
       if (e.shiftKey) { if (dir < 0) h.replay(); else h.skip(); return true; }
-      if (c.parts < 2) return false;
+      if (c.parts < 2 || c.aside) return false;
       h.stepPart(dir); return true;
     }
     case '<':

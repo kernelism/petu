@@ -120,7 +120,13 @@ export function Caption({ words, visible, question, waiting = false, hint, pausi
   const visibleTokens = tokens.slice(Math.min(start, tokens.length));
   return (
     <div className={`caption${shown ? ' is-visible' : ''}${error?.onRetry ? ' has-error' : ''}`} aria-hidden={!shown}>
-      {parts && !error ? <PartsBar {...parts} /> : question && (
+      {parts && !error ? (
+        <>
+          {/* An aside: its question above the row (the row says the answer is paused). */}
+          {parts.aside && question && <div className="caption-q" title={question}>{question}</div>}
+          <PartsBar {...parts} />
+        </>
+      ) : question && (
         <div className={`caption-q${waiting && !error ? ' is-waiting' : ''}`} title={question}>{question}</div>
       )}
       {error ? (

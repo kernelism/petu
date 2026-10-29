@@ -1,17 +1,33 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowUp, Square } from 'lucide-react';
+import { ArrowUp, Square, X } from 'lucide-react';
+import { BAR_LABEL, PLACEHOLDER, type BarMode } from './barMode';
 import './ui.css';
 
 const isTypingTarget = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 
 export type Transcript = { question: string; answer: string };
+/** Point-to-ask: what the next question is about (a selection or a circled region), shown as a chip. */
+export type About = { label: string; page?: number };
 
 /** Typing this many characters counts as intent to ask (prewarm). */
 const INTENT_CHARS = 3;
 
-export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcript, blocked, onIntent }: {
+export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', showStop = busy, about, onClearAbout, onTyping, onResume, focusSeq, suggestions = [], restore, transcript, blocked, onIntent }: {
   onAsk(q: string): void; onStop(): void; busy: boolean;
+  /** What the bar means now (src/ui/barMode.ts): its placeholder says which. */
+  mode?: BarMode;
+  /** The stop button sits in the bar only until the parts row shows (then it is there). */
+  showStop?: boolean;
+  /** Point-to-ask: the chip "about: … · p.N" before the field; × removes it. */
+  about?: About | null;
+  onClearAbout?(): void;
+  /** The field went from empty to typed (true) or back to empty (false). */
+  onTyping?(typing: boolean): void;
+  /** Enter on an empty bar while an aside is open: back to the answer. */
+  onResume?(): void;
+  /** A new value focuses the field (a chip was attached). */
+  focusSeq?: number;
   /** Shown as chips above the bar while it is focused and empty. */
   suggestions?: string[];
   /** Puts `text` back into the field (after a failed answer); a new `seq` restores again. */
@@ -31,6 +47,12 @@ export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcr
   // Nothing can be sent while blocked: the field shows the cap line instead of text that can't go anywhere.
   useEffect(() => { if (blocked) setText(''); }, [blocked]);
   const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (focusSeq) inputRef.current?.focus(); }, [focusSeq]);
+  const typingRef = useRef(false);
+  const setTyping = (v: string) => {
+    const t = v.trim().length > 0;
+    if (t !== typingRef.current) { typingRef.current = t; onTyping?.(t); }
+  };
   const busyRef = useRef(busy);
   busyRef.current = busy;
 
@@ -50,7 +72,9 @@ export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcr
 
   const submit = () => {
     const q = text.trim();
+    if (!q && mode === 'aside') { onResume?.(); return; }
     if (!q || blocked) return;
+    typingRef.current = false;
     onAsk(q);
     setText('');
   };
@@ -62,6 +86,8 @@ export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcr
     } else if (e.key === 'Escape') {
       e.preventDefault();
       if (showTranscript) setShowTranscript(false);
+      else if (text) { setText(''); setTyping(''); }
+      else if (mode === 'aside') onResume?.();
       else if (busy) onStop();
       else e.currentTarget.blur();
     }
@@ -101,6 +127,14 @@ export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcr
           ))}
         </div>
       )}
+      {about && (
+        <span className="askbar-about" title={`About: ${about.label}${about.page ? ` (page ${about.page})` : ''}`}>
+          <span className="askbar-about-text">about: {about.label}{about.page ? ` · p.${about.page}` : ''}</span>
+          <button type="button" className="askbar-about-x" onClick={() => { onClearAbout?.(); inputRef.current?.focus(); }} aria-label="Remove what this question is about">
+            <X size={12} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+        </span>
+      )}
       <input
         ref={inputRef}
         className="askbar-input"
@@ -109,13 +143,14 @@ export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcr
           const v = e.target.value;
           if (v.trim().length >= INTENT_CHARS && text.trim().length < INTENT_CHARS) onIntent?.();
           setText(v);
+          setTyping(v);
         }}
         onKeyDown={onKeyDown}
-        placeholder={busy ? 'Answering · Esc to stop' : blocked ?? 'Ask about this PDF…'}
+        placeholder={blocked && !busy ? blocked : PLACEHOLDER[mode]}
         // Blocked: still focusable (the line can be read, Esc and / work), but nothing can be typed or sent.
         readOnly={!!blocked && !busy}
         title={blocked && !busy ? blocked : undefined}
-        aria-label="Ask about this PDF"
+        aria-label={BAR_LABEL[mode]}
         autoComplete="off"
         spellCheck={false}
       />
@@ -130,13 +165,13 @@ export function AskBar({ onAsk, onStop, busy, suggestions = [], restore, transcr
         </button>
       )}
       <div className="askbar-trail">
-        {busy ? (
+        {hasText && !blocked ? (
+          <button type="submit" className="askbar-btn is-send" aria-label={mode === 'check' ? 'Send your answer' : 'Ask'}>
+            <ArrowUp size={18} strokeWidth={2} />
+          </button>
+        ) : busy && showStop ? (
           <button type="button" className="askbar-btn is-stop" onClick={onStop} aria-label="Stop answer">
             <Square size={12} strokeWidth={0} fill="currentColor" />
-          </button>
-        ) : hasText && !blocked ? (
-          <button type="submit" className="askbar-btn is-send" aria-label="Ask">
-            <ArrowUp size={18} strokeWidth={2} />
           </button>
         ) : (
           <kbd className="keycap" aria-hidden="true">/</kbd>

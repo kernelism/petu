@@ -49,6 +49,15 @@ export type AskContext = {
   searchText?: string;
   /** Volatile tail: student ink on the visible page. */
   ink?: { summary: string; crop?: { b64: string; w: number; h: number } };
+  /**
+   * Volatile tail, the moment the question is asked in (v1 learner UX; src/agent/moment.ts):
+   * `aside`: asked mid-answer, which waits paused (its plan, what it has said, its board);
+   * `about`: what the student pointed at (a selection, or a region circled on a page or the board);
+   * `check`: the answer ended on this question to the student, and the question is their reply.
+   */
+  aside?: string;
+  about?: string;
+  check?: string;
 };
 
 /** NDJSON lines from the server, one JSON object per line. */

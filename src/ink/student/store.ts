@@ -4,7 +4,8 @@ export type Tool = 'pen' | 'highlighter' | 'eraser';
 export type StudentStroke = { id: number; page: number; tool: 'pen' | 'highlighter'; color: string; points: [number, number, number][] };
 type State = { canvasOn: boolean; tool: Tool; color: string; strokes: StudentStroke[]; undo: StudentStroke[][] };
 
-export const PEN_COLORS = ['#1D1D1F', '#E5484D', '#0A84FF', '#30A46C', '#F2600C'];
+/** The student's pen is blue by default, so it never reads as the tutor's ink (v1 learner UX). */
+export const PEN_COLORS = ['#0A84FF', '#1D1D1F', '#E5484D', '#30A46C', '#F2600C'];
 let s: State = { canvasOn: false, tool: 'pen', color: PEN_COLORS[0], strokes: [], undo: [] };
 const subs = new Set<() => void>();
 const set = (p: Partial<State>) => { s = { ...s, ...p }; subs.forEach((f) => f()); };

@@ -6,7 +6,7 @@ import type { Stroke } from '../ink/agent/strokes';
 import { animateScrollTo } from '../pdf/scroll';
 import { Follow, ScrollOwner } from './follow';
 import { routeGutter, maskBlocker } from './route';
-import { boardLayout, bodyPx, cropSpan, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
+import { boardLayout, bodyPx, fitZoom, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
 import { BOARD_HEAD, boardPad } from './layout';
 import { camFor, overviewCam, type Cam } from './scene/camera';
@@ -90,6 +90,20 @@ export class Desk implements DeskApi {
   private owner = new ScrollOwner();
   private boardGlide: AbortController | null = null;
   private frameReq = 0;
+  /**
+   * Session trail and asides (spec "v1 learner UX"): a head above a section, `h` px tall (an answer's
+   * question header, or an aside's title row whose element also frames the inset). A collapsed aside
+   * shows only its head (the marker); its section takes no height until it is reopened.
+   */
+  private heads = new Map<Section, { el: HTMLElement; h: number; aside: boolean; collapsed: boolean }>();
+  private nextHead: { el: HTMLElement; h: number; aside: boolean } | null = null;
+  /** An aside is playing: its sections are tinted, the rest of the board steps back, nothing is cropped. */
+  private asideOpen = false;
+  /** Sections of the paused answer cropped to their ink while an aside plays (restored when it ends). */
+  private held = new Set<Section>();
+  /** The student's board zoom: a multiplier on every section's scale (1 = the board as laid out). */
+  private zoomK = 1;
+  private zoomCtl: { out: HTMLButtonElement; pct: HTMLSpanElement; in: HTMLButtonElement; fit: HTMLButtonElement };
 
   constructor(private host: DeskHost, private stage: HTMLDivElement, private opts: { onClose?: () => void } = {}) {
     this.board = document.createElement('div');
@@ -110,7 +124,8 @@ export class Desk implements DeskApi {
     this.content = document.createElement('div');
     this.content.className = 'desk-board-content';
     this.scroller.appendChild(this.content);
-    this.board.append(this.scroller, close);
+    this.zoomCtl = this.makeZoomControl();
+    this.board.append(this.scroller, close, this.zoomCtl.out.parentElement!);
     this.wireLayer = document.createElement('div');
     this.wireLayer.className = 'desk-wires';
     stage.append(this.board, this.wireLayer);
@@ -150,6 +165,7 @@ export class Desk implements DeskApi {
     const column = this.heading ?? (this.open ? columnOf(f) : { x: L?.pageX ?? f.page.pageX, w: L?.pageW ?? f.page.pageW });
     const s: DeskState = { split: this.open ? f.ratio ?? 'normal' : 'none', stacked: this.open && f.stacked, following: this.follow.following(), sketching: this.open, column };
     if (this.open && f.board) s.board = f.board;
+    if (this.open) s.zoom = this.zoomK;
     return s;
   }
 
@@ -158,7 +174,8 @@ export class Desk implements DeskApi {
     if (!sec) return null;
     return {
       id, page: sec.page, size: sec.size, layers: sec.layers,
-      scale: () => this.boxOf(sec)?.s ?? 0.5,
+      // The section's own scale: board ink is sized for it, unaffected by the student's zoom.
+      scale: () => (this.boxOf(sec)?.s ?? 0.5 * this.zoomK) / this.zoomK,
       body: () => bodyPx(sec.body, this.frame().page.pageW),
       ...(sec.scene ? { scene: sec.scene.space } : {}),
     };
@@ -179,8 +196,17 @@ export class Desk implements DeskApi {
       return ep === this.epoch ? this.region(spec.id) ?? 'desk reset' : 'desk reset';
     }
     // The sections above are finished: each keeps just its ink, so the board has no dead space between them.
-    this.sections.forEach((s) => this.crop(s));
+    // An aside leaves the paused answer's sections as they are (it draws on in them when it resumes).
+    if (!this.asideOpen) this.sections.forEach((s) => this.crop(s));
     const sec = this.makeSection(spec);
+    if (this.asideOpen) sec.el.classList.add('is-aside');
+    if (this.nextHead) {
+      const h = this.nextHead;
+      this.nextHead = null;
+      this.heads.set(sec, { ...h, collapsed: false });
+      h.el.classList.toggle('is-aside', this.asideOpen);
+      this.content.appendChild(h.el);
+    }
     this.sections.push(sec);
     this.ids.set(spec.id, sec);
     this.content.appendChild(sec.el);
@@ -364,6 +390,63 @@ export class Desk implements DeskApi {
     this.emit();
   }
 
+  /** The next section added gets `el` as its head, `h` px tall (null: none). Consumed by that section. */
+  headNext(el: HTMLElement | null, h = 0): void {
+    this.nextHead = el ? { el, h, aside: this.asideOpen } : null;
+  }
+
+  /**
+   * An aside opens (true) or ends (false). Open: sections added are its inset; the board around it
+   * steps back. Ended: every open aside collapses to its marker (its head), and the board re-lays.
+   */
+  setAside(on: boolean): void {
+    if (on === this.asideOpen) return;
+    this.asideOpen = on;
+    this.board.classList.toggle('has-aside', on);
+    // The paused answer's open sections show just their ink while the aside plays (the inset sits right
+    // under it), and get their whole height back when the answer resumes and draws on.
+    if (on) {
+      for (const s of this.sections) {
+        if (s.scene || s.y0 !== 0 || s.y1 !== s.full) continue;
+        this.crop(s);
+        if (s.y0 !== 0 || s.y1 !== s.full) this.held.add(s);
+      }
+    } else {
+      for (const s of this.held) {
+        s.y0 = 0; s.y1 = s.full;
+        s.el.querySelectorAll('svg').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${s.full}`));
+      }
+      this.held.clear();
+    }
+    if (!on) for (const [sec, hd] of this.heads) if (hd.aside && !hd.collapsed) this.collapse(sec, hd, true);
+    if (!on && this.nextHead?.aside) this.nextHead = null;
+    this.position();
+  }
+
+  /** A collapsed aside's marker was clicked: it opens again in place (and closes when clicked again). */
+  toggleAside(el: HTMLElement): void {
+    for (const [sec, hd] of this.heads) if (hd.el === el && hd.aside) { this.collapse(sec, hd, !hd.collapsed); this.position(); return; }
+  }
+
+  private collapse(sec: Section, hd: { el: HTMLElement; collapsed: boolean }, on: boolean) {
+    hd.collapsed = on;
+    hd.el.classList.toggle('is-collapsed', on);
+    sec.el.classList.toggle('is-collapsed', on);
+  }
+
+  /** Where this answer's region-space rect is on screen now (point-to-ask on the board); null when unknown. */
+  onScreen(region: string, r: SRect): { x: number; y: number; w: number; h: number } | null {
+    const sec = this.ids.get(region);
+    return sec && this.open ? this.viewRect(sec, r) : null;
+  }
+
+  /** Scrolls the board so the head `el` sits at its top (the trail: a question clicked or replayed). */
+  async showHead(el: HTMLElement): Promise<void> {
+    if (!this.open) return;
+    const top = parseFloat(el.style.top) || 0;
+    await this.glideBoard(() => Math.max(0, top - 8));
+  }
+
   /** "Back to answer": follow again and return to where the answer was. */
   async resume(): Promise<void> {
     this.follow.resume();
@@ -380,7 +463,11 @@ export class Desk implements DeskApi {
     this.ids.clear();
     this.last = null;
     const gone = this.sections;
+    const goneHeads = [...this.heads.values()].map((h) => h.el);
     this.sections = [];
+    this.heads.clear();
+    this.nextHead = null;
+    void wait(GLIDE_MS).then(() => goneHeads.forEach((e) => e.remove()));
     this.open = false;
     this.split = 'none';
     this.board.classList.remove('is-open');
@@ -388,9 +475,89 @@ export class Desk implements DeskApi {
     this.heading = columnOf(this.frame());
     this.emit();
     // The sections leave with the board, once it has slid out.
-    void wait(GLIDE_MS).then(() => { gone.forEach((s) => s.el.remove()); if (!this.open) this.owner.write(this.scroller, 0); });
+    void wait(GLIDE_MS).then(() => { gone.forEach((s) => s.el.remove()); if (!this.open) { this.owner.write(this.scroller, 0); this.scroller.scrollLeft = 0; this.zoomK = 1; this.syncZoomControl(); } });
     try { await this.host.setSplit('none', GLIDE_MS); }
     finally { this.gliding = false; this.heading = null; this.position(); }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Board zoom (the student's): every section scales by one multiplier, around the top of the view.
+
+  zoom(): number { return this.zoomK; }
+
+  /** Zooms the board to `z` (clamped), or to the zoom at which all of its content fits its height (≤ 100%). */
+  setZoom(z: number | 'fit'): void {
+    const f = this.frame();
+    const b = f.board;
+    let next = z === 'fit' ? (b ? fitZoom(b.h, boardLayout(b.w, this.specs(f), 1)) : 1) : z;
+    next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Number.isFinite(next) ? next : 1));
+    if (Math.abs(next - this.zoomK) < 1e-4) {
+      // Fit when already fitted still brings the whole board into view.
+      if (z === 'fit') this.owner.write(this.scroller, 0);
+      return;
+    }
+    if (!this.open || !b) { this.zoomK = next; this.syncZoomControl(); return; }
+    // The anchor: what sits at the top of the view now (a section and a unit in it), and the view's horizontal centre.
+    const before = this.boxes(), top = this.scroller.scrollTop;
+    const i = before.findIndex((x) => top < x.y + x.h);
+    const at = i >= 0 ? before[i] : null;
+    const unit = at ? Math.max(0, top - at.y) / at.s : 0;
+    const cx = (this.scroller.scrollLeft + b.w / 2) / Math.max(1, this.content.offsetWidth || b.w);
+    this.boardGlide?.abort();
+    this.zoomK = next;
+    this.position();
+    const after = this.boxes();
+    const nt = at && after[i] ? (top < at.y ? top - at.y + after[i].y : after[i].y + unit * after[i].s) : top;
+    this.owner.write(this.scroller, z === 'fit' ? 0 : Math.max(0, nt));
+    const w = this.content.offsetWidth || b.w;
+    this.scroller.scrollLeft = Math.max(0, cx * w - b.w / 2);
+    this.syncZoomControl();
+    this.onMove();
+    this.emit();
+  }
+
+  /** One zoom step in or out (see ZOOM_STEPS). */
+  zoomStep(dir: -1 | 1): void { this.setZoom(zoomStepFrom(this.zoomK, dir)); }
+
+  private makeZoomControl() {
+    const bar = document.createElement('div');
+    bar.className = 'desk-zoom';
+    bar.setAttribute('role', 'group');
+    bar.setAttribute('aria-label', 'Board zoom');
+    const btn = (cls: string, label: string, title: string, html: string, run: () => void) => {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.className = `desk-zoom-btn ${cls}`;
+      el.setAttribute('aria-label', label);
+      el.title = title;
+      el.innerHTML = html;
+      el.addEventListener('click', run);
+      return el;
+    };
+    const mod = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
+    const icon = (d: string) => `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="${d}" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>`;
+    const out = btn('desk-zoom-out', 'Zoom out', `Zoom out (${mod}−)`, icon('M3.5 8h9'), () => this.zoomStep(-1));
+    const pct = document.createElement('span');
+    pct.className = 'desk-zoom-pct';
+    pct.setAttribute('aria-live', 'polite');
+    const inn = btn('desk-zoom-in', 'Zoom in', `Zoom in (${mod}+)`, icon('M3.5 8h9M8 3.5v9'), () => this.zoomStep(1));
+    const sep = document.createElement('span');
+    sep.className = 'desk-zoom-sep';
+    sep.setAttribute('aria-hidden', 'true');
+    const fit = btn('desk-zoom-fit', 'Fit the board', `Fit (${mod}0)`, 'Fit', () => this.setZoom('fit'));
+    bar.append(out, pct, inn, sep, fit);
+    const ctl = { out, pct, in: inn, fit };
+    this.zoomCtl = ctl;
+    this.syncZoomControl();
+    return ctl;
+  }
+
+  private syncZoomControl() {
+    const c = this.zoomCtl;
+    if (!c) return;
+    c.pct.textContent = `${Math.round(this.zoomK * 100)}%`;
+    c.out.disabled = this.zoomK <= ZOOM_MIN + 1e-4;
+    c.in.disabled = this.zoomK >= ZOOM_MAX - 1e-4;
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -482,7 +649,7 @@ export class Desk implements DeskApi {
   private boxes(): SectionBox[] {
     const f = this.frame();
     if (!f.board) return [];
-    return boardLayout(f.board.w, this.specs(f)).boxes;
+    return boardLayout(f.board.w, this.specs(f), this.zoomK).boxes;
   }
   private boxOf(sec: Section): SectionBox | null {
     const i = this.sections.indexOf(sec);
@@ -514,9 +681,9 @@ export class Desk implements DeskApi {
     if (!box || !b) return null;
     if (sec.scene) {
       const { cam } = sec.scene, k = box.s * cam.z;
-      return { x: b.x + box.x + (r.x - cam.x) * k, y: b.y + box.y + (r.y - cam.y) * k - this.scroller.scrollTop, w: r.w * k, h: r.h * k };
+      return { x: b.x + box.x - this.scroller.scrollLeft + (r.x - cam.x) * k, y: b.y + box.y + (r.y - cam.y) * k - this.scroller.scrollTop, w: r.w * k, h: r.h * k };
     }
-    return { x: b.x + box.x + (r.x + (sec.dx ?? 0)) * box.s, y: b.y + box.y + (r.y - sec.y0) * box.s - this.scroller.scrollTop, w: r.w * box.s, h: r.h * box.s };
+    return { x: b.x + box.x - this.scroller.scrollLeft + (r.x + (sec.dx ?? 0)) * box.s, y: b.y + box.y + (r.y - sec.y0) * box.s - this.scroller.scrollTop, w: r.w * box.s, h: r.h * box.s };
   }
 
   /** Puts the board, its sections and every wire where the current window says. */
@@ -526,10 +693,21 @@ export class Desk implements DeskApi {
       const b = f.board;
       Object.assign(this.board.style, { left: `${b.x}px`, top: `${b.y}px`, width: `${b.w}px`, height: `${b.h}px` });
       this.board.classList.toggle('is-stacked', f.stacked);
-      const lay = boardLayout(b.w, this.specs(f));
-      lay.boxes.forEach((x, i) => Object.assign(this.sections[i].el.style, { left: `${x.x}px`, top: `${x.y}px`, width: `${x.w}px`, height: `${x.h}px` }));
+      const lay = boardLayout(b.w, this.specs(f), this.zoomK);
+      lay.boxes.forEach((x, i) => {
+        const sec = this.sections[i];
+        Object.assign(sec.el.style, { left: `${x.x}px`, top: `${x.y}px`, width: `${x.w}px`, height: `${x.h}px` });
+        const hd = this.heads.get(sec);
+        if (!hd) return;
+        // The head spans the board's content width above its section; an open aside's frame wraps its section too.
+        const frame = hd.aside && !hd.collapsed ? x.h + lay.pad / 2 : 0;
+        Object.assign(hd.el.style, { left: `${lay.pad / 2}px`, top: `${x.y - hd.h}px`, width: `${lay.width - lay.pad}px`, height: `${hd.h + frame}px` });
+      });
       this.sections.forEach((s) => { if (s.scene) this.applyCam(s); });
       this.content.style.height = `${lay.height}px`;
+      // Zoomed past the board's width: the content widens and the board scrolls sideways too.
+      this.content.style.width = lay.width > b.w + 0.5 ? `${lay.width}px` : '';
+      this.scroller.classList.toggle('is-wide', lay.width > b.w + 0.5);
     }
     this.rerouteAll();
     this.emit();
@@ -624,7 +802,10 @@ export class Desk implements DeskApi {
   /** Layout specs for every section: a scene fills the board's visible height under its head row. */
   private specs(f: Frame) {
     const fill = f.board ? f.board.h - BOARD_HEAD - boardPad(f.board.w) : 0;
-    return this.sections.map((s) => ({ body: bodyPx(s.body, f.page.pageW), span: s.y1 - s.y0, ...(s.scene ? { fill } : {}) }));
+    return this.sections.map((s) => {
+      const hd = this.heads.get(s);
+      return { body: bodyPx(s.body, f.page.pageW), span: s.y1 - s.y0, ...(s.scene ? { fill } : {}), ...(hd ? { head: hd.h, hidden: hd.collapsed } : {}) };
+    });
   }
 
   private makeScene(sec: Section, paper: SVGGElement) {

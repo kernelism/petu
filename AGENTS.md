@@ -107,6 +107,8 @@ Dev URLs (append to the dev server URL):
 - `?script=canvas` — the slide as canvas (`public/fixtures/canvas.pdf`): drawing on a slide's calibrated
   chart in its data units (`p=N on=#c1`), lifting its figure onto the board (`{{lift}}`), notes in place
   (`{{note p=N … annotate=}}`); see docs/briefs/board-engine.md
+- `?script=learner` — the v1 learner UX as one simulated session (ask, aside, resume, follow-up,
+  circle + "about:" chip, check reply judged on the board, trail + zoom + shortcuts); src/demo/learner.ts
 - `?script=lec09`, `?script=toolkit`, `?script=relational` — dev scripts, no API call (lec09 needs a
   local, gitignored PDF; relational shows the `let`/construction grammar on the fixture)
 - `?src=<pdf url>` — open a PDF by URL (e.g. `/api/dev-pdf/<name>.pdf` from `PETU_PDF_DIRS`)
