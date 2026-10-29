@@ -26,7 +26,7 @@ describe('Director instant mode', () => {
     const build: BuildElement = async (a) => {
       if (a.kind === 'emph') return 'unknown id';
       const plan: ElementPlan = {
-        target: a.region != null ? { region: a.region } : { page: 1 }, bbox: { x: 0, y: 0, w: 10, h: 10 },
+        target: (a as { region?: string }).region != null ? { region: (a as { region: string }).region } : { page: 1 }, bbox: { x: 0, y: 0, w: 10, h: 10 },
         draw: async (signal) => { drawSignals.push(signal.aborted); if (!signal.aborted) await new Promise((r) => setTimeout(r, 5000)); },
       };
       return plan;
