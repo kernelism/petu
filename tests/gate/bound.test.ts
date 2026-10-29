@@ -8,6 +8,7 @@ import { gateAnswer } from '../../scripts/gate-beats/gateRun';
 import type { Recording } from '../../scripts/gate-beats/recordings';
 import { Lint } from '../../server/lint';
 import { EXAMPLES } from '../../server/prompt/examples';
+import type { Grounding, GroundMark } from '../../src/geometry/resolve';
 import { ScriptFilter } from '../../server/scriptFilter';
 
 const W = (s: string) => s.split(/\s+/).filter(Boolean);
@@ -40,11 +41,26 @@ describe('bound numbers in the gate', () => {
   });
 });
 
+/** The calibrated charts in an example's listing (`#c1 chart x,y w×h x "…" lo–hi, y "…" lo–hi`), as the app's grounding resolves them. */
+function chartsOf(listing: string): Grounding {
+  const charts = new Map<string, GroundMark>();
+  let page = 0;
+  for (const l of listing.split('\n')) {
+    const p = /^PAGE (\d+)/.exec(l);
+    if (p) { page = Number(p[1]); continue; }
+    const m = /^(#c\d+) chart (\d+),(\d+) (\d+)×(\d+) x "[^"]*" (-?[\d.]+)–(-?[\d.]+), y "[^"]*" (-?[\d.]+)–(-?[\d.]+)$/.exec(l);
+    if (!m) continue;
+    const [x, y, w, h, x0, x1, y0, y1] = m.slice(2).map(Number);
+    charts.set(`${page}${m[1]}`, { kind: 'chart', rect: { x, y, w, h }, x: { lo: x0, hi: x1, p0: x, p1: x + w }, y: { lo: y0, hi: y1, p0: y + h, p1: y } });
+  }
+  return { mark: (p, id) => charts.get(`${p}${id}`) };
+}
+
 describe('the prompt examples', () => {
   it('state no engine number by hand, and every val resolves', () => {
     for (const ex of EXAMPLES) {
       const f = new ScriptFilter();
-      const flags = flagsOf(f.push(ex.script) + f.end()).filter((x) => x.check === 'unbound' || x.check === 'order' || (x.check === 'tag' && /val/.test(x.detail)));
+      const flags = gateAnswer(rec(f.push(ex.script) + f.end()), { pages: new Map(), grounding: chartsOf(ex.listing) }).beats.flatMap((b) => b.verdict.flags).filter((x) => x.check === 'unbound' || x.check === 'order' || (x.check === 'tag' && /val/.test(x.detail)));
       expect(flags, ex.title).toEqual([]);
     }
   });
