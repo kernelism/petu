@@ -10,7 +10,7 @@ const tm = (action: Record<string, unknown>, fired: number, skipped?: string): S
 // Verbatim shapes from the draw runs (haiku D1): const, scene, plot, find, val — all of which work.
 const SCRIPT = '{{const g=9.8 Km=2}} {{scene id=s}} Here is the curve {{plot on=s id=q fn="g*x/(Km+x)" domain=0,20 "rate"}} '
   + '{{find id=h of=q level=4.9}} {{point on=s at=h "half"}} It reaches half at {{val id=h.x fmt=0}} units. '
-  + '{{sketch id=t near=p4}} {{line on=t from=Ps to Pb}} {{val id=nope}} done';
+  + '{{sketch id=t near=p4}} {{line on=t from=Ps}} {{val id=nope}} done';
 const TIMINGS = [
   tm({ kind: 'sketch', id: 's', scene: true }, 10), tm({ kind: 'plot', id: 'q' }, 20), tm({ kind: 'point' }, 30),
   tm({ kind: 'sketch', id: 't' }, 40), tm({ kind: 'val', ref: 'nope' }, 50, 'unbound value nope'),
@@ -25,7 +25,7 @@ describe('judge transcript marks only real failures', () => {
     expect(t).toContain('[find id=h of=q level=4.9]');
     expect(t).toContain('[sketch id=t near=p4 ✓]'); // the scene does not take the later sketch's timing
     expect(t.match(/not parsed/g)).toHaveLength(1); // only the broken line
-    expect(t).toContain('[line on=t from=Ps to Pb ✗ not parsed]');
+    expect(t).toContain('[line on=t from=Ps ✗ not parsed]');
   });
   it('a resolved val shows what was said; an unbound one shows its skip', () => {
     expect(t).toContain('[val id=h.x fmt=0 → "2" ✓]');
