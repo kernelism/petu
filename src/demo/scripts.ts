@@ -1,6 +1,19 @@
 // src/demo/scripts.ts
 import type { Demo } from './demoScript';
 import { GATE_SCRIPT } from './gate';
+import { EXAMPLES } from '../../server/prompt/examples';
+
+/**
+ * The prompt's few-shot examples played on public/fixtures/examples.pdf (`npm run decks -- examples`),
+ * so a prompt change can be judged by the board a student would see. The plan is stripped (the
+ * server's filter does that for a real answer); the deck spells the counter's minus as "-" (WinAnsi).
+ */
+function example(title: string): Demo & { src: string; page: number } {
+  const ex = EXAMPLES.find((e) => e.title.includes(title));
+  if (!ex) throw new Error(`no prompt example titled …${title}…`);
+  const script = `{{scroll p=${ex.page}}} ` + ex.script.replace(/<plan>[\s\S]*?<\/plan>/g, '').replace(/−/g, '-');
+  return { src: '/fixtures/examples.pdf', page: ex.page, question: ex.question, script };
+}
 
 /**
  * Dev-only named scripts for real PDFs: `?script=<name>` (optionally `&src=<pdf url>`) opens the
@@ -299,4 +312,8 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number; deeper
       `{{connect from=p4:"Vmax is unchanged" to=s:v1[5]}} so Vmax is unchanged. ` +
       `{{merge on=s id=es of=sub,enz "ES, nearly always"}} Flood it with substrate and the enzyme is nearly always holding S.`,
   },
+  // The prompt's examples (server/prompt/examples.ts) on their own slides.
+  'ex-village': example('coins as marks'),
+  'ex-forecast': example('many cases at once'),
+  'ex-counter': example("slide's own chart"),
 };

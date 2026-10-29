@@ -26,7 +26,7 @@ describe('system prompt', () => {
   it('is stable (one cacheable prefix) and within budget', () => {
     expect(systemPrompt()).toBe(s);
     expect(PROMPT_VERSION).toMatch(/^p\d+\.\d+$/);
-    expect(s.length / 3.6).toBeLessThan(8300); // ~tokens (the slide as canvas — charts, lifts, page notes — ~250 more; the visual kit's card added ~1,000; views, plots and FORMULAS ~400; Board v2's scene ~700; bound numbers, readouts, moves and a fifth example ~650)
+    expect(s.length / 3.6).toBeLessThan(8300); // ~tokens (the slide as canvas — charts, lifts, page notes — ~250 more; the visual kit's card added ~1,000; views, plots and FORMULAS ~400; Board v2's scene ~700; bound numbers, readouts, moves and a fifth example ~650; p5.6: four examples, chart-first and beats in TEACH, amounts/counts/histograms in the card, wave-1 helpers — 8,208)
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
   });
 
@@ -86,6 +86,9 @@ describe('system prompt', () => {
     // The slide as canvas: calibrated charts, lifts, page notes
     expect(kinds, 'lift').toContain('lift');
     for (const w of ['on=#c1', '#c1 chart', 'annotate=#', 'box=x,y,w,h', 'WORK ON THE SLIDE AND FROM IT']) expect(s, w).toContain(w);
+    // Amounts, counts and distributions; readouts and moves on a slide's chart; wave-1 helpers
+    expect(kinds, 'tokens').toContain('tokens');
+    for (const w of [' stack}}', 'parts=', 'split id=b[2] vals=', 'state=', 'hist=', 'on=#c1 at=E', 'if(c,a,b)', 'integral(', 'quantile', 'clear side']) expect(s, w).toContain(w);
   });
 
   it('states the kit principles: the engine computes, visible values, page values, input-operation-output, step then sweep', () => {

@@ -40,6 +40,10 @@ export const SCENES: Scene[] = [
   // injected skip and the fake repair (1.5 s), the demo's replacement plays in its place.
   { name: 'gate', query: 'script=gate&gate=live', moments: [END], audit: false },
   { name: 'gate-repair', query: 'script=gate&gate=live&gatefail=2:skip&repair=fake&repairms=1500', moments: [END], audit: false },
+  // The prompt's few-shot examples on their own slides (public/fixtures/examples.pdf): what the model is shown, as a student sees it.
+  { name: 'ex-village', query: 'script=ex-village', moments: [mid(14000), mid(30000), END] },
+  { name: 'ex-forecast', query: 'script=ex-forecast', moments: [mid(20000), END] },
+  { name: 'ex-counter', query: 'script=ex-counter', moments: [mid(22000), END] },
   { name: 'lec09', query: 'script=lec09', moments: [mid(14000), END], needs: 'public/dev/lec09_optical_flow.pdf' },
 ];
 

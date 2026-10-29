@@ -21,6 +21,11 @@ describe('Lint (grammar checks only)', () => {
     const s = circles(30) + '{{sketch id=a near=p1}} {{sketch id=b near=p2}} {{sketch id=c near=p3}} {{sketch id=d near=p4 size=l}}';
     expect(run(s)).toEqual({ out: s, notes: [] });
   });
+  it('knows the amount, count and distribution moves (tokens, stacked and split bars, histograms)', () => {
+    const s = '{{sketch id=k near=p1}} {{tokens on=k id=c n=8 states=seller,tax "coins"}} A {{set id=c state=tax n=2}} B {{set id=c[7:8] state=seller}} C ' +
+      '{{bars on=k id=b vals=100;90,20 labels=before,after parts=room,tax stack}} D {{split id=b[1] vals=30 "kept" "tax"}} E {{bars on=k id=h hist=b bins=4}} F';
+    expect(run(s)).toEqual({ out: s, notes: [] });
+  });
   it('notes an unknown tag name and an unclosed quote, and changes nothing', () => {
     const s = 'A {{wiggle p=1}} B {{highlight p=1 "open}} C {{ point on=s at=1,1 "P"}}';
     const { out, notes } = run(s);
