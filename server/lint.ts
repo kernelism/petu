@@ -8,6 +8,8 @@ export const TAG_NAMES = new Set(['scroll', 'highlight', 'underline', 'circle', 
   'scene', 'node', 'flow', 'link', 'note', 'shares', 'blend', 'group', 'pair', 'merge', 'split',
   // amounts, counts and distributions (a count as marks)
   'tokens',
+  // a magnifier inset on the board (src/desk/zoom.ts)
+  'zoom',
   // bound numbers, readouts, demonstration moves (src/script/parseValues.ts)
   'val', 'find', 'contrast', 'limit', 'beforeafter',
   // the slide as canvas: a page region onto the board

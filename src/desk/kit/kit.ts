@@ -494,7 +494,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
     const ps = C.resolveCells(a.stack.vals, a.stack.cells, withConsts(store.consts, a.with));
     if (typeof ps === 'string') return ps;
     parts = ps;
-    a = Object.assign({}, a, { src: { vals: [ps.map((r) => r.reduce((t, v) => t + v, 0))] } });
+    a = Object.assign({}, a, { src: { vals: [ps.map((r) => (a.kind === 'bars' && a.stack?.side ? groupTop(r) : r.reduce((t, v) => t + v, 0)))] } });
   }
   // bars axes=<another bar chart> (not a line): one y scale for both, drawn as bars (a line has no bar axes to sit on).
   let shareScale: Block | undefined;
@@ -597,30 +597,53 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
       const lf = a.labelsFrom && a.labelsFrom[1] >= 0 ? store.get(a.labelsFrom[0]) : undefined;
       const labels = shownAll((lf?.full ? lf.full.map((r) => C.fmt(r[a.labelsFrom![1]], lf.dp)) : a.labels)?.slice(0, Cn));
       // A slot is as wide as its label (words never run into each other); the bar keeps its own width.
+      // Grouped bars (stack.side): a slot holds its group's parts side by side.
+      const side = !!(parts && a.kind === 'bars' && a.stack?.side);
+      const per = side ? Math.max(...parts!.map((r) => r.length)) : 1;
       const labW = labels?.length ? m.u(Math.max(...labels.map((l) => textWidth(l, m.labelPx))) + m.labelPx * 0.9) : 0;
+      // One height for every bar chart (not its numerals' width): charts that share a scale share it.
+      const H0 = m.u(m.numPx * 2.5) * 3.2;
       // A histogram's bins touch, across a fixed width (one x scale for every histogram that shares its bins).
-      const slot = hist ? HIST_W / Cn : Math.max(cs, labW), H = hist ? HIST_W * 0.42 : cs * 3.2;
-      const neg = ev[0].some((v) => v < 0);
-      // Stacked bars name their parts on the right, beside the last bar's segments.
-      const partW = a.parts?.length ? m.u(Math.max(...a.parts.map((l) => textWidth(shown(l), m.labelPx))) + m.labelPx * 1.2) : 0;
+      const slot = hist ? HIST_W / Cn : Math.max(side ? cs * (0.55 * per + 0.45) : cs, labW);
+      const neg = ev[0].some((v) => v < 0) || (parts?.flat().some((v) => v < 0) ?? false);
+      // One scale with the bars it sits beside when their ranges are alike (raw vs raw); its own otherwise.
+      const ext = (v: number[]) => ({ pos: Math.max(0, ...v.filter(Number.isFinite)), neg: Math.max(0, ...v.filter(Number.isFinite).map((x) => -x)) });
+      const mine = ext(side ? parts!.flat() : ev[0]);
+      // Side by side (right=) is a comparison: one scale. Below is a new picture: its own.
+      // A histogram keeps its own count scale (axes= shares its bins, not its heights).
+      const span = (e: { pos: number; neg: number }) => e.pos + e.neg || 1;
+      const alike = (g: { pos: number; neg: number }) => span(mine) / span(g) < 4 && span(g) / span(mine) < 4;
+      let g0 = hist ? undefined : shareScale?.group ?? (anchor?.kind === 'bars' && anchor.group && a.right && alike(anchor.group) ? anchor.group : undefined);
+      // Members of one scale share one body height (the scale is height / range) and so one baseline.
+      const H = hist ? HIST_W * 0.42 : g0 ? g0.members[0].placed.body.h : parts && !side ? H0 * 1.25 : H0;
+      // Stacked bars name their parts on the right, beside the last bar's segments; grouped bars in a legend there.
+      const partW = a.parts?.length ? m.u(Math.max(...a.parts.map((l) => textWidth(shown(l), m.labelPx))) + m.labelPx * (side ? 2.2 : 1.2)) : 0;
       const pad: Pad = { l: 0, t: m.label * 1.5, r: partW, b: (neg ? m.label * 1.4 : 0) + (labels || hist ? m.label * 1.7 : 0) + (a.caption ? m.label * 1.9 : 0) + m.label * 0.4 };
-      const placed = P(Cn * slot, parts ? H * 1.25 : H, pad);
+      let placed = P(Cn * slot, H, pad);
+      // In a scene the block is placed among everything; beside bars it shares (right=, or a chart the
+      // scene put in the same row), the bodies line up so the baselines are one line.
+      if (scene && !hist && !a.at) {
+        const row = g0 ? (anchor?.group === g0 ? anchor : g0.members[0]) : rel ? undefined : store.inRegion(region).find((o) => o.kind === 'bars' && o.group && !o.plot && o.view !== 'line' && !o.el.hist && alike(o.group)
+          && o.placed.body.y < placed.body.y + placed.body.h && placed.body.y < o.placed.body.y + o.placed.body.h && Math.abs(o.placed.body.h - H) < 1e-6);
+        if (row) {
+          const dy = row.placed.body.y - placed.body.y;
+          const moved = { body: { ...placed.body, y: placed.body.y + dy }, rect: { ...placed.rect, y: placed.rect.y + dy } };
+          const R = row.placed.rect, inRow = (o: Box) => o.x >= R.x - 1 && o.y >= R.y - 1 && o.x + o.w <= R.x + R.w + 1 && o.y + o.h <= R.y + R.h + 1;
+          const hits = [...scene.rects(), ...unclaimed(env, ctx.target)].some((o) => !inRow(o)
+            && o.x < moved.rect.x + moved.rect.w && moved.rect.x < o.x + o.w && o.y < moved.rect.y + moved.rect.h && moved.rect.y < o.y + o.h);
+          if (!hits) { placed = moved; g0 = row.group; }
+        }
+      }
       b = newBlock(id, 'bars', region, placed, m, got.deps);
       if (parts) b.parts = parts;
+      if (side) b.el.side = true;
       if (a.parts) b.el.partNames = shownAll(a.parts);
       b.el.store = store;
       if (hist) { b.el.hist = { lo: hist.lo, hi: hist.hi }; b.barW = slot * 0.94; }
-      Object.assign(b, { src: a.src, full: got.full, vals, dp: a.dp, cs: slot, cellPx, em: a.em, barW: cs * 0.62 });
+      Object.assign(b, { src: a.src, full: got.full, vals, dp: a.dp, cs: slot, cellPx, em: a.em, barW: side ? slot - cs * 0.45 : cs * 0.62 });
       b.el.labels = labels; b.el.caption = a.caption;
-      // One scale with the bars it sits beside when their ranges are alike (raw vs raw); its own otherwise.
-      const ext = (v: number[]) => ({ pos: Math.max(0, ...v.filter(Number.isFinite)), neg: Math.max(0, ...v.filter(Number.isFinite).map((x) => -x)) });
-      const mine = ext(ev[0]);
       b.full = ev;
-      // Side by side (right=) is a comparison: one scale. Below is a new picture: its own.
-      // A histogram keeps its own count scale (axes= shares its bins, not its heights).
-      const g0 = hist ? undefined : shareScale?.group ?? (anchor?.kind === 'bars' && a.right ? anchor.group : undefined);
-      const span = (e: { pos: number; neg: number }) => e.pos + e.neg || 1;
-      if (g0 && (shareScale || (span(mine) / span(g0) < 4 && span(g0) / span(mine) < 4))) {
+      if (g0 && (shareScale || alike(g0))) {
         g0.pos = Math.max(g0.pos, mine.pos); g0.neg = Math.max(g0.neg, mine.neg); g0.members.push(b); b.group = g0;
       } else b.group = { ...mine, members: [b] };
       if (a.ghost) {
@@ -1083,11 +1106,11 @@ async function setBarVals(b: Block, next: C.Mat, ms: number, ctl: Ctl | undefine
       setAttrs(e.bars[i], { x: r.x, y: r.y, width: r.w, height: Math.max(0, r.h), fill: e.emBars.has(i) ? token('--kit-accent') || c.bar : c.bar, 'fill-opacity': stacked ? 0 : 0.85 });
       const lab = Number.isFinite(v) ? (t >= 1 ? C.fmt(v, x.dp, fracOf(x)) : C.fmt(Number(cur.toFixed(x.dp ?? decimals(v))), x.dp ?? decimals(v))) : '';
       // A histogram of many bins reads by its shape: counts only when there are few.
-      e.vals[i].textContent = x.el.hist && vs.length > 10 ? '' : lab;
+      e.vals[i].textContent = (x.el.hist && vs.length > 10) || x.el.side ? '' : lab;
       setAttrs(e.vals[i], { x: r.x + r.w / 2, y: cur >= 0 ? r.y - m.label * 0.7 : r.y + r.h + m.label * 0.7 });
       if (x.parts) paintParts(x, i, r, t, c);
     });
-    if (x.parts) paintPartNames(x, c);
+    if (x.parts) (x.el.side ? paintLegend : paintPartNames)(x, c);
     const by = baseY(x);
     setAttrs(e.base, { y1: by, y2: by });
     if (x.ghost) drawGhosts(x, x.ghost, c);
@@ -1101,6 +1124,9 @@ async function setBarVals(b: Block, next: C.Mat, ms: number, ctl: Ctl | undefine
 }
 
 /** A stacked bar's part tones, bottom up: the bar's own, then lighter (one accent stays free for emph). */
+/** A group's height on the scale (grouped bars): its part of largest size, with its sign. */
+const groupTop = (r: number[]) => r.reduce((t, v) => (Math.abs(v) > Math.abs(t) ? v : t), 0);
+
 const partTone = (j: number, c: ReturnType<typeof col>) => (j === 0 ? c.bar : mix(c.bar, c.cell, Math.min(0.8, 0.42 + 0.2 * (j - 1))));
 
 /**
@@ -1118,6 +1144,7 @@ function paintParts(b: Block, i: number, r: Box, t: number, c: ReturnType<typeof
   while (seg.rects.length < ps.length) { seg.rects.push(svg(seg.g, 'rect', { rx: px(b, 1.5) })); seg.texts.push(kitText(seg.g, 0, 0, '', { size: m.label, fill: c.ink })); }
   seg.rects.slice(ps.length).forEach((x) => x.setAttribute('height', '0'));
   seg.texts.slice(ps.length).forEach((x) => { x.textContent = ''; });
+  if (b.el.side) return paintSide(b, i, r, ps, to, t, seg, c);
   const sum = ps.reduce((a, v) => a + Math.max(0, v), 0) || 1;
   const gap = ps.length > 1 ? px(b, 2) * s : 0;
   let y = r.y + r.h;
@@ -1131,6 +1158,40 @@ function paintParts(b: Block, i: number, r: Box, t: number, c: ReturnType<typeof
     seg.texts[j].textContent = fits ? C.fmt(t >= 1 ? to[j] : Number(p.toFixed(b.dp ?? 1)), b.dp) : '';
     setAttrs(seg.texts[j], { x: r.x + r.w / 2, y: y + h / 2, fill: j === 0 ? c.cell : c.ink, opacity: s });
     y -= j < ps.length - 1 ? gap : 0;
+  });
+}
+
+/**
+ * Grouped bars: group i's parts side by side across its bar's width, each from the baseline on the
+ * block's (shared) scale, its value above it; tones by part, so a part reads the same in every group.
+ * `r` is the group's envelope as it grows (the first draw rises from the baseline as one).
+ */
+function paintSide(b: Block, i: number, r: Box, ps: number[], to: number[], t: number, seg: { rects: SVGRectElement[]; texts: SVGTextElement[] }, c: ReturnType<typeof col>) {
+  const e = b.el.bars as BarEls, m = b.m, n = ps.length;
+  const full = barRect(b, i, groupTop(ps)).h;
+  const fr = full > 0 ? Math.min(1, r.h / full) : 1;
+  const gap = n > 1 ? Math.min(px(b, 3), r.w / n / 5) : 0, w = (r.w - gap * (n - 1)) / n;
+  ps.forEach((p, j) => {
+    const q = barRect(b, i, p), h = q.h * fr;
+    const x = r.x + j * (w + gap), y = p >= 0 ? q.y + q.h - h : q.y;
+    const tone = e.emBars.has(i) ? token('--kit-accent') || c.bar : partTone(j, c);
+    setAttrs(seg.rects[j], { x, y, width: w, height: h, fill: tone, 'fill-opacity': 0.9 });
+    seg.texts[j].textContent = C.fmt(t >= 1 ? to[j] : Number(p.toFixed(b.dp ?? 1)), b.dp);
+    setAttrs(seg.texts[j], { x: x + w / 2, y: p >= 0 ? y - m.label * 0.7 : y + h + m.label * 0.7, fill: c.ink, opacity: 1 });
+  });
+}
+
+/** Grouped bars' legend: a swatch and a name per part, right of the last group, from its top down. */
+function paintLegend(b: Block, c: ReturnType<typeof col>) {
+  const e = b.el.bars as BarEls, names = b.el.partNames as string[] | undefined;
+  if (!names?.length || !e.names) return;
+  e.names.replaceChildren();
+  const { body } = b.placed, m = b.m, sw = m.label * 0.8;
+  const x = body.x + body.w + m.label * 0.7;
+  names.forEach((nm, j) => {
+    const y = body.y + m.label * (0.6 + 1.5 * j);
+    svg(e.names!, 'rect', { x, y: y - sw / 2, width: sw, height: sw, rx: px(b, 1.5), fill: partTone(j, c), 'fill-opacity': 0.9 });
+    kitText(e.names!, x + sw + m.label * 0.45, y, nm, { size: m.label, fill: c.muted, anchor: 'start' });
   });
 }
 
@@ -2275,7 +2336,7 @@ function setParts(b: Block, v: Extract<KitVerb, { kind: 'set' }>, part: BlockPar
     next.forEach((t, i) => { parts[i] = parts[i].map((p) => (old[i] ? (p * t) / old[i] : t / parts[i].length)); });
   }
   if (parts.flat().some((x) => !Number.isFinite(x))) return 'set: not a number';
-  const totals = [parts.map((r) => r.reduce((t, x) => t + x, 0))];
+  const totals = [parts.map((r) => (b.el.side ? groupTop(r) : r.reduce((t, x) => t + x, 0)))];
   const deps = store.dependents(b.id), c = col();
   return {
     target: tgtOf(b), bbox: b.placed.rect,

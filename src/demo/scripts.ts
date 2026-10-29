@@ -141,6 +141,38 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number;
       `One caution: the real Earth has a dense core, so its pull inside doesn't fall off in step with distance, and a real trip would be somewhat faster. Check yourself: on a planet with the same density but half Earth's radius, would the tunnel trip take longer, shorter, or the same?`,
   },
   /**
+   * Founder live test, verbatim (Opus author, 2026-10-29): rent ceiling on OpenStax Principles of
+   * Economics 3e (corpus). Bars side by side must share one baseline and one value scale.
+   */
+  'live-econ': {
+    src: '/api/dev-pdf/openstax-principles-economics-3e.pdf',
+    page: 86,
+    question: 'Why does a price ceiling on rent create a shortage, and who actually ends up better or worse off?',
+    script:
+      `{{scroll p=88}} Here is the textbook's own rent example, where the mechanism shows in the numbers. {{highlight p=88 "the price of a rental unit would rise to $600"}} After demand grows, the market would settle at six hundred dollars, with seventeen thousand units rented. {{scene id=s near=p88}} {{bars on=s id=m vals=17,17;15,19 labels=market $600,ceiling $500 parts=supplied,demanded "thousands of units"}} At six hundred dollars, the units landlords offer and the units renters want match.\n\n` +
+      `{{highlight p=88 "the horizontal line at the price of $500"}} Now the law holds rent at five hundred. Two things happen at once. Renters respond to the cheaper price, and the number who want a unit climbs to nineteen thousand. {{highlight p=88 "the quantity supplied remains at the same 15,000 rental units"}} Landlords respond to the lower rent too, and they offer only fifteen thousand. {{calc on=s id=gap of=m[2,2],m[2,1] fn="x-y" below=m "shortage"}} The gap between what is wanted and what is offered is the shortage: {{val id=gap}} thousand households who want a unit at that rent and cannot get one. The ceiling made the gap by keeping price from rising to close it.\n\n` +
+      `{{tokens on=s id=h n=19 states=housed,shut out "households wanting a unit" below=gap}} So who comes out ahead? Picture the nineteen thousand households as marks, one per thousand. {{set id=h[16:19] state=shut out}} Only fifteen of them find a unit. {{highlight p=88 "fewer apartments rented out under the price ceiling"}} That is the irony the page points out: fewer people are housed than the seventeen thousand at the market rent.\n\n` +
+      `{{highlight p=88 "Those who manage to purchase the product at the lower price given by the price ceiling"}} The households that get a unit gain, because they pay a hundred dollars less. {{highlight p=88 "landlords tend to spend less on maintenance"}} Even part of that gain shrinks, because landlords cut upkeep, so the cheaper apartment is often a worse apartment. Landlords lose the extra rent, and some take units off the rental market altogether. The shut-out households lose the most: a low rent is worth nothing if you cannot find a place.\n\n` +
+      `Before you check the table, guess: if the ceiling were set at four hundred dollars instead, would the shortage grow or shrink? {{set id=m[2,1] to=12}} {{set id=m[2,2] to=23}} From the table's four-hundred row, supply falls to twelve thousand and demand rises to twenty-three thousand, and the shortage now reads {{val id=gap}} thousand. Last question: what would a ceiling set at seven hundred dollars do, above the market rent, and would anyone be shut out?`,
+  },
+  /**
+   * Founder live test, verbatim (Opus author, 2026-10-29): d/dx sin x on the unit circle, OpenStax
+   * Calculus vol 1 (corpus). Labels at one point (dx, Q, x) must never stack.
+   */
+  'live-calc': {
+    src: '/api/dev-pdf/openstax-calculus-volume-1.pdf',
+    page: 249,
+    question: 'Why is the derivative of sin x equal to cos x? Show me, don\'t just prove it.',
+    script:
+      `{{scroll p=250}} Start with the page's own guess. {{box p=250 mark=#i1}} The book computes a tiny difference quotient for sine, and the graph it gets looks like a cosine curve. The circle shows why that happens.\n\n` +
+      `{{sketch id=s near=p250 fit}} {{let on=s O=0,0 E=320,0 W=-320,0 N=0,-320 S=0,320 P=247,-169 Q=198,-225 R=198,-169 F=foot(P,O,E)}} {{circle on=s at=O r=300}} {{line on=s from=W to=E weight=faint}} {{line on=s from=S to=N weight=faint}} Take a point on the unit circle, {{point on=s at=P "P" dir=e}} {{line on=s from=O to=P}} at angle x from the horizontal axis. {{line on=s from=P to=F em id=ht}} Its height is sin x. {{label id=ht "sin x" dir=e}} {{angle on=s at=O from=E to=P "x"}} So asking how fast sine changes means asking how fast this point rises as the angle grows.\n\n` +
+      `{{point on=s at=Q "Q" dir=n}} Turn the angle a tiny bit more, to Q. Because x is in radians and the radius is one, the arc from P to Q has length equal to the change in angle. {{line on=s from=P to=Q id=arc}} {{label id=arc "dx" dir=ne}} Up close the arc is almost straight, and it points along the tangent, which is perpendicular to the radius.\n\n` +
+      `{{line on=s from=Q to=R em id=rise}} {{line on=s from=R to=P dash}} The rise from P to Q is the change in sine. {{label id=rise "rise" dir=w}} Look at the little triangle. Its slanted side is perpendicular to the radius, so the triangle is the big triangle O, F, P turned a quarter turn. {{angle on=s at=Q from=R to=P "x"}} That makes its angle at Q equal to x. The vertical leg is adjacent to that angle, so the rise is the arc times cos x. Divide the rise by the change in angle and you get cos x. That ratio is the derivative.\n\n` +
+      `Now move the point around the circle in your head. Near angle zero the arc runs straight up and the rise is as large as the arc: the rate is one, and cos zero is one. At the top the arc runs sideways, so for a moment there is no rise at all: the rate is zero. Past the top the arc tilts downward and the height falls: the rate is negative. Cosine is the point's horizontal position, and it goes through exactly the same values, positive, then zero, then negative.\n\n` +
+      `{{scroll p=252}} {{box p=252 mark=#i1}} That is this figure. {{highlight p=252 "has a maximum or a minimum,"}} Sine flattens at its peak just where the cosine curve crosses zero, and it is steepest where cosine reaches one or negative one.\n\n` +
+      `{{scroll p=251}} {{box p=251 mark=#e3}} The formal proof says the same thing with limits. Sine h over h going to one says a tiny arc and its rise are the same length near zero. The other limit says the sideways part of a small turn vanishes to first order. Before checking, picture the point at the far left of the circle, at angle pi. Which way is a tiny arc pointing there, and what does that make the slope of sine at pi?`,
+  },
+  /**
    * Visual kit v1 check (spec "Visual kit v1"), no API call: six board sections, half of them outside
    * computer science, every number computed by the engine. 1 a window sliding over a patch with an
    * edge (live calc line, output filling); 2 two vectors as bars, a brightness change, a raw distance
@@ -357,4 +389,10 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number;
   'ex-village': example('coins as marks'),
   'ex-forecast': example('many cases at once'),
   'ex-counter': example("slide's own chart"),
+};
+
+/** live-calc with one professor move added: a magnifier on P where the narration turns to the little triangle. */
+SCRIPTS['live-calc-zoom'] = {
+  ...SCRIPTS['live-calc'],
+  script: SCRIPTS['live-calc'].script.replace('Look at the little triangle.', '{{zoom on=s at=P r=90 scale=3}} Look at the little triangle.'),
 };

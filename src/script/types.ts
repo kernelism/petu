@@ -64,6 +64,11 @@ export type Shape<P = Pt> =
   | { kind: 'label'; at: P; text: string }
   /** Region only. at = left edge, vertical middle (or the centre with `centered`). */
   | { kind: 'write'; at: P; text: string; size: TextSize; centered?: boolean }
+  /**
+   * Region only. A magnifier: a ring of radius r (sketch units) around `at`, and an enlarged copy (×scale,
+   * capped to fit) of every stroke inside it in clear space beside the figure, labels redrawn at body size.
+   */
+  | { kind: 'zoom'; at: P; r: number; scale: number; text?: string }
   /** A dot, plus an optional label placed toward `dir` (default ne) and nudged off other elements. */
   | { kind: 'point'; at: P; text?: string; dir?: Compass }
   /** Catmull-Rom curve through 2+ points. */
@@ -170,7 +175,7 @@ export type KitBlock<P = Pt> =
   /** view=line: the values as a curve on axes (implied past 16 values); axes=v draws onto line v's axes (an overlay). */
   | ({ kind: 'bars'; src: KitSource; labels?: string[]; labelsFrom?: ColRef; ghost?: string; view?: 'line'; axes?: string; dp?: number; caption?: string;
       /** stack: each bar is the sum of its parts (rows of `vals=100;90,20`, ragged; formula cells over constants), on one scale. */
-      stack?: { vals: number[][]; cells?: (string | null)[][] };
+      stack?: { vals: number[][]; cells?: (string | null)[][]; /** grouped: each part its own bar, side by side in its group (rectangular rows with parts=) */ side?: boolean };
       /** The parts' names, by position (a stacked bar's segments, or a split's). */
       parts?: string[] } & KitPlace<P>)
   /** Data points, literal or two of a table's columns (x, y: 0-based), which appear as the rows fill. */

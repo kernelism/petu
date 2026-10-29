@@ -40,6 +40,7 @@ computes every coordinate and every number.
 | `src/desk/scene/store.ts` | `SceneStore` (things by id, `alias` after a merge, `ofKind`), `anchorBox` (thing / part / kit block / element → world box), hooks `setKitResolver`, `setSceneLink` (kit → scene without an import cycle). |
 | `src/desk/registry.ts` | Drawn elements of the answer (id → bbox/boxes/strokes), `ext()` for per-answer stores. |
 | `src/desk/render.ts`, `math.ts`, `expr.ts`, `plot.ts`, `nudge.ts`, `follow.ts`, `runs.ts` | SVG text/dots/shade/emph; lazy KaTeX; safe expression parser (no eval); plot sampling; label nudging (≤ 3; a point label goes outside a closed shape it sits on: registry `outline`s of circles, boxes, shades); follow mode (rule 6); region text runs. |
+| `src/desk/zoom.ts` | Magnifier inset (`{{zoom}}`): `placeInset` (pure: clear space beside the figure, radius r·scale capped, shrinks to fit), `toInset`. Drawn by the `zoom` case in elements.ts. |
 | `src/ink/agent/*` | Stroke geometry (`strokes.ts`), pen motion (`animate.ts`, `PX_PER_SEC` 700), highlights/labels (`marks.ts`), CSS tokens (`tokens.ts`), line weights (`weights.ts`), pen cursor (`penCursor.ts`: a fixed nib on `document.body` placed via the stroke group's `getScreenCTM()`; `drawStrokes` and scene links call `penDown`/`penTo`/`penLift`; newest stroke wins, fades 400ms after the last lift; off under reduced motion, `?nopen`, or without `getScreenCTM`). |
 | `src/locate/locateQuote.ts` | Quote (+ `near=`) → rects on the page's text runs. |
 | `src/demo/demoScript.ts`, `src/demo/scripts.ts` | Hand-written scripts (`?demo=…`, `?script=kit|toolkit|relational|lec09|scene|scene-econ|scene-bio|moves`). |
@@ -156,6 +157,31 @@ Prevention by construction: the narration never types a number the engine comput
 - Demos: `?script=canvas` (chart readout + beforeafter on the slide), `?script=kit` sections 9–11.
   Tests: `tests/values/chartValues.test.ts`, `tests/desk/kitStack|kitTokens|kitMovesNew.test.ts`,
   `tests/ink/bracket.test.ts`.
+
+## Comparisons, labels, magnifier (founder live tests, layout2)
+
+- **Bars beside bars are one chart**: a bars block `right=` another (or one a scene puts in the same row,
+  ranges within 4×) joins its scale group. Every bar chart has one body height (`H0`, not its numerals'
+  width) and members take the group's, so scale (height ÷ range) and baseline are shared; in a scene the
+  body is aligned to its neighbour's (unless that lands on other ink). `below=` stays its own picture.
+- **Grouped bars**: `{{bars on=s id=m vals=17,17;15,19 labels=a,b parts=supplied,demanded}}` (rectangular
+  rows + `parts=`, no `stack`) = a group per row, a bar per part, side by side (`stack.side`; legend at the
+  right; `m[i,j]` a part, `set id=m[2,1] to=12` moves one bar). Ragged rows or `stack` stay stacked.
+- **List values with spaces** (`labels=market $600,ceiling $500`, `states=housed,shut out`): bare words
+  after `labels= parts= states= state= cols= rows=` continue the value until a flag word (`tokenize.ts`).
+- **Labels never overlap labels** (`placeClear`): text on text costs more than any number of strokes
+  crossed; the search reaches 6× the offset before settling. Angle and brace labels are recorded labels
+  too (`ownLabel`), so others keep off them and `relabel` moves them.
+- **Zoom** `{{zoom on=s at=P r=90 scale=3 "caption"}}` (region only; `r` in the sketch's units, scaled
+  with `fit`; `scale` 1.5–8, default 3): a ring around the detail, a thin line, and an inset in the
+  clearest spot beside the figure (radius r·scale ≤ 0.3 of the section, smaller if that is what fits).
+  The inset is an opaque disc with a clipped copy of every stroke near the detail (line widths, dashes
+  and dots kept), and the labels whose anchors lie in the ring redrawn at body size, clear of each other.
+  Snapshot at draw time: ink drawn later is not copied. Its room is an obstacle for later ink.
+- Demos: `?script=live-econ`, `?script=live-calc`, `?script=live-calc-zoom` (corpus PDFs; gallery scenes
+  of the same names). Tests: `tests/desk/kitCompare.test.ts`, `tests/geometry/unitCircle.test.ts`.
+- Open: `calc of=m[2,2],m[2,1]` (a calc over parts) does not parse, and the value model
+  (`src/gate/engine.ts`) has no part operands, so live-econ's shortage calc and its `{{val}}` are skipped.
 
 ## Expressions and computed data
 

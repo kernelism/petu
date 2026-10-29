@@ -25,7 +25,11 @@ const FLAG_WORDS = new Set(['em', 'dash', 'outline', 'fit', 'same', 'flip', 'sha
  * the bare word is a point key of that tag, not given already, and the next token is a bare value
  * (no quote, no `=`, not a flag word). Anything else stays as written (a flag, or malformed).
  */
-const POINT_KEYS: Record<string, string[]> = {
+/** Keys whose value is a list of names (labels, headers, states): spaces inside are part of a name. */
+const LIST_KEYS = new Set(['labels', 'parts', 'states', 'state', 'cols', 'rows']);
+/** Bare words that end such a list: every flag some tag reads. */
+const LIST_STOP = new Set([...FLAG_WORDS, 'stack', 'arrows', 'down', 'plain', 'show']);
+const POINT_KEYS:Record<string, string[]> = {
   line: ['from', 'to', 'through'], arrow: ['from', 'to', 'through'], brace: ['from', 'to'], angle: ['at', 'from', 'to'],
   point: ['at'], label: ['at'], circle: ['at'], shade: ['at'], write: ['at', 'center'], math: ['at', 'center'], box: ['at', 'center'],
 };
@@ -79,6 +83,14 @@ export function tokenize(body: string): Tokens | null {
       continue;
     }
     if (lastKey === 'pts' && (POINT.test(t) || /^[A-Za-z#(]/.test(t) && !/^(em|dash|outline|fit)$/i.test(t))) { out.args.pts += ` ${t}`; continue; }
+    // A list value written with spaces (`labels=market $600,ceiling $500`, `states=housed,shut out`):
+    // bare words that are no flag continue it. Only names take this; numbers and points never do.
+    if (LIST_KEYS.has(lastKey) && !LIST_STOP.has(k)) {
+      out.args[lastKey] += ` ${t}`;
+      const rk = Object.keys(out.rawArgs).find((x) => x.toLowerCase() === lastKey);
+      if (rk) out.rawArgs[rk] = out.args[lastKey];
+      continue;
+    }
     out.flags.add(t.toLowerCase());
     lastKey = '';
   }

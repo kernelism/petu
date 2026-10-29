@@ -27,6 +27,7 @@ import { buildBlock, buildChartPlot, buildKitPlot, buildKitRef, buildReadoutPoin
 import { withConsts } from '../values/readout';
 import { chartToPage } from '../agent/context/charts';
 import { placeNote } from './annotate';
+import { placeInset, toInset } from './zoom';
 
 /** Closed shapes (circle, box) read as rushed below this, however small… */
 export const CLOSED_MIN_MS = 400;
@@ -230,6 +231,19 @@ async function writePlaced(g: SVGGElement, owner: string, index: number, box: SR
 }
 
 /**
+ * An element's own label (an angle's, a brace's) at `tip`: placed clear of every other label, recorded
+ * with its owner so later labels keep off it and a later stroke across it moves it.
+ */
+async function ownLabel(ctx: TargetCtx, env: BuildEnv, g: SVGGElement, sig: AbortSignal, k: Pace, id: string, text: string, em: boolean | undefined, tip: SPt, dir: NonNullable<Parameters<typeof placeLabel>[3]>) {
+  const o = textOpts(ctx, env, textPx(ctx, 'label'), em);
+  const place = () => placeText(ctx, env, g, text, o, tip, dir, 0, id);
+  const box = place();
+  const e = env.registry.get(id), index = e ? e.boxes.length : 0;
+  if (e) env.registry.update(id, { boxes: [...e.boxes, box], bbox: union([e.bbox, box]) });
+  await writePlaced(g, id, index, box, text, o, env, sig, k, place);
+}
+
+/**
  * Places a label box next to `anchor` toward `dir`, nudged off the target's other elements
  * (rule 5). Runs at draw time, so it sees everything drawn before it.
  */
@@ -319,8 +333,9 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
         const at = () => { const now = env.registry.get(id)?.anchor ?? anchor0; return { x: mid.x + now.x - anchor0.x, y: mid.y + now.y - anchor0.y }; };
         const place = () => placeText(ctx, env, g, a.text!, o, at(), compassOf(n), px(2), id);
         const box = place();
+        const index = e ? e.boxes.length : 0; // before the update: it changes the entry in place
         if (e) env.registry.update(id, { boxes: [...e.boxes, box], bbox: union([e.bbox, box]) });
-        await writePlaced(g, id, e ? e.boxes.length : 0, box, a.text!, o, env, sig, k, place);
+        await writePlaced(g, id, index, box, a.text!, o, env, sig, k, place);
       });
     }
     case 'curve': {
@@ -335,11 +350,7 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       const b = bisector(c, P(a.from), P(a.to));
       const tip = { x: c.x + b.x * (rad + px(10)), y: c.y + b.y * (rad + px(10)) };
       const dir = compassOf(b);
-      return strokePlan(a, ctx, env, { strokes: [arc] }, [], async (g, sig, k) => {
-        const o = textOpts(ctx, env, textPx(ctx, 'label'), a.em);
-        const box = placeText(ctx, env, g, a.text!, o, tip, dir, 0);
-        await writeLabel(g, box, a.text!, o, env, sig, k);
-      });
+      return strokePlan(a, ctx, env, { strokes: [arc] }, [], (g, sig, k, id) => ownLabel(ctx, env, g, sig, k, id, a.text!, a.em, tip, dir));
     }
     case 'brace': {
       // A bracket beside the measured segment, on its clear side (never drawn across what it measures).
@@ -358,11 +369,7 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       const n = sideNormal(f, t, side);
       const depth = o.gap + o.tick + o.notch;
       const tip = { x: (f.x + t.x) / 2 + n.x * (depth + px(4)), y: (f.y + t.y) / 2 + n.y * (depth + px(4)) };
-      return strokePlan(a, ctx, env, { strokes: [s] }, [], async (g, sig, k) => {
-        const o = textOpts(ctx, env, textPx(ctx, 'label'), a.em);
-        const box = placeText(ctx, env, g, a.text!, o, tip, compassOf(n), 0);
-        await writeLabel(g, box, a.text!, o, env, sig, k);
-      });
+      return strokePlan(a, ctx, env, { strokes: [s] }, [], (g, sig, k, id) => ownLabel(ctx, env, g, sig, k, id, a.text!, a.em, tip, compassOf(n)));
     }
     case 'axes': {
       const o = P(a.at);
@@ -399,6 +406,96 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       const strokes = plotStrokes(fn, a.domain, { x: ax.bbox.x, y: ax.bbox.y + ax.bbox.h, w: ax.bbox.w, h: ax.bbox.h }, a.range);
       if (!strokes.length) return 'nothing to plot';
       return strokePlan(a, ctx, env, { strokes, dash: a.dash });
+    }
+    case 'zoom': {
+      if (!isRegion(ctx.target)) return 'zoom lives on the board';
+      const c = P(a.at), o0 = P({ x: 0, y: 0 }), u = P({ x: 1000, y: 0 }).x - o0.x;
+      const rr = (a.r * u) / 1000;
+      if (!(rr > 0)) return 'zoom: no radius';
+      const t = ctx.target, B = bounds(ctx);
+      const box = (p: SPt, q: number): SRect => ({ x: p.x - q, y: p.y - q, w: 2 * q, h: 2 * q });
+      // What is already there: the figure the detail belongs to (its ink near the detail's), and every box and label to keep clear of.
+      const near = env.registry.entries().filter((e) => !e.faded && sameTargetOf(e.target, t));
+      const figure = union(near.map((e) => e.bbox).filter((b) => b.w * b.h > 0).concat([box(c, rr)]));
+      const obstacles = [...env.registry.obstacles(t), ...env.registry.labels(t).map((l) => l.box)];
+      const z = placeInset(c, rr, a.scale, figure, obstacles, { x: 0, y: 0, w: 1000, h: ctx.h }, px(14), Math.min(1000, ctx.h) * 0.3);
+      const d = { x: z.C.x - c.x, y: z.C.y - c.y }, L = Math.hypot(d.x, d.y) || 1;
+      const strokes = [
+        circleStroke(c, rr, rr, r, true),
+        lineStroke({ x: c.x + (d.x / L) * rr, y: c.y + (d.y / L) * rr }, { x: z.C.x - (d.x / L) * z.R, y: z.C.y - (d.y / L) * z.R }, r),
+        circleStroke(z.C, z.R, z.R, r, true),
+      ];
+      return strokePlan({ ...a, weight: 'secondary' } as unknown as DrawAction, ctx, env, { strokes }, [box(z.C, z.R)], async (g, sig, k, id) => {
+        // The copy sits under the inset's ring: an opaque disc, the strokes inside the detail's ring
+        // scaled by k (line widths, dashes and dots kept as drawn), clipped to the inset.
+        const copy = document.createElementNS(SVG_NS, 'g') as SVGGElement;
+        copy.setAttribute('data-zoom', '');
+        copy.style.opacity = '0';
+        g.insertBefore(copy, g.firstChild);
+        const disc = document.createElementNS(SVG_NS, 'circle');
+        for (const [kk, v] of Object.entries({ cx: z.C.x, cy: z.C.y, r: z.R, fill: token('--board-bg') || token('--paper') || '#fff' })) disc.setAttribute(kk, String(v));
+        copy.appendChild(disc);
+        const clipId = `zoom-${id}-${Math.round(z.C.x)}-${Math.round(z.C.y)}`;
+        const clip = document.createElementNS(SVG_NS, 'clipPath');
+        clip.setAttribute('id', clipId);
+        const cc = document.createElementNS(SVG_NS, 'circle');
+        for (const [kk, v] of Object.entries({ cx: z.C.x, cy: z.C.y, r: z.R })) cc.setAttribute(kk, String(v));
+        clip.appendChild(cc);
+        copy.appendChild(clip);
+        const clipped = document.createElementNS(SVG_NS, 'g');
+        clipped.setAttribute('clip-path', `url(#${clipId})`);
+        copy.appendChild(clipped);
+        const inner = document.createElementNS(SVG_NS, 'g');
+        inner.setAttribute('transform', `translate(${z.C.x} ${z.C.y}) scale(${z.k}) translate(${-c.x} ${-c.y})`);
+        clipped.appendChild(inner);
+        const ring = box(c, rr);
+        for (const e of near) {
+          if (e.id === id || !e.group || !e.strokes?.length && e.kind !== 'point') continue;
+          if (!(e.bbox.x < ring.x + ring.w && ring.x < e.bbox.x + e.bbox.w && e.bbox.y < ring.y + ring.h && ring.y < e.bbox.y + e.bbox.h)) continue;
+          const cl = e.group.cloneNode(true) as SVGGElement;
+          cl.querySelectorAll('text, foreignObject, [data-zoom]').forEach((x) => x.remove());
+          cl.querySelectorAll('[stroke-width]').forEach((x) => x.setAttribute('stroke-width', String(Number(x.getAttribute('stroke-width')) / z.k)));
+          cl.querySelectorAll('[stroke-dasharray]').forEach((x) => x.setAttribute('stroke-dasharray', (x.getAttribute('stroke-dasharray') ?? '').split(/[ ,]+/).map((v) => String(Number(v) / z.k)).join(' ')));
+          cl.querySelectorAll('circle.desk-dot').forEach((x) => x.setAttribute('r', String(Number(x.getAttribute('r')) / z.k)));
+          cl.removeAttribute('id');
+          inner.appendChild(cl);
+        }
+        // Labels about the detail, redrawn at body size beside their anchors' enlarged places, clear of each other.
+        const segs: Seg[] = env.registry.segments(t).filter((sg) => Math.hypot(sg.a.x - c.x, sg.a.y - c.y) <= rr * 1.5 || Math.hypot(sg.b.x - c.x, sg.b.y - c.y) <= rr * 1.5)
+          .map((sg) => ({ a: toInset(z, sg.a), b: toInset(z, sg.b) }));
+        const inBox = { x: z.C.x - z.R * 0.72, y: z.C.y - z.R * 0.72, w: z.R * 1.44, h: z.R * 1.44 };
+        const placed: SRect[] = [];
+        const labs = document.createElementNS(SVG_NS, 'g') as SVGGElement;
+        copy.appendChild(labs);
+        for (const l of env.registry.labels(t)) {
+          if (l.owner === id) continue;
+          const lc = { x: l.box.x + l.box.w / 2, y: l.box.y + l.box.h / 2 };
+          const pts = l.entry.strokes?.flat() ?? [];
+          // A label tag's own entry has no strokes: it names the stroke nearest it.
+          const all = near.filter((e) => e.id !== id && e.strokes?.length).flatMap((e) => e.strokes!);
+          // Its anchor inside the ring: a point's dot; else the nearest piece of stroke inside the ring
+          // (its owner's, or for a label tag any), when the label sits right beside it.
+          const inRing = (q: SPt) => Math.hypot(q.x - c.x, q.y - c.y) <= rr;
+          const pieces = (ss: Stroke[]) => ss.flatMap((st) => st.slice(1).map((b, i) => [st[i], b]).filter(([p0, p1]) => inRing(p0) || inRing(p1)));
+          const mine = pts.length ? pieces(l.entry.strokes!) : pieces(all);
+          let anchor: SPt | undefined = l.entry.kind === 'point' ? (inRing(l.entry.anchor) ? l.entry.anchor : undefined) : mine.length ? nearestOn(lc, mine) : undefined;
+          if (anchor && l.entry.kind !== 'point' && Math.hypot(anchor.x - lc.x, anchor.y - lc.y) > Math.max(l.box.w, l.box.h) + px(24)) anchor = undefined;
+          if (!anchor) continue;
+          const o = textOpts(ctx, env, textPx(ctx, 'label'), false);
+          const m = measureText(labs, l.text, o);
+          const A = toInset(z, anchor);
+          const dir = compassOf({ x: lc.x - anchor.x, y: lc.y - anchor.y });
+          const at = placeClear(A, m.w, m.h, dir, l.entry.kind === 'point' ? px(3) : 0, segs, [], inBox, [], placed);
+          placed.push(at);
+          makeText(labs, { x: at.x, y: at.y + at.h / 2 }, l.text, o);
+        }
+        if (a.text) {
+          const o = textOpts(ctx, env, textPx(ctx, 'label'), false);
+          const m = measureText(labs, a.text, o);
+          makeText(labs, { x: z.C.x - m.w / 2, y: z.C.y + z.R + m.h * 0.9 }, a.text, o);
+        }
+        await fadeGroup(copy, 1, prefersReducedMotion() || k.fadeMs != null ? 0 : 320, sig);
+      });
     }
     case 'point': {
       const c = P(a.at), rad = px(DOT_PX);
@@ -636,6 +733,20 @@ function chartPlot(a: Extract<DrawAction, { kind: 'plot' }>, ctx: TargetCtx, env
     const box = placeClear(end, m.w, m.h, a.labelAt === 'top' ? 'n' : 'e', 4, env.registry.segments(ctx.target), [...env.registry.obstacles(ctx.target), ...page], bounds(ctx));
     await writeLabel(g, box, label, o, env, sig, k);
   });
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const sameTargetOf = (a: Target, b: Target) => ('region' in a && 'region' in b ? a.region === b.region : 'page' in a && 'page' in b && a.page === b.page);
+/** The point of `strokes` nearest p. */
+function nearestOn(p: SPt, strokes: Stroke[]): SPt {
+  let best = strokes[0][0], bd = Infinity;
+  for (const s of strokes) for (let i = 0; i + 1 < s.length; i++) {
+    const a = s[i], b = s[i + 1], dx = b.x - a.x, dy = b.y - a.y, L = dx * dx + dy * dy;
+    const t = L ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / L)) : 0;
+    const q = { x: a.x + t * dx, y: a.y + t * dy }, dd = Math.hypot(q.x - p.x, q.y - p.y);
+    if (dd < bd) { bd = dd; best = q; }
+  }
+  return best;
 }
 
 /** The compass direction closest to a unit vector (y down). */

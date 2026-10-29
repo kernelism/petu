@@ -150,7 +150,8 @@ function compassOf(v: SPt): Compass {
 export function placeClear(anchor: SPt, w: number, h: number, dir: Compass, clear: number, segs: Seg[], boxes: SRect[], bounds: SRect, outlines: Outline[] = [], labels: SRect[] = []): SRect {
   const on = shapesAt(anchor, outlines, LABEL_OFFSET + clear);
   // `labels`: other labels' boxes. Text on text is as unreadable as text on a stroke.
-  const cost = (r: SRect) => (segs.filter((s) => segHitsRect(s, r)).length + labels.filter((o) => overlapArea(r, o) > 0).length) * 1e6 + on.filter((o) => rectInPoly(r, o)).length * 1e6 + boxes.reduce((n, o) => n + overlapArea(r, o), 0);
+  // Text on text is never accepted while any spot is free of it: a label on another costs more than any number of strokes crossed.
+  const cost = (r: SRect) => labels.filter((o) => overlapArea(r, o) > 0).length * 1e12 + segs.filter((s) => segHitsRect(s, r)).length * 1e6 + on.filter((o) => rectInPoly(r, o)).length * 1e6 + boxes.reduce((n, o) => n + overlapArea(r, o), 0);
   let order = ORDER[dir];
   if (on.length) {
     // Away from the interior: from the shapes' centre (their vertices' mean) through the anchor.
@@ -165,5 +166,13 @@ export function placeClear(anchor: SPt, w: number, h: number, dir: Compass, clea
     if (c === 0) return r;
     if (c < bestCost) { bestCost = c; best = r; }
   }
-  return nudge(best!, boxes, bounds);
+  // Still on another label: farther out (to 6× the offset) for the nearest spot free of labels.
+  for (let k = 4.2; bestCost >= 1e12 && k <= 6; k += 0.8) for (const d of order) {
+    const r = clampTo(placeLabel(anchor, w, h, d, clear + (k - 1) * LABEL_OFFSET), bounds);
+    const c = cost(r);
+    if (c < bestCost) { bestCost = c; best = r; }
+  }
+  // The nudge moves off boxes only: it never pushes a label onto another one.
+  const n = nudge(best!, boxes, bounds);
+  return labels.some((o) => overlapArea(n, o) > 0) && !labels.some((o) => overlapArea(best!, o) > 0) ? best! : n;
 }

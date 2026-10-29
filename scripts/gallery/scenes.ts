@@ -54,6 +54,10 @@ export const SCENES: Scene[] = [
   ] },
   // A founder live test (chord tunnel): a fit sketch with a circle, a chord on it, labelled arrows.
   { name: 'tunnel', query: 'script=tunnel&style=hand', moments: [mid(26000), END], needs: '.petu/corpus/openstax-university-physics-volume-1.pdf' },
+  // Founder live tests (layout2): bars side by side on one baseline/scale; labels at one point never stack; a zoom inset.
+  { name: 'live-econ', query: 'script=live-econ', moments: [mid(30000), END], needs: '.petu/corpus/openstax-principles-economics-3e.pdf' },
+  { name: 'live-calc', query: 'script=live-calc', moments: [mid(40000), END], needs: '.petu/corpus/openstax-calculus-volume-1.pdf' },
+  { name: 'live-calc-zoom', query: 'script=live-calc-zoom', moments: [mid(40000), END], needs: '.petu/corpus/openstax-calculus-volume-1.pdf' },
   { name: 'lec09', query: 'script=lec09', moments: [mid(14000), END], needs: 'public/dev/lec09_optical_flow.pdf' },
 ];
 
