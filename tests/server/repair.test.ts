@@ -234,7 +234,7 @@ describe('POST /api/repair', () => {
     await post(api, '/api/repair', wire(await answer(api)));
     expect(calls[1].body.reasoning).toEqual({ effort: 'low' });
     // The default stage 2 is terra/medium; its repairs run at low (a 450-token budget leaves no room to reason longer).
-    expect(parseEnv(() => undefined, { root, home: root }).repair).toMatchObject({ effort: 'low', maxOutput: REPAIR_MAX_OUTPUT });
+    expect(parseEnv((k) => ({ PETU_EFFORT: 'medium' })[k], { root, home: root }).repair).toMatchObject({ effort: 'low', maxOutput: REPAIR_MAX_OUTPUT });
     expect(parseEnv((k) => ({ PETU_EFFORT: 'none' })[k], { root, home: root }).repair).toMatchObject({ effort: 'none' });
     expect(() => parseEnv((k) => ({ PETU_MODEL: 'claude-opus-5-5', PETU_EFFORT: 'low', PETU_REPAIR_EFFORT: 'none' })[k], { root, home: root })).toThrow(/REPAIR_EFFORT/);
   });
