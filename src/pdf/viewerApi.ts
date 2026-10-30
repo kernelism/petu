@@ -3,6 +3,13 @@ import type { DeskHost } from '../desk/types';
 
 export type PageLayers = { highlight: SVGGElement; agent: SVGGElement };
 
+/**
+ * Who moves to a page. `answer`: the tutor (like scrollToPage; the page counts as acted on).
+ * Anything else (`student`: the page field or a key; `back`: "Back to pN") is the student taking the
+ * view: follow mode pauses mid-answer and the acted-on page is cleared.
+ */
+export type GoReason = 'answer' | 'student' | 'back';
+
 export interface ViewerApi {
   numPages(): number;
   currentPage(): number;
@@ -18,6 +25,23 @@ export interface ViewerApi {
    * Without: shows the whole page, centered between the top bar and the caption when it fits.
    */
   scrollToPage(page: number, y?: number): Promise<void>;
+  /**
+   * Shows `page` whole (framed as scrollToPage without y), clamped to the document. A far jump cuts
+   * to just short of the page and glides the rest. Resolves when it lands (or is interrupted).
+   */
+  goToPage(page: number, opts?: { reason?: GoReason }): Promise<void>;
+  /**
+   * The page the tutor last acted on (scrolled to, revealed, or inked while it was in view), until
+   * the student takes the view; null if none. The page slot carries `.is-acted` and the scroller
+   * `.has-acted` (app.css sets the other pages back only then).
+   */
+  actedPage(): number | null;
+  /** Called with the acted-on page whenever it changes. Returns the unsubscribe. */
+  onActedChange(cb: (page: number | null) => void): () => void;
+  /** The student's page zoom (1 = fitted to the column). */
+  pageZoom(): number;
+  /** Sets the page zoom (clamped), about the reading line. */
+  setPageZoom(z: number): void;
   /** Scrolls only if model-y on `page` is outside the middle 70% of the viewport (or under the window chrome). Returns whether it scrolled. */
   ensureVisible(page: number, y?: number): Promise<boolean>;
   /** Whether model-y on `page` is on screen now, clear of the window chrome. */
