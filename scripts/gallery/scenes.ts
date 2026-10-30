@@ -60,6 +60,7 @@ export const SCENES: Scene[] = [
   { name: 'svg-rent', query: 'script=svg-rent', moments: [mid(12000), END] },
   { name: 'svg-sinx', query: 'script=svg-sinx', moments: [mid(12000), END] },
   // The exact-data engine (src/svgboard/data.ts): mid-tween and the end state (ghost / trace kept).
+  { name: 'svg-dense', query: 'script=svg-dense', moments: [mid(9000), END] },
   { name: 'svg-ceiling', query: 'script=svg-ceiling', moments: [mid(16000), mid(30000), END] },
   { name: 'svg-spin', query: 'script=svg-spin', moments: [mid(16000), mid(24000), END] },
   { name: 'svg-slope', query: 'script=svg-slope', moments: [mid(14000), mid(26000), END] },
