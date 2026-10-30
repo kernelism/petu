@@ -210,6 +210,8 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
           type="button"
           className={`askbar-mic${listening ? ' is-listening' : ''}`}
           onClick={toggleMic}
+          // Clicking moves focus here: Esc drops the dictation (before the window's Esc stops the answer).
+          onKeyDown={(e) => { if (e.key === 'Escape' && listening) { e.preventDefault(); cancelMic(); } }}
           aria-pressed={listening}
           aria-label={listening ? 'Stop and send what you said' : 'Ask by voice'}
           title={listening ? 'Stop and send (Esc drops it)' : 'Ask by voice'}

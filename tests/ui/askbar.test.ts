@@ -116,4 +116,16 @@ describe('AskBar dictation', () => {
     expect(b.input.placeholder).toBe('Microphone access was blocked.');
     expect(b.props.onAsk).not.toHaveBeenCalled();
   });
+
+  it('Esc on the mic button drops the dictation, and does not stop the answer', () => {
+    const b = mount({ busy: true });
+    b.clickMic();
+    b.mic()!.focus();
+    b.key(b.mic()!, 'Escape');
+    expect(dict.cancel).toHaveBeenCalled();
+    expect(b.props.onStop).not.toHaveBeenCalled();
+    expect(b.input.placeholder).not.toBe('Listening…');
+    b.key(b.mic()!, 'Escape');
+    expect(b.props.onStop).toHaveBeenCalledTimes(1); // not listening: Esc stops the answer again
+  });
 });
