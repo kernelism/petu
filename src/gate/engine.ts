@@ -17,6 +17,8 @@ import { Figures, type Grounding } from '../geometry/resolve';
 import { curveOf, read, yAt, type Curve, type FitData, type Reading } from '../values/readout';
 import { sayNumber } from '../values/say';
 import { latestCharts } from '../agent/context/charts';
+import { newScope, resolveData, type DataScope } from '../svgboard/data';
+import { parseGroup } from '../svgboard/sanitize';
 
 export type ValueSource = 'page' | 'question' | 'literal' | 'const' | 'computed' | 'derived';
 export type Value = { v: number; source: ValueSource; /** block id, page, const name… */ of: string; beat: number; row?: { table: string; r: number; cells: number[] } };
@@ -65,6 +67,9 @@ export class GateState {
   readonly segs: Seg[] = [];
   readonly points: PointG[] = [];
   readonly figures: Figures;
+  /** The svg board's exact data (src/svgboard/data.ts): its constants are this state's, its data-val numbers are computed values. */
+  readonly svg: DataScope = newScope();
+  private svgGroups: Element[] = [];
   /** The id of the last shape or block apply() created (anonymous ones get `_n`). */
   lastId: string | undefined;
   private anon = 0;
@@ -125,6 +130,7 @@ export class GateState {
       case 'limit':
       case 'beforeafter': return this.move(a, beat);
       case 'tween': return this.tween(a, beat);
+      case 'svg': return this.svgGroup(a.svg, beat);
     }
     if (a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table' || a.kind === 'calc' || a.kind === 'scatter' || a.kind === 'fit' || a.kind === 'shares' || a.kind === 'tokens') return this.kit(a, beat);
     if ('ref' in a) return this.verb(a, beat);
@@ -383,8 +389,34 @@ export class GateState {
     }
     for (const [key, v] of vals) { this.setConst(key, v); this.addValues([v], 'const', key, beat); }
     this.recompute(beat);
+    this.svgAgain(beat);
     for (const [id, f] of this.finds) { const r = this.reading(id); if (typeof r !== 'string') this.addReading(f, r, beat); }
     return;
+  }
+
+  /**
+   * An svg group: its data-const constants join this state's (as a {{const}} would), its frames and
+   * curves are resolved, and every data-val it shows is a computed value the narration may say.
+   */
+  private svgGroup(src: string, beat: number): string | undefined {
+    const g = parseGroup(src);
+    if (typeof g === 'string') return g;
+    this.svg.consts = this.consts;
+    this.svg.define = (defs) => { this.apply({ kind: 'const', defs } as RawAction, beat); };
+    this.svg.values.length = 0;
+    const probs = resolveData(g, this.svg);
+    this.addValues(this.svg.values.map((v) => v.v), 'computed', 'svg', beat);
+    if (this.svg.values.length || g.querySelector('[data-at],[data-fn],[data-param],[data-between]')) this.svgGroups.push(g);
+    return probs.length ? probs.map((p) => p.detail).join('; ') : undefined;
+  }
+
+  /** The svg board after a constant moved: its data-val readouts say their new values. */
+  private svgAgain(beat: number): void {
+    if (!this.svgGroups.length) return;
+    this.svg.consts = this.consts;
+    this.svg.values.length = 0;
+    for (const g of this.svgGroups) resolveData(g, this.svg);
+    this.addValues(this.svg.values.map((v) => v.v), 'computed', 'svg', beat);
   }
 
   /** limit / beforeafter: the constant takes its new value; every plot, readout and computed block follows. */

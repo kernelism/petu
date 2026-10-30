@@ -169,6 +169,8 @@ export class KitStore {
   constsChanged(): void { this.constSubs.forEach((f) => f()); }
   /** Live geometry's place on the board (target and box of what a constant moves), for a tween's framing. */
   liveBox?: (keys: string[]) => { target: Target; bbox: { x: number; y: number; w: number; h: number } } | null;
+  /** The svg board's groups bound to constants (src/svgboard/element.ts), for a tween's framing. */
+  svgBox?: (keys: string[]) => { target: Target; bbox: { x: number; y: number; w: number; h: number } } | null;
   /** Named readouts ({{find}}) of this answer, computed when read. */
   readonly finds = new Map<string, FindAction>();
   /** A plot's curve with the current constants (readouts compute on it, exactly as the value model does). */
@@ -3191,7 +3193,7 @@ async function tweenMove(v: Extract<RefAction, { kind: 'tween' }>, env: BuildEnv
   const bad = to.findIndex((x) => !Number.isFinite(x));
   if (bad >= 0) return `bad value ${v.sets[bad][1]}`;
   const plots = [...new Set(keys.flatMap((k) => constPlots(store, k)))], blocks = [...new Set(keys.flatMap((k) => constBlocks(store, k)))];
-  const live = store.liveBox?.(keys) ?? null;
+  const live = store.liveBox?.(keys) ?? store.svgBox?.(keys) ?? null;
   if (!plots.length && !blocks.length && !live) return `nothing is drawn from ${v.sets.map(([k]) => k).join(', ')}`;
   const host = plots[0]?.plot?.host ?? plots[0] ?? blocks[0];
   const c = col();

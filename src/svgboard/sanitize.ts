@@ -39,6 +39,8 @@ export type SanitizeOpts = {
   /** Ids already defined on this board: model id → namespaced id (shared across its groups). */
   ids: Map<string, string>;
   doc?: Document;
+  /** Runs on the parsed group before styling (exact data, text fitting): src/svgboard/{data,polish}.ts. */
+  prepare?: (g: Element) => void;
 };
 
 export type Sanitized = { el: SVGGElement; id?: string; notes: string[] };
@@ -62,11 +64,26 @@ export function parseGroup(src: string): Element | string {
   return g;
 }
 
+/** Rough area of a filled shape (user units²), for softening large fills. */
+function areaOf(el: Element, name: string): number {
+  const n = (k: string) => num(el.getAttribute(k)) ?? 0;
+  // A bar or a dot is a mark (it stays solid); a wide area is a wash.
+  if (name === 'rect') return Math.min(n('width'), n('height')) > 40 ? n('width') * n('height') : 0;
+  if (name === 'circle') return n('r') > 24 ? Math.PI * n('r') ** 2 : 0;
+  if (name === 'ellipse') return Math.PI * n('rx') * n('ry');
+  const v = (name === 'path' ? el.getAttribute('d') : el.getAttribute('points'))?.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi)?.map(Number) ?? [];
+  if (v.length < 4) return 0;
+  const xs = v.filter((_, i) => i % 2 === 0), ys = v.filter((_, i) => i % 2 === 1);
+  // The bounding box, halved (a curve's region is rarely its whole box).
+  return ((Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys))) / 2;
+}
+
 export function sanitizeGroup(src: string, o: SanitizeOpts): Sanitized | string {
   const parsed = parseGroup(src);
   if (typeof parsed === 'string') return parsed;
   const notes: string[] = [];
   let count = 0;
+  o.prepare?.(parsed);
   const modelId = parsed.getAttribute('id') ?? undefined;
   // Ids defined in the group join the board's map before any reference is rewritten.
   parsed.querySelectorAll('[id]').forEach((e) => { const id = e.getAttribute('id')!; o.ids.set(id, `${o.ns}-${id}`); });
@@ -125,6 +142,8 @@ export function sanitizeGroup(src: string, o: SanitizeOpts): Sanitized | string 
     const fs = el.getAttribute('font-size');
     if (fs != null) { const v = num(fs); if (v != null && !/%|em/.test(fs)) font = v; }
     if (isText) {
+      // Legible ink: text never fades below 0.8 (a faint label is a missed label).
+      for (const k of ['opacity', 'fill-opacity'] as const) { const v = num(el.getAttribute(k)); if (v != null && v < 0.8) el.setAttribute(k, '0.8'); }
       const eff = font ?? 16;
       if (eff < o.minFont) { el.setAttribute('font-size', String(Math.round(o.minFont * 10) / 10)); font = o.minFont; }
       if (name === 'text') {
@@ -145,6 +164,18 @@ export function sanitizeGroup(src: string, o: SanitizeOpts): Sanitized | string 
       const da = el.getAttribute('stroke-dasharray');
       if (da && da !== 'none') el.setAttribute('stroke-dasharray', da.split(/[\s,]+/).map((x) => String(Math.max(2, Math.min(12, (num(x) ?? 4))))).join(' '));
     }
+    // Strokes stay visible (a guide may be faint, never invisible).
+    if (SHAPES.has(name)) { const so = num(el.getAttribute('stroke-opacity')); if (so != null && so < 0.4 && (el.getAttribute('stroke') ?? 'none') !== 'none') el.setAttribute('stroke-opacity', '0.4'); }
+    // Soft fills: a large area in a strong colour becomes a wash (dots and small marks stay solid).
+    if (SHAPES.has(name) && name !== 'line') {
+      const f = el.getAttribute('fill');
+      const area = areaOf(el, name);
+      if (f && f !== 'none' && f !== INK.paper && f !== INK.sheet && !/^url/i.test(f) && area > 2400) {
+        const fo = (num(el.getAttribute('fill-opacity')) ?? 1) * (num(el.getAttribute('opacity')) ?? 1);
+        const cap = f === o.palette.accent ? 0.2 : f === INK.line ? 0.9 : 0.16;
+        if (fo > cap) { el.setAttribute('fill-opacity', String(cap / (num(el.getAttribute('opacity')) ?? 1))); notes.push('fill softened'); }
+      }
+    }
     // A backing rect over (nearly) the whole canvas: the board is already paper.
     if (name === 'rect' && depth <= 1) {
       const w = num(el.getAttribute('width')) ?? 0, h = num(el.getAttribute('height')) ?? 0;
@@ -159,6 +190,8 @@ export function sanitizeGroup(src: string, o: SanitizeOpts): Sanitized | string 
     }
   };
   walk(parsed, null, 0);
+  // A data attribute that did not resolve: never drawn wrong, so not drawn (data.ts; the gate flagged it).
+  parsed.querySelectorAll('[data-bad]').forEach((e) => { e.setAttribute('display', 'none'); e.setAttribute('data-hid', ''); notes.push(`hidden: ${e.getAttribute('data-bad')}`); });
   if (count > MAX_ELEMENTS) notes.push(`over ${MAX_ELEMENTS} elements: cut`);
   if (modelId) { parsed.setAttribute('data-svg-id', modelId); }
   parsed.setAttribute('data-svg-group', '');

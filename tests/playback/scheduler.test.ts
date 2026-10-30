@@ -188,4 +188,18 @@ describe('PacedClock', () => {
     c.enqueue('c');
     expect(c.wordStart(2)).toBe(5000); // after a gap, the next word starts now
   });
+  it('beatWords: an svg group sees its beat\'s words and when each is spoken, up to the next group', () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const got: { text: string; inMs: number }[][] = [];
+    const svg = (id: string): ScriptEvent => ({ type: 'action', action: { kind: 'svg', id, svg: `<g id="${id}"/>` } as Action });
+    const s: Scheduler = new Scheduler(fixedClock(), {
+      onWord: () => {}, onAction: (a) => { if (a.kind === 'svg') got.push(s.beatWords()); }, onDone: () => {},
+    }, { leadMs: () => 0 });
+    s.push([...words('Start here.'), svg('one'), ...words('the curve falls fast.'), svg('two'), ...words('then it flattens.'), END]);
+    vi.advanceTimersByTime(3000);
+    expect(got[0].map((x) => x.text)).toEqual(['the', 'curve', 'falls', 'fast.']);
+    expect(got[0].map((x) => x.inMs)).toEqual([0, 100, 200, 300]);
+    expect(got[1].map((x) => x.text)).toEqual(['then', 'it', 'flattens.']);
+    vi.useRealTimers();
+  });
 });

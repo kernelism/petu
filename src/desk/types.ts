@@ -91,7 +91,12 @@ export type TargetCtx = {
 };
 
 /** How fast to draw: speed ≤ 1 compresses (backlog); fadeMs fades in instead of tracing. */
-export type Pace = { speed: number; fadeMs?: number };
+export type Pace = { speed: number; fadeMs?: number;
+  /** The narration from this word to the end of its beat, each word with how soon it is spoken (ms): an svg group paces its parts to it. */
+  beat?: () => BeatWord[];
+  /** Aborts only on a real stop (a new answer, stop), not on the director's step timeout: a paced group draws on past it. */
+  stop?: AbortSignal };
+export type BeatWord = { text: string; inMs: number };
 
 /** A resolved element, ready to draw on its word. */
 export type ElementPlan = {
