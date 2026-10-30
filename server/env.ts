@@ -1,4 +1,4 @@
-// server/env.ts — the ONLY place that reads OPENAI_API_KEY, the Anthropic key (and every PETU_* knob).
+// server/env.ts — the ONLY place that reads OPENAI_API_KEY, the Anthropic key, SPEECHMATICS_API_KEY (and every PETU_* knob).
 // The Anthropic key comes from the .env file only (Vite's loadEnv result): PETU_ANTHROPIC_KEY, else
 // ANTHROPIC_API_KEY. A value of either name in the process environment is never used (in this shell
 // ANTHROPIC_API_KEY can belong to other Anthropic tools and redirect their billing), and nothing is
@@ -71,6 +71,8 @@ export type PetuEnv = {
   key: string;
   /** PETU_ANTHROPIC_KEY ('' when unset: a claude-* answer model then refuses each answer with a clear message). */
   anthropicKey: string;
+  /** SPEECHMATICS_API_KEY ('' when unset: the mic button says dictation is not set up). Server-side only: the browser gets short-lived keys. */
+  speechmaticsKey: string;
   model: ModelConfig;
   /** Stage 1 (scout): a fast model at no reasoning; JSON out. */
   scout: ModelConfig;
@@ -155,6 +157,7 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   return {
     key: get('OPENAI_API_KEY')?.trim() ?? '',
     anthropicKey: anthropicKeyOf(opts.fileEnv),
+    speechmaticsKey: get('SPEECHMATICS_API_KEY')?.trim() ?? '',
     model: { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(promptVariant ? { promptVariant } : {}), ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) },
     scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, fast: str('PETU_SCOUT_FAST') === '1', explicitCache },
     storyboard: storyOn ? { model: storyModel, effort: storyEffort, maxOutput: STORYBOARD_MAX_OUTPUT, fast: false, explicitCache, ...(str('PETU_STORYBOARD_TIMEOUT_MS') ? { timeoutMs: num('PETU_STORYBOARD_TIMEOUT_MS', 12_000) } : {}) } : null,

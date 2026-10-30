@@ -14,6 +14,8 @@
 //                              an answer's failed unit, server/repair.ts); 404 unknown reqId, 429 past
 //                              MAX_REPAIRS, 400 bad body or phase, 402 cap, 503 repairs off
 //   POST /api/report           { report, png? } → saved under .petu/reports/ (server/report.ts)
+//   POST /api/stt              {} → { jwt, url }: a 60 s Speechmatics realtime key for the mic (server/stt.ts);
+//                              503 without SPEECHMATICS_API_KEY, 502 when Speechmatics refuses
 //   GET  /api/dev-pdf/<n>.pdf  <n>.pdf from the first PETU_PDF_DIRS directory that has it
 //
 // Every /api/* request must come from the app itself (`guard`): a loopback Host (no rebound DNS
@@ -37,6 +39,7 @@ import { worstCaseUsd } from './prices';
 import { loadPetuEnv, type PetuEnv } from './env';
 import { routeReport } from './report';
 import { RepairCache, repair } from './repair';
+import { mintSttToken } from './stt';
 import type { RepairWire, RepairWireEvent } from '../src/agent/protocol';
 import { isRelation } from '../src/agent/context/memory';
 
@@ -107,6 +110,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
       if (path === '/api/judge') return await routeJudge(req, res);
       if (path === '/api/repair') return await routeRepair(req, res);
       if (path === '/api/report') return await routeReport(req, res, o.root, env.key);
+      if (path === '/api/stt') return await routeStt(req, res);
       if (path.startsWith('/api/dev-pdf/')) return routePdf(req, res, path.slice('/api/dev-pdf/'.length));
     } catch (e) {
       const msg = [env.key, env.anthropicKey].filter(Boolean).reduce((m, k) => m.split(k).join('***'), String(e));
@@ -139,6 +143,15 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     } finally {
       res.off('close', onClose);
       if (!res.writableEnded && !res.destroyed) res.end();
+    }
+  }
+
+  async function routeStt(req: IncomingMessage, res: ServerResponse) {
+    if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
+    if (!env.speechmaticsKey) return json(res, 503, { error: 'Add SPEECHMATICS_API_KEY to .env and restart npm run dev.' });
+    try { return json(res, 200, await mintSttToken(env.speechmaticsKey, o.fetch ?? fetch)); } catch (e) {
+      console.error(`petu: /api/stt: ${String(e).split(env.speechmaticsKey).join('***')}`.slice(0, 300));
+      return json(res, 502, { error: 'Dictation is unavailable right now.' });
     }
   }
 
