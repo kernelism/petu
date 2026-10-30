@@ -1278,7 +1278,8 @@ function lineXs(a: Extract<KitBlock, { kind: 'bars' }>, n: number, store: KitSto
   return Array.from({ length: n }, (_, i) => i + 1);
 }
 
-const padDom = (lo: number, hi: number) => { const d = hi - lo || Math.abs(hi) || 1; return [lo - d * 0.06, hi + d * 0.06] as const; };
+// A span lost in float noise (sin²+cos², 1 ± 1e-16) is flat: a step below one ulp would never advance the ticks.
+const padDom = (lo: number, hi: number) => { const d = hi - lo > 1e-9 * Math.max(Math.abs(lo), Math.abs(hi)) ? hi - lo : Math.abs(hi) || 1; return [lo - d * 0.06, hi + d * 0.06] as const; };
 function domOf(members: { xs: number[]; ys: number[] }[]): Plot['dom'] {
   const xs = members.flatMap((m) => m.xs), ys = members.flatMap((m) => m.ys.filter(Number.isFinite));
   const [y0, y1] = padDom(Math.min(...ys), Math.max(...ys));
