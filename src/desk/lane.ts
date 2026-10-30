@@ -105,3 +105,19 @@ export function zoomedInsets(ins: { top: number; bottom: number }, H: number, st
   if (!(z > 0) || Math.abs(z - 1) < 1e-4) return { ...ins };
   return { top: (ins.top - st * (z - 1)) / z, bottom: st + H - (H - ins.bottom + st) / z };
 }
+
+/**
+ * The part of the lane (sheet px) that shows in the window under the overview zoom `z` and pan `panX`
+ * (the sheet scaled about W/2, slid by panX). Zoomed in, the lane's far side leaves the window: the
+ * lane lays its drawings out in this part only, so a drawing is never cut by the window's edge
+ * (founder 2026-10-30: "image B" cut off at 125%). Never narrower than half the lane (a lane panned
+ * almost out of view keeps a usable width; the student panned away from it).
+ */
+export function visibleLane(lane: { x: number; w: number }, W: number, z: number, panX: number, edge = 12): { x: number; w: number } {
+  if (!(z > 0) || (Math.abs(z - 1) < 1e-4 && Math.abs(panX) < 0.5)) return { x: lane.x, w: lane.w };
+  const sx = (x: number) => W / 2 + panX + (x - W / 2) * z;
+  const a = Math.max(edge, sx(lane.x)), b = Math.min(W - edge, sx(lane.x + lane.w));
+  const w = Math.min(lane.w, Math.max(lane.w / 2, (b - a) / z));
+  const x = Math.min(lane.x + lane.w - w, Math.max(lane.x, lane.x + (a - sx(lane.x)) / z));
+  return { x, w };
+}

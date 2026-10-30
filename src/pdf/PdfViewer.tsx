@@ -854,6 +854,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       crop: (page, r, pxW) => renderer.crop(clampPage(page), r, pxW),
       laneEl: () => laneRef.current,
       zoom: () => ovRef.current.z,
+      pan: () => ovRef.current.panX,
       onZoom: (cb) => overviewHub.subscribe(cb),
     };
 

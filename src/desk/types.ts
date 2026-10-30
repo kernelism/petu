@@ -214,5 +214,7 @@ export interface DeskHost {
   laneEl?(): HTMLElement | null;
   /** The overview zoom of the sheet (layout C; 1 = reading size) and its changes. */
   zoom?(): number;
+  /** The overview's sideways pan (window px; 0 at 100%). */
+  pan?(): number;
   onZoom?(cb: () => void): () => void;
 }

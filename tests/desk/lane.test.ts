@@ -96,3 +96,22 @@ describe('zoomedInsets (sticky under the overview zoom)', () => {
     }
   });
 });
+
+describe('visibleLane (the lane part the window shows under the overview zoom)', () => {
+  it('is the whole lane at 100% and when zoomed out', async () => {
+    const { visibleLane } = await import('../../src/desk/lane');
+    expect(visibleLane({ x: 848, w: 544 }, 1440, 1, 0)).toEqual({ x: 848, w: 544 });
+    const out = visibleLane({ x: 848, w: 544 }, 1440, 0.9, 0);
+    expect(out.w).toBeCloseTo(544);
+  });
+  it('zoomed in, ends at the window edge: what is laid out there shows whole', async () => {
+    const { visibleLane } = await import('../../src/desk/lane');
+    for (const z of [1.1, 1.25, 1.5]) {
+      const v = visibleLane({ x: 848, w: 544 }, 1440, z, 0);
+      const right = 720 + (v.x + v.w - 720) * z;
+      expect(right).toBeLessThanOrEqual(1440 - 12 + 1e-6);
+      expect(v.x).toBeCloseTo(848);
+      expect(v.w).toBeGreaterThanOrEqual(272);
+    }
+  });
+});

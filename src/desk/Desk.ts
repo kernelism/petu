@@ -9,7 +9,7 @@ import { routeGutter, maskBlocker } from './route';
 import { boardLayout, bodyPx, fitZoom, laneFrame, pageAt, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, cropSpanX, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
 import { BOARD_HEAD, boardPad, MIN_TEXT_PX, SECTION_W, TEXT_UNITS } from './layout';
-import { dockTop, FOLDED_H, LANE_PAD, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, wantFor, zoomedInsets } from './lane';
+import { dockTop, FOLDED_H, LANE_PAD, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, visibleLane, wantFor, zoomedInsets } from './lane';
 import { camFor, overviewCam, type Cam } from './scene/camera';
 
 export type { DeskHost } from './types';
@@ -214,7 +214,7 @@ export class Desk implements DeskApi {
       host.onLayout(() => this.position()),
       host.onUserIntent(user),
       host.onScroll(() => this.onMove()),
-      host.onZoom?.(() => this.onMove()) ?? (() => {}),
+      host.onZoom?.(() => { if (this.lane()) this.position(); this.onMove(); }) ?? (() => {}),
       this.follow.subscribe(() => this.emit()),
     );
     // Layout C: the lane is the sheet's margin, there before any drawing.
@@ -258,7 +258,7 @@ export class Desk implements DeskApi {
     return {
       id, page: sec.page, size: sec.size, layers: sec.layers,
       // The section's own scale: board ink is sized for it, unaffected by the student's zoom.
-      scale: () => (this.lane() ? this.laneScale(sec) : (this.boxOf(sec)?.s ?? 0.5 * this.zoomK) / this.zoomK),
+      scale: () => (this.lane() ? this.laneScale(sec, true) : (this.boxOf(sec)?.s ?? 0.5 * this.zoomK) / this.zoomK),
       body: () => bodyPx(sec.body, this.frame().page.pageW),
       ...(sec.scene ? { scene: sec.scene.space } : {}),
     };
@@ -1201,10 +1201,12 @@ export class Desk implements DeskApi {
    * A section's scale in the lane: the lane's width (mockups C1–C4: the drawing spans the margin; its
    * text keeps its own floor, svgMinFont), at least the type cap the split board would give it.
    */
-  private laneScale(sec: Section): number {
+  private laneScale(sec: Section, base = false): number {
     const f = this.frame();
+    // `base`: the lane's own width (what board text is sized for); else the part of it that shows.
+    const lw = f.lane ? (base ? f.lane.w : this.laneVis(f).w) : f.board?.w ?? 0;
     // An aside's inset is indented 24 px under the paused drawing (spec §5.6).
-    const cw = Math.max(1, (f.lane?.w ?? f.board?.w ?? 0) - 2 * LANE_PAD - (sec.el.classList.contains('is-aside') ? 24 : 0));
+    const cw = Math.max(1, lw - 2 * LANE_PAD - (sec.el.classList.contains('is-aside') ? 24 : 0));
     const w = sec.xw ?? SECTION_W;
     return Math.max(cw / w, Math.min(cw / w, Math.max(bodyPx(sec.body, f.page.pageW), MIN_TEXT_PX) / TEXT_UNITS));
   }
@@ -1341,9 +1343,11 @@ export class Desk implements DeskApi {
   private positionLane(f: Frame) {
     const lane = f.lane!, L = this.host.layout();
     const total = L ? `${L.total}px` : '100%';
-    Object.assign(this.board.style, { left: `${lane.x}px`, top: '0px', width: `${lane.w}px`, height: total });
+    // Zoomed in, the lane lays out in the part of it the window shows (visibleLane): no drawing is cut.
+    const vis = this.laneVis(f);
+    Object.assign(this.board.style, { left: `${vis.x}px`, top: '0px', width: `${vis.w}px`, height: total });
     Object.assign(this.content.style, { height: total, width: '' });
-    const cw = Math.max(1, lane.w - 2 * LANE_PAD);
+    const cw = Math.max(1, vis.w - 2 * LANE_PAD);
     for (const s of this.sections) {
       const k = this.laneScale(s);
       // An aside's inset is indented under the paused drawing (spec §5.6), the width of its head.
@@ -1391,6 +1395,12 @@ export class Desk implements DeskApi {
     g.item.classList.toggle('is-pinned', Math.abs(top - g.top) > LEADER_MAX && !leaderPath(this.anchorY(g.anchor), { top, h: g.h }, LANE_PAD, g.head?.offsetHeight ?? 0));
     this.clipLane(g);
     this.drawLeader(g, top);
+  }
+
+  /** The lane as the window shows it under the overview zoom (sheet px). */
+  private laneVis(f: Frame): { x: number; w: number } {
+    const lane = f.lane!;
+    return visibleLane(lane, this.host.viewport().W, this.zoomZ(), this.host.pan?.() ?? 0);
   }
 
   /** The overview zoom (1 at reading size): the sheet is scaled by it, so window px are z × sheet px. */
