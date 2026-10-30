@@ -141,6 +141,7 @@ function viewer(): ViewerApi {
     layers: () => layers, allLayers: () => [layers], textRuns: async () => [],
     scrollToPage: vi.fn(async () => {}), ensureVisible: vi.fn(async () => false), isVisible: () => true,
     whenVisible: async () => true, ensureSize: async () => {}, cancelScroll: vi.fn(),
+    goToPage: async () => {}, actedPage: () => null, onActedChange: () => () => {}, pageZoom: () => 1, setPageZoom: () => {},
     deskHost: () => { throw new Error('unused'); },
   };
 }

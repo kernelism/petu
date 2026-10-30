@@ -73,6 +73,25 @@ export function implausible(s: string): boolean {
   return false;
 }
 
+/** Punctuation a heading may carry without reading as symbols. */
+const PLAIN_PUNCT = new Set([...'.,:;!?\'"()[]-–—/&+%’‘“”·…#*']);
+
+/**
+ * Whether a short label (a slide title, a bookmark) is unreadable as a heading: any implausible
+ * glyph left after repair, or more than 30% of its glyphs neither letters, digits nor plain
+ * punctuation (a title made of broken math). Such a label is dropped, never shown.
+ */
+export function garbled(s: string): boolean {
+  let n = 0, odd = 0;
+  for (const ch of s) {
+    if (/\s/u.test(ch)) continue;
+    n++;
+    if (implausible(ch)) return true;
+    if (!/[\p{L}\p{N}]/u.test(ch) && !PLAIN_PUNCT.has(ch)) odd++;
+  }
+  return n > 0 && odd / n > 0.3;
+}
+
 /**
  * A per-font character fix: garbled string → the glyph it draws. Only codes whose name is known and
  * whose ToUnicode value is implausible are fixed; a garbled value shared by several codes is left alone.

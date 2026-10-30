@@ -21,13 +21,15 @@ type Props = {
   renderOverlay?(page: number, spaceH: number): ReactNode;
   /** The page at the reading line (the stage can set its neighbours back while a sketch sits beside it). */
   current?: boolean;
+  /** The page the tutor acted on (ViewerApi.actedPage). */
+  acted?: boolean;
 };
 
 /**
  * One page: always mounted, absolutely positioned, a white sheet until the viewer swaps a rendered
  * canvas into `canvasHost`. Layers, bottom to top: canvas, highlights, overlay slot, agent ink.
  */
-function PageSlotImpl({ page, top, left, width, height, spaceH, register, renderOverlay, current = false }: Props) {
+function PageSlotImpl({ page, top, left, width, height, spaceH, register, renderOverlay, current = false, acted = false }: Props) {
   const parts = useRef<Partial<SlotHandle>>({});
   const tryRegister = () => {
     const p = parts.current;
@@ -51,7 +53,7 @@ function PageSlotImpl({ page, top, left, width, height, spaceH, register, render
   return (
     <div
       ref={elRef}
-      className={current ? 'pv-page is-current' : 'pv-page'}
+      className={`pv-page${current ? ' is-current' : ''}${acted ? ' is-acted' : ''}`}
       data-page={page}
       style={{ top, left, width, height }}
     >
