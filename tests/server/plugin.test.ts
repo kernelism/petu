@@ -14,10 +14,10 @@ const KEY = 'sk-test-PLUGIN-xyz';
 describe('parseEnv', () => {
   const from = (o: Record<string, string>) => (k: string) => o[k];
   const opts = { root: '/repo', home: '/home/u' };
-  it('defaults: terra/medium answer, terra/none scout, founder phase with $3/day, phase caps incl. the lesson phases, $60 total, prior $0.0076', () => {
+  it('defaults: terra/none (answer and scout), founder phase with $3/day, phase caps incl. the lesson phases, $60 total, prior $0.0076', () => {
     const e = parseEnv(from({}), opts);
     expect(e.key).toBe('');
-    expect(e.model).toEqual({ model: 'gpt-6.1-terra', effort: 'medium', maxOutput: 6000, fast: false, explicitCache: true });
+    expect(e.model).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 3200, fast: false, explicitCache: true });
     expect(e.scout).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600, fast: false, explicitCache: true });
     expect(e.phase).toBe('founder');
     expect(e.caps).toEqual({ totalUsd: 60, dailyUsd: 3, phaseUsd: PHASE_CAPS });
@@ -138,7 +138,7 @@ describe('createApi', () => {
     const api = createApi({ env: env(), root, fetch: upstream([]).f });
     expect(JSON.parse(readFileSync(join(root, '.petu/spend.json'), 'utf8')).priorUsd).toBe(0.0076);
     expect(readFileSync(join(root, '.petu/eval-token'), 'utf8')).toBe(api.token);
-    expect(api.statusLine()).toBe('petu: model gpt-6.1-terra/medium · spent $0.01 of $60 · phase founder');
+    expect(api.statusLine()).toBe('petu: model gpt-6.1-terra/none · spent $0.01 of $60 · phase founder');
     expect(api.statusLine()).not.toContain(KEY);
   });
 

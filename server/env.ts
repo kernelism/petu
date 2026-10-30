@@ -44,8 +44,11 @@ export const DEFAULT_MODEL = 'gpt-6.1-terra';
  * 2026-10-30 (SVG board, p6.1): effort medium. On the held-out set terra-medium judged 3.67 vs Opus-low
  * 3.80 at ~1/9 the cost, and a blind founder + coordinator A/B preferred it on 2 of 3; effort none drew
  * visibly weaker boards. Founder decision: terra-medium is the default, Opus the opt-in "best quality".
+ * Reverted to effort none the same night: at medium the main answer started 16–32 s after Enter (the
+ * opener covers ~5 s), a long silent "…" — latency outranks the board gain. Medium returns once the
+ * thinking can overlap speech.
  */
-export const DEFAULT_EFFORT: Effort = 'medium';
+export const DEFAULT_EFFORT: Effort = 'none';
 /** Stage 2's output budget: a script that walks several pages and draws (p3.2 answers used ≤ ~900). */
 export const DEFAULT_MAX_OUTPUT = 3200;
 /** With reasoning on, its tokens count against the output budget too. */
