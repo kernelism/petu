@@ -45,8 +45,6 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   const [showTranscript, setShowTranscript] = useState(false);
   useEffect(() => { if (restore) setText(restore.text); }, [restore?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!transcript || busy) setShowTranscript(false); }, [transcript, busy]);
-  // Nothing can be sent while blocked: the field shows the cap line instead of text that can't go anywhere.
-  useEffect(() => { if (blocked) setText(''); }, [blocked]);
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (focusSeq) inputRef.current?.focus(); }, [focusSeq]);
   const typingRef = useRef(false);
@@ -90,6 +88,9 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   };
   const dropMic = () => { const d = dictRef.current; dictRef.current = null; setListening(false); d?.cancel(); };
   const cancelMic = () => { dropMic(); setText(''); setTyping(''); };
+  // Nothing can be sent while blocked: the field shows the cap line instead of text that can't go
+  // anywhere, and a dictation in progress is dropped (the mic button is gone, its end would send).
+  useEffect(() => { if (blocked) { dropMic(); setText(''); } }, [blocked]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {

@@ -83,4 +83,17 @@ describe('AskBar dictation', () => {
     expect(b.input.value).toBe('what is a demand curve');
     expect(b.props.onAsk).not.toHaveBeenCalled();
   });
+
+  it('the spending cap drops a dictation in progress: nothing is sent', () => {
+    const b = mount();
+    b.clickMic();
+    b.heard('why');
+    b.rerender({ blocked: 'Spending cap reached' });
+    expect(dict.cancel).toHaveBeenCalled();
+    b.heard('why');
+    b.end({ text: 'why', auto: true });
+    expect(b.props.onAsk).not.toHaveBeenCalled();
+    expect(b.input.value).toBe('');
+    expect(b.input.placeholder).toBe('Spending cap reached');
+  });
 });
