@@ -1566,6 +1566,7 @@ export default function App() {
         onOpenSettings={toggleSettings}
         onOpenFile={(f) => void openFile(f)}
         report={import.meta.env.DEV ? captureReport : undefined}
+        onGoToPage={(n) => void viewerRef.current?.goToPage(n, { reason: 'student' })}
       />
       <FollowPill visible={paused} onResume={resumeFollow} x={dock.x} />
       {desk?.edge && desk.page && (
