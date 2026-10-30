@@ -156,4 +156,44 @@ describe('VoiceClock', () => {
     expect(shown.map((x) => x.split(':')[1])).toEqual(['Supply', 'rises.', 'done']);
     expect(played[1].stopped).toBe(false);
   });
+
+  describe('with the scheduler', () => {
+    const ev = (t: string): ScriptEvent[] => t.split(' ').map((text) => ({ type: 'word' as const, text }));
+    const drive = () => {
+      const v = make();
+      const shown: string[] = [];
+      const acts: number[] = [];
+      let done = -1;
+      const s = new Scheduler(v.clock, { onWord: (t) => shown.push(t), onAction: () => acts.push(Date.now()), onDone: () => { done = Date.now(); } });
+      return { ...v, s, shown, acts, done: () => done };
+    };
+
+    it('a forward seek silences the pieces it skips', async () => {
+      const { s, asked, played } = drive();
+      s.push(ev('One two three. Four five six. Seven eight nine.'));
+      await flush();
+      asked.forEach((a) => a.resolve(1000));
+      await vi.advanceTimersByTimeAsync(10);
+      expect(played.map((p) => p.at)).toEqual([0, 1000, 2000]);
+      s.seek(6);
+      const t = Date.now();
+      const replay = played.slice(3);
+      expect(replay).toEqual([{ at: t + 250, offset: 0, ms: 1000, stopped: false }]);
+      // Nothing else is still to be heard after the seek's breath.
+      expect(played.slice(0, 3).filter((p) => !p.stopped && p.at + p.ms > t + 250)).toEqual([]);
+    });
+
+    it('a hold keeps the piece being heard and delays the next', async () => {
+      const { s, asked, played } = drive();
+      s.push(ev('One two three. Four five six.'));
+      await flush();
+      asked[0].resolve(1000);
+      asked[1].resolve(1000);
+      await vi.advanceTimersByTimeAsync(10);
+      s.hold(1001, 2000); // before 'Four', which starts at 1000
+      expect(played[0].stopped).toBe(false);
+      expect(played[1].stopped).toBe(true);
+      expect(played.at(-1)!.at).toBe(1000 + 2000);
+    });
+  });
 });

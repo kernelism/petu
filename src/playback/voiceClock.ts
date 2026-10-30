@@ -94,7 +94,13 @@ export class VoiceClock implements NarrationClock {
 
   retime(from: number, start: number): void {
     this.halted = false;
-    for (const p of this.pieces) if (p.to > from) { p.handle?.stop(); p.handle = undefined; p.placed = false; }
+    for (const p of this.pieces) {
+      if (p.to > from) { p.handle?.stop(); p.handle = undefined; p.placed = false; }
+      // A piece wholly before `from` whose words were still to come at `start` (a forward seek skipped
+      // it) goes quiet. One already heard by then keeps playing: a hold waits for it, and a respeed's
+      // start (a paced estimate) may fall inside its last word.
+      else if (p.handle && (this.starts[p.to - 1] ?? -Infinity) >= start) { p.handle.stop(); p.handle = undefined; }
+    }
     for (let i = Math.max(0, from); i < this.starts.length; i++) this.starts[i] = null;
     let k = this.pieces.findIndex((p) => p.to > from);
     if (k < 0) k = this.pieces.length;
