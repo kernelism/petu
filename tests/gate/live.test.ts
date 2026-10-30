@@ -265,10 +265,11 @@ describe('live gate: the length budget', () => {
   it('never splits a beat from its group (group before its words)', async () => {
     const h = harness({ preflight: svgPreflight() });
     h.gate.setBudget({ capWords: 40 });
-    const nb = (i: number) => `\n\n{{svg <g id="g${i}"></g>}} ${Array.from({ length: 25 }, (_, j) => `v${i}x${j}`).join(' ')}. `;
-    await h.play(['Opener. ', { handoff: true }, nb(1), nb(2), nb(3), check]);
+    // The splitter keeps each group with the sentence before it: the group whose name opens the next beat belongs to that beat.
+    const nb = (i: number) => `{{svg <g id="curve${i}"></g>}} curve${i} ${Array.from({ length: 24 }, (_, j) => `v${i}x${j}`).join(' ')}. `;
+    await h.play(['Opener. ', { handoff: true }, 'First words here. ', nb(1), nb(2), nb(3), check]);
     const text = h.out.join('');
-    for (const i of [1, 2, 3]) expect(text.includes(`g${i}"`), `group ${i}`).toBe(text.includes(`v${i}x0`));
+    for (const i of [1, 2, 3]) expect(text.includes(`curve${i}"`), `group ${i}`).toBe(text.includes(`v${i}x0`));
     expect(text).not.toContain('v3x0');
     expect(text.trim().endsWith('doubled?')).toBe(true);
   });

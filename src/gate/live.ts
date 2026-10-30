@@ -313,6 +313,25 @@ function openTag(s: string): boolean {
   return !/\}\}/.test(rest) && !/[\n\r]/.test(rest) && rest.length < (isSvgTagBody(rest.slice(2, 8)) ? SVG_TAG_MAX : MAX_TAG_CHARS);
 }
 
+/** Whether an svg wire tag's group id is named among these (lowercased) words. */
+function namedBy(svgBody: string, words: string[]): boolean {
+  const id = /<g\b[^>]*?\bid\s*=\s*["']([^"']+)["']/i.exec(svgBody)?.[1]?.toLowerCase();
+  return !!id && id.split(/[-_]/).some((part) => part.length >= 2 && words.some((w) => w === part || w.startsWith(part)));
+}
+
+/** A unit's trailing svg groups that its own words don't name (they lead the next beat), split off. */
+export function splitLeadingGroups(text: string): { head: string; tail: string } {
+  const toks = tokenize(text);
+  const words = toks.filter((t): t is Word => t.kind === 'word').map((w) => w.text.toLowerCase().replace(/[^\p{L}\p{N}-]/gu, ''));
+  let cut = text.length;
+  for (let i = toks.length - 1; i >= 0; i--) {
+    const t = toks[i];
+    if (t.kind !== 'tag' || !isSvgTagBody(t.body.slice(0, 6)) || namedBy(t.body, words)) break;
+    cut = t.start;
+  }
+  return cut < text.length ? { head: text.slice(0, cut), tail: text.slice(cut) } : { head: text, tail: '' };
+}
+
 export class LiveGate {
   private stage2 = false;
   private openerBuf = '';
@@ -413,7 +432,9 @@ export class LiveGate {
     })();
     const worker = (async () => {
       try {
-        for await (const u of this.queue.drain()) { if (signal.aborted) break; if (this.paced(u)) continue; await this.process(u, out, signal); }
+        for await (const u0 of this.queue.drain()) { if (signal.aborted) break; for (const u of this.paced(u0)) { if (signal.aborted) break; await this.process(u, out, signal); } }
+        // Groups carried for a beat that never came (the stream ended): they play last, or are cut with the rest.
+        if (!signal.aborted && this.carry) { const c: PreflightUnit = { key: `${this.nUnit++}`, kind: 'sentence', text: this.carry, end: true }; this.carry = ''; if (this.closing) this.held.push(c); else await this.process(c, out, signal); }
         if (!signal.aborted && this.held.length) for (const u of this.closingBeat()) { if (signal.aborted) break; await this.process(u, out, signal); }
       }
       catch (e) { err ??= e; }
@@ -466,30 +487,77 @@ export class LiveGate {
 
 
   /**
-   * A stage-2 unit opens a beat: it starts a new paragraph or with an svg group, or the unit before it
-   * closed with its group (a beat's words then its group). Cutting there never splits a beat from its
-   * drawing: a group whose words were said is never left undrawn, and no group plays without its words.
+   * Whether a beat boundary lies just before stage-2 unit `u` (`prev`: the text just before it). Groups
+   * may come after their words (p6.0) or just before the words that name them (p6.1), and the splitter
+   * keeps a group with the sentence before it either way, so the boundary is read from the words: `u`
+   * starts with words (a page-pointing tag may lead), the text before it ends a sentence or a group, and
+   * no group just before it is named by `u`'s first words (that group belongs to `u`'s beat). Cutting
+   * there never leaves a drawn group without its words, nor words without their group.
    */
   private opensBeat(u: PreflightUnit, prev: string): boolean {
-    if (/^[ \t]*\r?\n/.test(u.text) || /^\s*\{\{\s*svg\b/.test(u.text)) return true;
+    const toks = tokenize(u.text);
+    const words = toks.filter((t): t is Word => t.kind === 'word');
+    if (!words.length) return false;
+    const lead = words.slice(0, 6).map((w) => w.text.toLowerCase().replace(/[^\p{L}\p{N}-]/gu, ''));
+    // Groups ahead of the first word must be named by it (p6.1: a group just before the words that name it).
+    for (const t of toks) {
+      if (t.kind === 'word') break;
+      if (t.kind === 'tag' && isSvgTagBody(t.body.slice(0, 6)) && !namedBy(t.body, lead)) return false;
+    }
     const p = prev.trimEnd();
-    return /\}\}$/.test(p) && /\{\{\s*svg\b[^]*\}\}$/.test(p.slice(p.lastIndexOf('{{')));
+    if (!/[.!?…]["'’”)\]]*$/.test(p) && !/\}\}$/.test(p)) return false;
+    for (let rest = p; /\}\}$/.test(rest);) {
+      const open = rest.lastIndexOf('{{');
+      if (open < 0) break;
+      const body = rest.slice(open + 2, -2);
+      if (!isSvgTagBody(body.slice(0, 6))) break;
+      if (namedBy(body, lead)) return false;
+      rest = rest.slice(0, open).trimEnd();
+    }
+    return true;
   }
+
+  /**
+   * Trailing groups held back from a unit near the budget until the next unit shows whose they are: a
+   * group just before the words that name it opens the next beat (p6.1), else it closes its own (p6.0).
+   */
+  private carry = '';
 
   /**
    * The length budget: once the released stage-2 words leave no room for more than the check question,
    * the answer closes at the next beat boundary. Everything after it is held; at the stream's end only
-   * the check question's beat is checked and played (closingBeat). Returns whether the unit was held.
+   * the check question's beat is checked and played (closingBeat). Near the budget, groups at a unit's
+   * end that its own words do not name are carried to the next unit (they lead its beat), so a cut never
+   * leaves a group drawn without its words. Returns the unit to check, or null when it was held.
    */
-  private paced(u: PreflightUnit): boolean {
-    if (u.kind === 'opener' || !this.budget || !this.stage2) return false;
-    if (this.closing) { this.held.push(u); return true; }
-    if (this.words2 >= this.budget.capWords - CHECK_WORDS && this.opensBeat(u, this.released2)) {
-      this.closing = true;
-      this.held.push(u);
-      return true;
+  private paced(u0: PreflightUnit): PreflightUnit[] {
+    if (u0.kind === 'opener' || !this.budget || !this.stage2) return [u0];
+    let u = u0;
+    const go: PreflightUnit[] = [];
+    let prev = this.released2;
+    if (this.carry) {
+      // The carried groups belong to this unit's beat when its first words name them (p6.1); else they
+      // close the beat before (p6.0) and play now, ahead of it.
+      const c = this.carry;
+      this.carry = '';
+      const lead = tokenize(u.text).filter((t): t is Word => t.kind === 'word').slice(0, 6).map((w) => w.text.toLowerCase().replace(/[^\p{L}\p{N}-]/gu, ''));
+      const ours = tokenize(c).some((t) => t.kind === 'tag' && isSvgTagBody(t.body.slice(0, 6)) && namedBy(t.body, lead));
+      if (ours) u = { ...u, text: c + u.text };
+      else { go.push({ key: `${u.key}g`, kind: 'sentence', text: c }); prev += c; }
     }
-    return false;
+    if (this.closing) { this.held.push(u); return go; }
+    const room = this.budget.capWords - CHECK_WORDS;
+    if (this.words2 >= room && this.opensBeat(u, prev)) { this.closing = true; this.held.push(u); return go; }
+    if (this.words2 + wordCount(u.text) >= room) {
+      const { head, tail } = splitLeadingGroups(u.text);
+      if (tail) {
+        this.carry = tail;
+        // A unit that is only groups waits whole for the words after it.
+        if (!head.trim()) { if (head) this.carry = head + tail; return go; }
+        u = { ...u, text: head };
+      }
+    }
+    return [...go, u];
   }
 
   /** The held units' last beat that asks the student a question (played); the rest are cut. */
