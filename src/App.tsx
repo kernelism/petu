@@ -185,7 +185,7 @@ function describe(a: RawAction): string {
 
 function describeAction(a: Action): string {
   if (a.kind === 'clear') return a.kind;
-  if (a.kind === 'sketch') return `sketch ${a.id} p${a.page}${a.size === 'l' ? ' l' : ''}`;
+  if (a.kind === 'sketch') return `sketch ${a.id}${a.page != null ? ` p${a.page}` : ''}${a.size === 'l' ? ' l' : ''}`;
   if (a.kind === 'connect') return 'connect';
   if ('ref' in a) return `${a.kind} #${a.ref}`;
   const cut = (t: string) => ` "${t.length > 18 ? `${t.slice(0, 17)}…` : t}"`;
