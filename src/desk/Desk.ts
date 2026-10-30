@@ -102,6 +102,12 @@ export class Desk implements DeskApi {
    */
   private heads = new Map<Section, { el: HTMLElement; h: number; aside: boolean; collapsed: boolean }>();
   private nextHead: { el: HTMLElement; h: number; aside: boolean } | null = null;
+  /**
+   * Heads inside a section: a follow-up that draws on into an svg board (`BOARD extend`) gets its
+   * question header at the start of its new groups. `from`: the old content's bottom (units), the head
+   * never rises above it; `y`: the top of its first new group (units), null until that group is known.
+   */
+  private midHeads: { sec: Section; el: HTMLElement; h: number; from: number; y: number | null }[] = [];
   /** An aside is playing: its sections are tinted, the rest of the board steps back, nothing is cropped. */
   private asideOpen = false;
   /** Sections of the paused answer cropped to their ink while an aside plays (restored when it ends). */
@@ -214,6 +220,14 @@ export class Desk implements DeskApi {
       const old = this.ids.get(spec.id) ?? [...this.sections].reverse().find((s) => s.id === spec.id && !s.scene);
       if (old) {
         this.ids.set(spec.id, old);
+        // This answer's header goes where its new groups start (below what the board already holds).
+        if (this.nextHead && !this.nextHead.aside) {
+          const h = this.nextHead;
+          this.nextHead = null;
+          this.midHeads.push({ sec: old, el: h.el, h: h.h, from: inkBottom(old) ?? old.y1, y: null });
+          h.el.classList.add('is-mid');
+          this.content.appendChild(h.el);
+        }
         if (old.y0 !== 0 || old.y1 !== old.full) { old.y0 = 0; old.y1 = old.full; old.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${old.full}`)); this.position(); }
         this.last = { t: { region: spec.id }, r: WHOLE_REGION };
         if (!this.open) await this.openBoard('normal', before);
@@ -317,6 +331,20 @@ export class Desk implements DeskApi {
   }
 
   noteInk(t: Target, r: SRect): void {
+    if (t.region != null) {
+      const sec = this.ids.get(t.region);
+      const m = sec && this.midHeads.find((x) => x.sec === sec && x.y == null);
+      if (m && sec) {
+        // The follow-up's first new group: its header lands right above it, in view with it.
+        m.y = Math.max(m.from, r.y);
+        this.position();
+        const box = this.boxOf(sec);
+        if (box && this.follow.following()) {
+          const top = m.y - m.h / box.s;
+          void this.glideBoard(() => this.boardTop(sec, { x: r.x, y: top, w: r.w, h: r.y + r.h - top }));
+        }
+      }
+    }
     if (t.page == null) return;
     this.inked.unshift({ page: t.page, r });
     if (this.inked.length > 8) this.inked.length = 8;
@@ -508,7 +536,8 @@ export class Desk implements DeskApi {
     this.ids.clear();
     this.last = null;
     const gone = this.sections;
-    const goneHeads = [...this.heads.values()].map((h) => h.el);
+    const goneHeads = [...this.heads.values(), ...this.midHeads].map((h) => h.el);
+    this.midHeads = [];
     this.sections = [];
     this.heads.clear();
     this.nextHead = null;
@@ -809,6 +838,14 @@ export class Desk implements DeskApi {
         const frame = hd.aside && !hd.collapsed ? x.h + lay.pad / 2 : 0;
         Object.assign(hd.el.style, { left: `${lay.pad / 2}px`, top: `${x.y - hd.h}px`, width: `${lay.width - lay.pad}px`, height: `${hd.h + frame}px` });
       });
+      for (const m of this.midHeads) {
+        const i = this.sections.indexOf(m.sec), x = lay.boxes[i];
+        if (!x) continue;
+        // Its bottom on the first new group's top, never above the old content's bottom (units → px).
+        const floor = x.y + (m.from - m.sec.y0) * x.s;
+        const top = m.y == null ? floor : Math.max(floor, x.y + (m.y - m.sec.y0) * x.s - m.h);
+        Object.assign(m.el.style, { left: `${lay.pad / 2}px`, top: `${top}px`, width: `${lay.width - lay.pad}px`, height: `${m.h}px` });
+      }
       this.sections.forEach((s) => { if (s.scene) this.applyCam(s); });
       this.content.style.height = `${lay.height}px`;
       // Zoomed past the board's width: the content widens and the board scrolls sideways too.
@@ -1035,6 +1072,19 @@ export class Desk implements DeskApi {
 }
 
 let sceneIds = 0;
+/** The bottom of an svg board's drawn groups, in section units (null without layout). */
+function inkBottom(sec: Section): number | null {
+  const root = sec.layers.agent.querySelector(':scope > svg[data-svgboard]') as SVGSVGElement | null;
+  const m = root?.getScreenCTM?.(), vb = root?.viewBox?.baseVal;
+  if (!root || !m || !(m.d > 0) || !vb || !(vb.width > 0)) return null;
+  let bottom: number | null = null;
+  root.querySelectorAll(':scope > g:not([data-ghost])').forEach((g) => {
+    const r = g.getBoundingClientRect();
+    // Client px → the root's user units (its matrix) → section units (1000 / the canvas width).
+    if (r.height > 0) bottom = Math.max(bottom ?? 0, (((r.bottom - m.f) / m.d) * REGION_W) / vb.width);
+  });
+  return bottom;
+}
 const isWhole = (r: SRect) => r.x === 0 && r.y === 0 && r.w === REGION_W && r.h === REGION_H;
 /** Whether `r` lies inside `v`, allowing a slack of `slack` units. */
 const inside = (r: SRect, v: SRect, slack: number) => r.x >= v.x - slack && r.y >= v.y - slack && r.x + r.w <= v.x + v.w + slack && r.y + r.h <= v.y + v.h + slack;

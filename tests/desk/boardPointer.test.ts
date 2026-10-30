@@ -149,3 +149,47 @@ describe('Desk: an svg board section', () => {
     expect(parseFloat(sec.style.height) / r.scale()).toBeCloseTo(4 * REGION_H, 0);
   });
 });
+
+describe('follow inside a tall svg group, and a follow-up that extends the board', () => {
+  let stage: HTMLDivElement;
+  beforeEach(() => { stage = document.createElement('div'); document.body.appendChild(stage); });
+  afterEach(() => { stage.remove(); vi.unstubAllGlobals(); });
+
+  it('drawGroup reports each part as it starts, in order (the board follows the pen through a tall group)', async () => {
+    const { mountBoard, drawGroup } = await import('../../src/svgboard/render');
+    vi.stubGlobal('requestAnimationFrame', (f: FrameRequestCallback) => setTimeout(() => f(performance.now()), 0));
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    stage.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'svg')).appendChild(layer);
+    const { board } = mountBoard(layer, { w: 1000, h: 2400 }, 'b1', '#7c3aed');
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.innerHTML = '<rect x="0" y="0" width="10" height="10"/><text x="0" y="1200">top label</text><text x="0" y="2300">bottom label</text>';
+    const seen: string[] = [];
+    await drawGroup(board, g, 'tall', { signal: new AbortController().signal, color: '#000', onStep: (el) => seen.push(el.tagName.toLowerCase() + (el.textContent ? `:${el.textContent}` : '')) });
+    expect(seen).toEqual(['rect', 'text:top label', 'text:bottom label']);
+  });
+
+  it('a follow-up that extends the board gets its own header, right above its first new group', async () => {
+    vi.useFakeTimers();
+    const d = new Desk(fakeHost(), stage);
+    const r = await d.addRegion({ id: 'svgb1', page: 2, size: 'l', svg: true, h: 1500 });
+    if (typeof r === 'string') throw new Error(r);
+    await d.reset(0);
+    const head = document.createElement('div');
+    head.className = 'trail-head';
+    d.headNext(head, 40);
+    const r2 = await d.addRegion({ id: 'svgb1', page: 2, size: 'l', svg: true, extend: true, h: 2100 });
+    if (typeof r2 === 'string') throw new Error(r2);
+    d.growRegion('svgb1', 2100);
+    expect(head.isConnected).toBe(true);
+    d.noteInk({ region: 'svgb1' }, { x: 0, y: 1600, w: 800, h: 200 });
+    const sec = stage.querySelector('.desk-region') as HTMLElement;
+    const s = r2.scale();
+    expect(parseFloat(head.style.top)).toBeCloseTo(parseFloat(sec.style.top) + 1600 * s - 40, 0);
+    // The next section added does not take it again.
+    const r3 = await d.addRegion({ id: 'svgb2', page: 2, size: 'l', svg: true, h: 700 });
+    expect(typeof r3).not.toBe('string');
+    expect(stage.querySelectorAll('.trail-head').length).toBe(1);
+    vi.useRealTimers();
+  });
+});

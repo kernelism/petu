@@ -59,13 +59,13 @@ ${g('gap', `<text x="320" y="1800" font-size="26" text-anchor="middle" fill="#22
 
 const FRESH = `<plan>
 Adding 100 a year: each deposit starts its own snowball; after 20 years 6727 + 5727 = 12454.
-BOARD viewBox="0 0 1000 900"
-groups: deposits the yearly deposits; total the sum
+BOARD viewBox="0 0 1000 1900"
+groups: deposits one bar per deposit, oldest grown most (a tall column); total the sum
 </plan>
-Every deposit starts its own small snowball, so adding a hundred a year stacks a new one on top each year.
-${g('deposits', `<rect x="120" y="80" width="60" height="300" fill="#bbb" stroke="#222" stroke-width="2"/>\n<rect x="260" y="180" width="60" height="200" fill="#bbb" stroke="#222" stroke-width="2"/>\n<rect x="400" y="260" width="60" height="120" fill="#bbb" stroke="#222" stroke-width="2"/>\n<text x="300" y="440" font-size="24" text-anchor="middle" fill="#888">older deposits have grown more</text>`)}
+Every deposit starts its own small snowball, so adding a hundred a year stacks a new one each year, and the oldest have grown the most.
+${g('deposits', `<rect x="200" y="80" width="605" height="60" fill="#bbb" stroke="#222" stroke-width="2"/>\n<text x="180" y="120" font-size="26" text-anchor="end" fill="#222">deposit 1</text>\n<text x="820" y="120" font-size="26" fill="#222">673 after 20 y</text>\n<rect x="200" y="330" width="413" height="60" fill="#bbb" stroke="#222" stroke-width="2"/>\n<text x="180" y="370" font-size="26" text-anchor="end" fill="#222">deposit 2</text>\n<text x="628" y="370" font-size="26" fill="#222">459 after 16 y</text>\n<rect x="200" y="580" width="282" height="60" fill="#bbb" stroke="#222" stroke-width="2"/>\n<text x="180" y="620" font-size="26" text-anchor="end" fill="#222">deposit 3</text>\n<text x="497" y="620" font-size="26" fill="#222">314 after 12 y</text>\n<rect x="200" y="830" width="192" height="60" fill="#bbb" stroke="#222" stroke-width="2"/>\n<text x="180" y="870" font-size="26" text-anchor="end" fill="#222">deposit 4</text>\n<text x="407" y="870" font-size="26" fill="#222">214 after 8 y</text>\n<rect x="200" y="1080" width="131" height="60" fill="#bbb" stroke="#222" stroke-width="2"/>\n<text x="180" y="1120" font-size="26" text-anchor="end" fill="#222">deposit 5</text>\n<text x="346" y="1120" font-size="26" fill="#222">146 after 4 y</text>\n<rect x="200" y="1330" width="99" height="60" fill="#bbb" stroke="#222" stroke-width="2"/>\n<text x="180" y="1370" font-size="26" text-anchor="end" fill="#222">deposit 6</text>\n<text x="314" y="1370" font-size="26" fill="#222">110 after 1 y</text>`)}
 After twenty years the deposits add 5727 to the 6727, about 12 thousand in all.
-${g('total', `<text x="500" y="600" font-size="30" text-anchor="middle" fill="#7c3aed">6727 + 5727 = 12454</text>`)}
+${g('total', `<text x="500" y="1640" font-size="30" text-anchor="middle" fill="#7c3aed">6727 + 5727 = 12454</text>`)}
 `;
 
 export const SESSION_RAW = { main: MAIN, aside: ASIDE, follow: FOLLOW, fresh: FRESH };

@@ -54,6 +54,20 @@ export function growBoard(b: SvgBoard, h: number): number {
   return (b.h * 1000) / b.w;
 }
 
+/**
+ * Where `el` sits in its board's section, in section units (through any transforms), widened by
+ * `air` units; null without layout.
+ */
+export function partBox(b: SvgBoard, el: Element, air = 0): SRect | null {
+  try {
+    // Through the root's screen matrix (a nested <svg>'s own client rect is its content's, not its canvas).
+    const m = b.root.getScreenCTM?.(), r = el.getBoundingClientRect();
+    if (!m || !(m.a > 0) || !(m.d > 0) || !(r.width > 0 || r.height > 0)) return null;
+    const k = 1000 / b.w;
+    return { x: ((r.left - m.e) / m.a) * k - air, y: ((r.top - m.f) / m.d) * k - air, w: (r.width / m.a) * k + 2 * air, h: (r.height / m.d) * k + 2 * air };
+  } catch { return null; }
+}
+
 /** Sanitizes a group for this board (never appends). `minPx`: the smallest text on screen. */
 export function prepareGroup(b: SvgBoard, src: string, minPx: number, pxPerUnit: number): Sanitized | string {
   const minFont = pxPerUnit > 0 ? minPx / pxPerUnit : 16;
@@ -80,7 +94,9 @@ type Step = { el: SVGElement; kind: 'trace' | 'fade'; len: number; px: number };
  * Appends `g` (a replaced id's old group fades to a ghost first) and draws it. `speed` ≤ 1 compresses
  * (backlog); `signal` aborted → the final state at once.
  */
-export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefined, o: { signal: AbortSignal; speed?: number; color: string }): Promise<void> {
+export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefined, o: { signal: AbortSignal; speed?: number; color: string;
+  /** Each part as it starts drawing (in order): the board follows the pen through a group taller than the view. */
+  onStep?: (el: SVGElement) => void }): Promise<void> {
   if (id) {
     const prev = b.groups.get(id);
     if (prev && prev !== g) { prev.removeAttribute('id'); prev.setAttribute('opacity', '0.3'); prev.setAttribute('data-ghost', ''); }
@@ -139,6 +155,7 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
     for (let i = 0; i < steps.length; i++) {
       const s = steps[i];
       if (o.signal.aborted) { for (const r of steps.slice(i)) land(r); break; }
+      o.onStep?.(s.el);
       if (s.kind === 'fade') { land(s); await sleep(durs[i] * k); continue; }
       const geo = s.el as unknown as SVGGeometryElement;
       const dur = Math.max(60, durs[i] * k), t0 = performance.now();
