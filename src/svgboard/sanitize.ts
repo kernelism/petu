@@ -10,7 +10,7 @@
  * halo behind text so a label stays legible where it meets a line. A full-board white backing rect is
  * dropped (the board is the paper).
  */
-import { FONT_FIGURE, INK, mapColor, mapFont, mapStrokeWidth, type Palette } from './style';
+import { FONT_FIGURE, INK, mapColor, mapFont, mapStrokeWidth, parseColor, type Palette } from './style';
 
 const NS = 'http://www.w3.org/2000/svg';
 /** Elements kept (lowercase). */
@@ -127,6 +127,9 @@ export function sanitizeGroup(src: string, o: SanitizeOpts): Sanitized | string 
     if (id) { el.setAttribute('id', ref(id) ?? `${o.ns}-${id}`); }
     // Presentation: colours, fonts, widths.
     const isText = name === 'text' || name === 'tspan';
+    // The model's own translucency of the fill (before the colour mapping folds paleness into it):
+    // a rect drawn see-through is a shaded region, a solid one a bar or a card.
+    const ownFill = (num(el.getAttribute('fill-opacity')) ?? 1) * (num(el.getAttribute('opacity')) ?? 1) * (parseColor(el.getAttribute('fill'))?.a ?? 1);
     const opacity = (k: 'fill-opacity' | 'stroke-opacity', f: number) => { if (f === 1) return; const cur = num(el.getAttribute(k)) ?? 1; el.setAttribute(k, String(Math.round(cur * f * 1000) / 1000)); };
     for (const k of ['fill', 'stroke', 'stop-color'] as const) {
       const v = el.getAttribute(k);
@@ -174,8 +177,9 @@ export function sanitizeGroup(src: string, o: SanitizeOpts): Sanitized | string 
         const fo = (num(el.getAttribute('fill-opacity')) ?? 1) * (num(el.getAttribute('opacity')) ?? 1);
         const cap = f === o.palette.accent ? 0.2 : f === INK.line ? 0.9 : 0.16;
         if (fo > cap) { el.setAttribute('fill-opacity', String(cap / (num(el.getAttribute('opacity')) ?? 1))); notes.push('fill softened'); }
-        // A wash (a shaded region, not a bar): drawn as the board's hatch (render.ts prepareGroup, board CSS).
-        if (f !== INK.line && Math.min(fo, cap) <= 0.3) el.setAttribute('data-wash', '');
+        // A wash (a shaded region, not a bar or a card behind text): drawn as the board's hatch
+        // (render.ts prepareGroup, board CSS). A region is a shape; a rect only when drawn see-through.
+        if (f !== INK.line && (name !== 'rect' || ownFill <= 0.5)) el.setAttribute('data-wash', '');
       }
       // A point: a small solid dot gets a paper ring, so it sits on the lines it marks (board CSS).
       if (name === 'circle' && f && f !== 'none' && f !== INK.paper && (num(el.getAttribute('r')) ?? 0) <= 9 && !el.hasAttribute('data-wash')) el.setAttribute('data-dot', '');
