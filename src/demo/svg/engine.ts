@@ -16,7 +16,7 @@ groups: market; equilibrium; ceiling; shortage; card
   <text x="110" y="34" font-size="18" fill="#555">rent ($ a month)</text>
   <text x="610" y="545" font-size="18" fill="#555" text-anchor="end">flats</text>
   <path id="demand" data-fn="a-b*x" data-axes="ax" fill="none" stroke="#222" stroke-width="2.5"/>
-  <text data-at="at(demand, x=140)" dx="6" dy="-26" font-size="20" fill="#222">demand</text>
+  <text data-at="at(demand, x=22)" dx="10" dy="-14" font-size="20" fill="#222">demand</text>
   <path id="supply" data-fn="c+e*x" data-axes="ax" fill="none" stroke="#222" stroke-width="2.5"/>
   <text data-at="at(supply, x=140)" dx="-4" dy="-14" font-size="20" fill="#222" text-anchor="end">supply</text>
 </g>
@@ -93,8 +93,8 @@ Her angular momentum, I times omega, is ten, and nothing outside her can change 
   <line x1="650" y1="340" x2="650" y2="446" stroke="#888"/>
 </g>
 As bars: a wide I, a short omega. Their product is what stays put.
-Now she pulls her arms {{tween p=1 dur=4}} in: the mass moves toward the axis, so I falls from about 10.8 to 3.3.
-To keep L at ten, omega climbs from 0.93 to about 3.05 rad per second: she spins more than three times as fast.`,
+Now she pulls her arms {{tween p=1 dur=4}} in: the mass moves toward the axis, so I falls from about 10.8 to 4.
+To keep L at ten, omega climbs from 0.92 to 2.5 rad per second: she spins nearly three times as fast.`,
   },
 
   slope: {
@@ -114,7 +114,7 @@ groups: curve; tangent; slope; cos
 </g>
 Here is sine. Take a point on it and look at how steep the curve is there.
 <g id="tangent">
-  <line data-from="pt(ax, a-0.9, sin(a)-0.9*cos(a))" data-to="pt(ax, a+0.9, sin(a)+0.9*cos(a))" stroke="#7c3aed" stroke-width="3"/>
+  <line data-from="pt(ax, a-0.5, sin(a)-0.5*cos(a))" data-to="pt(ax, a+0.5, sin(a)+0.5*cos(a))" stroke="#7c3aed" stroke-width="3"/>
   <circle id="P" data-at="at(sine, x=a)" r="7" fill="#7c3aed"/>
 </g>
 The violet tangent touches the curve at the point; its steepness is the slope.
@@ -126,11 +126,11 @@ The violet tangent touches the curve at the point; its steepness is the slope.
   <text x="760" y="160" font-size="22" fill="#7c3aed" data-val="cos(a)" data-fmt="2">slope = {}</text>
 </g>
 Mark the slope as a height above the same x: the hollow dot.
-Now slide the point {{tween a=6.2 dur=6 ease=linear}} along the curve and let the dot leave a trail.
+Now slide the point {{tween a=6.1 dur=6 ease=linear}} along the curve and let the dot leave a trail.
 Steep going up near zero, flat at the top, steepest going down at pi: the trail rises, crosses zero, and dips to minus one.
 <g id="cos">
   <path id="cosine" data-fn="cos(x)" data-axes="ax" fill="none" stroke="#7c3aed" stroke-width="1.5" stroke-dasharray="6 5"/>
-  <text data-at="at(cosine, x=6.2)" dx="-8" dy="-18" font-size="22" fill="#7c3aed" text-anchor="end">cos x</text>
+  <text data-at="at(cosine, x=6.1)" dx="-8" dy="-18" font-size="22" fill="#7c3aed" text-anchor="end">cos x</text>
 </g>
 The trail is exactly cos x: the slope of sine at every point is cosine.`,
   },
