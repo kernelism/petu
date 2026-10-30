@@ -421,12 +421,12 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 36px 24px 24px;
+  padding: 36px 24px 28px;
   border: 1.5px dashed rgba(0,0,0,.18);
-  border-radius: var(--radius-l);
+  border-radius: 18px;
   background: rgba(255,255,255,.35);
   text-align: center;
-  transition: opacity var(--dur-base) var(--ease-out);
+  transition: opacity 150ms var(--ease-out);
 }
 .empty.is-dragging .empty-card { opacity: 0; }
 .empty-icon { color: var(--muted); margin-bottom: 14px; }
@@ -440,34 +440,12 @@
   letter-spacing: -0.02em;
   color: var(--ink);
 }
-/* First visit only: the three moves, one quiet line. */
-.empty-verbs {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 6px 18px;
-  margin: -8px 0 24px;
-  padding: 0;
-  list-style: none;
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--ink-2);
-}
-.empty-verbs li { display: inline-flex; align-items: center; gap: 6px; }
-.empty-verbs svg { color: var(--muted); }
-.empty-drop { margin: 10px 0 0; font-size: 13px; line-height: 18px; color: var(--muted); }
-.empty-samples {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  margin-top: 14px;
-  font-size: 13px;
+.empty-sub {
+  margin: 4px 0 20px;
+  font-size: 14px;
   color: var(--muted);
 }
-.empty-samples-label { margin-right: 4px; }
-.empty-samples-sep { color: rgba(0,0,0,.3); }
-.empty .btn-quiet { color: var(--ink-2); }
+.empty .btn-quiet { margin-top: 10px; color: var(--ink-2); }
 .empty-error {
   min-height: 18px;
   margin: 8px 0 0;
