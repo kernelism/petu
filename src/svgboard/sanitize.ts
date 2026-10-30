@@ -174,7 +174,7 @@ export function sanitizeGroup(src: string, o: SanitizeOpts): Sanitized | string 
         const fo = (num(el.getAttribute('fill-opacity')) ?? 1) * (num(el.getAttribute('opacity')) ?? 1);
         const cap = f === o.palette.accent ? 0.2 : f === INK.line ? 0.9 : 0.16;
         if (fo > cap) { el.setAttribute('fill-opacity', String(cap / (num(el.getAttribute('opacity')) ?? 1))); notes.push('fill softened'); }
-        // A wash (a shaded region, not a bar): drawn as the board's hatch (board CSS, render.ts ensureHatch).
+        // A wash (a shaded region, not a bar): drawn as the board's hatch (render.ts prepareGroup, board CSS).
         if (f !== INK.line && Math.min(fo, cap) <= 0.3) el.setAttribute('data-wash', '');
       }
       // A point: a small solid dot gets a paper ring, so it sits on the lines it marks (board CSS).

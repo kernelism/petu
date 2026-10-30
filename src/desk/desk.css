@@ -250,17 +250,17 @@ svg[data-svgboard] text, svg[data-svgboard] :is(path, line, polyline, polygon, c
 svg[data-svgboard] text { font-variant-numeric: tabular-nums lining-nums; }
 /* A figure, drawn: rounded ends and corners (a pen's, not a plotter's). */
 svg[data-svgboard] :is(path, line, polyline, polygon) { stroke-linecap: round; stroke-linejoin: round; }
-/* Shaded regions are hatched, as in a printed figure (sanitize.ts marks them; the pattern: render.ts
-   ensureHatch). While being drawn, the hatch is the accent's. */
-svg[data-svgboard] [data-wash] { fill: url(#petu-hatch); fill-opacity: 1; }
-svg[data-svgboard] [data-live][data-wash], svg[data-svgboard] [data-live] [data-wash] { fill: url(#petu-hatch-live); }
+/* Shaded regions are hatched, as in a printed figure (sanitize.ts marks them; render.ts fills them with
+   the board's own hatch pattern). While being drawn, the hatch is the accent's. */
+svg[data-svgboard] [data-wash] { fill-opacity: 1; }
+svg[data-svgboard] [data-live][data-wash], svg[data-svgboard] [data-live] [data-wash] { fill: var(--board-hatch-live); }
 /* Points: a paper ring keeps a dot clear of the lines it sits on. */
 svg[data-svgboard] [data-dot] { stroke: var(--board-paper, #FFFFFE); stroke-width: 2px; paint-order: stroke; }
 svg[data-svgboard] [data-live]:is(text), svg[data-svgboard] [data-live] text { fill: var(--board-live); }
 svg[data-svgboard] [data-live]:is(path, line, polyline, polygon, circle, ellipse):not([stroke="none"]):not([fill-opacity^="0."]):not([data-dot]),
 svg[data-svgboard] [data-live] :is(path, line, polyline, polygon, circle, ellipse):not([stroke="none"]):not([fill-opacity^="0."]):not([data-dot]) { stroke: var(--board-live); }
-svg[data-svgboard] [data-live]:is(circle)[fill]:not([fill="none"]):not([fill="#FFFFFE"]),
-svg[data-svgboard] [data-live] circle[fill]:not([fill="none"]):not([fill="#FFFFFE"]) { fill: var(--board-live); }
+svg[data-svgboard] [data-live]:is(circle)[fill]:not([fill="none"]):not([fill="#FFFFFE"]):not([data-wash]),
+svg[data-svgboard] [data-live] circle[fill]:not([fill="none"]):not([fill="#FFFFFE"]):not([data-wash]) { fill: var(--board-live); }
 
 /* ───────── Layout C: the anchored lane (src/desk/lane.ts, mockups C1–C5) ─────────
    The board becomes a paper margin joined to the page, inside the page's own scroll: one sheet. Each

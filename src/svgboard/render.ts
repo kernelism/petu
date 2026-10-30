@@ -44,47 +44,37 @@ export function boardIn(layer: SVGGElement): SvgBoard | null {
 }
 
 /**
+ * The hatch a board's washes are painted with (sanitize.ts marks them data-wash; prepareGroup points
+ * their fill here): a pair of patterns in the board's own <defs>, in board units (a board is ~1000
+ * wide, so lines ~10 units apart read as a fine diagonal hatch), over a faint tint of the same ink.
+ * `-live` is the accent's, for the part being drawn (board CSS `[data-live] [data-wash]`). Inside the
+ * board, not the document: a board serialised alone (report screenshots, svgUrl) keeps its hatch.
+ */
+const hatchId = (ns: string, live = false) => `petu-hatch${live ? '-live' : ''}-${ns}`;
+function addHatch(root: SVGSVGElement, ns: string, accent: string): void {
+  const defs = root.appendChild(document.createElementNS(NS, 'defs'));
+  for (const [id, ink] of [[hatchId(ns), INK.ink2], [hatchId(ns, true), accent]]) {
+    const pat = defs.appendChild(document.createElementNS(NS, 'pattern'));
+    for (const [k, v] of Object.entries({ id, patternUnits: 'userSpaceOnUse', width: '9', height: '9', patternTransform: 'rotate(45)' })) pat.setAttribute(k, v);
+    const tint = pat.appendChild(document.createElementNS(NS, 'rect'));
+    for (const [k, v] of Object.entries({ width: '9', height: '9', fill: ink, 'fill-opacity': '0.08' })) tint.setAttribute(k, v);
+    const line = pat.appendChild(document.createElementNS(NS, 'line'));
+    for (const [k, v] of Object.entries({ x1: '0', y1: '0', x2: '0', y2: '9', stroke: ink, 'stroke-width': '2.6', 'stroke-opacity': '0.62' })) line.setAttribute(k, v);
+  }
+  root.style.setProperty('--board-hatch-live', `url(#${hatchId(ns, true)})`);
+}
+/** The live hatch takes the colour a group is drawn in. */
+function tintLiveHatch(b: SvgBoard, color: string): void {
+  const p = b.root.querySelector(`pattern[id="${hatchId(b.ns, true)}"]`);
+  p?.querySelector('rect')?.setAttribute('fill', color);
+  p?.querySelector('line')?.setAttribute('stroke', color);
+}
+
+/**
  * Mounts a board (or, `extend`, takes the one already in the layer and grows it). Returns the section
  * height it needs, in section units (the caller grows the section).
  */
-/**
- * The hatch every board's washes use (board CSS `[data-wash]`): one pair of patterns per document, in
- * board units (a board is ~1000 wide, so lines ~10 units apart read as a fine diagonal hatch), over a
- * faint tint of the same ink. `-live` is the accent's, for the part being drawn.
- */
-export function ensureHatch(doc: Document, accent: string): void {
-  let defs = doc.getElementById('petu-hatch-defs') as Element | null;
-  if (!defs) {
-    const svg = doc.createElementNS(NS, 'svg');
-    svg.setAttribute('id', 'petu-hatch-defs');
-    svg.setAttribute('aria-hidden', 'true');
-    svg.setAttribute('style', 'position:absolute;width:0;height:0;overflow:hidden');
-    doc.body.appendChild(svg);
-    defs = svg;
-  }
-  const host = defs;
-  const pattern = (id: string, ink: string) => {
-    let p = doc.getElementById(id) as Element | null;
-    if (!p) {
-      const pat = doc.createElementNS(NS, 'pattern');
-      for (const [k, v] of Object.entries({ id, patternUnits: 'userSpaceOnUse', width: '9', height: '9', patternTransform: 'rotate(45)' })) pat.setAttribute(k, v);
-      const tint = doc.createElementNS(NS, 'rect');
-      for (const [k, v] of Object.entries({ width: '9', height: '9', 'fill-opacity': '0.08' })) tint.setAttribute(k, v);
-      const line = doc.createElementNS(NS, 'line');
-      for (const [k, v] of Object.entries({ x1: '0', y1: '0', x2: '0', y2: '9', 'stroke-width': '2.6', 'stroke-opacity': '0.62' })) line.setAttribute(k, v);
-      pat.append(tint, line);
-      host.appendChild(pat);
-      p = pat;
-    }
-    p.querySelector('rect')?.setAttribute('fill', ink);
-    p.querySelector('line')?.setAttribute('stroke', ink);
-  };
-  pattern('petu-hatch', INK.ink2);
-  pattern('petu-hatch-live', accent);
-}
-
 export function mountBoard(layer: SVGGElement, spec: { w: number; h: number; extend?: boolean }, ns: string, accent: string): { board: SvgBoard; height: number } {
-  ensureHatch(layer.ownerDocument, accent);
   const old = boardIn(layer);
   if (old) {
     if (spec.h > old.h) { old.h = spec.h; old.root.setAttribute('viewBox', `0 0 ${old.w} ${old.h}`); old.root.setAttribute('height', String((old.h * 1000) / old.w)); }
@@ -93,6 +83,7 @@ export function mountBoard(layer: SVGGElement, spec: { w: number; h: number; ext
   const root = document.createElementNS(NS, 'svg') as SVGSVGElement;
   const w = spec.w > 0 ? spec.w : 1000, h = spec.h > 0 ? spec.h : 700;
   for (const [k, v] of Object.entries({ x: '0', y: '0', width: '1000', height: String((h * 1000) / w), viewBox: `0 0 ${w} ${h}`, overflow: 'visible', 'data-svgboard': ns })) root.setAttribute(k, v);
+  addHatch(root, ns, accent);
   layer.appendChild(root);
   const board: SvgBoard = { root, w, h, ns, palette: { accent, hue: null }, ids: new Map(), groups: new Map(), scope: newScope(), bound: [], traces: new Map() };
   boards.set(root, board);
@@ -125,7 +116,10 @@ export function prepareGroup(b: SvgBoard, src: string, minPx: number, pxPerUnit:
   const scale = pxPerUnit > 0 ? typeScale(minPx, pxPerUnit, pxPerUnit * b.w) : { content: 16, title: 20, small: 13 };
   if (b.type) b.type.scale = scale; else b.type = newTypeState(scale);
   const st = b.type, min = Math.max(8, scale.small);
-  return sanitizeGroup(src, { ns: b.ns, palette: b.palette, minFont: min, w: b.w, h: b.h, ids: b.ids, prepare: (g) => { resolveData(g, b.scope); prepareText(g, min, applyGrammar(g, st)); } });
+  const s = sanitizeGroup(src, { ns: b.ns, palette: b.palette, minFont: min, w: b.w, h: b.h, ids: b.ids, prepare: (g) => { resolveData(g, b.scope); prepareText(g, min, applyGrammar(g, st)); } });
+  // Washes: the board's hatch (an attribute, so a serialised board carries it with its pattern).
+  if (typeof s !== 'string') s.el.querySelectorAll('[data-wash]').forEach((e) => e.setAttribute('fill', `url(#${hatchId(b.ns)})`));
+  return s;
 }
 
 /** Whether a prepared group has elements bound to constants. */
@@ -249,6 +243,7 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   }
   b.root.appendChild(g);
   b.root.style.setProperty('--board-live', o.color);
+  tintLiveHatch(b, o.color);
   setLive(b, null);
   const instant = o.signal.aborted || prefersReducedMotion() || typeof requestAnimationFrame !== 'function';
   const isLeaf = (el: Element) => el.matches(`${SHAPES},text`) && !el.closest('defs,marker,clipPath,pattern,symbol') && el.getAttribute('display') !== 'none';
