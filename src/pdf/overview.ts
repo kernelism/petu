@@ -94,6 +94,9 @@ export function wheelFactor(kind: 'pinch' | 'wheel', e: WheelLike, H: number): n
   return Math.exp(-Math.max(-200, Math.min(200, dy)) * k);
 }
 
+/** A sheet x (layout px) where it shows in the window under the overview zoom (scaled about W/2, slid by panX). */
+export const sheetToWindowX = (x: number, W: number, v: OverviewViewState): number => W / 2 + v.panX + (x - W / 2) * v.z;
+
 /** The percentage the pill shows. */
 export const overviewPct = (z: number): string => `${Math.round(z * 100)}%`;
 
@@ -103,17 +106,24 @@ export const overviewPct = (z: number): string => `${Math.round(z * 100)}%`;
 
 export type OverviewControl = { set(z: number | 'fit'): void };
 
+export type OverviewViewState = { z: number; panX: number };
+
 export class OverviewHub {
   private z = 1;
+  private v: OverviewViewState = { z: 1, panX: 0 };
   private ctl: OverviewControl | null = null;
   private subs = new Set<() => void>();
   get = (): number => this.z;
+  /** Zoom and sideways pan together (one object per change: chrome maps sheet x to the window with it). */
+  getView = (): OverviewViewState => this.v;
   subscribe = (f: () => void): (() => void) => { this.subs.add(f); return () => { this.subs.delete(f); }; };
   /** The live viewer's control. */
   attach(ctl: OverviewControl): void { this.ctl = ctl; }
   /** The viewer unmounts (only if it is still the attached one). */
-  detach(ctl: OverviewControl): void { if (this.ctl !== ctl) return; this.ctl = null; this.publish(1); }
-  publish(z: number): void { if (z === this.z) return; this.z = z; this.subs.forEach((f) => f()); }
+  detach(ctl: OverviewControl): void { if (this.ctl !== ctl) return; this.ctl = null; this.publish(1); this.publishPan(0); }
+  publish(z: number): void { if (z === this.z) return; this.z = z; this.v = { z, panX: this.v.panX }; this.subs.forEach((f) => f()); }
+  /** The sheet's sideways pan changed (the viewer applies zoom and pan together; z is published separately). */
+  publishPan(panX: number): void { if (panX === this.v.panX) return; this.v = { z: this.z, panX }; this.subs.forEach((f) => f()); }
   /** User-initiated (the pill): asks the live viewer for a zoom. */
   set(z: number | 'fit'): void { this.ctl?.set(z); }
 }

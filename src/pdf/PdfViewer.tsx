@@ -410,6 +410,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     const el = scrollRef.current, sizer = sizerRef.current, box = zoomRef.current;
     if (!el || !sizer || !box) return;
     const { z, panX } = ovRef.current;
+    overviewHub.publishPan(panX);
     if (z === 1 && panX === 0) {
       if (box.style.height) { sizer.style.transform = ''; sizer.style.transformOrigin = ''; box.style.height = ''; box.style.overflow = ''; }
       return;
@@ -852,6 +853,8 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       contentMask: (page) => renderer.mask(clampPage(page)),
       crop: (page, r, pxW) => renderer.crop(clampPage(page), r, pxW),
       laneEl: () => laneRef.current,
+      zoom: () => ovRef.current.z,
+      onZoom: (cb) => overviewHub.subscribe(cb),
     };
 
     // ---- Overview zoom (layout C only; spec §3 rule 6, §5.7, §5.8) ------------------------------
