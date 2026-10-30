@@ -165,6 +165,33 @@ describe('routeVoice', () => {
   });
 });
 
+describe('VoiceLine, reconnecting', () => {
+  const job = (text: string, out: { audio: number; done?: SpeakResult }) => ({
+    id: text, text, voice: 'marin' as const, speed: 1,
+    onAudio: (b: Buffer) => { out.audio += b.length; },
+    done: (r: SpeakResult) => { out.done = r; },
+  });
+
+  it('a socket closed before it opens fails its job only; the next runs on a new socket', async () => {
+    const socks: ReturnType<typeof fakeSocket>[] = [];
+    const l = new VoiceLine('k', () => { const f = fakeSocket(); socks.push(f); return f.s; });
+    const a = { audio: 0 } as { audio: number; done?: SpeakResult }, b = { audio: 0 } as { audio: number; done?: SpeakResult };
+    l.speak(job('One.', a));
+    l.speak(job('Two.', b));
+    await tick();
+    socks[0].s.onclose?.({ code: 1006, reason: '' });
+    await tick();
+    expect(a.done).toMatchObject({ ok: false });
+    expect(b.done).toBeUndefined();
+    expect(socks).toHaveLength(2);
+    socks[1].s.onopen?.();
+    await tick();
+    const r = created(socks[1].s, socks[1].sent);
+    socks[1].s.emit({ type: 'response.done', response: { id: r, status: 'completed', usage: {} } });
+    expect(b.done).toMatchObject({ ok: true });
+  });
+});
+
 describe('VoiceLine, timed', () => {
   afterEach(() => { vi.useRealTimers(); });
   const job = (text: string, out: { audio: number; done?: SpeakResult }) => ({

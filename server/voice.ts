@@ -168,7 +168,8 @@ export class VoiceLine {
     if (!j) return;
     this.current = j;
     try { await this.connect(); } catch (e) {
-      this.finish({ ok: false, error: e instanceof Error ? e.message : String(e) });
+      // A close has already failed this job (and the next may be running): finish only our own.
+      if (this.current === j) this.finish({ ok: false, error: e instanceof Error ? e.message : String(e) });
       return;
     }
     if (this.current !== j) return;
