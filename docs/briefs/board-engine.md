@@ -81,7 +81,9 @@ and draws it. The tag kit above stays for the `tags` prompt variant (`PETU_PROMP
   ids unique, no text on text (> 25% of the smaller box), no stroke through a text's core box, inside
   the canvas (the bottom may grow to 1.6×H). Text boxes are estimated (font ≥ the renderer's minimum,
   `svgMinFont`), transforms applied, paths flattened. Repairs get `svgRepairNote` (the beat as raw
-  SVG) and `SVG_REPAIR_MAX_OUTPUT`.
+  SVG) and `SVG_REPAIR_MAX_OUTPUT`. A repair never opens a board: the server's filter runs with
+  `opened` and the gate drops any `{{svgboard}}` in a repair of a unit that had none (one board = one
+  frame; before, a repaired group opened a second section below and was re-checked on an empty board).
 - **Follow-ups**: MEMORY lists `svg group <id> "<its words>"` and the `board layout` from the answer's
   plan; asides open their own `svgb<N>` section in the aside inset (`is-aside`).
 - **Exact data** (`src/svgboard/data.ts`, resolved before checking and drawing; the gate and the

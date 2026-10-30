@@ -82,6 +82,13 @@ describe('svg beats: the server filter', () => {
     expect(out).toMatch(/\{\{svg <g id="up">.*<\/g>\}\}/);
   });
 
+  it('a repair stream (board already open) sends its groups with no BOARD tag', () => {
+    const f = new SvgBeatFilter(() => 0, { opened: true });
+    const out = f.push('The lever arm.\n<g id="arm"><line x1="300" y1="450" x2="300" y2="350" stroke="#000"/></g>\n') + f.end();
+    expect(out).toContain('{{svg <g id="arm">');
+    expect(out).not.toContain('{{svgboard');
+  });
+
   it('reads the BOARD line', () => {
     expect(boardOf('x\nBOARD viewBox="0 0 1000 820"\nregions: …')).toEqual({ w: 1000, h: 820, extend: false });
     expect(boardOf('BOARD extend viewBox="0 0 1000 1200"')).toEqual({ w: 1000, h: 1200, extend: true });

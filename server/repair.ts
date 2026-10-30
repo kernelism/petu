@@ -110,7 +110,8 @@ export async function repair(w: RepairWire, cfg: ModelConfig | null, d: RepairDe
   if (signal.aborted) up.abort();
   let late = false;
   const deadline = setTimeout(() => { late = true; up.abort(); }, Math.max(0, Math.min(w.deadlineMs, T.callMs)));
-  const filter = svg ? new SvgBeatFilter() : new ScriptFilter(), lint = new Lint(), read = newRead();
+  // A repaired beat draws into the answer's open board: its groups go out with no BOARD tag of their own.
+  const filter = svg ? new SvgBeatFilter(undefined, { opened: true }) : new ScriptFilter(), lint = new Lint(), read = newRead();
   let text = '', failed: Extract<RepairWireEvent, { t: 'error' }> | null = null, sent = false;
   const send = (s: string) => { if (!s) return; text += s; if (!signal.aborted && !late) emit({ t: 'text', d: s }); };
   try {
