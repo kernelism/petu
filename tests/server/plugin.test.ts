@@ -1,12 +1,13 @@
 // @vitest-environment node
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { parseEnv, PHASE_CAPS, MAX_TOTAL_USD } from '../../server/env';
+import { loadPetuEnv, parseEnv, PHASE_CAPS, MAX_TOTAL_USD } from '../../server/env';
 import { createApi } from '../../server/plugin';
+import { STT_MINT_URL, STT_WS_URL } from '../../server/stt';
 import type { AskEvent, AskRequest } from '../../src/agent/protocol';
 
 const KEY = 'sk-test-PLUGIN-xyz';
@@ -57,6 +58,13 @@ describe('parseEnv', () => {
   it('the total can be lowered but never raised past $60', () => {
     expect(parseEnv(from({ PETU_TOTAL_CAP_USD: '0' }), opts).caps.totalUsd).toBe(0);
     expect(parseEnv(from({ PETU_TOTAL_CAP_USD: '100' }), opts).caps.totalUsd).toBe(MAX_TOTAL_USD);
+  });
+  it('SPEECHMATICS_API_KEY: trimmed, \'\' when unset, the shell\'s over the .env file\'s', () => {
+    expect(parseEnv(from({}), opts).speechmaticsKey).toBe('');
+    expect(parseEnv(from({ SPEECHMATICS_API_KEY: ' k ' }), opts).speechmaticsKey).toBe('k');
+    const load = (file: Record<string, string>, proc: Record<string, string> = {}) => loadPetuEnv('development', '/repo', '/repo', (() => ({ ...file, ...proc })) as never, proc as NodeJS.ProcessEnv);
+    expect(load({ SPEECHMATICS_API_KEY: 'file' }).speechmaticsKey).toBe('file');
+    expect(load({ SPEECHMATICS_API_KEY: 'file' }, { SPEECHMATICS_API_KEY: 'shell' }).speechmaticsKey).toBe('shell');
   });
   it('rejects bad knobs, including effort none on models that refuse it', () => {
     expect(() => parseEnv(from({ PETU_EFFORT: 'max' }), opts)).toThrow(/PETU_EFFORT/);
@@ -463,4 +471,49 @@ describe('createApi', () => {
     await api.handle(fakeReq('POST', '/api/prewarm', JSON.stringify({ context: good().context })), res, () => {});
     expect(api.prewarmedCount()).toBe(2); // this page's answer prefix and the document's scout prefix
   }, 20_000); // 300 prewarms, each through the ledger's file lock: ~3.5s alone, slower under a parallel run
+});
+
+describe('/api/stt', () => {
+  const SM = 'sm-secret-STT-key';
+  const post = async (api: ReturnType<typeof createApi>, method = 'POST') => {
+    const res = fakeRes();
+    await api.handle(fakeReq(method, '/api/stt', method === 'POST' ? '{}' : ''), res, () => {});
+    return { status: res.statusCode, body: res.body() };
+  };
+  it('405 for anything but POST; 503 with the setup line without a key (Speechmatics is not called)', async () => {
+    const f = vi.fn();
+    const api = createApi({ env: env(), root, fetch: f as unknown as typeof fetch });
+    expect((await post(api, 'GET')).status).toBe(405);
+    const r = await post(api);
+    expect(r.status).toBe(503);
+    expect(JSON.parse(r.body).error).toMatch(/SPEECHMATICS_API_KEY/);
+    expect(f).not.toHaveBeenCalled();
+  });
+  it('200 { jwt, url }: a temporary key minted with the account key', async () => {
+    const f = vi.fn(async (_u: string, _i: RequestInit) => new Response(JSON.stringify({ key_value: 'tmp-jwt' }), { status: 201 }));
+    const api = createApi({ env: env({ SPEECHMATICS_API_KEY: SM }), root, fetch: f as unknown as typeof fetch });
+    const r = await post(api);
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body)).toEqual({ jwt: 'tmp-jwt', url: STT_WS_URL });
+    expect(r.body).not.toContain(SM);
+    expect(f.mock.calls[0][0]).toBe(STT_MINT_URL);
+  });
+  it('502 with a generic line when Speechmatics refuses or fails; the key is in neither the response nor the log', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      for (const f of [
+        async () => new Response('bad key', { status: 401 }),
+        async () => new Response('not json', { status: 200 }),
+        async () => { throw new Error(`connect failed with Bearer ${SM}`); },
+      ]) {
+        const api = createApi({ env: env({ SPEECHMATICS_API_KEY: SM }), root, fetch: f as unknown as typeof fetch });
+        const r = await post(api);
+        expect(r.status).toBe(502);
+        expect(JSON.parse(r.body)).toEqual({ error: 'Dictation is unavailable right now.' });
+        expect(r.body).not.toContain(SM);
+      }
+      expect(err).toHaveBeenCalledTimes(3);
+      for (const c of err.mock.calls) expect(c.join(' ')).not.toContain(SM);
+    } finally { err.mockRestore(); }
+  });
 });
