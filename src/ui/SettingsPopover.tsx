@@ -1,6 +1,8 @@
-import { useEffect, useRef, type CSSProperties } from 'react';
+import { useEffect, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { X } from 'lucide-react';
 import { HIGHLIGHT_COLORS, INK_COLORS, setSettings, useSettings } from '../settings/settings';
 import type { InkStyle } from '../ink/agent/marks';
+import { requestShortcuts } from './ShortcutsOverlay';
 import './ui.css';
 
 const STYLES: { value: InkStyle; label: string }[] = [
@@ -8,36 +10,78 @@ const STYLES: { value: InkStyle; label: string }[] = [
   { value: 'hand', label: 'Hand' },
   { value: 'clean', label: 'Clean' },
 ];
-const COLOR_NAMES: Record<string, string> = {
-  '#F2600C': 'Orange', '#E5484D': 'Red', '#0A84FF': 'Blue', '#30A46C': 'Green', '#8E4EC6': 'Purple',
-  '#FFD60A': 'Yellow', '#7EE787': 'Green', '#7CC4FF': 'Blue', '#FF9ECF': 'Pink',
+const INK_NAMES: Record<string, string> = {
+  '#8E4EC6': 'Violet', '#F2600C': 'Orange', '#E5484D': 'Red', '#0A84FF': 'Blue', '#30A46C': 'Green',
+};
+const HIGHLIGHT_NAMES: Record<string, string> = {
+  '#FFD60A': 'Yellow', '#7EE787': 'Light green', '#7CC4FF': 'Light blue', '#FF9ECF': 'Pink',
 };
 
-function Swatches({ label, colors, value, onPick }: { label: string; colors: string[]; value: string; onPick(c: string): void }) {
+/** The words per minute the narration actually plays at: the setting times the playback speed. */
+export const effectiveWpm = (wpm: number, speed: number) => Math.round(wpm * speed);
+
+/** Where an arrow key moves a radio group's selection (wrapping), or null for any other key. */
+export function radioStep(key: string, i: number, n: number): number | null {
+  if (key === 'ArrowRight' || key === 'ArrowDown') return (i + 1) % n;
+  if (key === 'ArrowLeft' || key === 'ArrowUp') return (i - 1 + n) % n;
+  if (key === 'Home') return 0;
+  if (key === 'End') return n - 1;
+  return null;
+}
+
+/**
+ * A radio group with one tab stop (the checked option) whose arrow keys move the selection, as
+ * native radios do. `render(option, checked)` gives each option's props beyond the radio wiring.
+ */
+function RadioGroup<T>({ label, labelledBy, className, options, value, same = (a, b) => a === b, onPick, render }: {
+  label?: string; labelledBy?: string; className: string; options: T[]; value: T; same?(a: T, b: T): boolean;
+  onPick(v: T): void; render(o: T, checked: boolean): { className: string; label?: string; style?: CSSProperties; children?: ReactNode };
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const at = Math.max(0, options.findIndex((o) => same(o, value)));
+  const onKeyDown = (e: ReactKeyboardEvent) => {
+    const next = radioStep(e.key, at, options.length);
+    if (next == null) return;
+    e.preventDefault();
+    onPick(options[next]);
+    ref.current?.querySelectorAll<HTMLElement>('[role="radio"]')[next]?.focus();
+  };
   return (
-    <div className="swatches" role="radiogroup" aria-label={label}>
-      {colors.map((c) => {
-        const on = c.toLowerCase() === value.toLowerCase();
+    <div ref={ref} className={className} role="radiogroup" aria-label={label} aria-labelledby={labelledBy} onKeyDown={onKeyDown}>
+      {options.map((o, i) => {
+        const checked = i === at;
+        const r = render(o, checked);
         return (
           <button
-            key={c}
+            key={i}
             type="button"
             role="radio"
-            aria-checked={on}
-            aria-label={COLOR_NAMES[c] ?? c}
-            className={`swatch${on ? ' is-on' : ''}`}
-            style={{ '--swatch': c } as CSSProperties}
-            onClick={() => onPick(c)}
-          />
+            aria-checked={checked}
+            aria-label={r.label}
+            tabIndex={checked ? 0 : -1}
+            className={r.className}
+            style={r.style}
+            onClick={() => onPick(o)}
+          >
+            {r.children}
+          </button>
         );
       })}
     </div>
   );
 }
 
-export function SettingsPopover({ open, onClose }: { open: boolean; onClose(): void }) {
+const sameColor = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+const swatch = (names: Record<string, string>) => (c: string, on: boolean) =>
+  ({ className: `swatch${on ? ' is-on' : ''}`, label: names[c] ?? c, style: { '--swatch': c } as CSSProperties });
+
+export function SettingsPopover({ open, onClose, onShowShortcuts = requestShortcuts }: { open: boolean; onClose(): void; onShowShortcuts?(): void }) {
   const s = useSettings();
   const ref = useRef<HTMLDivElement>(null);
+  const close = () => {
+    onClose();
+    document.querySelector<HTMLElement>('[data-settings-anchor]')?.focus();
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -62,40 +106,44 @@ export function SettingsPopover({ open, onClose }: { open: boolean; onClose(): v
   }, [open, onClose]);
 
   if (!open) return null;
+  const actual = effectiveWpm(s.wpm, s.speed);
 
   return (
-    <div className="popover" ref={ref} role="dialog" aria-label="Settings" tabIndex={-1}>
+    <div className="popover" ref={ref} role="dialog" aria-labelledby="pop-title" tabIndex={-1}>
+      <header className="pop-head">
+        <h2 className="pop-title" id="pop-title">Settings</h2>
+        <button type="button" className="icon-btn pop-close" onClick={close} aria-label="Close settings" title="Close (Esc)">
+          <X size={16} strokeWidth={2} aria-hidden="true" />
+        </button>
+      </header>
+
       <section className="pop-row">
         <div className="pop-label" id="pop-style">Drawing style</div>
-        <div className="segmented" role="radiogroup" aria-labelledby="pop-style">
-          {STYLES.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              role="radio"
-              aria-checked={s.inkStyle === o.value}
-              className={`seg${s.inkStyle === o.value ? ' is-on' : ''}`}
-              onClick={() => setSettings({ inkStyle: o.value })}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
+        <RadioGroup
+          labelledBy="pop-style"
+          className="segmented"
+          options={STYLES.map((o) => o.value)}
+          value={s.inkStyle}
+          onPick={(v) => setSettings({ inkStyle: v })}
+          render={(v, on) => ({ className: `seg${on ? ' is-on' : ''}`, children: STYLES.find((o) => o.value === v)!.label })}
+        />
       </section>
 
       <section className="pop-row">
-        <div className="pop-label">Ink color</div>
-        <Swatches label="Ink color" colors={INK_COLORS} value={s.inkColor} onPick={(c) => setSettings({ inkColor: c })} />
+        <div className="pop-label" id="pop-ink">Ink color</div>
+        <RadioGroup labelledBy="pop-ink" className="swatches" options={INK_COLORS} value={s.inkColor} same={sameColor}
+          onPick={(c) => setSettings({ inkColor: c })} render={swatch(INK_NAMES)} />
       </section>
 
       <section className="pop-row">
-        <div className="pop-label">Highlight</div>
-        <Swatches label="Highlight color" colors={HIGHLIGHT_COLORS} value={s.highlightColor} onPick={(c) => setSettings({ highlightColor: c })} />
+        <div className="pop-label" id="pop-hl">Highlight color</div>
+        <RadioGroup labelledBy="pop-hl" className="swatches" options={HIGHLIGHT_COLORS} value={s.highlightColor} same={sameColor}
+          onPick={(c) => setSettings({ highlightColor: c })} render={swatch(HIGHLIGHT_NAMES)} />
       </section>
 
       <section className="pop-row">
         <div className="pop-label pop-label-split">
-          <label htmlFor="pop-wpm">Caption speed</label>
+          <label htmlFor="pop-wpm">Reading speed</label>
           <span className="pop-value">{s.wpm} wpm</span>
         </div>
         <input
@@ -106,21 +154,34 @@ export function SettingsPopover({ open, onClose }: { open: boolean; onClose(): v
           max={220}
           step={5}
           value={s.wpm}
+          aria-valuetext={`${s.wpm} words per minute`}
+          aria-describedby={s.speed !== 1 ? 'pop-wpm-note' : undefined}
           style={{ '--fill': `${((s.wpm - 130) / 90) * 100}%` } as CSSProperties}
           onChange={(e) => setSettings({ wpm: Number(e.target.value) })}
         />
+        {/* The answer's own speed control (1×, < >) multiplies this; say what they make together. */}
+        {s.speed !== 1 && (
+          <p className="pop-note" id="pop-wpm-note">
+            Playing at {s.speed}× · {actual} wpm
+          </p>
+        )}
       </section>
 
       <section className="pop-row pop-row-inline">
-        <label className="pop-label" htmlFor="pop-keys">Keyboard shortcuts</label>
-        <button
-          id="pop-keys"
-          type="button"
-          role="switch"
-          aria-checked={s.shortcuts}
-          className={`switch${s.shortcuts ? ' is-on' : ''}`}
-          onClick={() => setSettings({ shortcuts: !s.shortcuts })}
-        />
+        <label className="pop-switch-row" htmlFor="pop-keys">
+          <span className="pop-label">Keyboard shortcuts</span>
+          <button
+            id="pop-keys"
+            type="button"
+            role="switch"
+            aria-checked={s.shortcuts}
+            className={`switch${s.shortcuts ? ' is-on' : ''}`}
+            onClick={() => setSettings({ shortcuts: !s.shortcuts })}
+          />
+        </label>
+        <button type="button" className="btn-quiet pop-show-keys" onClick={() => { onClose(); onShowShortcuts(); }}>
+          Show <kbd className="keycap">?</kbd>
+        </button>
       </section>
     </div>
   );

@@ -1,8 +1,9 @@
 // src/ui/ReportButton.tsx — the top bar's Report control (also Shift+R outside text fields).
 // Clicking captures at once (the state the tester is looking at), then offers a one-line optional
-// note: Enter saves, Esc cancels. A short static line says where it went.
+// note with its keys spelled out under it (↵ Save · Esc Cancel). A short static line says where it went.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Flag } from 'lucide-react';
+import type { TipProps } from './Tip';
 import './ui.css';
 
 /** Captures now; the returned function saves the capture with a note and resolves to the saved dir. */
@@ -15,7 +16,8 @@ const typing = (t: EventTarget | null) => {
   return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 };
 
-export function ReportButton({ capture }: { capture: Capture }) {
+/** `tipProps`: the top bar's shared tooltip (Tip.tsx); without it the button keeps a native title. */
+export function ReportButton({ capture, tipProps }: { capture: Capture; tipProps?(label: string, keys?: string): TipProps }) {
   const [phase, setPhase] = useState<Phase>({ k: 'idle' });
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
@@ -72,8 +74,8 @@ export function ReportButton({ capture }: { capture: Capture }) {
         type="button"
         className="icon-btn"
         onClick={() => void start()}
-        aria-label="Report a problem (Shift+R)"
-        title="Report a problem (Shift+R)"
+        {...(tipProps ? tipProps('Report a problem', '⇧R') : { 'aria-label': 'Report a problem (Shift+R)', title: 'Report a problem (Shift+R)' })}
+        aria-keyshortcuts="Shift+R"
         aria-expanded={phase.k === 'note'}
         data-report=""
       >
@@ -82,18 +84,24 @@ export function ReportButton({ capture }: { capture: Capture }) {
       {phase.k !== 'idle' && (
         <div className="report-pop" role={phase.k === 'done' ? 'status' : undefined}>
           {phase.k === 'note' || phase.k === 'saving' ? (
-            <input
-              ref={inputRef}
-              className="report-input"
-              placeholder="What went wrong? (optional) — Enter saves"
-              aria-label="Report note (optional). Enter saves, Escape cancels."
-              maxLength={2000}
-              disabled={phase.k === 'saving'}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); void submit(e.currentTarget.value); }
-                else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel(); }
-              }}
-            />
+            <>
+              <input
+                ref={inputRef}
+                className="report-input"
+                placeholder="Describe the problem (optional)"
+                aria-label="Describe the problem (optional). Enter saves, Escape cancels."
+                maxLength={2000}
+                disabled={phase.k === 'saving'}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); void submit(e.currentTarget.value); }
+                  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel(); }
+                }}
+              />
+              <span className="report-keys" aria-hidden="true">
+                <span><kbd className="keycap">↵</kbd> Save</span>
+                <span><kbd className="keycap">Esc</kbd> Cancel</span>
+              </span>
+            </>
           ) : (
             <span className={`report-line${phase.k === 'done' && phase.error ? ' is-error' : ''}`}>
               {phase.k === 'capturing' ? 'Capturing…' : phase.line}

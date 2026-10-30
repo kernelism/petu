@@ -13,14 +13,35 @@
   --caption-bg: rgba(28,28,30,.92);
   --caption-fg: #FFFFFF;
   --focus: #0A84FF;
-  --radius-l: 14px;
+  /* The student's own colour (their pen's default, the "about:" chip, their text selection). */
+  --student: #0A84FF;
+  --student-ink: #0A5FC2;  /* the student's blue as text: 5.6:1 on its tint */
+  --danger: #B3261E;
+  /* Corners: three radii and a pill. s = small controls (≤ 28px), m = buttons and fields, l = surfaces. */
+  --radius-s: 6px;
   --radius-m: 10px;
+  --radius-l: 14px;
+  --radius-pill: 999px;
+  /* Shadows: two. low = resting chrome on the desk; float = anything that floats over content. */
+  --shadow-low: 0 1px 3px rgba(0,0,0,.07);
   --shadow-float: 0 1px 2px rgba(0,0,0,.06), 0 8px 28px rgba(0,0,0,.12);
+  --edge: 0 0 0 0.5px var(--hairline);   /* a surface's hairline, drawn as a shadow */
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
   --ease-out: cubic-bezier(.2,.8,.2,1);
+  /* Motion: three durations. fast = hover/press fills, base = things appearing, slow = settling away. */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 400ms;
   /* interaction fills on light surfaces */
   --hover: rgba(0,0,0,.05);
   --press: rgba(0,0,0,.09);
+  /* ... and on the dark caption */
+  --hover-dark: rgba(255,255,255,.1);
+  --press-dark: rgba(255,255,255,.17);
+  /* An aside: a warm grey, so violet stays tutor ink. tint = fills, edge = frames, ink = its text on dark. */
+  --aside-tint: rgba(120,108,88,.06);
+  --aside-edge: rgba(120,108,88,.22);
+  --aside-ink: #EDE6DA;
 
   /* Tutor ink: a line hierarchy, so construction never outweighs the geometry it serves.
      Widths are CSS px on screen (non-scaling strokes); the hand style draws them 1.2× heavier. */
@@ -32,17 +53,18 @@
   --ink-connector-w: 1.25px;  /* page ↔ sketch connectors, solid accent */
   /* Sheets (shade) in sketches: an opaque light fill, so overlaps never muddy; outline = hairline. */
   --shade-sheet: #F7F6F2;
-  --shade-line: #8E8E93;
+  --shade-line: #8E8E93;      /* a line tone: never text */
   --shade-tint: .10;          /* em shade: accent at this opacity */
   /* Sketch type: word labels in a quiet sans; symbols (x, x′, C, θ) in KaTeX's math italic. */
   --ink-label-weight: 450;
   --font-math: KaTeX_Math, KaTeX_Main, "Times New Roman", serif;
 
-  /* Visual kit (engine-rendered blocks): light grid lines, a darker edge, muted labels and glyphs. */
+  /* Visual kit (engine-rendered blocks): light grid lines, a darker edge, muted labels and glyphs.
+     --kit-muted is text (calc lines, ticks, captions): 5.3:1 on the paper (AA at 11–13px). */
   --kit-cell: #FFFFFF;
   --kit-line: #D9D6CF;
   --kit-edge: #9B978E;
-  --kit-muted: #8A8780;
+  --kit-muted: #6E6B64;
   --kit-bar: #3F3D39;
   --kit-dot: #6C6962;
   --kit-pos: #3E6BC7;   /* signed values: positive */
@@ -51,3 +73,6 @@
 }
 html, body, #root { height: 100%; margin: 0; background: var(--canvas-bg); color: var(--ink); font-family: var(--font); -webkit-font-smoothing: antialiased; }
 *:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* Selected text (the transcript, the slides' text layer, the board) and the caret in the student's blue. */
+::selection { background: rgba(10,132,255,.25); color: inherit; }
+input, textarea { caret-color: var(--student); }

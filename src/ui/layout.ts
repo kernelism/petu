@@ -3,14 +3,20 @@ import type { DeskState } from '../desk/types';
 
 /** The dock is this wide at most, and never wider than its column. */
 export const DOCK_MAX = 560;
+/** From LARGE_W wide windows up the chrome takes its large step (ui.css `@media (min-width: 2000px)`): a wider dock. */
+export const LARGE_W = 2000;
+export const DOCK_MAX_LARGE = 680;
+
+/** The dock's widest, for a window W px wide. */
+export const dockMax = (W: number) => (W >= LARGE_W ? DOCK_MAX_LARGE : DOCK_MAX);
 
 /**
  * Where the dock (caption + ask bar, one unit) sits: centred under the slide column (the page
- * column while reading, the slide column pinned left in a split), as wide as it up to DOCK_MAX.
+ * column while reading, the slide column pinned left in a split), as wide as it up to dockMax(W).
  */
 export function dockPlacement(W: number, s: DeskState | null): { x: number; w: number } {
   const col = s ? s.column : { x: 16, w: W - 32 };
-  return { x: col.x + col.w / 2, w: Math.max(0, Math.min(DOCK_MAX, col.w)) };
+  return { x: col.x + col.w / 2, w: Math.max(0, Math.min(dockMax(W), col.w)) };
 }
 
 /** The caption sits right on the ask bar: one unit, no gap (ui.css .caption bottom: 100%). */
