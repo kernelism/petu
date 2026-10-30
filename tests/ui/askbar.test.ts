@@ -96,4 +96,24 @@ describe('AskBar dictation', () => {
     expect(b.input.value).toBe('');
     expect(b.input.placeholder).toBe('Spending cap reached');
   });
+
+  it('an error mid-question puts what was heard back in the field with the note: nothing is sent', () => {
+    const b = mount();
+    b.clickMic();
+    b.heard('why does the demand');
+    b.end({ text: 'why does the demand', auto: false, error: 'Dictation lost its connection.' });
+    expect(b.props.onAsk).not.toHaveBeenCalled();
+    expect(b.input.value).toBe('why does the demand');
+    expect(b.input.title).toBe('Dictation lost its connection.');
+    b.key(b.input, 'Enter');
+    expect(b.props.onAsk).toHaveBeenCalledWith('why does the demand');
+  });
+
+  it('an error before anything was heard shows in the placeholder', () => {
+    const b = mount();
+    b.clickMic();
+    b.end({ text: '', auto: false, error: 'Microphone access was blocked.' });
+    expect(b.input.placeholder).toBe('Microphone access was blocked.');
+    expect(b.props.onAsk).not.toHaveBeenCalled();
+  });
 });

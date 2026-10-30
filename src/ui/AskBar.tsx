@@ -76,7 +76,9 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
         if (dictRef.current !== d) return;
         dictRef.current = null;
         setListening(false);
-        if (error && !t) { setMicNote(error); setText(''); setTyping(''); return; }
+        // An error is never a send: what was heard goes back in the field (Enter sends it), the note
+        // in the placeholder (empty field) or the field's title.
+        if (error) { setMicNote(error); setText(t); setTyping(t); return; }
         if (t.trim()) { typingRef.current = false; onAskRef.current(t.trim()); }
         setText('');
         setTyping('');
@@ -188,7 +190,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
         placeholder={blocked && !busy ? blocked : listening ? 'Listening…' : micNote || PLACEHOLDER[mode]}
         // Blocked: still focusable (the line can be read, Esc and / work), but nothing can be typed or sent.
         readOnly={!!blocked && !busy}
-        title={blocked && !busy ? blocked : undefined}
+        title={blocked && !busy ? blocked : micNote || undefined}
         aria-label={BAR_LABEL[mode]}
         autoComplete="off"
         spellCheck={false}
