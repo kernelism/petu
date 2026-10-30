@@ -5,7 +5,7 @@ import { Figures, type Grounding } from '../geometry/resolve';
 import type { ViewerApi } from '../pdf/viewerApi';
 import { rectToSpace, toSpace, type SRect } from '../geometry/space';
 import { rng } from '../ink/agent/strokes';
-import { fadeOut } from '../ink/agent/marks';
+import { fadeOut, retireOut } from '../ink/agent/marks';
 import type { Settings } from '../settings/settings';
 import { Registry } from '../desk/registry';
 import { kitStore } from '../desk/kit/kit';
@@ -274,13 +274,14 @@ export class Director {
   async clear(ms = 300): Promise<void> {
     this.registry.clear();
     const desk = this.desk();
-    await Promise.all([this.fadePage(ms), desk ? desk.reset(ms) : null]);
+    await Promise.all([this.fadePage(ms, false), desk ? desk.reset(ms) : null]);
   }
 
-  private async fadePage(ms: number): Promise<void> {
+  /** A new answer's fade keeps the last one's marks as past marks (hidden; M shows them); {{clear}} removes them. */
+  private async fadePage(ms: number, keep = true): Promise<void> {
     const v = this.d.viewer();
     const groups = v ? v.allLayers().flatMap((l) => [l.highlight, l.agent]) : [];
-    if (groups.length) await fadeOut(groups, ms);
+    if (groups.length) await (keep ? retireOut : fadeOut)(groups, ms);
   }
 
   /**

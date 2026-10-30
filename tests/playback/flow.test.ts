@@ -176,11 +176,11 @@ describe('page framing', () => {
   const page = { top: 2000, h: 500 };
   it('split: the page top sits on the board top (SAFE_TOP), with no sliver of the page above', () => {
     for (const split of ['normal', 'wide'] as const) {
-      expect(page.top - pageFrameTop(page, 1440, 900, split, 0.5625)).toBe(SAFE_TOP);
-      expect(page.top - pageFrameTop(page, 2560, 1440, split, 0.5625)).toBe(SAFE_TOP);
+      expect(page.top - pageFrameTop(page, 1440, 900, split, 0.5625, false)).toBe(SAFE_TOP);
+      expect(page.top - pageFrameTop(page, 2560, 1440, split, 0.5625, false)).toBe(SAFE_TOP);
     }
     // Stacked (narrow window): the page's slot padding is skipped too.
-    expect(frameFor(700, 900, 'normal', 0.5625).stacked).toBe(true);
+    expect(frameFor(700, 900, 'normal', 0.5625, false).stacked).toBe(true);
     expect(page.top - pageFrameTop(page, 700, 900, 'normal', 0.5625)).toBe(SAFE_TOP + STACK_PAD);
   });
   it('reading: a page that fits is centred between the chrome', () => {

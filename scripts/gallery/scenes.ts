@@ -79,6 +79,11 @@ export const SCENES: Scene[] = [
   { name: 'live-calc', query: 'script=live-calc', moments: [mid(40000), END], needs: '.petu/corpus/openstax-calculus-volume-1.pdf' },
   { name: 'live-calc-zoom', query: 'script=live-calc-zoom', moments: [mid(40000), END], needs: '.petu/corpus/openstax-calculus-volume-1.pdf' },
   { name: 'lec09', query: 'script=lec09', moments: [mid(14000), END], needs: 'public/dev/lec09_optical_flow.pdf' },
+  // Layout C, the anchored lane (mockups C1–C5, src/demo/lane.ts): the ceiling drawn on the chart (C1), the
+  // journey to Figure 3.21 with the shortage braced and noted on the page (C2), the finished board (C4);
+  // the session's aside on the circled 15,000 (C3) and the follow-up's ceiling above the market (C5).
+  { name: 'lane-econ', query: 'script=lane-econ', moments: [{ name: 'c1-rule', after: 'start', ms: 25000 }, { name: 'c2-gap', after: 'start', ms: 41000 }, END], needs: '.petu/corpus/openstax-principles-economics-3e.pdf' },
+  { name: 'lane-session', query: 'script=lane-session', moments: [{ name: 'c3-aside', after: 'start', ms: 54000 }, { name: 'c5-follow', after: 'start', ms: 127000 }, { name: 'c5-session', after: 'start', ms: 129000, keys: ['s'] }, { name: 'c5-z', after: 'start', ms: 130000, keys: ['z'] }, { name: 'c5-overview', after: 'start', ms: 132000 }], needs: '.petu/corpus/openstax-principles-economics-3e.pdf' },
 ];
 
 export const SIZES = ['1440x900', '2560x1440'] as const;

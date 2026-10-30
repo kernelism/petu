@@ -19,14 +19,14 @@ describe('margin', () => {
 
 describe('frameFor', () => {
   it('reading: the page column centred, as before the split layout', () => {
-    const f = frameFor(1440, 900, 'none', 9 / 16);
+    const f = frameFor(1440, 900, 'none', 9 / 16, false);
     expect(f.board).toBeNull();
     expect(f.page).toEqual(readingColumn(1440));
     expect(f.page).toEqual({ pageW: MAX_PAGE_W, pageX: 290 });
   });
   for (const [W, H] of SIZES) {
     it(`split at ${W}×${H}: equal margins, gutter = margin, shared top and bottom edges, nothing overlapping`, () => {
-      const f = frameFor(W, H, 'normal', 9 / 16);
+      const f = frameFor(W, H, 'normal', 9 / 16, false);
       const b = f.board!;
       if (f.stacked) {
         expect(f.slides.w).toBe(b.w);
@@ -47,23 +47,23 @@ describe('frameFor', () => {
     });
   }
   it('wide (size=l): the slide column takes ~0.4, the board ~0.6', () => {
-    const f = frameFor(1440, 900, 'wide', 9 / 16);
+    const f = frameFor(1440, 900, 'wide', 9 / 16, false);
     expect(f.ratio).toBe('wide');
     expect(f.slides.w / (f.slides.w + f.board!.w)).toBeCloseTo(0.4, 1);
   });
   it('a wide split that would squeeze the slides below the minimum falls back to normal', () => {
-    const f = frameFor(1100, 800, 'wide', 9 / 16);
+    const f = frameFor(1100, 800, 'wide', 9 / 16, false);
     expect(f.ratio).toBe('normal');
     expect(f.stacked).toBe(false);
   });
   it('stacks below the minimum slide column', () => {
-    expect(frameFor(900, 800, 'normal', 9 / 16).stacked).toBe(true);
-    expect(frameFor(1100, 800, 'normal', 9 / 16).stacked).toBe(false);
+    expect(frameFor(900, 800, 'normal', 9 / 16, false).stacked).toBe(true);
+    expect(frameFor(1100, 800, 'normal', 9 / 16, false).stacked).toBe(false);
     const W = Math.ceil(2 * MIN_SLIDE_COL / 0.925) + 2;
-    expect(frameFor(W, 800, 'normal', 9 / 16).stacked).toBe(false);
+    expect(frameFor(W, 800, 'normal', 9 / 16, false).stacked).toBe(false);
   });
   it('is a pure function of the window (resizing back restores the same frame)', () => {
-    expect(frameFor(1440, 900, 'normal', 0.75)).toEqual(frameFor(1440, 900, 'normal', 0.75));
+    expect(frameFor(1440, 900, 'normal', 0.75, false)).toEqual(frameFor(1440, 900, 'normal', 0.75, false));
   });
 });
 

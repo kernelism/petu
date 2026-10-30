@@ -32,6 +32,13 @@
   .stage, .stage .pv-page { transition: none; }
 }
 
+/* Layout C (src/desk/lane.ts): the page and the lane are one sheet on the desk; nothing is masked
+   (the dock floats over the sheet) and no page is set back while the lane draws. */
+html.petu-lane, html.petu-lane body, html.petu-lane #root { background: #ECEAE5; }
+html.petu-lane .stage > .pv-scroll { -webkit-mask-image: none; mask-image: none; }
+html.petu-lane .stage.is-sketching .pv-page:not(.is-current) { opacity: 1; }
+html.petu-lane .pv-page { border-radius: 0; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .05); }
+
 /* ───────── ?debug ───────── */
 .debug {
   position: fixed;

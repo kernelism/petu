@@ -41,4 +41,24 @@ export function boardZoomKey(e: KeyLike, ctx: ZoomKeyContext): 'in' | 'out' | 'f
   return null;
 }
 
-export const isMacPlatform = (): boolean => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+/**
+ * Overview keys of the lane layout (layout C, W ≥ 1200: the board's own zoom does not exist there):
+ *
+ *   Z   toggle the overview (100% ↔ fit)      ⌘+ / ⌘=   in      ⌘−   out      ⌘0   100%
+ *
+ * Z: no modifiers, not while typing, not with a popover open. The ⌘ keys follow boardZoomKey's
+ * rules. Only in lane mode (`lane`); otherwise null and B's board mapping applies.
+ */
+export type OverviewKeyContext = { lane: boolean; mac: boolean; popover: boolean };
+
+export function overviewKey(e: KeyLike & { shiftKey?: boolean }, ctx: OverviewKeyContext): 'toggle' | 'in' | 'out' | 'reset' | null {
+  if (!ctx.lane || e.defaultPrevented || e.isComposing) return null;
+  if (e.key === 'z' || e.key === 'Z') {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || ctx.popover || isTypingTarget(e.target)) return null;
+    return 'toggle';
+  }
+  const z = boardZoomKey(e, { boardOpen: true, mac: ctx.mac });
+  return z === 'fit' ? 'reset' : z;
+}
+
+export const isMacPlatform =(): boolean => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);

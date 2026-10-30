@@ -33,4 +33,17 @@ export interface ViewerApi {
   cancelScroll(): void;
   /** The viewer's side of the desk (the split glide, scroll and user-intent events). */
   deskHost(): DeskHost;
+  /**
+   * Overview zoom of the whole surface (layout C, the lane, only; src/pdf/overview.ts): 1 = reading
+   * size, 0.5–2. The setters are the reader's (they stop follow) and glide about the window's centre;
+   * pinch, ⌘+wheel, Safari gestures, Z and ⌘± drive the same zoom. No-ops below the lane's width.
+   * Optional so test doubles of the viewer need not stub them (the real viewer has them all).
+   */
+  overview?(): number;
+  /** 'fit': the overview (50% until the desk can name the answer's extent). */
+  setOverview?(z: number | 'fit'): void;
+  stepOverview?(dir: 1 | -1): void;
+  /** 100% ↔ fit (Z). */
+  toggleOverview?(): void;
+  onOverview?(cb: (z: number) => void): () => void;
 }

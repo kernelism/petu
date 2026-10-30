@@ -8,7 +8,7 @@ function fakeHost(W = 1440, H = 900, pages = 5): DeskHost {
   const aspects = new Float64Array(pages).fill(9 / 16);
   const s = { W, H, top: 0, split: 'none' as Split };
   const none = () => () => {};
-  const layout = () => computeLayout(frameFor(s.W, s.H, s.split, 9 / 16).page, aspects, s.H);
+  const layout = () => computeLayout(frameFor(s.W, s.H, s.split, 9 / 16, false).page, aspects, s.H);
   return {
     viewport: () => ({ W: s.W, H: s.H }),
     layout,
