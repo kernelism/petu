@@ -20,9 +20,20 @@ export function sectionFor(bookmarks: Bookmark[], page: number): string | undefi
   return best ? trim(best.title) : undefined;
 }
 
+/**
+ * Reads as words: most characters are letters, digits, spaces or ordinary punctuation. An equation set
+ * in a math font often extracts as glyph soup ("$%$∑ Ixly !"!%$v"!"), which is never a title.
+ */
+export function readsAsWords(text: string): boolean {
+  const t = text.replace(/\s+/g, '');
+  if (!t) return false;
+  const plain = t.match(/[\p{L}\p{N}.,:;'’()\-–—&/?]/gu)?.length ?? 0;
+  return plain / t.length >= 0.85;
+}
+
 /** A page's title: the tallest line with letters in its top quarter (a slide title, a heading). */
 export function pageTitle(lines: TextLine[]): string | undefined {
-  const top = lines.filter((l) => l.rect.y < 250 && !l.math && /\p{L}{2,}/u.test(l.text) && !/^\d+$/.test(l.text.trim()));
+  const top = lines.filter((l) => l.rect.y < 250 && !l.math && /\p{L}{2,}/u.test(l.text) && !/^\d+$/.test(l.text.trim()) && readsAsWords(l.text));
   if (!top.length) return undefined;
   const t = top.reduce((a, b) => (b.rect.h > a.rect.h * 1.05 || (b.rect.h >= a.rect.h * 0.95 && b.rect.y < a.rect.y) ? b : a));
   return trim(t.text);

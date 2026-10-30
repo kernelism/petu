@@ -334,7 +334,7 @@ export function momentNotes(c: Pick<AskContext, 'aside' | 'about' | 'check'>): s
   const out: string[] = [];
   if (c.aside) out.push(`ASIDE: the student paused your answer mid-way to ask the question below. Answer just that, briefly, with a small drawing of its own in a new section with new ids; then the paused answer resumes on its own, so neither continue nor repeat it.\n${c.aside}`);
   if (c.about) out.push(`POINTED AT: the question is about this.\n${c.about}`);
-  if (c.check) out.push(`CHECK REPLY: your last answer ended on the question "${c.check}", and the question below is the student's reply. Judge it on the board: draw their answer and the engine-computed correct one side by side, then say what the difference shows.`);
+  if (c.check) out.push(`OPEN CHECK QUESTION: your last answer ended on "${c.check}". The student's message below may answer it, or may be a new question of their own. If it answers it, judge it on the board: draw their answer and the correct one side by side, then say what the difference shows. If it is a new question, answer that question, and leave the check for later.`);
   return out;
 }
 
