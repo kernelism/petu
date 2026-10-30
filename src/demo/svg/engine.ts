@@ -75,7 +75,7 @@ Seen from above, she spins with her arms held out, the hands far from the axis.
   <path id="sweep" data-param="300+72*cos(t*0.9), 280-72*sin(t*0.9)" data-t="0,w" fill="none" stroke="#7c3aed" stroke-width="5"/>
   <text data-at="300+104*cos(0.45*w), 280-104*sin(0.45*w)" font-size="22" fill="#7c3aed" text-anchor="middle" dominant-baseline="middle">ω</text>
 </g>
-The violet arc is how far she turns in a moment: her spin rate.
+The arc is how far she turns in a moment: her spin rate.
 <g id="card">
   <rect x="620" y="80" width="340" height="236" rx="10" fill="#f6f3ff" stroke="#c4b5fd"/>
   <text x="640" y="120" font-size="20" fill="#555">live</text>
@@ -117,7 +117,7 @@ Here is sine. Take a point on it and look at how steep the curve is there.
   <line data-from="pt(ax, a-0.5, sin(a)-0.5*cos(a))" data-to="pt(ax, a+0.5, sin(a)+0.5*cos(a))" stroke="#7c3aed" stroke-width="3"/>
   <circle id="P" data-at="at(sine, x=a)" r="7" fill="#7c3aed"/>
 </g>
-The violet tangent touches the curve at the point; its steepness is the slope.
+The tangent touches the curve at the point; its steepness is the slope.
 <g id="slope">
   <line data-from="pt(ax, a, 0)" data-to="pt(ax, a, cos(a))" stroke="#7c3aed" stroke-width="2" stroke-dasharray="3 4"/>
   <circle data-at="pt(ax, a, cos(a))" r="6" fill="#fff" stroke="#7c3aed" stroke-width="2.5" data-trace=""/>

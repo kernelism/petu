@@ -50,11 +50,15 @@ function boxOf(t: T): Box {
 }
 
 /** Raises small text to `minFont`, wraps and stacks it so it stays inside its card; then clears labels off strokes. */
-export function prepareText(g: Element, minFont: number): void {
-  try { fit(g, minFont); clear(g, minFont); } catch { /* geometry is best-effort: never block a group */ }
+export function prepareText(g: Element, minFont: number, sizes?: Map<Element, number>): void {
+  try { fit(g, minFont, sizes); clear(g, minFont); } catch { /* geometry is best-effort: never block a group */ }
 }
 
-function fit(g: Element, minFont: number): void {
+/**
+ * `sizes` (the board grammar, grammar.ts): the size each text is set at, up or down; texts it does not
+ * name are only raised to `minFont`. Cards are then re-set with one line pitch and padding.
+ */
+function fit(g: Element, minFont: number, sizes?: Map<Element, number>): void {
   const all = Array.from(g.querySelectorAll('text')).filter((e) => !e.closest('defs,marker,symbol,clipPath,pattern'));
   if (!all.length) return;
   const cards = Array.from(g.querySelectorAll('rect')).filter((r) => !r.closest('defs,marker,symbol,clipPath,pattern'))
@@ -64,17 +68,18 @@ function fit(g: Element, minFont: number): void {
   const ts: T[] = [];
   for (const el of all) {
     const m = matOf(el, g);
-    if (!isShift(m) || el.hasAttribute('data-at')) continue;
     const fs0 = num(inherit(el, 'font-size'), 16);
+    const want = sizes?.get(el) ?? Math.max(minFont, fs0);
+    if (!isShift(m) || el.hasAttribute('data-at')) { if (Math.abs(want - fs0) > 0.01) el.setAttribute('font-size', r2(want)); continue; }
     const x = num(el.getAttribute('x')?.split(/[\s,]+/)[0]), y = num(el.getAttribute('y')?.split(/[\s,]+/)[0]);
     const px = x + m[4], py = y + m[5];
     // Its card: the smallest rect around where it is written.
     const inside = cards.filter((c) => px >= c.box.x - 1 && px <= c.box.x + c.box.w + 1 && py >= c.box.y - 1 && py <= c.box.y + c.box.h + 1).sort((a, b) => a.box.w * a.box.h - b.box.w * b.box.h)[0];
     let fs = fs0, raised = false;
-    if (fs0 < minFont - 0.01) {
-      const k = minFont / fs0;
-      fs = minFont; raised = true;
-      el.setAttribute('font-size', r2(minFont));
+    if (Math.abs(want - fs0) > 0.01) {
+      const k = want / fs0;
+      fs = want; raised = want > fs0;
+      el.setAttribute('font-size', r2(want));
       for (const s of Array.from(el.querySelectorAll('tspan'))) {
         if (s.hasAttribute('font-size')) s.setAttribute('font-size', r2(Math.max(minFont, num(s.getAttribute('font-size'), fs0) * k)));
         const dy = s.getAttribute('dy');
@@ -84,6 +89,7 @@ function fit(g: Element, minFont: number): void {
     }
     ts.push({ el, m, x, y, fs, fs0, anchor: inherit(el, 'text-anchor') ?? 'start', lines: 1, raised, card: inside?.box ?? null, cardEl: inside?.el ?? null });
   }
+  if (sizes) setCards(g, ts, cards);
   if (!ts.some((t) => t.raised)) return;
   // Wrap: a raised line wider than its card breaks at words.
   for (const t of ts) {
@@ -128,6 +134,32 @@ function fit(g: Element, minFont: number): void {
     const bottom = Math.max(...inside.map((p) => p.b.y + p.b.h)) + pad, right = Math.max(...inside.map((p) => p.b.x + p.b.w)) + pad;
     if (bottom > c.box.y + c.box.h) c.el.setAttribute('height', r2(bottom - c.box.y));
     if (right > c.box.x + c.box.w) c.el.setAttribute('width', r2(right - c.box.x));
+  }
+}
+
+/**
+ * A card (a rect holding two or more lines written one under another at one x): its lines are set at
+ * one pitch (1.7 × the size) from one padding, the card resized around them. A wider gap the model
+ * left between lines stays a half-line break.
+ */
+function setCards(g: Element, ts: T[], cards: { el: Element; box: Box }[]): void {
+  for (const c of cards) {
+    const inside = ts.filter((t) => t.card === c.box && !t.el.children.length && (inherit(t.el, 'text-anchor') ?? 'start') === 'start').sort((a, b) => a.y - b.y);
+    if (inside.length < 2 || inside.some((t) => Math.abs(t.x + t.m[4] - (inside[0].x + inside[0].m[4])) > 4)) continue;
+    const fs = Math.max(...inside.map((t) => t.fs)), pitch = 1.7 * fs, pad = 1.1 * fs;
+    const gaps = inside.slice(1).map((t, i) => t.y - inside[i].y), g0 = Math.min(...gaps);
+    let base = c.box.y + pad + 0.78 * fs;
+    inside.forEach((t, i) => {
+      if (i) base += pitch + (gaps[i - 1] > 1.45 * g0 ? 0.5 * fs : 0);
+      const want = base - t.m[5];
+      if (Math.abs(want - t.y) > 0.01) { shift(t.el, 0, want - t.y); t.y = want; }
+    });
+    const left = inside[0].x + inside[0].m[4] - c.box.x;
+    const right = Math.max(...inside.map((t) => t.x + t.m[4] + Math.max(...lineWidths(t.el, t.fs)))) + Math.max(left, pad);
+    const bottom = base + 0.32 * fs + pad;
+    c.el.setAttribute('height', r2(bottom - c.box.y)); c.box.h = bottom - c.box.y;
+    if (right > c.box.x + c.box.w) { c.el.setAttribute('width', r2(right - c.box.x)); c.box.w = right - c.box.x; }
+    for (const t of inside) t.raised = false;
   }
 }
 

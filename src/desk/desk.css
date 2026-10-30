@@ -240,3 +240,16 @@
 .desk-zoom-sep { width: 1px; height: 14px; margin: 0 2px; background: var(--hairline); }
 /* Zoomed past the board's width: it scrolls sideways too (no visible scrollbar). */
 .desk-board-scroll.is-wide { overflow-x: auto; }
+
+/* The board's grammar (src/svgboard/grammar.ts): colour means time. The part being drawn is the accent
+   (render.ts sets data-live and --board-live); it settles back to ink. Text never carries the
+   model's colours; superseded copies (ghosts) are grey. */
+svg[data-svgboard] text, svg[data-svgboard] :is(path, line, polyline, polygon, circle, ellipse) {
+  transition: fill 420ms ease-out, stroke 420ms ease-out;
+}
+svg[data-svgboard] text { font-variant-numeric: tabular-nums; }
+svg[data-svgboard] [data-live]:is(text), svg[data-svgboard] [data-live] text { fill: var(--board-live); }
+svg[data-svgboard] [data-live]:is(path, line, polyline, polygon, circle, ellipse):not([stroke="none"]):not([fill-opacity^="0."]),
+svg[data-svgboard] [data-live] :is(path, line, polyline, polygon, circle, ellipse):not([stroke="none"]):not([fill-opacity^="0."]) { stroke: var(--board-live); }
+svg[data-svgboard] [data-live]:is(circle)[fill]:not([fill="none"]):not([fill="#FFFFFE"]),
+svg[data-svgboard] [data-live] circle[fill]:not([fill="none"]):not([fill="#FFFFFE"]) { fill: var(--board-live); }

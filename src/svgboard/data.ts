@@ -477,6 +477,8 @@ function place(el: Element, tag: string, p: DPt): void {
 function drawFrame(el: Element, ax: Axes, sc: DataScope): void {
   const tx = el.getAttribute('data-ticks-x'), ty = el.getAttribute('data-ticks-y');
   if (!el.hasAttribute('data-frame') && !tx && !ty) return;
+  // A redraw keeps the size the board's grammar gave the ticks (grammar.ts: small).
+  const was = el.querySelector(':scope > text[data-engine]')?.getAttribute('font-size');
   for (const old of Array.from(el.querySelectorAll(':scope > [data-engine]'))) old.remove();
   const doc = el.ownerDocument;
   const add = (name: string, attrs: Record<string, string>, text?: string) => {
@@ -487,12 +489,12 @@ function drawFrame(el: Element, ax: Axes, sc: DataScope): void {
     el.insertBefore(e, el.firstChild);
     return e;
   };
-  const { x, y, w, h } = ax.box, fs = 15;
+  const { x, y, w, h } = ax.box, fs = was ?? '15';
   const fmt = el.getAttribute('data-fmt');
   const nums = (s: string) => splitTop(s, ',').map((v) => evalF(v, sc));
   // Inserted at the front in reverse: texts last-in-front so the L draws first.
-  if (ty) for (const v of nums(ty).reverse()) { const p = toBoard(ax, ax.x0, v); if (p.y < y - 0.5 || p.y > y + h + 0.5) continue; add('text', { x: r2(x - 10), y: r2(p.y), 'text-anchor': 'end', 'dominant-baseline': 'middle', 'font-size': String(fs), fill: '#6E6E73' }, withUnit(fmtValue(v, fmt), el.getAttribute('data-unit-y'))); }
-  if (tx) for (const v of nums(tx).reverse()) { const p = toBoard(ax, v, ax.y0); if (p.x < x - 0.5 || p.x > x + w + 0.5) continue; add('text', { x: r2(p.x), y: r2(y + h + 8), 'text-anchor': 'middle', 'dominant-baseline': 'hanging', 'font-size': String(fs), fill: '#6E6E73' }, withUnit(fmtValue(v, fmt), el.getAttribute('data-unit-x'))); }
+  if (ty) for (const v of nums(ty).reverse()) { const p = toBoard(ax, ax.x0, v); if (p.y < y - 0.5 || p.y > y + h + 0.5) continue; add('text', { x: r2(x - 10), y: r2(p.y), 'text-anchor': 'end', 'dominant-baseline': 'middle', 'font-size': String(fs), fill: '#1D1D1F', 'data-tick': '', 'data-role': 'small' }, withUnit(fmtValue(v, fmt), el.getAttribute('data-unit-y'))); }
+  if (tx) for (const v of nums(tx).reverse()) { const p = toBoard(ax, v, ax.y0); if (p.x < x - 0.5 || p.x > x + w + 0.5) continue; add('text', { x: r2(p.x), y: r2(y + h + 8), 'text-anchor': 'middle', 'dominant-baseline': 'hanging', 'font-size': String(fs), fill: '#1D1D1F', 'data-tick': '', 'data-role': 'small' }, withUnit(fmtValue(v, fmt), el.getAttribute('data-unit-x'))); }
   if (ty) for (const v of nums(ty).reverse()) { const p = toBoard(ax, ax.x0, v); if (p.y < y - 0.5 || p.y > y + h + 0.5) continue; add('line', { x1: r2(x - 5), y1: r2(p.y), x2: r2(x), y2: r2(p.y), stroke: '#6E6E73', 'stroke-width': '1' }); }
   if (tx) for (const v of nums(tx).reverse()) { const p = toBoard(ax, v, ax.y0); if (p.x < x - 0.5 || p.x > x + w + 0.5) continue; add('line', { x1: r2(p.x), y1: r2(y + h), x2: r2(p.x), y2: r2(y + h + 5), stroke: '#6E6E73', 'stroke-width': '1' }); }
   if (el.hasAttribute('data-frame')) add('path', { d: `M${r2(x)} ${r2(y)}L${r2(x)} ${r2(y + h)}L${r2(x + w)} ${r2(y + h)}`, fill: 'none', stroke: '#3A3A3C', 'stroke-width': '2' });
