@@ -95,3 +95,13 @@ export function stickyInsets(h: number, H: number, top: number, bottom: number, 
   // Both insets agree (the item's bottom sits where its top puts it), so neither wins over the other.
   return { top: t, bottom: H - t - h };
 }
+
+/**
+ * Sticky insets (window px) as the sheet's own px under the overview zoom `z` (the sheet scaled about
+ * its top; `st` the scroller's raw scrollTop, `H` the window height). Sticky runs in the unscaled
+ * layout against the raw scrollTop, so a group stuck at `top` px would show at top·z + st·(z − 1).
+ */
+export function zoomedInsets(ins: { top: number; bottom: number }, H: number, st: number, z: number): { top: number; bottom: number } {
+  if (!(z > 0) || Math.abs(z - 1) < 1e-4) return { ...ins };
+  return { top: (ins.top - st * (z - 1)) / z, bottom: st + H - (H - ins.bottom + st) / z };
+}

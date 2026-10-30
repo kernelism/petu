@@ -291,32 +291,9 @@ svg[data-svgboard] [data-live] circle[fill]:not([fill="none"]):not([fill="#FFFFF
 .lane-group.is-live > .lane-item { position: sticky; }
 .lane-item > .desk-region, .lane-item > .trail-head { position: relative; }
 .lane-item > .trail-head:not(.is-aside) .trail-row { height: 36px; font-size: 14.5px; }
-/* Pinned (the answer walked away from the passage): a card under a quiet label. */
-.lane-item::before {
-  content: '';
-  position: absolute;
-  /* --lane-clip (Desk.clipLane): how far the item's top is above the comfort band; the card and its
-     label stay in the band (never under the chrome row) while the item's content runs on above it, masked. */
-  inset: calc(30px + var(--lane-clip, 0px)) 14px 0;
-  z-index: -1;
-  border-radius: 10px;
-  background: #FCFBF9;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, .065), 0 1px 3px rgba(0, 0, 0, .04);
-  opacity: 0;
-  transition: opacity 160ms var(--ease-out, ease-out);
-}
-.lane-item::after {
-  content: 'pinned while the answer plays';
-  position: absolute;
-  top: calc(6px + var(--lane-clip, 0px));
-  left: 26px;
-  font: 400 12px/18px var(--font);
-  color: var(--muted);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 160ms var(--ease-out, ease-out);
-}
-.lane-item.is-pinned::before, .lane-item.is-pinned::after { opacity: 1; }
+/* Pinned (the answer walked away from the passage): the drawing stays on the paper as drawn (mockups
+   C1–C5: no card, no label); the paper behind it covers what it passes over (folded cards, docked drawings). */
+.lane-item.is-pinned { background: var(--lane-paper, #F8F7F3); }
 .lane-item.is-pinned > .trail-head:not(.is-aside):not(.is-mid) { visibility: hidden; }
 /* A follow-up's header inside an extended svg section (BOARD extend): over its first new group. */
 .lane-item > .trail-head.is-mid { position: absolute; z-index: 1; }
@@ -352,6 +329,3 @@ svg[data-svgboard] [data-live] circle[fill]:not([fill="none"]):not([fill="#FFFFF
 .lane-item > .trail-head.is-aside.is-collapsed { margin-top: 4px; border-radius: 0; box-shadow: none; }
 .lane-item > .desk-region.is-collapsed { display: none; }
 
-@media (prefers-reduced-motion: reduce) {
-  .lane-item::before, .lane-item::after { transition: none; }
-}

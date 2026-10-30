@@ -212,4 +212,7 @@ export interface DeskHost {
   crop?(page: number, r: { x: number; y: number; w: number; h: number }, pxW: number): Promise<string | null>;
   /** The anchored lane's layer in the scroll content (layout C; null before the first layout). */
   laneEl?(): HTMLElement | null;
+  /** The overview zoom of the sheet (layout C; 1 = reading size) and its changes. */
+  zoom?(): number;
+  onZoom?(cb: () => void): () => void;
 }

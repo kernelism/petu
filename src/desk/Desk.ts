@@ -9,7 +9,7 @@ import { routeGutter, maskBlocker } from './route';
 import { boardLayout, bodyPx, fitZoom, laneFrame, pageAt, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
 import { BOARD_HEAD, boardPad, MIN_TEXT_PX, SECTION_W, TEXT_UNITS } from './layout';
-import { dockTop, FOLDED_H, LANE_PAD, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, wantFor } from './lane';
+import { dockTop, FOLDED_H, LANE_PAD, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, wantFor, zoomedInsets } from './lane';
 import { camFor, overviewCam, type Cam } from './scene/camera';
 
 export type { DeskHost } from './types';
@@ -58,13 +58,13 @@ type Group = {
   parts?: HTMLElement[];
   /** Taller than the band while it plays: the part being drawn (px from the item's top) and the sticky top that shows it. */
   pen?: { top: number; h: number } | null; stick?: number | null;
+  /** Its sticky insets on screen while it plays (window px; `stick` converts them under the overview zoom). */
+  ins?: { top: number; bottom: number } | null;
 };
 /** The docking glide at an answer's end (spec §5.2 rule 5). */
 const DOCK_MS = 300;
 /** The comfort band's top: the lane's live item sticks this far below the window top (under the chrome row). */
 const LANE_STICK = SAFE_TOP + 16;
-/** The pinned card's top below its item's top (desk.css .lane-item::before), its label above it. */
-const PIN_CARD = 30;
 /** The fade where the lane is masked at the comfort band's top. */
 const LANE_FADE = 16;
 /** A scene section's world: its camera (world units, zoom), its claims, the last thing framed. */
@@ -212,6 +212,7 @@ export class Desk implements DeskApi {
       host.onLayout(() => this.position()),
       host.onUserIntent(user),
       host.onScroll(() => this.onMove()),
+      host.onZoom?.(() => this.onMove()) ?? (() => {}),
       this.follow.subscribe(() => this.emit()),
     );
     // Layout C: the lane is the sheet's margin, there before any drawing.
@@ -453,8 +454,8 @@ export class Desk implements DeskApi {
         if (sec.group?.live) {
           const g = sec.group, v = this.viewRect(sec, r);
           if (!v) return false;
-          // With air above for the pinned card's top and the band's fade.
-          const air = PIN_CARD + LANE_FADE;
+          // With air above for the band's fade.
+          const air = LANE_FADE;
           g.pen = { top: v.y - g.item.getBoundingClientRect().top - air, h: v.h + air };
           const from = g.item.getBoundingClientRect().top;
           this.position();
@@ -1344,8 +1345,9 @@ export class Desk implements DeskApi {
       if (g.live) {
         const ins = stickyInsets(g.h, H, LANE_STICK, safeBottom() + 12, g.pen, g.stick);
         g.stick = g.pen ? ins.top : null;
-        Object.assign(g.item.style, { top: `${ins.top}px`, bottom: `${ins.bottom}px` });
-      } else { g.pen = g.stick = null; Object.assign(g.item.style, { top: '', bottom: '' }); }
+        g.ins = ins;
+        this.stick(g);
+      } else { g.pen = g.stick = g.ins = null; Object.assign(g.item.style, { top: '', bottom: '' }); }
       // A follow-up's header inside an extended svg section: over its first new group (units → px).
       for (const m of this.midHeads) {
         if (m.sec.group !== g) continue;
@@ -1360,10 +1362,11 @@ export class Desk implements DeskApi {
     if (this.liveGroup) this.liveLane();
   }
 
-  /** The live group on scroll: pinned (stuck away from its place: the card look) or in place; its leader follows. */
+  /** The live group on scroll: pinned (stuck away from its place) or in place; its leader follows. */
   private liveLane() {
     const g = this.liveGroup!;
-    const top = g.item.getBoundingClientRect().top - this.content.getBoundingClientRect().top;
+    this.stick(g);
+    const top = (g.item.getBoundingClientRect().top - this.content.getBoundingClientRect().top) / this.zoomZ();
     // Pinned: held in view away from the passage it belongs to (the answer walked on), out of a leader's
     // reach; a nudge to fit the band, with its anchor still beside it, is not.
     g.item.classList.toggle('is-pinned', Math.abs(top - g.top) > LEADER_MAX && !leaderPath(this.anchorY(g.anchor), { top, h: g.h }, LANE_PAD, g.head?.offsetHeight ?? 0));
@@ -1371,18 +1374,35 @@ export class Desk implements DeskApi {
     this.drawLeader(g, top);
   }
 
+  /** The overview zoom (1 at reading size): the sheet is scaled by it, so window px are z × sheet px. */
+  private zoomZ(): number { const z = this.host.zoom?.() ?? 1; return z > 0 ? z : 1; }
+
+  /**
+   * Applies a live group's sticky insets. Sticky positioning runs in the sheet's own (unscaled) layout
+   * against the scroller's raw scrollTop, but the overview zoom scales the sheet about its top: at z ≠ 1
+   * the window insets map to sheet insets that depend on the scroll (the group otherwise drifts by
+   * scrollTop·(z − 1) and leaves the window: founder 2026-10-30, the answer vanishing while zooming).
+   */
+  private stick(g: Group) {
+    const ins = g.ins;
+    if (!ins) return;
+    const z = this.zoomZ();
+    const { top, bottom } = zoomedInsets(ins, this.host.viewport().H, this.host.scrollTop() * z, z);
+    Object.assign(g.item.style, { top: `${+top.toFixed(2)}px`, bottom: `${+bottom.toFixed(2)}px` });
+  }
+
   /**
    * Nothing in the lane sits under the chrome row. A group whose top has gone above the comfort band
    * (a docked one scrolled up with the page, or a live one taller than the band) is masked there with a
-   * short fade. The live group's card and its "pinned" label stay in the band (--lane-clip moves them
-   * down): its content is masked down to the card's top, not to the window's.
+   * short fade; the live group's parts are masked down to the band's top, not the window's.
    */
   private clipLane(g: Group) {
     const r = g.item.getBoundingClientRect();
-    const live = g.live && !g.folded, pinned = live && g.item.classList.contains('is-pinned');
+    const live = g.live && !g.folded;
     const band = live ? LANE_STICK : SAFE_TOP;
-    const clip = r.bottom > 0 && r.top < band ? band - r.top : 0;
-    g.item.style.setProperty('--lane-clip', `${Math.round(clip)}px`);
+    const z = this.zoomZ();
+    // Window px → the item's own px (the overview zoom scales the sheet; masks are in its px).
+    const clip = r.bottom > 0 && r.top < band ? (band - r.top) / z : 0;
     g.item.classList.toggle('is-clipped', clip > 0);
     const mask = (el: HTMLElement | SVGElement, cut: number) => {
       const v = cut > 0 ? `linear-gradient(to bottom, transparent ${cut.toFixed(1)}px, #000 ${(cut + LANE_FADE).toFixed(1)}px)` : '';
@@ -1396,8 +1416,8 @@ export class Desk implements DeskApi {
     }
     // The live item itself is never masked (its card and label are its own pseudo-elements): its parts are.
     mask(g.item, 0);
-    const line = band + (pinned ? PIN_CARD : 0);
-    for (const el of [...g.item.children] as HTMLElement[]) mask(el, clip > 0 ? line - el.getBoundingClientRect().top : 0);
+    const line = band;
+    for (const el of [...g.item.children] as HTMLElement[]) mask(el, clip > 0 ? (line - el.getBoundingClientRect().top) / z : 0);
   }
 
   /**

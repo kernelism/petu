@@ -82,3 +82,17 @@ describe('lane placement', () => {
     expect(d.w).toBe(lane.w - 44);
   });
 });
+
+describe('zoomedInsets (sticky under the overview zoom)', () => {
+  it('a group stuck at 80 px stays at 80 px on screen at any zoom and scroll', async () => {
+    const { zoomedInsets } = await import('../../src/desk/lane');
+    const H = 900;
+    for (const z of [0.5, 0.96, 1, 1.18, 2]) for (const st of [0, 1200, 5400]) {
+      const ins = zoomedInsets({ top: 80, bottom: 120 }, H, st, z);
+      // Stuck at its top: sheet y = st + top'; on screen (sheet scaled about its top) y·z − st.
+      expect((st + ins.top) * z - st).toBeCloseTo(80, 6);
+      // Its bottom limit: sheet bottom ≤ st + H − bottom' → on screen ≤ H − 120.
+      expect((st + H - ins.bottom) * z - st).toBeCloseTo(H - 120, 6);
+    }
+  });
+});
