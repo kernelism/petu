@@ -1628,7 +1628,7 @@ export default function App() {
       />
       <FollowPill visible={paused} onResume={resumeFollow} x={dock.x} />
       {desk?.edge && desk.page && (
-        <button type="button" className={`lane-edge is-${desk.edge.dir}`} style={{ left: (() => { const c = windowColumn(desk.page!, viewportW, ovView); return Math.max(c.x + 12, Math.min(viewportW - 16, c.x + c.w - 12)); })() }} onClick={() => void deskRef.current?.showEdge()}>
+        <button type="button" className={`lane-edge is-${desk.edge.dir}`} style={{ left: (() => { const c = windowColumn(desk.page!, viewportW, ovView); return Math.min(viewportW - 160, c.x + c.w + 24); })() }} onClick={() => void deskRef.current?.showEdge()}>
           <span aria-hidden="true">{desk.edge.dir === 'up' ? '↑' : '↓'}</span> p.{desk.edge.page} · marked
         </button>
       )}
