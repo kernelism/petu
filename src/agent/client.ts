@@ -58,7 +58,8 @@ export async function* askStream(req: AskRequest, signal: AbortSignal, h: AskHan
     else if (e.t === 'note') h.onNote?.(e.message);
     else if (e.t === 'done') { done = true; h.onDone?.(e); }
     else if (e.t === 'error') {
-      if (spoke || e.code === 'cut_off') { h.onCutOff?.(e.message); return true; }
+      // A cap that cuts an answer off reads as the student's line (the server's names the knob).
+      if (spoke || e.code === 'cut_off') { h.onCutOff?.(e.code === 'cap' ? capNotice(null, e.message) : e.message); return true; }
       throw new AskError(e.code, e.message, e.retryable);
     }
     return false;
@@ -249,7 +250,17 @@ function blockedCode(s: SpendSummary): 'total' | 'daily' | 'phase' {
   return /today/i.test(b) ? 'daily' : /phase/i.test(b) ? 'phase' : 'total';
 }
 
-/** The cap line, in the caption and in place of the ask bar's placeholder. */
+/**
+ * The cap as the student reads it (the ask bar, the caption, the screen reader): no dollars, no
+ * environment knobs. The developer's detail is `capLine` (?debug and the dev console only).
+ */
+export function capNotice(s: SpendSummary | null, serverLine = ''): string {
+  return (s && (dailyHit(s) || (s.totalUsd < s.capUsd && blockedCode(s) === 'daily'))) || (!s && /today|daily/i.test(serverLine))
+    ? "Today's answer budget is used up. It resets tomorrow."
+    : 'The answer budget is used up.';
+}
+
+/** The cap line for the developer: which cap, in dollars, and the command-line knob that lifts it. */
 export function capLine(s: SpendSummary | null): string {
   if (!s) return 'Spending cap reached. Raise it for this run on the command line, e.g. PETU_DAILY_CAP_USD=6 npm run dev.';
   if (dailyHit(s)) return `Today's spending cap reached: ${usd(s.todayUsd)} of ${usd(s.dailyCapUsd!)} used. ${knobLine('daily', s)}`;
@@ -263,7 +274,7 @@ export function capLine(s: SpendSummary | null): string {
 export function askErrorLine(code: AskErrorCode, spend: SpendSummary | null): { message: string; retry: boolean } {
   switch (code) {
     case 'no_key': return { message: 'Add your OpenAI key to .env, then restart the dev server.', retry: false };
-    case 'cap': return { message: capLine(spend), retry: false };
+    case 'cap': return { message: capNotice(spend), retry: false };
     case 'rate_limited': return { message: 'The tutor is busy. Try again in a moment.', retry: true };
     case 'cut_off': return { message: 'The answer was cut off.', retry: true };
     case 'bad_request': return { message: "That question couldn't be sent.", retry: false };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { countLines, windowStart, endsClause, endsSentence } from '../../src/ui/captionWindow';
+import { countLines, windowStart, endsClause, endsSentence, pauseCueIn, PAUSE_CUE_MS } from '../../src/ui/captionWindow';
 
 /** Monospace: one unit per character, a space is one unit. */
 const mono = (s: string) => s.length;
@@ -80,5 +80,15 @@ describe('caption window', () => {
     const t = tok('aaaa bbbb cccc dd. Next one here.');
     const w = play(t, 10);
     expect(w[4]).toBe('Next');
+  });
+});
+
+describe('the one wait cue', () => {
+  it('shows only after a real pause: 1.5 s past the last queued word, never during a sentence gap', () => {
+    expect(PAUSE_CUE_MS).toBe(1500);
+    // Words queued until t=4000, now t=1000: the cue may show at 4000 + 1500.
+    expect(1000 + pauseCueIn(4000, 1000)).toBe(5500);
+    // Everything already spoken: 1.5 s from now.
+    expect(pauseCueIn(900, 1000)).toBe(1500);
   });
 });

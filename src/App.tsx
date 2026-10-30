@@ -42,10 +42,11 @@ import { SessionDrawer, type SessionRow } from './ui/SessionDrawer';
 import { dockPlacement, dockReserve } from './ui/layout';
 import { DOCK_GAP, margin, SAFE_TOP, setSafeBottom } from './desk/layout';
 import { takeSentences } from './ui/text';
+import { pauseCueIn } from './ui/captionWindow';
 import type { Action, RawAction } from './script/types';
 import type { Grounding } from './geometry/resolve';
 import type { AskEvent } from './agent/protocol';
-import { AskError, askErrorLine, capLine, spendPhase, type AskHandlers } from './agent/client';
+import { AskError, askErrorLine, capLine, capNotice, spendPhase, type AskHandlers } from './agent/client';
 import { fakeRepair, makeRepair, recordedRepair } from './agent/repair';
 import { useAgent, type MakeContext } from './agent/useAgent';
 import { ContextBuilder, groundPage } from './agent/context/build';
@@ -95,13 +96,8 @@ const CAPTION_LINGER_MS = 2200;
 const CAPTION_LINGER_TEXT_MS = 6500;
 /** The cap line hands over to the ask bar, which keeps it. */
 const CAP_CAPTION_MS = 6000;
-const ANSWER_FAILED = 'Something went wrong.';
+const ANSWER_FAILED = "The tutor didn't answer. Retry, or edit your question below.";
 const NO_ANSWER = 'No answer came back.';
-/** No word this long after Enter: one static line under the question. */
-const STILL_THINKING_MS = 4000;
-const STILL_THINKING = 'Still thinking…';
-/** All words spoken and no new one for this long, mid-answer: the caption shows a faint ellipsis. */
-const PAUSE_GRACE_MS = 350;
 /** A journey's route stays up this long after it starts (the travel, the arrival beat, a read). */
 const ROUTE_MS = 4000;
 let audioCtx: AudioContext | null = null;
@@ -217,7 +213,7 @@ function describeAction(a: Action): string {
 }
 
 /** Compact, bottom-left, collapsed by default so it never covers the page. Click to expand. */
-function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
+function DebugPanel({ d, t0, cap }: { d: DebugState; t0: number; /** The spending cap's developer line (which cap, the knob), when asking is blocked. */ cap?: string }) {
   const [open, setOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [scoutOpen, setScoutOpen] = useState(false);
@@ -243,6 +239,7 @@ function DebugPanel({ d, t0 }: { d: DebugState; t0: number }) {
   }
   return (
     <div className="debug" onClick={() => setOpen(false)} title="Click to collapse">
+      {cap && <div className="debug-row debug-note"><span>{cap}</span></div>}
       {sc && <div className="debug-row" title={sc.fallback}><span>scout</span><span>p{sc.pages.join(' → p')} · {sc.ms}ms{sc.fallback ? ' · fallback' : ''}</span></div>}
       {sc?.ctx && <div className="debug-row" title={sc.ctx.candidates.join('\n')}><span>context {sc.ctx.mode}</span><span>{sc.ctx.tier} · {Object.entries(sc.ctx.tokens).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(' · ')} tok · {sc.ctx.ms}ms{sc.ctx.printedOffset ? ` · printed = PDF − ${sc.ctx.printedOffset}` : ''}</span></div>}
       {sc?.ctx?.candidates.length ? <div className="debug-row"><span>candidates</span><span>{sc.ctx.candidates.join(' · ')}</span></div> : null}
@@ -384,8 +381,6 @@ export default function App() {
   /** The asked question, echoed above the caption while answering. */
   const [question, setQuestion] = useState<string | undefined>();
   const [waiting, setWaiting] = useState(false);
-  /** "Still thinking…" once no word has come for a while. */
-  const [hint, setHint] = useState<string | undefined>();
   /** Mid-answer, all words so far spoken and the next not yet in (e.g. the opener ended before stage 2). */
   const [pausing, setPausing] = useState(false);
   const pauseTimer = useRef<number>();
@@ -451,6 +446,7 @@ export default function App() {
   const shortcutsOpenRef = useRef(false);
   shortcutsOpenRef.current = shortcutsOpen;
   const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
+  const openShortcuts = useCallback(() => setShortcutsOpen(true), []);
   const labelsRef = useRef<SectionLabels | null>(null);
   const [, setLabelTick] = useState(0);
   const journeyRef = useRef<(j: Journey) => void>(() => {});
@@ -474,7 +470,6 @@ export default function App() {
   const pageRef = useRef(1);
   /** The marks of the pages sent with the current question (agent answers only). */
   const groundingRef = useRef<Grounding | undefined>();
-  const thinkTimer = useRef<number>();
   /** The eval recorder of the answer in flight. */
   const recRef = useRef<Recorder | null>(null);
   /** The current (or last) answer's record, for the Report button (src/report/capture.ts). */
@@ -525,7 +520,6 @@ export default function App() {
     if (h && !h.el.isConnected) deskRef.current?.headNext(h.el, h.h);
   };
   const clearHide = () => window.clearTimeout(hideTimer.current);
-  const clearThink = () => { window.clearTimeout(thinkTimer.current); setHint(undefined); };
   const clearPause = () => { window.clearTimeout(pauseTimer.current); setPausing(false); };
 
   const agent = useAgent({ doc, name: fileName, enabled: !DEMO_PATH || EVAL, make: MAKE_CONTEXT, warmSystem: !params.has('nogen') });
@@ -569,6 +563,10 @@ export default function App() {
     return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
   }, [hasDoc]);
 
+  // An answer that closed on a check question: once its narration has gone, the question stays pinned in
+  // the caption while the bar asks for the student's answer (F01); a reply, a new question or Esc ends it.
+  const pinCheck = !!check && !busy && !aside && !answerError && !captionVisible;
+  const captionShown = captionVisible || pinCheck;
   // The viewer's visible area ends above the dock (the caption when it shows, else the ask bar), or,
   // stacked, above the board: no slide content under the dock, no sliver of a page between its parts.
   const [viewBottom, setViewBottom] = useState(0);
@@ -582,7 +580,7 @@ export default function App() {
       if (stacked && boardY != null) { setViewBottom(Math.max(0, H - (boardY - margin(window.innerWidth)))); return; }
       const bar = dock.querySelector<HTMLElement>('.askbar'), cap = dock.querySelector<HTMLElement>('.caption');
       if (!bar) return;
-      const top = bar.getBoundingClientRect().top - (captionVisible && cap ? cap.offsetHeight : 0);
+      const top = bar.getBoundingClientRect().top - (captionShown && cap ? cap.offsetHeight : 0);
       setViewBottom(Math.max(0, H - top + DOCK_GAP));
     };
     update();
@@ -590,14 +588,13 @@ export default function App() {
     dock.querySelectorAll('.askbar, .caption').forEach((e) => ro.observe(e));
     window.addEventListener('resize', update);
     return () => { ro.disconnect(); window.removeEventListener('resize', update); };
-  }, [hasDoc, captionVisible, stacked, boardY]);
+  }, [hasDoc, captionShown, stacked, boardY]);
 
   /** Shows a one-off line in the caption, then fades it. */
   const flash = useCallback((text: string, ms = 4000) => {
     clearHide();
     setQuestion(undefined);
     setWaiting(false);
-    clearThink();
     setAnswerError(null);
     setCaptionWords(text.split(' '));
     setCaptionVisible(true);
@@ -616,7 +613,6 @@ export default function App() {
     deskRef.current?.follow.setAnswering(false);
     clearPause();
     setWaiting(false);
-    clearThink();
     setBusy(false);
   }, [director]);
 
@@ -727,7 +723,6 @@ export default function App() {
     sessionRef.current = null;
     old?.stop();
     clearHide();
-    clearThink();
     lastQuestion.current = q;
     recRef.current = run.rec ?? null;
     setTranscript(null);
@@ -773,7 +768,6 @@ export default function App() {
     setWaiting(true);
     setCaptionVisible(true);
     setBusy(true);
-    thinkTimer.current = window.setTimeout(() => setHint(STILL_THINKING), STILL_THINKING_MS);
     let spoken: string[] = [];
     let liveFrom = 0;
     const speak = (words: string[], final = false) => {
@@ -960,15 +954,15 @@ export default function App() {
       onWord: (words) => {
         if (sessionRef.current !== session) return;
         if (DEBUG && words.length === 1) { const t = performance.now(); setDebug((d) => ({ ...d, word: t })); }
-        if (!spoke) { spoke = true; setWaiting(false); clearThink(); }
+        if (!spoke) { spoke = true; setWaiting(false); }
         const idx = partAt(partsRef.current, words.length - 1);
         setPartIdx(idx);
         setSpokenN(words.length);
         setReached((r) => Math.max(r, idx));
-        // Once these words are spoken, a faint ellipsis if nothing new has come (a gap in the stream).
+        // The one wait cue: a faint ellipsis once these words are spoken and nothing new has come for 1.5 s.
         window.clearTimeout(pauseTimer.current);
         setPausing(false);
-        pauseTimer.current = window.setTimeout(() => { if (sessionRef.current === session && streamOpen) setPausing(true); }, Math.max(0, clock.endsAt() - clock.now()) + PAUSE_GRACE_MS);
+        pauseTimer.current = window.setTimeout(() => { if (sessionRef.current === session && streamOpen) setPausing(true); }, pauseCueIn(clock.endsAt(), clock.now()));
         run.rec?.word(words[words.length - 1]);
         log.words(words);
         spoken = words;
@@ -978,14 +972,14 @@ export default function App() {
       onState: (st: SessionState, err?: string) => {
         log.state(st, err);
         if (st === 'stopped' && toAgent && spoken.length) ag.history.push(q, spoken, page);
-        if (st === 'stopped') { finish(); return; }
+        // A stopped answer that spoke counts as answered: the bar offers a follow-up (F20).
+        if (st === 'stopped') { if (spoken.length) setAnswered(true); finish(); return; }
         if (sessionRef.current !== session) return;
         if (st === 'loading' || st === 'playing') { setBusy(true); return; }
         clearPause();
         setUserPaused(false);
         setBusy(false);
         setWaiting(false);
-        clearThink();
         deskRef.current?.follow.setAnswering(false);
         if (spoken.length) setTranscript({ question: q, answer: joinWords(spoken) });
         sessionRef.current = null;
@@ -1019,10 +1013,11 @@ export default function App() {
           const e = askErr as AskError | null;
           if (e?.code === 'cap') {
             // The ask bar takes over the cap line (it stays there); the caption says it once, then fades.
-            setAnswerError({ message: capLine(ag.spend), retry: false });
-            void ag.refreshSpend().then((s) => { if (s) setAnswerError((cur) => (cur && !cur.retry ? { message: capLine(s), retry: false } : cur)); });
+            setAnswerError({ message: capNotice(ag.spend), retry: false });
+            if (import.meta.env.DEV) console.info('[spend]', capLine(ag.spend));
+            void ag.refreshSpend().then((s) => { if (s) setAnswerError((cur) => (cur && !cur.retry ? { message: capNotice(s), retry: false } : cur)); });
             hideTimer.current = window.setTimeout(() => setCaptionVisible(false), CAP_CAPTION_MS);
-            setLiveText(capLine(ag.spend));
+            setLiveText(capNotice(ag.spend));
           } else {
             const line = e ? askErrorLine(e.code, ag.spend) : { message: ANSWER_FAILED, retry: true };
             setAnswerError(line);
@@ -1176,7 +1171,7 @@ export default function App() {
   /**
    * An aside (v1 learner UX): a question asked while an answer plays. The answer pauses on its word;
    * the side answer plays with its own small drawing in a warm-grey inset on the board (the rest of
-   * the board steps back); Return or "Resume answer" collapses the inset to a marker and the answer
+   * the board steps back); Return or "Back to answer" collapses the inset to a marker and the answer
    * goes on from the word it paused on. One level: asking again replaces the aside. Agent answers ask
    * /api/ask with the paused answer as context (`aside`); dev scripts play their canned `answers`.
    */
@@ -1236,7 +1231,7 @@ export default function App() {
   };
   askAsideRef.current = askAside;
 
-  /** Return / "Resume answer": the inset collapses to its marker and the answer goes on from its word. */
+  /** Return / "Back to answer": the inset collapses to its marker and the answer goes on from its word. */
   const closeAside = useCallback(() => {
     if (!asideRef.current) return;
     endAside();
@@ -1423,8 +1418,9 @@ export default function App() {
     // One desk per viewer (a new document remounts the viewer): the board, its sections, connectors.
     deskRef.current?.destroy();
     boardScripts.current = [];
-    // The board's ×: an answer still playing stops first (its ink would have nowhere to go).
-    const desk = new Desk(api.deskHost(), stageRef.current!, { onClose: () => { if (busyRef.current) closeRef.current(); boardScripts.current = []; void deskRef.current?.dismiss(); } });
+    // The board's ×: an answer still playing stops first (its ink would have nowhere to go). Closing
+    // hides the board and keeps the trail (the next drawing or a session-list pick brings it back).
+    const desk = new Desk(api.deskHost(), stageRef.current!, { onClose: () => { if (busyRef.current) closeRef.current(); void deskRef.current?.hide(); } });
     deskRef.current = desk;
     desk.subscribe((s) => { setDesk(s); setPaused(desk.follow.paused()); });
     if (import.meta.env.DEV) { window.__viewer = api; window.__desk = desk; }
@@ -1502,14 +1498,15 @@ export default function App() {
     void deskRef.current?.showHead(e.head.el);
   }, []);
 
-  // Esc between answers closes the board (while playing, Esc stops the answer first). The lane stays (it is the sheet's margin).
+  // Esc between answers hides the board (while playing, Esc stops the answer first); it never erases:
+  // the trail stays and comes back with the board. The lane stays (it is the sheet's margin).
   const boardOpen = !!desk && desk.split !== 'none' && !desk.lane;
   useEffect(() => {
     if (!boardOpen) return;
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-      if (e.key === 'Escape' && !busyRef.current && !e.defaultPrevented && !typing && !document.querySelector('.popover')) { boardScripts.current = []; void deskRef.current?.dismiss(); }
+      if (e.key === 'Escape' && !busyRef.current && !e.defaultPrevented && !typing && !document.querySelector('.popover')) void deskRef.current?.hide();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -1522,6 +1519,20 @@ export default function App() {
   }, []);
   const onIntent = useCallback(() => { if (!DEMO_PATH) agentRef.current.intent(pageRef.current); }, []);
 
+  const dismissCheck = useCallback(() => setCheck(null), []);
+  // Esc between answers clears a failed answer's line (F18); the question stays in the bar to edit or resend.
+  useEffect(() => {
+    if (!answerError) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || busyRef.current || e.defaultPrevented || document.querySelector('.popover')) return;
+      e.preventDefault();
+      clearHide();
+      setAnswerError(null);
+      setCaptionVisible(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [answerError]);
   const resumeFollow = useCallback(() => { void deskRef.current?.resume(); }, []);
 
   const toggleSettings = useCallback(() => setSettingsOpen((o) => !o), []);
@@ -1617,8 +1628,8 @@ export default function App() {
       <OverviewPill />
       <SessionDrawer open={sessionOpen} rows={sessionRows} total={sessionTotal} onPick={pickSession} onClose={() => setSessionOpen(false)} />
       <RouteChip route={route} backTo={backTo} onBack={onBack} x={desk?.lane && desk.page ? desk.page.x + desk.page.w / 2 : dock.x} />
-      <SettingsPopover open={settingsOpen} onClose={closeSettings} />
-      <CanvasToolbar />
+      <SettingsPopover open={settingsOpen} onClose={closeSettings} onShowShortcuts={openShortcuts} />
+      <CanvasToolbar showHint={answered} />
       {inkState.canvasOn && inkState.tool === 'pen' && desk?.board && !desk.stacked && (
         <BoardPen rect={desk.board} color={inkState.color} keep={!!pointed && pointed.kind === 'circle' && pointed.page == null} onLoop={onBoardLoop} onWheel={onBoardWheel} />
       )}
@@ -1632,10 +1643,11 @@ export default function App() {
           visible={captionVisible || !!aside}
           question={aside ? aside.question : question}
           waiting={aside ? aside.state === 'thinking' : waiting}
-          hint={aside ? (aside.state === 'error' ? "That couldn't be answered. Press Return to go back to the answer." : undefined) : hint}
+          hint={aside?.state === 'error' ? "That couldn't be answered. Press Return to go back to the answer." : undefined}
           pausing={!aside && pausing && !userPaused}
           parts={partsView}
           error={answerError ? { message: answerError.message, onRetry: answerError.retry ? onRetry : undefined } : undefined}
+          check={pinCheck ? check ?? undefined : undefined}
         />
         <AskBar
           onAsk={onAsk}
@@ -1647,7 +1659,8 @@ export default function App() {
           onClearAbout={clearPointed}
           onTyping={onTyping}
           onResume={closeAside}
-          suggestions={(isSample || DEV_SCRIPT) && !captionVisible ? SUGGESTIONS : undefined}
+          onDismissCheck={dismissCheck}
+          suggestions={(isSample || DEV_SCRIPT) && !captionVisible && !answered ? SUGGESTIONS : undefined}
           restore={restore}
           transcript={captionVisible ? null : transcript}
           blocked={DEMO_PATH ? undefined : agent.blocked}
@@ -1659,7 +1672,7 @@ export default function App() {
       <div className={`dropveil${dragging ? ' is-visible' : ''}`} aria-hidden="true">
         <div className="dropveil-label">Drop to open</div>
       </div>
-      {DEBUG && <DebugPanel d={debug} t0={askT0} />}
+      {DEBUG && <DebugPanel d={debug} t0={askT0} cap={agent.blockedDetail} />}
     </>
   );
 }

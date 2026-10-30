@@ -8,7 +8,7 @@ import { groundingOf, type PageGround } from './context/types';
 import type { ScoutContext } from './context/build';
 import type { AskContext, SpendSummary } from './protocol';
 import { twoStage } from './twoStage';
-import { AskError, askStream, capLine, getSpend, scoutLive, spendBlocked, spendPhase, type AskHandlers } from './client';
+import { AskError, askStream, capLine, capNotice, getSpend, scoutLive, spendBlocked, spendPhase, type AskHandlers } from './client';
 import type { ScoutResult } from './scout';
 import { History } from './history';
 import { SessionMemory, recordOf } from './context/memory';
@@ -164,7 +164,10 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
     }
   }, [history, memory, doc, name]);
 
-  const blocked = useMemo(() => (spendBlocked(spend) ? capLine(spend) : undefined), [spend]);
+  // The student's line; the developer's (which cap, the knob) only in ?debug and the console.
+  const blocked = useMemo(() => (spendBlocked(spend) ? capNotice(spend) : undefined), [spend]);
+  const blockedDetail = useMemo(() => (spendBlocked(spend) ? capLine(spend) : undefined), [spend]);
+  useEffect(() => { if (blockedDetail && import.meta.env.DEV) console.info('[spend]', blockedDetail); }, [blockedDetail]);
 
   /** The grounding of `pages` (eval replays: the pages the recorded answer was given). */
   const grounds = useCallback(async (page: number, pages: number[] = []): Promise<PageGround[]> => {
@@ -172,5 +175,5 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
     return b ? (await b.build(page, '', [], { pages, plan: '' })).grounds : [];
   }, []);
 
-  return { spend, blocked, refreshSpend, pageChanged, intent, source, history, memory, grounds };
+  return { spend, blocked, blockedDetail, refreshSpend, pageChanged, intent, source, history, memory, grounds };
 }

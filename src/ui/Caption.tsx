@@ -27,11 +27,11 @@ type Props = {
   question?: string;
   /** Between Enter and the first word: the echoed question waits, muted. */
   waiting?: boolean;
-  /** A quiet status line while no word has arrived yet ("Still thinking…"). Static text, no motion. */
+  /** A quiet line while no word has arrived yet (an aside that couldn't be answered). Static text, no motion. */
   hint?: string;
   /**
-   * Mid-answer, every word so far has been spoken and the next has not arrived (the opener ended
-   * before the rest of the answer was ready): a faint ellipsis after the last word. It fades in once.
+   * Mid-answer, every word so far has been spoken and the next has not arrived for a real pause (captionWindow
+   * PAUSE_CUE_MS, 1.5 s): a faint ellipsis after the last word, the one wait cue. It fades in once.
    */
   pausing?: boolean;
   /**
@@ -41,6 +41,11 @@ type Props = {
   error?: { message: string; onRetry?(): void };
   /** A playing answer's parts and controls (src/ui/PartsBar.tsx): shown in place of the question line. */
   parts?: PartsView;
+  /**
+   * The check question the answer closed on, pinned while the bar asks for the student's answer (and
+   * the narration has gone): "Check yourself: …", wrapping, never cut. Shown in place of everything else.
+   */
+  check?: string;
 };
 
 /** The cross-fade between reading windows (ui.css .caption-text / .caption-leaving). */
@@ -63,7 +68,7 @@ function makeMeasure(el: HTMLElement): (s: string) => number {
   };
 }
 
-export function Caption({ words, visible, question, waiting = false, hint, pausing = false, error, parts }: Props) {
+export function Caption({ words, visible, question, waiting = false, hint, pausing = false, error, parts, check }: Props) {
   const tokens = groupWords(words);
   const viewRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -113,7 +118,14 @@ export function Caption({ words, visible, question, waiting = false, hint, pausi
     return () => window.clearTimeout(t);
   }, [leaving]);
 
-  const shown = visible && (tokens.length > 0 || !!question || !!error);
+  const shown = (visible && (tokens.length > 0 || !!question || !!error)) || (!!check && !error);
+  if (check && !error) {
+    return (
+      <div className="caption is-visible" aria-hidden={false}>
+        <p className="caption-check"><span className="caption-check-label">Check yourself:</span>{check}</p>
+      </div>
+    );
+  }
   const showHint = !!hint && !error && tokens.length === 0;
   /** Between Enter and the first word: the narration line holds a faint ellipsis, so the dock keeps its height. */
   const thinking = waiting && !error && tokens.length === 0;

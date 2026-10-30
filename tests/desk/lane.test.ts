@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { frameFor, laneFrame, LANE_MIN_W, pageFrameTop, SAFE_TOP } from '../../src/desk/layout';
-import { dockTop, LANE_GAP, LEADER_MAX, leaderPath, packLane, stickyInsets, wantFor } from '../../src/desk/lane';
+import { dockTop, LANE_GAP, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, wantFor } from '../../src/desk/lane';
 import { dockPlacement } from '../../src/ui/layout';
 
 describe('laneFrame (layout C geometry)', () => {
@@ -36,6 +36,13 @@ describe('lane placement', () => {
   it('a group sits at its anchor; one whose slot is taken stacks below with a gap; earlier ones never move', () => {
     const tops = packLane([{ want: 100, h: 300 }, { want: 200, h: 100 }, { want: 1000, h: 50 }]);
     expect(tops).toEqual([100, 100 + 300 + LANE_GAP, 1000]);
+  });
+  it('a leader goes only to a real mark: the live page ink, or a marked anchor; never to an unmarked page', () => {
+    expect(leaderFrom(320, 500, true)).toEqual([320, 500]);
+    expect(leaderFrom(null, 500, true)).toEqual([500]);
+    // Asked on a title page the answer never marks: the anchor is only the reading line there.
+    expect(leaderFrom(null, 500, false)).toEqual([]);
+    expect(leaderFrom(320, 500, false)).toEqual([320]);
   });
   it('the head sits just above the anchor so the drawing starts level with it', () => {
     expect(wantFor(500, 44)).toBe(448);

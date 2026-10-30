@@ -233,15 +233,20 @@ export type SectionBox = { x: number; y: number; w: number; h: number; s: number
  * `zoom` (the student's board zoom, 1 = as laid out) multiplies every section's size; the pads and
  * the head row stay. A section wider than the content box starts at the pad (the board scrolls
  * sideways); `width` is the content's width (≥ the board's).
+ * `fitH` (stacked: the board's height): a section scales down so its whole height fits the short board
+ * (its drawing is never mostly below the fold while the narration names it), at most to half its width
+ * fit (text stays readable; a taller drawing still reveals part by part).
  */
-export function boardLayout(boardW: number, secs: { body: number; span?: number; fill?: number; head?: number; hidden?: boolean }[], zoom = 1): { boxes: SectionBox[]; height: number; pad: number; width: number } {
+export function boardLayout(boardW: number, secs: { body: number; span?: number; fill?: number; head?: number; hidden?: boolean; fitH?: number }[], zoom = 1): { boxes: SectionBox[]; height: number; pad: number; width: number } {
   const pad = boardPad(boardW);
   const cw = Math.max(1, boardW - 2 * pad);
   let y = BOARD_HEAD, width = boardW;
-  const boxes = secs.map(({ body: b, span = SECTION_H, fill, head = 0, hidden }) => {
+  const boxes = secs.map(({ body: b, span = SECTION_H, fill, head = 0, hidden, fitH }) => {
     // A head (the session trail's question header, an aside's title row) takes `head` px above its section.
     y += head;
-    const s = Math.min(cw / SECTION_W, Math.max(b, MIN_TEXT_PX) / TEXT_UNITS) * zoom;
+    let s0 = Math.min(cw / SECTION_W, Math.max(b, MIN_TEXT_PX) / TEXT_UNITS);
+    if (fitH != null && fill == null && span > 0) s0 = Math.min(s0, Math.max(s0 / 2, (fitH - BOARD_HEAD - head - 2 * pad) / span));
+    const s = s0 * zoom;
     // A scene fills the board's content width and `fill` px of height: a window onto its world.
     // A collapsed aside keeps only its head (the marker): its section takes no height.
     const w = fill != null ? cw * zoom : SECTION_W * s, h = hidden ? 0 : fill != null ? Math.max(1, fill) * zoom : span * s;

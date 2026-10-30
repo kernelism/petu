@@ -69,6 +69,15 @@ export function leaderPath(y0: number, item: Span, w: number, headH = 0): { d: s
 }
 
 /**
+ * Where a group's leader may start, in order of preference: the playing answer's latest page mark,
+ * then the group's anchor only when that anchor is a page mark (`marked`). A drawing whose answer never
+ * marked a page (asked on a title page, say) sits in the lane with no leader: never one to the view.
+ */
+export function leaderFrom(liveMark: number | null, anchor: number, marked: boolean): number[] {
+  return [...(liveMark != null ? [liveMark] : []), ...(marked ? [anchor] : [])];
+}
+
+/**
  * The sticky insets for a live group `h` px tall in a window `H` tall, with `top` (the chrome) and
  * `bottom` (the dock) kept clear: it sticks under the chrome; a group taller than the band keeps its
  * newest (bottom) part in view instead, or, given `pen` (the part being drawn: px from the item's top),
