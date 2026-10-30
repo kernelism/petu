@@ -59,6 +59,8 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
 
   // Dictation (src/agent/dictation.ts): the mic fills the field as the student speaks; a pause (or
   // the mic again) sends it, Esc drops it. A failure shows in place of the placeholder for a while.
+  // Enter or typing takes the field over: the dictation is dropped (unhooked first, so its onEnd
+  // neither sends the question again nor overwrites what was typed).
   const [listening, setListening] = useState(false);
   const [micNote, setMicNote] = useState('');
   const dictRef = useRef<Dictation | null>(null);
@@ -71,7 +73,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
     setMicNote('');
     onIntent?.();
     const d = new Dictation({
-      onText: (t) => { setText(t); setTyping(t); },
+      onText: (t) => { if (dictRef.current === d) { setText(t); setTyping(t); } },
       onEnd: ({ text: t, error }) => {
         if (dictRef.current !== d) return;
         dictRef.current = null;
@@ -86,7 +88,8 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
     setListening(true);
     void d.start();
   };
-  const cancelMic = () => { const d = dictRef.current; dictRef.current = null; setListening(false); d?.cancel(); setText(''); setTyping(''); };
+  const dropMic = () => { const d = dictRef.current; dictRef.current = null; setListening(false); d?.cancel(); };
+  const cancelMic = () => { dropMic(); setText(''); setTyping(''); };
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -106,6 +109,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
     const q = text.trim();
     if (!q && mode === 'aside') { onResume?.(); return; }
     if (!q || blocked) return;
+    dropMic();
     typingRef.current = false;
     onAsk(q);
     setText('');
@@ -174,6 +178,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
         value={text}
         onChange={(e) => {
           const v = e.target.value;
+          if (dictRef.current) dropMic();
           if (v.trim().length >= INTENT_CHARS && text.trim().length < INTENT_CHARS) onIntent?.();
           setText(v);
           setTyping(v);
