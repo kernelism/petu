@@ -97,6 +97,13 @@ const ellipse = (cx: number, cy: number, rx: number, ry: number): Pt[] => Array.
  * WebKit's and Gecko's system sans run wider than the estimate below (founder WebKit stills:
  * "0.2€weights"). Null without a DOM to measure in (tests, the server): the estimate is used.
  */
+/**
+ * Measured at board text's own screen size: the system sans changes optical size with it (SF Text below
+ * ~20 px runs ~14% wider than SF Display at 100 px), so a large-size measure runs short.
+ */
+const MEASURE_PX = 14;
+/** Drawn text inside the scaled board ran up to ~4% wider than the off-screen measure (Firefox, WebKit). */
+const MEASURE_SAFETY = 1.05;
 let measureEl: SVGTextElement | null | undefined;
 const measured = new Map<string, number>();
 function measureEm(s: string): number | null {
@@ -111,7 +118,7 @@ function measureEm(s: string): number | null {
         svg.setAttribute('aria-hidden', 'true');
         svg.setAttribute('style', 'position:fixed;left:-10000px;top:0;width:10px;height:10px;visibility:hidden;pointer-events:none');
         const t = document.createElementNS(NS, 'text') as SVGTextElement;
-        t.setAttribute('font-size', '100'); t.setAttribute('font-family', FONT_SANS); t.setAttribute('x', '0'); t.setAttribute('y', '100');
+        t.setAttribute('font-size', String(MEASURE_PX)); t.setAttribute('font-family', FONT_SANS); t.setAttribute('x', '0'); t.setAttribute('y', '100');
         svg.appendChild(t); document.body.appendChild(svg);
         measureEl = t;
       }
@@ -121,7 +128,7 @@ function measureEm(s: string): number | null {
   let v = measured.get(s);
   if (v == null) {
     measureEl.textContent = s;
-    v = measureEl.getComputedTextLength() / 100;
+    v = (measureEl.getComputedTextLength() / MEASURE_PX) * MEASURE_SAFETY;
     if (!(v > 0)) return null;
     if (measured.size > 4000) measured.clear();
     measured.set(s, v);
