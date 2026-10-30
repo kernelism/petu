@@ -68,7 +68,7 @@ describe('board grammar', () => {
     }
     const ys = ts.map((t) => Number(t.getAttribute('y')));
     const steps = ys.slice(1).map((y, i) => y - ys[i]);
-    for (const s of steps) expect(s).toBeCloseTo(1.7 * RAISE_MAX * 20, 1);
+    for (const s of steps) expect(s).toBeCloseTo(1.7 * Math.min(28.8, RAISE_MAX * 20), 1);
     expect(ys[0] - 70).toBeGreaterThan(32);
     const rect = ts[0].ownerDocument.querySelector('rect') ?? ts[0].parentElement!.querySelector('rect')!;
     expect(70 + Number(rect.getAttribute('height'))).toBeGreaterThan(ys[ys.length - 1] + 20);

@@ -208,7 +208,7 @@ export const inkBox = (t: Box): Box => ({ x: t.x, y: t.y + 0.08 * t.h, w: t.w, h
 const AIR = 0.12;
 const airBox = (t: TextBox): Box => { const b = inkBox(t), a = AIR * t.fs; return { x: b.x - a, y: b.y - a / 2, w: b.w + 2 * a, h: b.h + a }; };
 /** Text is raised at most this far over the model's own (median) content size: the drawing's proportions hold. */
-export const RAISE_MAX = 1.3;
+export const RAISE_MAX = 1.5;
 
 /**
  * The size each text is set at. The grammar's sizes are a target, not a floor: the model laid its
