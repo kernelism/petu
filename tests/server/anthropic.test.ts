@@ -1,7 +1,7 @@
 // @vitest-environment node
 // The Anthropic Messages API provider (server/anthropic.ts, wired in server/openai.ts): no network,
 // a scripted fetch only.
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -105,7 +105,7 @@ describe('Anthropic request (stage 2)', () => {
     expect(s.thinking).toEqual({ type: 'between_tools' });
     expect(s).not.toHaveProperty('output_config');
     expect(thinkingFor('claude-haiku-5-5', 'none')).toEqual({ thinking: { type: 'disabled' } });
-    expect(thinkingFor('claude-sonnet-5-5', 'medium')).toEqual({ thinking: { type: 'adaptive' }, output_config: { effort: 'medium' } });
+    expect(thinkingFor('claude-sonnet-5-5', 'medium')).toEqual({ thinking: { type: 'adaptive', display: 'summarized' }, output_config: { effort: 'medium' } });
     expect(() => thinkingFor('claude-opus-5-5', 'none')).toThrow(/thinking/);
   });
   it('drops empty text blocks and messages left empty (the API rejects them)', () => {
@@ -187,6 +187,99 @@ describe('Anthropic answer through ask()', () => {
   });
 });
 
+/** A stream that sends each chunk `gap` ms after the last (fake timers); `next` returns null to end it. */
+function timedFetch(next: (i: number) => string | null, gap: (i: number) => number) {
+  const calls: Call[] = [];
+  const f = (async (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    const enc = new TextEncoder();
+    let i = 0;
+    return new Response(new ReadableStream<Uint8Array>({
+      pull(c) {
+        return new Promise<void>((ok) => setTimeout(() => {
+          const s = next(i);
+          try { if (s == null) c.close(); else c.enqueue(enc.encode(s)); } catch { /* cancelled */ }
+          i++; ok();
+        }, gap(i)));
+      },
+    }, { highWaterMark: 0 }), { status: 200 });
+  }) as unknown as typeof fetch;
+  return { f, calls };
+}
+const think = (n: number) => sse({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: `step ${n} ` } });
+const medium: ModelConfig = { ...opus, effort: 'medium' };
+
+describe('Anthropic: thinking is activity (the idle timer), the whole stream has a cap', () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] }); });
+  afterEach(() => { vi.useRealTimers(); });
+  const answer = async (f: typeof fetch) => {
+    const out: AskEvent[] = [];
+    const p = ask(req(), medium, deps(f), (e) => out.push(e), new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(600_000);
+    await p;
+    return out;
+  };
+  const head = stream([]).slice(0, 2), tail = stream(['The tax ', 'splits.']).slice(4);
+
+  it('30 s of thinking deltas (one every 2 s), then text: the answer plays in full, no error (default 20 s idle)', async () => {
+    const body = [...head, ...Array.from({ length: 15 }, (_, k) => think(k)), ...tail];
+    const { f, calls } = timedFetch((i) => body[i] ?? null, (i) => (i >= 2 && i < 17 ? 2_000 : 0));
+    const out = await answer(f);
+    expect((calls[0].init.signal as AbortSignal).aborted).toBe(false);
+    expect(out.filter((e) => e.t === 'text').map((e) => (e as { d: string }).d).join('')).toBe('The tax splits.');
+    expect(out.at(-1)).toMatchObject({ t: 'done', estimated: false });
+    expect(out.some((e) => e.t === 'error')).toBe(false);
+  });
+  it('the request streams its thinking (display summarized), else a long think is silence', () => {
+    expect(JSON.parse(JSON.stringify(buildAnswerRequest(req(), medium))).thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+  });
+  it('30 s of silence is still a stall: aborted after 20 s, a network error, booked as an estimate', async () => {
+    const { f, calls } = timedFetch((i) => [...head, ...tail][i] ?? null, (i) => (i === 2 ? 30_000 : 0));
+    const out = await answer(f);
+    expect((calls[0].init.signal as AbortSignal).aborted).toBe(true);
+    expect(out.at(-1)).toMatchObject({ t: 'error', code: 'network', message: 'Anthropic stopped sending.' });
+    expect(ledger.summary().totalUsd).toBeGreaterThan(0);
+  });
+  it('thinking that never ends: stopped by the overall cap (240 s), the upstream aborted, booked', async () => {
+    const { f, calls } = timedFetch((i) => (i < 2 ? head[i] : think(i)), (i) => (i < 2 ? 0 : 2_000));
+    const t0 = Date.now();
+    const out: AskEvent[] = [];
+    const p = ask(req(), medium, deps(f), (e) => out.push(e), new AbortController().signal);
+    let endedAt = 0;
+    void p.then(() => { endedAt = Date.now(); });
+    await vi.advanceTimersByTimeAsync(600_000);
+    await p;
+    expect(endedAt - t0).toBeGreaterThanOrEqual(240_000);
+    expect(endedAt - t0).toBeLessThan(243_000);
+    expect((calls[0].init.signal as AbortSignal).aborted).toBe(true);
+    expect(out.at(-1)).toMatchObject({ t: 'error', code: 'network', message: 'Anthropic took too long to finish.' });
+    expect(ledger.summary().totalUsd).toBeGreaterThan(0);
+  });
+  it('OpenAI reasoning events count as activity too (one every 2 s for 30 s, then text)', async () => {
+    const oa = (o: { type: string } & Record<string, unknown>) => `event: ${o.type}\ndata: ${JSON.stringify(o)}\n\n`;
+    const body = [
+      ...Array.from({ length: 15 }, (_, k) => oa({ type: 'response.reasoning_summary_text.delta', item_id: 'r1', delta: `step ${k} ` })),
+      oa({ type: 'response.output_item.added', item: { id: 'm1', type: 'message' } }),
+      oa({ type: 'response.output_text.delta', item_id: 'm1', delta: 'Hello.' }),
+      oa({ type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 100, output_tokens: 10 } } }),
+    ];
+    const { f } = timedFetch((i) => body[i] ?? null, (i) => (i < 15 ? 2_000 : 0));
+    const out: AskEvent[] = [];
+    const p = ask(req(), { ...medium, model: 'gpt-6.1-terra' }, deps(f), (e) => out.push(e), new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await p;
+    expect(out.filter((e) => e.t === 'text').map((e) => (e as { d: string }).d).join('')).toBe('Hello.');
+    expect(out.at(-1)).toMatchObject({ t: 'done', estimated: false });
+  });
+  it('the cap after text: what arrived plays, then cut_off', async () => {
+    const t = stream(['Part one. ']);
+    const { f } = timedFetch((i) => (i < 7 ? t[i] : think(i)), (i) => (i < 7 ? 0 : 2_000));
+    const out = await answer(f);
+    expect(out.filter((e) => e.t === 'text').map((e) => (e as { d: string }).d).join('')).toBe('Part one. ');
+    expect(out.at(-1)).toMatchObject({ t: 'error', code: 'cut_off' });
+  });
+});
+
 describe('Anthropic prewarm', () => {
   it('page prewarm: the same cached prefix, max_tokens 0, not streamed, same thinking settings; usage booked as prewarm', async () => {
     const usage = { input_tokens: 5, cache_creation_input_tokens: 9000, cache_read_input_tokens: 0, cache_creation: { ephemeral_5m_input_tokens: 3000, ephemeral_1h_input_tokens: 6000 }, output_tokens: 0 };
@@ -196,7 +289,7 @@ describe('Anthropic prewarm', () => {
     const b = JSON.parse(String(calls[0].init.body));
     expect(b.max_tokens).toBe(0);
     expect(b).not.toHaveProperty('stream');
-    expect(b.thinking).toEqual({ type: 'adaptive' });
+    expect(b.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
     expect(b.messages).toHaveLength(1);
     expect(cacheMarks(b)).toEqual([{ type: 'ephemeral', ttl: '1h' }, { type: 'ephemeral' }, { type: 'ephemeral' }]);
     expect(r.usd).toBeCloseTo((5 * 4 + 6000 * 8 + 3000 * 5) / 1e6, 10);

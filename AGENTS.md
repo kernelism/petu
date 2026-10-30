@@ -191,7 +191,7 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   `ledger.ts`, `prices.ts`, `prompt/{system,examples}.ts`. Every `/api/*` request must come from the
   app: a loopback Host, an Origin (if any) equal to it, and `content-type: application/json` on POSTs
   (`guard` in `plugin.ts`; these routes run before Vite's own host check). Upstream calls time out
-  (15s to headers, 20s between chunks, 60s for prewarm/judge).
+  (15s to headers, 20s between upstream events (thinking deltas, reasoning events and pings count; Anthropic thinking is requested with `display: summarized` so it streams), 240s per streamed answer, 60s for prewarm/judge).
 - **Prompt** `server/prompt/system.ts`, `PROMPT_VERSION` **p4.9**: a brief, not a rulebook —
   identity → how to teach (answer first, walk the pages, show the mechanism on one growing figure) →
   the board never duplicates → timing → context → pointing → board (WORKED NUMBERS: one worked case,

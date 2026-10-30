@@ -77,7 +77,7 @@ describe('buildRepairRequest', () => {
     const o2 = buildRequest(ask({ history: [{ q: 'Before?', a: '', page: 1 }] }), cfg);
     const b = repairBody(o2, { committed: 'Released words.', report: report() }, cfg);
     expect(b.max_tokens).toBe(REPAIR_MAX_OUTPUT);
-    expect(b.thinking).toEqual({ type: 'adaptive' });
+    expect(b.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
     expect(b.output_config).toEqual({ effort: 'low' });
     expect(b.stream).toBe(true);
     const roles = b.messages.map((m: any) => m.role);

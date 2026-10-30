@@ -94,11 +94,15 @@ export type AnswerRecord = { at: string; phase: string; model: string; effort: s
   svg?: { groups: string[]; board: unknown; notes: string[]; firstGroupMs: number; ttftMs: number; totalMs: number } };
 /**
  * `headersMs`: no response headers → the attempt is abandoned (retried once, before any text).
- * `idleMs`: a streamed answer that sends nothing for this long is ended (cut_off after text).
+ * `idleMs`: a streamed answer that sends nothing for this long is ended (cut_off after text). Any
+ *   upstream event is activity: thinking deltas (Anthropic), reasoning events (OpenAI) and pings
+ *   reset it as text does, so a model that thinks for a minute before its first word is not cut off.
+ * `streamMs`: a streamed answer as a whole, from its headers: a stream that keeps sending but never
+ *   ends (thinking forever, pings only) still stops.
  * `callMs`: a non-streamed call (prewarm, judge) as a whole.
  */
-export type Timeouts = { headersMs: number; idleMs: number; callMs: number };
-export const TIMEOUTS: Timeouts = { headersMs: 15_000, idleMs: 20_000, callMs: 60_000 };
+export type Timeouts = { headersMs: number; idleMs: number; streamMs: number; callMs: number };
+export const TIMEOUTS: Timeouts = { headersMs: 15_000, idleMs: 20_000, streamMs: 240_000, callMs: 60_000 };
 const URL_ = 'https://api.openai.com/v1/responses';
 export const JUDGE_MODEL = 'gpt-6.1-sol';
 /** r3 rubric (5 criteria + defect flags + notes) needs more room than r2; the reservation uses this too. */
@@ -641,8 +645,8 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
       // have reached OpenAI, so it is booked as an estimate below.
       if (failed && failed.code !== 'network') { d.ledger.release(reqId); record(0); emit(failed); signal.removeEventListener('abort', onAbort); return; }
     } else {
-      const r = await readUpstream(res, ep, { signal, idleMs: T.idleMs, filter, lint, send, onNote: (m) => emit({ t: 'note', message: m }), stop: () => live?.abort() }, read);
-      idle = r.idle; usage = r.usage; terminal = r.terminal; complete = r.complete;
+      const r = await readUpstream(res, ep, { signal, idleMs: T.idleMs, streamMs: T.streamMs, filter, lint, send, onNote: (m) => emit({ t: 'note', message: m }), stop: () => live?.abort() }, read);
+      idle = r.idle || !!r.overrun; usage = r.usage; terminal = r.terminal; complete = r.complete;
       if (r.failed) failed = { t: 'error', code: 'upstream', message: r.failed, retryable: true };
       if (signal.aborted) up.abort();
       send(lint.push(filter.end()) + lint.end());
@@ -650,7 +654,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
       // Stalled, cut short upstream (response.incomplete), or ended without a terminal event: what
       // arrived plays, then the client hears cut_off; with no text at all it is an error.
       if (!signal.aborted && !failed && (idle || !terminal || !complete)) {
-        const why = idle ? `${ep.vendor} stopped sending.` : terminal ? `${ep.vendor} ended the answer early${r.status ? ` (${r.status})` : ''}.` : `The stream from ${ep.vendor} ended early.`;
+        const why = read.overrun ? `${ep.vendor} took too long to finish.` : idle ? `${ep.vendor} stopped sending.` : terminal ? `${ep.vendor} ended the answer early${r.status ? ` (${r.status})` : ''}.` : `The stream from ${ep.vendor} ended early.`;
         failed = { t: 'error', code: outChars ? 'cut_off' : idle ? 'network' : 'upstream', message: why, retryable: true };
       }
     }
@@ -677,25 +681,32 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
 }
 
 /** What reading one upstream stream produced (readUpstream). */
-export type UpstreamRead = { usage?: Usage; terminal: boolean; complete: boolean; idle: boolean; rawChars: number; failed?: string; /** The terminal status, with the upstream's reason when cut short: "incomplete (max_output_tokens)". */ status?: string };
+export type UpstreamRead = { usage?: Usage; terminal: boolean; complete: boolean; idle: boolean; rawChars: number; failed?: string;
+  /** The terminal status, with the upstream's reason when cut short: "incomplete (max_output_tokens)". */ status?: string;
+  /** The stream ran past `streamMs` while still sending (ended like a stall). */
+  overrun?: boolean };
 export const newRead = (): UpstreamRead => ({ terminal: false, complete: false, idle: false, rawChars: 0 });
 /**
  * Reads an upstream answer stream (OpenAI Responses or Anthropic Messages SSE) through the script
  * filter and lint: each cleaned piece goes to `send`. Shared by stage 2 (`ask`) and repairs
- * (server/repair.ts). Stops on the client's abort, on `idleMs` without bytes (calls `stop` to abort
- * the upstream), or at the end. Never throws on upstream errors: `failed` carries the scrubbed message.
+ * (server/repair.ts). Stops on the client's abort, on `idleMs` without any upstream event (thinking
+ * and reasoning deltas and pings count: only silence is a stall), past `streamMs` in all (both call
+ * `stop` to abort the upstream), or at the end. Never throws on upstream errors: `failed` carries the scrubbed message.
  */
-export async function readUpstream(res: Response, ep: Endpoint, o: { signal: AbortSignal; idleMs: number; filter: ScriptFilter; lint: Lint; send: (s: string) => void; onNote?: (m: string) => void; stop?: () => void },
+export async function readUpstream(res: Response, ep: Endpoint, o: { signal: AbortSignal; idleMs: number; streamMs?: number; filter: ScriptFilter; lint: Lint; send: (s: string) => void; onNote?: (m: string) => void; stop?: () => void },
   /** Filled as the stream is read, so a read that throws (an abort) still tells what arrived. */
   out: UpstreamRead = newRead()): Promise<UpstreamRead> {
   const sse = new SseParser(), events = ep.anthropic ? new AnthropicEvents() : new ResponseEvents();
   const dec = new TextDecoder();
   const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+  const end = o.streamMs != null ? Date.now() + o.streamMs : Infinity;
   for (;;) {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const r = await Promise.race([reader.read(), new Promise<'idle'>((ok) => { timer = setTimeout(() => ok('idle'), o.idleMs); })]);
+    // The idle timer restarts on every chunk read, whatever it carries (text, thinking, reasoning, ping).
+    const left = end - Date.now(), overall = left <= o.idleMs;
+    const r = await Promise.race([reader.read(), new Promise<'idle'>((ok) => { timer = setTimeout(() => ok('idle'), Math.max(0, Math.min(o.idleMs, left))); })]);
     clearTimeout(timer);
-    if (r === 'idle') { out.idle = true; o.stop?.(); reader.cancel().catch(() => undefined); break; }
+    if (r === 'idle') { if (overall) out.overrun = true; else out.idle = true; o.stop?.(); reader.cancel().catch(() => undefined); break; }
     if (r.done || o.signal.aborted) break;
     for (const ev of sse.push(dec.decode(r.value, { stream: true }))) {
       if ((ev as { type?: string })?.type === 'response.output_text.delta') out.rawChars += String((ev as { delta?: unknown }).delta ?? '').length;
