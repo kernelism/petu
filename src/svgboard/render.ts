@@ -69,9 +69,9 @@ export function ensureHatch(doc: Document, accent: string): void {
       const pat = doc.createElementNS(NS, 'pattern');
       for (const [k, v] of Object.entries({ id, patternUnits: 'userSpaceOnUse', width: '9', height: '9', patternTransform: 'rotate(45)' })) pat.setAttribute(k, v);
       const tint = doc.createElementNS(NS, 'rect');
-      for (const [k, v] of Object.entries({ width: '9', height: '9', 'fill-opacity': '0.07' })) tint.setAttribute(k, v);
+      for (const [k, v] of Object.entries({ width: '9', height: '9', 'fill-opacity': '0.08' })) tint.setAttribute(k, v);
       const line = doc.createElementNS(NS, 'line');
-      for (const [k, v] of Object.entries({ x1: '0', y1: '0', x2: '0', y2: '9', 'stroke-width': '2', 'stroke-opacity': '0.5' })) line.setAttribute(k, v);
+      for (const [k, v] of Object.entries({ x1: '0', y1: '0', x2: '0', y2: '9', 'stroke-width': '2.6', 'stroke-opacity': '0.62' })) line.setAttribute(k, v);
       pat.append(tint, line);
       host.appendChild(pat);
       p = pat;
