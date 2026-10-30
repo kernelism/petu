@@ -243,7 +243,7 @@ describe('svg beats: a cut-off group', () => {
 describe('svg demos (gallery scenes)', () => {
   it('every svg demo opens a board and draws groups that pass the gate checks at the board minimum', async () => {
     const { SVG_DEMOS } = await import('../../src/demo/svg');
-    expect(Object.keys(SVG_DEMOS).sort()).toEqual(['svg-ceiling', 'svg-dough', 'svg-ferry', 'svg-rent', 'svg-session', 'svg-sinx', 'svg-skater', 'svg-slope', 'svg-spin', 'svg-tunnel']);
+    expect(Object.keys(SVG_DEMOS).sort()).toEqual(['svg-ceiling', 'svg-dense', 'svg-dough', 'svg-ferry', 'svg-rent', 'svg-session', 'svg-sinx', 'svg-skater', 'svg-slope', 'svg-spin', 'svg-tunnel']);
     for (const [k, d] of Object.entries(SVG_DEMOS)) {
       const acts = actions(d.script);
       expect(acts[0], k).toMatchObject({ kind: 'sketch', svgboard: {} });
