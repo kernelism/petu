@@ -11,9 +11,10 @@ import { penDown, penLift, penTo } from '../ink/agent/penCursor';
 import { prefersReducedMotion, strokeDurationMs, ease } from '../ink/agent/animate';
 import { sanitizeGroup, type Sanitized } from './sanitize';
 import { namesWord } from '../playback/scheduler';
-import type { Palette } from './style';
+import { INK, type Palette } from './style';
 import { isBound, newScope, resolveData, type DataScope } from './data';
 import { prepareText } from './polish';
+import { applyGrammar, newTypeState, typeScale, type TypeState } from './grammar';
 import type { SRect } from '../geometry/space';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -29,7 +30,11 @@ export type SvgBoard = { root: SVGSVGElement; w: number; h: number; ns: string; 
   /** Groups holding elements bound to constants, in drawing order (re-resolved when a constant changes). */
   bound: SVGGElement[];
   /** Trace paths of moving points (data-trace), by element. */
-  traces: Map<Element, { path: SVGPathElement; pts: string[] }> };
+  traces: Map<Element, { path: SVGPathElement; pts: string[] }>;
+  /** The board's type grammar state (grammar.ts), from its first group. */
+  type?: TypeState;
+  /** The part being drawn right now (the accent: `data-live`), and its settle timer. */
+  live?: Element | null; liveTimer?: ReturnType<typeof setTimeout> };
 const boards = new WeakMap<SVGSVGElement, SvgBoard>();
 
 /** The board's root in a section layer (null when the section holds none). */
@@ -79,9 +84,11 @@ export function partBox(b: SvgBoard, el: Element, air = 0): SRect | null {
 
 /** Sanitizes a group for this board (never appends). `minPx`: the smallest text on screen. */
 export function prepareGroup(b: SvgBoard, src: string, minPx: number, pxPerUnit: number): Sanitized | string {
-  const minFont = pxPerUnit > 0 ? minPx / pxPerUnit : 16;
-  const min = Math.max(8, minFont);
-  return sanitizeGroup(src, { ns: b.ns, palette: b.palette, minFont: min, w: b.w, h: b.h, ids: b.ids, prepare: (g) => { resolveData(g, b.scope); prepareText(g, min); } });
+  // The board's grammar (grammar.ts): three text sizes from the body size, ink text, one title.
+  const scale = pxPerUnit > 0 ? typeScale(minPx, pxPerUnit, pxPerUnit * b.w) : { content: 16, title: 20, small: 13 };
+  if (b.type) b.type.scale = scale; else b.type = newTypeState(scale);
+  const st = b.type, min = Math.max(8, scale.small);
+  return sanitizeGroup(src, { ns: b.ns, palette: b.palette, minFont: min, w: b.w, h: b.h, ids: b.ids, prepare: (g) => { resolveData(g, b.scope); prepareText(g, min, applyGrammar(g, st)); } });
 }
 
 /** Whether a prepared group has elements bound to constants. */
@@ -111,6 +118,8 @@ function ghost(h: Element): void {
     for (const a of e.getAttributeNames()) if (a.startsWith('data-')) e.removeAttribute(a);
     if (e.getAttribute('id')) e.removeAttribute('id');
     (e as SVGElement).style?.removeProperty?.('opacity');
+    // Superseded: grey (the board's grammar: grey only for what was replaced).
+    for (const k of ['stroke', 'fill']) { const v = e.getAttribute(k); if (v && v !== 'none' && v !== INK.paper && !/^url/i.test(v)) e.setAttribute(k, INK.muted); }
   }
   c.setAttribute('opacity', '0.28');
   c.setAttribute('data-ghost-of', '');
@@ -202,6 +211,8 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
     b.groups.set(id, g);
   }
   b.root.appendChild(g);
+  b.root.style.setProperty('--board-live', o.color);
+  setLive(b, null);
   const instant = o.signal.aborted || prefersReducedMotion() || typeof requestAnimationFrame !== 'function';
   const isLeaf = (el: Element) => el.matches(`${SHAPES},text`) && !el.closest('defs,marker,clipPath,pattern,symbol') && el.getAttribute('display') !== 'none';
   if (instant) {
@@ -290,6 +301,7 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
       const wait = t0 + u.at - performance.now();
       if (wait > 16) { penLift(pen); await sleep(wait); if (sig.aborted) break; }
       penDown(pen);
+      setLive(b, u.el);
       const nat = u.steps.reduce((a, s) => a + natural(s), 0);
       const k = nat > budget[ui] * 0.9 ? (budget[ui] * 0.9) / nat : 1;
       for (const s of u.steps) {
@@ -312,6 +324,8 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
     }
   } finally {
     penLift(pen);
+    // The last part stays the accent a moment, then settles to ink (a stop settles it at once).
+    if (sig.aborted) setLive(b, null); else settleLive(b, LIVE_SETTLE_MS);
     // Whatever did not draw (aborted) lands now.
     for (const s of steps) if (s.el.style.opacity === '0' || s.el.style.strokeDashoffset !== '') land(s);
     o.stop?.removeEventListener('abort', onSig);
@@ -322,5 +336,22 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   else await done;
   o.signal.removeEventListener('abort', onSig);
 }
+/** How long the last drawn part keeps the accent once its group is done. */
+const LIVE_SETTLE_MS = 1400;
+
+/** Marks `el` as the part being drawn (the accent, board CSS); the previous part settles to ink. */
+export function setLive(b: SvgBoard, el: Element | null): void {
+  if (b.liveTimer) { clearTimeout(b.liveTimer); b.liveTimer = undefined; }
+  if (b.live && b.live !== el) b.live.removeAttribute('data-live');
+  b.live = el;
+  el?.setAttribute('data-live', '');
+}
+function settleLive(b: SvgBoard, ms: number): void {
+  const el = b.live;
+  if (!el) return;
+  if (b.liveTimer) clearTimeout(b.liveTimer);
+  b.liveTimer = setTimeout(() => { if (b.live === el) setLive(b, null); }, ms);
+}
+
 /** Under the director's per-action timeout (ACTION_TIMEOUT_MS 3 s): a paced group hands back before it. */
 const ACTION_STEP_MS = 2400;

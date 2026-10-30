@@ -67,7 +67,6 @@ export function hsl(c: Rgb): { h: number; s: number; l: number } {
 /** The answer's palette: which hue became the accent (the first chromatic one seen). */
 export type Palette = { accent: string; hue: number | null };
 
-const hueDist = (a: number, b: number) => { const d = Math.abs(a - b) % 360; return Math.min(d, 360 - d); };
 
 /**
  * One colour value → the board's. `role`: a stroke or text keeps a readable ink; a fill keeps its
@@ -89,16 +88,16 @@ export function mapColor(v: string | null | undefined, role: 'stroke' | 'fill' |
     const color = l < 0.3 ? INK.ink : l < 0.5 ? INK.ink2 : l < 0.7 || role === 'text' ? INK.muted : role === 'fill' ? INK.line : INK.faint;
     return { color, alpha: a };
   }
-  // Chromatic: the first hue is the accent; any other is neutral grey (one accent colour per board).
+  // Chromatic: colour means time on the board (grammar.ts), never the model's hue. At rest a coloured
+  // mark is ink (the accent is the part being drawn: render.ts data-live); a pale wash stays a wash
+  // of ink, a pale outline a hairline.
   if (pal.hue == null) pal.hue = h;
-  const isAccent = hueDist(h, pal.hue) <= 25;
   if (role === 'fill' && l > 0.72) {
-    // A pale wash: the same colour at the wash's strength.
     const k = Math.max(0.1, Math.min(0.3, (1 - l) * 1.2));
-    return { color: isAccent ? pal.accent : INK.muted, alpha: a * k };
+    return { color: INK.muted, alpha: a * k };
   }
-  if (isAccent) return { color: pal.accent, alpha: a };
-  return { color: role === 'fill' ? INK.faint : INK.ink2, alpha: a };
+  if (role === 'stroke' && l > 0.72) return { color: INK.line, alpha: a };
+  return { color: role === 'fill' ? INK.ink2 : INK.ink, alpha: a };
 }
 
 /** The board's font for a model font-family: math-ish faces → the math font, everything else the sans. */

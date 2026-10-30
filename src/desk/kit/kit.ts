@@ -44,7 +44,7 @@ export const GLIDE_MS = 320;
 // ------------------------------------------------------------------------------------------------
 // Metrics: everything is sized from the board's type (the slide's body size), in section units.
 
-export type Metrics = { s: number; numPx: number; labelPx: number; num: number; label: number; /** The board's measured body size (units): no reading text under it. */ body: number; cell: number; gap: number; opW: number; margin: number; top: number; u: (px: number) => number };
+export type Metrics = { s: number; numPx: number; labelPx: number; num: number; label: number; /** Axis ticks, units and bar categories along an axis (the grammar's small size). */ tick: number; tickPx: number; /** The board's measured body size (units): no reading text under it. */ body: number; cell: number; gap: number; opW: number; margin: number; top: number; u: (px: number) => number };
 
 /**
  * A label written as an id (`arms_out`, `total_revenue`) is shown with spaces ("arms out"). Only list
@@ -59,9 +59,11 @@ const shownAll = (xs: string[] | undefined) => xs?.map(shown);
 export function metrics(scale: number, bodyPx: number): Metrics {
   const s = Math.max(scale, 1e-3);
   // Numerals at the slide's body size, never under 13px, and growing with a wide board (to 20px).
-  const numPx = Math.max(13, bodyPx * 0.9, Math.min(20, (1000 * s) / 50)), labelPx = Math.max(MIN_TEXT_PX, numPx * 0.82);
+  // The board's grammar (src/svgboard/grammar.ts): one content size for every label, value, caption,
+  // table cell and calc line; ticks and units small (never under 11px).
+  const numPx = Math.max(13, bodyPx * 0.9, Math.min(20, (1000 * s) / 50)), labelPx = numPx, tickPx = Math.min(numPx, Math.max(11, numPx * 0.82));
   const u = (px: number) => px / s;
-  return { s, numPx, labelPx, num: u(numPx), label: u(labelPx), body: u(Math.max(MIN_TEXT_PX, Number.isFinite(bodyPx) ? bodyPx : 0)), cell: u(numPx * 2.3), gap: u(numPx * 1.7), opW: u(numPx * 1.4), margin: 40, top: 32, u };
+  return { s, numPx, labelPx, num: u(numPx), label: u(labelPx), tick: u(tickPx), tickPx, body: u(Math.max(MIN_TEXT_PX, Number.isFinite(bodyPx) ? bodyPx : 0)), cell: u(numPx * 2.3), gap: u(numPx * 1.7), opW: u(numPx * 1.4), margin: 40, top: 32, u };
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -623,7 +625,7 @@ export async function buildBlock(a0: KitBlock & { region?: string; page?: number
       // Grouped bars (stack.side): a slot holds its group's parts side by side.
       const side = !!(parts && a.kind === 'bars' && a.stack?.side);
       const per = side ? Math.max(...parts!.map((r) => r.length)) : 1;
-      const labW = labels?.length ? m.u(Math.max(...labels.map((l) => textWidth(l, m.labelPx))) + m.labelPx * 0.9) : 0;
+      const labW = labels?.length ? m.u(Math.max(...labels.map((l) => textWidth(l, m.tickPx))) + m.tickPx * 0.9) : 0;
       // One height for every bar chart (not its numerals' width): charts that share a scale share it.
       const H0 = m.u(m.numPx * 2.5) * 3.2;
       // A histogram's bins touch, across a fixed width (one x scale for every histogram that shares its bins).
@@ -842,7 +844,7 @@ async function appear(el: SVGElement, ms: number, k: Pace) {
 /** A block's caption under it; a variable's name (u, v) in math italic, a shade darker. */
 function caption(g: Element, x: number, y: number, cap: string, m: Metrics, c: ReturnType<typeof col>) {
   const v = isVarName(cap);
-  const t = kitText(g, x, y, cap, { size: v ? m.label * 1.2 : m.label, fill: v ? c.ink2 : c.muted });
+  const t = kitText(g, x, y, cap, { size: m.label, fill: c.ink });
   t.setAttribute('data-kit-caption', '');
   if (v) { t.setAttribute('font-style', 'italic'); t.setAttribute('font-family', 'KaTeX_Math, "STIX Two Math", "Cambria Math", "Times New Roman", serif'); }
   return t;
@@ -883,7 +885,7 @@ export async function setCaption(id: string, text: string, env: BuildEnv): Promi
         if (w > fit) setAttrs(t, { textLength: fit, lengthAdjust: 'spacingAndGlyphs' });
         setAttrs(t, { opacity: 0, fill: accent });
         o.remove();
-        return { t, fill: isVarName(text) ? c.ink2 : c.muted };
+        return { t, fill: c.ink };
       });
       if (line) { line.textContent = text; line.setAttribute('fill', accent); }
       await tween(still ? 0 : 240 * k.speed, (x) => { news.forEach((n) => n.t.setAttribute('opacity', String(x))); line?.setAttribute('opacity', String(x)); }, undefined, easeOut);
@@ -896,7 +898,7 @@ export async function setCaption(id: string, text: string, env: BuildEnv): Promi
 
 function drawOp(g: SVGGElement, b: Block, c: ReturnType<typeof col>) {
   const o = b.placed.op!;
-  const t = kitText(g, o.x, o.y, o.glyph, { size: b.m.num * 1.45, fill: c.ink2 });
+  const t = kitText(g, o.x, o.y, o.glyph, { size: b.m.num * 1.45, fill: c.ink });
   t.setAttribute('font-family', 'KaTeX_Main, "STIX Two Math", "Cambria Math", serif');
 }
 
@@ -933,8 +935,8 @@ async function drawGrid(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: P
   svg(frame, 'rect', { x: body.x, y: body.y, width: body.w, height: body.h, fill: 'none', stroke: c.edge, rx: px(b, 1.5), ...hair(1.2) });
   const labels = svg(g, 'g');
   const rows = b.el.rows as string[] | undefined, cols = b.el.cols as string[] | undefined, cap = b.el.caption as string | undefined;
-  rows?.forEach((s, r) => kitText(labels, body.x - m.label * 0.6, body.y + (r + 0.5) * cs, s, { size: m.label, fill: c.muted, anchor: 'end' }));
-  cols?.forEach((s, q) => kitText(labels, body.x + (q + 0.5) * cs, body.y - m.label * 0.85, s, { size: m.label, fill: c.muted }));
+  rows?.forEach((s, r) => kitText(labels, body.x - m.label * 0.6, body.y + (r + 0.5) * cs, s, { size: m.label, fill: c.ink, anchor: 'end' }));
+  cols?.forEach((s, q) => kitText(labels, body.x + (q + 0.5) * cs, body.y - m.label * 0.85, s, { size: m.label, fill: c.ink }));
   if (cap) caption(labels, body.x + body.w / 2, body.y + body.h + m.label * 1.2, cap, m, c);
   const numG = svg(g, 'g');
   for (let r = 0; r < R; r++) {
@@ -1076,13 +1078,13 @@ async function drawBars(b: Block, c: ReturnType<typeof col>, env: BuildEnv, k: P
   const labels = b.el.labels as string[] | undefined, cap = b.el.caption as string | undefined;
   const negs = b.group!.neg > 0;
   const below = body.y + body.h + (negs ? m.label * 1.4 : 0);
-  labels?.forEach((s, i) => kitText(labG, body.x + (i + 0.5) * b.cs!, below + m.label * 0.95, s, { size: m.label, fill: c.muted }));
+  labels?.forEach((s, i) => kitText(labG, body.x + (i + 0.5) * b.cs!, below + m.label * 0.95, s, { size: m.tick, fill: c.ink }));
   const hist = b.el.hist as { lo: number; hi: number } | undefined;
   if (hist) for (const t of C.ticks(hist.lo, hist.hi, 5)) {
     // The bins' value scale: a few round values under the bars.
     const x = body.x + ((t - hist.lo) / (hist.hi - hist.lo)) * body.w;
     svg(labG, 'line', { x1: x, x2: x, y1: below, y2: below + px(b, 4), stroke: c.edge, ...hair(1) });
-    kitText(labG, x, below + m.label * 0.95, C.fmt(t), { size: m.label, fill: c.muted });
+    kitText(labG, x, below + m.label * 0.95, C.fmt(t), { size: m.tick, fill: c.ink });
   }
   if (cap) caption(labG, body.x + body.w / 2, below + (labels || b.el.hist ? m.label * 2.5 : m.label * 1.1), cap, m, c);
   b.el.bars = { bars, vals, ghosts, base, emBars: new Set(), segs: [], names: svg(g, 'g') } satisfies BarEls;
@@ -1214,7 +1216,7 @@ function paintLegend(b: Block, c: ReturnType<typeof col>) {
   names.forEach((nm, j) => {
     const y = body.y + m.label * (0.6 + 1.5 * j);
     svg(e.names!, 'rect', { x, y: y - sw / 2, width: sw, height: sw, rx: px(b, 1.5), fill: partTone(j, c), 'fill-opacity': 0.9 });
-    kitText(e.names!, x + sw + m.label * 0.45, y, nm, { size: m.label, fill: c.muted, anchor: 'start' });
+    kitText(e.names!, x + sw + m.label * 0.45, y, nm, { size: m.label, fill: c.ink, anchor: 'start' });
   });
 }
 
@@ -1240,7 +1242,7 @@ function paintPartNames(b: Block, c: ReturnType<typeof col>) {
     const nm = names[j];
     const h = Number(rc.getAttribute('height'));
     if (!nm || !(h > 0)) return;
-    kitText(e.names!, x, Number(rc.getAttribute('y')) + h / 2, nm, { size: b.m.label, fill: c.muted, anchor: hit ? 'end' : 'start', opacity: s });
+    kitText(e.names!, x, Number(rc.getAttribute('y')) + h / 2, nm, { size: b.m.label, fill: c.ink, anchor: hit ? 'end' : 'start', opacity: s });
   });
 }
 
@@ -1471,16 +1473,16 @@ function drawPlotAxes(pl: Plot, c: ReturnType<typeof col>) {
   for (const t of C.ticks(d.x0, d.x1, 5)) {
     const x = linePt(pl, t, d.y0).x;
     svg(ax, 'line', { x1: x, x2: x, y1: body.y + body.h, y2: body.y + body.h + px(h, 4), stroke: c.edge, ...hair(1) });
-    kitText(ax, x, body.y + body.h + m.label * 0.95, C.fmt(t), { size: m.label, fill: c.muted });
+    kitText(ax, x, body.y + body.h + m.label * 0.95, C.fmt(t), { size: m.tick, fill: c.ink });
   }
   for (const t of C.ticks(d.y0, d.y1)) {
     const y = linePt(pl, d.x0, t).y;
     svg(ax, 'line', { x1: body.x - px(h, 4), x2: body.x, y1: y, y2: y, stroke: c.edge, ...hair(1) });
-    kitText(ax, body.x - px(h, 7), y, C.fmt(t), { size: m.label, fill: c.muted, anchor: 'end' });
+    kitText(ax, body.x - px(h, 7), y, C.fmt(t), { size: m.tick, fill: c.ink, anchor: 'end' });
   }
   if (d.y0 < 0 && d.y1 > 0) { const y = linePt(pl, d.x0, 0).y; svg(ax, 'line', { x1: body.x, x2: body.x + body.w, y1: y, y2: y, stroke: c.line, ...hair(1) }); }
-  if (pl.xLabel) kitText(ax, body.x + body.w, body.y + body.h + m.label * 2.3, pl.xLabel, { size: m.label, fill: c.ink2, anchor: 'end' });
-  if (pl.yLabel) kitText(ax, body.x, body.y - m.label * 1.1, pl.yLabel, { size: m.label, fill: c.ink2, anchor: 'start' });
+  if (pl.xLabel) kitText(ax, body.x + body.w, body.y + body.h + m.label * 2.3, pl.xLabel, { size: m.label, fill: c.ink, anchor: 'end' });
+  if (pl.yLabel) kitText(ax, body.x, body.y - m.label * 1.1, pl.yLabel, { size: m.label, fill: c.ink, anchor: 'start' });
   pl.axes = ax;
 }
 
@@ -1528,14 +1530,13 @@ function paintLine(b: Block, ys: number[], c: ReturnType<typeof col>, upto = ys.
   void c;
 }
 
-/** A plot's lines, newest in ink, earlier ones (unless em) set back in the muted tone. */
+/** A plot's lines: ink (em: the accent). */
 function lineColor(b: Block, c: ReturnType<typeof col>, accent: string): string {
-  if (b.em) return accent;
-  const ms = b.plot!.members.filter((x) => !x.em);
-  return b === ms[ms.length - 1] ? c.ink : c.muted;
+  // Grammar: every live line is ink (grey is only for what was superseded: a beforeafter ghost).
+  return b.em ? accent : c.ink;
 }
 
-/** Each line of a plot in its colour (the newest in ink, earlier ones muted), but `skip`. */
+/** Each line of a plot in its colour (ink; em in the accent), but `skip`. */
 function recolorLines(pl: Plot, c: ReturnType<typeof col>, accent: string, skip?: Block) {
   for (const o of pl.members) if (o !== skip && o.el.line) { const oc = lineColor(o, c, accent); const oe = o.el.line as LineEls; oe.path.setAttribute('stroke', oc); oe.dots.forEach((d) => d.setAttribute('fill', oc)); oe.label?.setAttribute('fill', oc); }
 }
@@ -1625,16 +1626,16 @@ async function drawScatter(b: Block, c: ReturnType<typeof col>, k: Pace) {
   for (const t of C.ticks(d.x0, d.x1)) {
     const x = toPlot(b, { x: t, y: d.y0 }).x;
     svg(axes, 'line', { x1: x, x2: x, y1: body.y + body.h, y2: body.y + body.h + px(b, 4), stroke: c.edge, ...hair(1) });
-    kitText(axes, x, body.y + body.h + m.label * 0.95, C.fmt(t), { size: m.label, fill: c.muted });
+    kitText(axes, x, body.y + body.h + m.label * 0.95, C.fmt(t), { size: m.tick, fill: c.ink });
   }
   for (const t of C.ticks(d.y0, d.y1)) {
     const y = toPlot(b, { x: d.x0, y: t }).y;
     svg(axes, 'line', { x1: body.x - px(b, 4), x2: body.x, y1: y, y2: y, stroke: c.edge, ...hair(1) });
-    kitText(axes, body.x - px(b, 7), y, C.fmt(t), { size: m.label, fill: c.muted, anchor: 'end' });
+    kitText(axes, body.x - px(b, 7), y, C.fmt(t), { size: m.tick, fill: c.ink, anchor: 'end' });
   }
   const xl = b.el.xLabel as string | undefined, yl = b.el.yLabel as string | undefined, cap = b.el.caption as string | undefined;
-  if (xl) kitText(axes, body.x + body.w, body.y + body.h + m.label * 2.3, xl, { size: m.label, fill: c.ink2, anchor: 'end' });
-  if (yl) kitText(axes, body.x, body.y - m.label * 1.1, yl, { size: m.label, fill: c.ink2, anchor: 'start' });
+  if (xl) kitText(axes, body.x + body.w, body.y + body.h + m.label * 2.3, xl, { size: m.label, fill: c.ink, anchor: 'end' });
+  if (yl) kitText(axes, body.x, body.y - m.label * 1.1, yl, { size: m.label, fill: c.ink, anchor: 'start' });
   if (cap) caption(axes, body.x + body.w / 2, body.y + body.h + m.label * (xl ? 3.7 : 2.4), cap, m, c);
   const clipId = `kit-clip-${++clips}`;
   const cp = svg(svg(g, 'defs'), 'clipPath', { id: clipId });
@@ -1788,7 +1789,7 @@ async function band(v: Extract<KitVerb, { kind: 'band' }>, env: BuildEnv, store:
         const x = d.x0 + (d.x1 - d.x0) * 0.97, yl = -(l.a * x + l.c) / l.b;
         const s = l.b < 0 ? -1 : 1; // the edge above the line in data terms
         const q = toPlot(sc, { x: x + s * l.a * v.w, y: yl + s * l.b * v.w });
-        if (q.y > body.y && q.y < body.y + body.h) f.el.bandLabel = kitText(se.marks, q.x, q.y - m.label * 0.7, v.label, { size: m.label, fill: f.em ? accent : c.ink2, anchor: 'end', halo: c.halo });
+        if (q.y > body.y && q.y < body.y + body.h) f.el.bandLabel = kitText(se.marks, q.x, q.y - m.label * 0.7, v.label, { size: m.label, fill: f.em ? accent : c.ink, anchor: 'end', halo: c.halo });
       }
       const t = kitText(se.marks, body.x + body.w, body.y - m.label * 1.0, 'inside band: ', { size: m.num, fill: c.ink, anchor: 'end', halo: c.halo });
       const n = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
@@ -1892,7 +1893,13 @@ function calcExpansion(cd: { of: string[]; reduce: C.Reduce; fn?: string; q?: nu
 
 const piecesOf = (e: C.Expansion, label?: string) => [...(label ? [`${label} = `] : []), ...e.parts, e.result];
 
-/** Renders a calc line (lines of pieces, the result in the accent); `write` reveals it piece by piece. */
+/** Accent text settles to `ink` after `ms` (at once when 0): the accent marks only what is happening now. */
+function settleAccent(els: Element[], ink: string, ms: number): void {
+  const go = () => els.forEach((e) => { if (e.isConnected || ms === 0) { (e as SVGElement).style.transition = 'fill 420ms ease-out'; e.setAttribute('fill', ink); } });
+  if (ms <= 0) go(); else setTimeout(go, ms);
+}
+
+/** Renders a calc line (lines of pieces, the result in the accent while written, then ink); `write` reveals it piece by piece. */
 async function drawCalc(b: Block, store: KitStore, c: ReturnType<typeof col>, env: BuildEnv, k: Pace, write: boolean, exp?: C.Expansion) {
   const cd = b.calc!;
   const e = exp ?? (cd.win || cd.live ? null : calcExpansion(cd, store, b.dp));
@@ -1906,13 +1913,15 @@ async function drawCalc(b: Block, store: KitStore, c: ReturnType<typeof col>, en
     const lines = wrapPieces(pieces, cd.maxW, (s) => m.u(textWidth(s, m.numPx)));
     const pitch = m.num * 1.55;
     const spans: SVGTSpanElement[] = [];
+    const results: SVGTSpanElement[] = [];
     lines.forEach((ln, li) => {
       const t = kitText(tg, body.x, body.y + pitch * (li + 0.5), '', { size: m.num, fill: c.ink, anchor: 'start', halo: c.halo });
       ln.forEach((p) => {
         const s = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
         s.textContent = p;
         const last = li === lines.length - 1 && p === ln[ln.length - 1];
-        if (last) setAttrs(s, { fill: env.settings.inkColor, 'font-weight': 600 });
+        // The result is the accent while it is written, then settles to ink (colour = time).
+        if (last) { setAttrs(s, { fill: env.settings.inkColor, 'data-calc-result': '' }); results.push(s); }
         t.appendChild(s);
         spans.push(s);
       });
@@ -1923,6 +1932,7 @@ async function drawCalc(b: Block, store: KitStore, c: ReturnType<typeof col>, en
       old?.remove();
       for (const s of spans) { await pause(each); s.setAttribute('fill-opacity', '1'); }
     }
+    settleAccent(results, c.ink, write && k.fadeMs == null && !prefersReducedMotion() ? 900 * k.speed : 0);
   }
   old?.remove();
   b.el.text = tg;
@@ -2046,7 +2056,7 @@ function drawPadding(p: Parts, r: number, q: number, g: SVGGElement, c: ReturnTy
     if (rr >= 0 && cc >= 0 && rr < R && cc < Cn) continue;
     const x = body.x + cc * cs, y = body.y + rr * ch;
     svg(g, 'rect', { x, y, width: cs, height: ch, fill: c.cell, 'fill-opacity': 0.7, stroke: c.muted, 'stroke-dasharray': '2 3', ...hair(1) });
-    if (p.input.view !== 'image') kitText(g, x + cs / 2, y + cs / 2, '0', { size: p.input.m.num, fill: c.muted });
+    if (p.input.view !== 'image') kitText(g, x + cs / 2, y + cs / 2, '0', { size: p.input.m.num, fill: c.ink });
   }
 }
 
@@ -2063,7 +2073,7 @@ async function winDone(p: Parts, ctl: Ctl, c: ReturnType<typeof col>, accent: st
     p.out.win!.cur = null;
     restCell(p.out, cur[0], cur[1], c, accent);
   }
-  (p.calc.el.text as SVGElement | undefined)?.setAttribute('opacity', '0.5');
+  // The calc line stays ink once the window rests (grammar: grey only for what is superseded).
 }
 
 async function stepOrSweep(v: Extract<KitVerb, { kind: 'step' | 'sweep' }>, env: BuildEnv, store: KitStore): Promise<ElementPlan | string> {
@@ -2241,7 +2251,7 @@ function paintTokenLabels(b: Block, groups: { x: number; count: number; j: numbe
   for (const g of groups) {
     kitText(e.labels, g.x, y, String(g.count), { size: m.num, fill: c.ink, opacity });
     const name = b.tok!.states[g.j];
-    if (name) kitText(e.labels, g.x, y + m.label * 1.3, shown(name), { size: m.label, fill: c.muted, opacity });
+    if (name) kitText(e.labels, g.x, y + m.label * 1.3, shown(name), { size: m.label, fill: c.ink, opacity });
   }
 }
 
@@ -2656,7 +2666,7 @@ async function drawTable(b: Block, c: ReturnType<typeof col>, k: Pace) {
   const [R, Cn] = C.shape(b.vals!);
   const head = svg(g, 'g');
   const over = svg(g, 'g');
-  const heads = tb.heads.map((h, j) => kitText(head, tb.xs[j] + tb.ws[j] / 2, body.y - tb.hh / 2, shown(h), { size: m.label, fill: c.ink2 }));
+  const heads = tb.heads.map((h, j) => kitText(head, tb.xs[j] + tb.ws[j] / 2, body.y - tb.hh / 2, shown(h), { size: m.label, fill: c.ink }));
   svg(head, 'line', { x1: body.x, x2: body.x + body.w, y1: body.y - px(b, 1), y2: body.y - px(b, 1), stroke: c.edge, ...hair(1) });
   const cap = b.el.caption as string | undefined;
   if (cap) caption(head, body.x + body.w / 2, body.y + body.h + m.label * 1.2, cap, m, c);
@@ -2801,7 +2811,7 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
       const e = t.el.table as TableEls;
       // A new column's header and cells.
       if (!e.heads[j]) {
-        e.heads[j] = kitText(e.heads[0].parentNode as SVGGElement, tb.xs[j] + tb.ws[j] / 2, t.placed.body.y - tb.hh / 2, shown(v.head), { size: m.label, fill: c.ink2 });
+        e.heads[j] = kitText(e.heads[0].parentNode as SVGGElement, tb.xs[j] + tb.ws[j] / 2, t.placed.body.y - tb.hh / 2, shown(v.head), { size: m.label, fill: c.ink });
         const rule = (e.heads[0].parentNode as SVGGElement).querySelector('line');
         rule?.setAttribute('x2', String(t.placed.body.x + t.placed.body.w));
         e.texts.forEach((row, r) => { const cell = tabCell(t, r, j); row[j] = kitText(e.rows, cell.x + cell.w / 2, cell.y + cell.h / 2, '', { size: m.num, fill: c.ink }); });
@@ -2831,7 +2841,6 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
         for (const d of store.dependents(t.id)) if (d.kind === 'scatter' && d.el.scatter) (d.el.scatter as ScatterEls).pts.forEach((el) => { if (!el.hasAttribute('data-off')) setAttrs(el, ptLook(d, c)); });
         await tween(ctl.ff ? 0 : 260, (k) => hl.setAttribute('opacity', String(1 - k)), ctl);
         hl.remove();
-        (cb.el.text as SVGElement | undefined)?.setAttribute('opacity', '0.5');
       }).finally(() => first());
       await Promise.race([started, new Promise((r) => setTimeout(r, 400))]);
     },
