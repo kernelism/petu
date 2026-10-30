@@ -15,7 +15,7 @@ export const SVG_ENGINE_DEMOS: Record<string, { question: string; raw: string }>
     raw: `<plan>
 A row of numbers averaged two at a time, then a second row with other weights.
 BOARD viewBox="0 0 1000 420"
-groups: first; second
+groups: first; firstw; second; secondw
 </plan>
 <g id="first">
   <text x="40" y="38" font-size="24" fill="#222">Averaging neighbours, two at a time</text>
@@ -29,12 +29,15 @@ groups: first; second
     <text x="120" y="135">1</text><text x="180" y="135">2</text><text x="340" y="135">2</text>
     <text x="400" y="135">3</text><text x="560" y="135">3</text><text x="620" y="135">4</text>
   </g>
+</g>
+Each pair of neighbours is averaged
+<g id="firstw">
   <g font-size="17" fill="#888" text-anchor="middle">
     <text x="150" y="181">weights 0.5, 0.5</text><text x="370" y="181">weights 0.5, 0.5</text><text x="590" y="181">weights 0.5, 0.5</text>
   </g>
   <g font-size="19" fill="#222" text-anchor="middle"><text x="150" y="208">1.5</text><text x="370" y="208">2.5</text><text x="590" y="208">3.5</text></g>
 </g>
-Each pair of neighbours is averaged with weights of one half: one point five, two point five, three point five.
+with weights of one half: one point five, two point five, three point five.
 <g id="second">
   <text x="40" y="245" font-size="18" fill="#888">second row: other weights</text>
   <g fill="none" stroke="#222" stroke-width="2">
@@ -46,6 +49,9 @@ Each pair of neighbours is averaged with weights of one half: one point five, tw
     <text x="120" y="295">0</text><text x="180" y="295">2</text><text x="340" y="295">2</text>
     <text x="400" y="295">0</text><text x="560" y="295">0</text><text x="620" y="295">2</text>
   </g>
+</g>
+A second row with weights of one quarter
+<g id="secondw">
   <g font-size="17" fill="#888" text-anchor="middle">
     <text x="150" y="341">weights 0.25, 0.25</text><text x="370" y="341">weights 0.25, 0.25</text><text x="590" y="341">weights 0.25, 0.25</text>
   </g>
@@ -53,7 +59,7 @@ Each pair of neighbours is averaged with weights of one half: one point five, tw
   <text x="800" y="300" font-size="18" fill="#7c3aed" text-anchor="middle">same rule,</text>
   <text x="800" y="324" font-size="18" fill="#7c3aed" text-anchor="middle">every position</text>
 </g>
-A second row with weights of one quarter gives one half everywhere: the same rule at every position.`,
+gives one half everywhere: the same rule at every position.`,
   },
   ceiling: {
     question: 'Why does a rent ceiling below the market rent create a shortage, and what happens if it is cut further?',
