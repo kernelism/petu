@@ -26,7 +26,7 @@ function example(word: string): SvgDemo {
 }
 
 export const SVG_DEMOS: Record<string, SvgDemo> = {
-  'svg-ferry': example('banks'),
+  'svg-ferry': example('river'),
   'svg-dough': example('yeast'),
   // The exact-data engine: computed curves, crossings and readouts, constants tweened.
   ...Object.fromEntries(Object.entries(SVG_ENGINE_DEMOS).map(([k, v]) => [`svg-${k}`, demo(v.question, v.raw)])),

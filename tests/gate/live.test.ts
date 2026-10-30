@@ -293,3 +293,18 @@ describe('live gate: the length budget', () => {
     expect(h.out.join('')).toContain('<g id="g1">');
   });
 });
+
+describe('live gate: the length budget, p6.1 (spoken first, then the plan; each beat its group first)', () => {
+  const pre = (): Preflight => ({ check: () => ({ flags: [], notes: [], tags: [] }), accept() {}, reject() {} });
+  it("cuts before a beat's group, never between a group and its sentences, even when the id is named late", async () => {
+    const h = harness({ preflight: pre() });
+    h.gate.setBudget({ capWords: 60 });
+    const beat = (id: string, n: number) => `{{svg <g id="${id}"></g>}} ${Array.from({ length: n }, (_, j) => `${id}w${j}`).join(' ')} the ${id}. `;
+    await h.play(['Opener. ', { handoff: true }, 'It holds because the push never stops. {{svgboard h=600}} ', beat('river', 20), beat('drift', 20), beat('triangle', 20), '{{svg <g id="time"></g>}} What if the current were faster? ']);
+    const text = h.out.join('');
+    for (const id of ['river', 'drift', 'triangle']) expect(text.includes(`id="${id}"`), id).toBe(text.includes(`${id}w0`));
+    expect(text).toContain('driftw19');
+    expect(text).not.toContain('trianglew0');
+    expect(text.trim().endsWith('faster?')).toBe(true);
+  });
+});

@@ -4,9 +4,10 @@
  * beat, one a quantity over time read off its own chart. Each script is exactly what the model
  * writes in the svg format (p6.1): a first sentence pointing at the page (no drawing, it plays while
  * the plan is written), the hidden <plan> ending with the BOARD layout (viewBox, regions, groups in
- * teaching order), then beats in which each small <g id> comes just before the words that name it,
- * in absolute board coordinates. The board holds the picture, labels and key numbers, never the
- * narration's derivation. Every number is computed (the ferry's 3-4-5 triangle; the dough's doublings),
+ * teaching order), then beats: the beat's <g id> first (it draws across its sentences; parts with ids
+ * draw on the word that names them), then its sentences. Numbers that follow from a formula are
+ * formulas (data-const, data-axes/data-fn, data-at, data-val: src/svgboard/data.ts). The board holds
+ * the picture, labels and key numbers, never the narration's derivation. Every number is computed (the ferry's 3-4-5 triangle; the dough's doublings),
  * every group id is a word its beat says, and nothing overlaps (rendered and checked by eye;
  * tests/server/prompt.test.ts checks the form). They set the bar for richness: draw the mechanism,
  * labelled, composed so the finished board reads on its own.
@@ -27,13 +28,12 @@ t3 205 40–860: River 300 m wide, current 1.5 m/s, ferry speed in still water 2
 #g1 figure 520,320 420×380 "ferry"`,
     script: String.raw`{{highlight p=6 "aims upstream"}} The ferry aims upstream because the water carries it sideways for the whole crossing, so its aim has to cancel that push.
 <plan>
-Case: river 300 m, current 1.5, ferry 2.5; 3-4-5 triangle: across 2.0 m/s, 37°. Aimed at B: 120 s, drifts 180 m. Aimed upstream: 150 s.
+Case: river 300 m, current 1.5, ferry 2.5; across u = sqrt(2.5² − 1.5²) = 2.0 m/s, aim 37°. Aimed at B: 120 s, drifts 180 m. Aimed upstream: 150 s.
 BOARD viewBox="0 0 1000 700"
 regions: river (40–560, 70–610) from above, 400 units = 300 m; triangle (600–960, 330–610) 1 m/s = 100 units; time (600–1000, 630–690)
-groups: banks; current; drift; triangle; aim; time
+groups: river; drift; triangle; aim; time
 </plan>
-Here are the
-<g id="banks">
+<g id="river" data-const="W=300 c=1.5 v=2.5 u=sqrt(v^2-c^2)">
 <line x1="40" y1="140" x2="560" y2="140" stroke="#222" stroke-width="3"/>
 <line x1="40" y1="540" x2="560" y2="540" stroke="#222" stroke-width="3"/>
 <text x="80" y="130" font-size="16" fill="#888">far bank</text>
@@ -46,8 +46,6 @@ Here are the
 <text x="200" y="572" font-size="18" text-anchor="middle" fill="#222">A</text>
 <circle cx="200" cy="140" r="6" fill="#222"/>
 <text x="200" y="122" font-size="18" text-anchor="middle" fill="#222">B</text>
-</g>
-banks, 300 metres apart, and the
 <g id="current">
 <g stroke="#888" stroke-width="2" fill="none">
 <line x1="470" y1="250" x2="540" y2="250"/><polyline points="528,242 540,250 528,258"/>
@@ -56,15 +54,14 @@ banks, 300 metres apart, and the
 </g>
 <text x="505" y="222" font-size="18" text-anchor="middle" fill="#222">current 1.5 m/s</text>
 </g>
-current, carrying everything downstream at 1.5 metres per second.
-Point it straight at B and the crossing takes 120 seconds, but the water pushes the whole time: the
+</g>
+Here is the river from above: 300 metres between the banks, and the current carrying everything downstream at 1.5 metres per second.
 <g id="drift">
 <line x1="200" y1="540" x2="440" y2="140" stroke="#888" stroke-width="2" stroke-dasharray="8 6"/>
 <circle cx="440" cy="140" r="7" fill="#888"/>
-<text x="440" y="112" font-size="18" text-anchor="middle" fill="#222">lands 180 m downstream</text>
+<text x="440" y="112" font-size="18" text-anchor="middle" fill="#222" data-val="c*W/v" data-fmt="0">lands {} m downstream</text>
 </g>
-drift carries it 180 metres downstream.
-Velocities add tip to tail, so draw the
+Point it straight at B and the crossing takes 120 seconds, but the water pushes the whole time: the drift carries it 180 metres downstream.
 <g id="triangle">
 <line x1="800" y1="560" x2="650" y2="360" stroke="#222" stroke-width="3"/>
 <polyline points="664,367 650,360 652.8,375.4" fill="none" stroke="#222" stroke-width="3"/>
@@ -77,11 +74,10 @@ Velocities add tip to tail, so draw the
 <text x="725" y="344" font-size="18" text-anchor="middle" fill="#888">current 1.5</text>
 <text x="712" y="470" font-size="18" text-anchor="end" fill="#222">heading</text>
 <text x="712" y="492" font-size="18" text-anchor="end" fill="#222">2.5 m/s</text>
-<text x="815" y="465" font-size="18" fill="#222">across 2.0 m/s</text>
+<text x="815" y="465" font-size="18" fill="#222" data-val="u" data-fmt="1">across {} m/s</text>
 <text x="800" y="600" font-size="16" text-anchor="middle" fill="#888">1 m/s = 100 units</text>
 </g>
-triangle: the ferry's 2.5 through the water plus the current's 1.5 must sum to a velocity pointing straight across. It is a 3, 4, 5 triangle, so 2.0 metres per second is left for crossing, with the aim about 37 degrees upstream.
-So the ferry takes that
+Velocities add tip to tail, so draw the triangle: the ferry's 2.5 through the water plus the current's 1.5 must sum to a velocity pointing straight across. It is a 3, 4, 5 triangle, so 2.0 metres per second is left for crossing, with the aim about 37 degrees upstream.
 <g id="aim">
 <line x1="200" y1="540" x2="146" y2="468" stroke="#222" stroke-width="3"/>
 <polyline points="160,475 146,468 148.8,483.4" fill="none" stroke="#222" stroke-width="3"/>
@@ -90,12 +86,11 @@ So the ferry takes that
 <text x="200" y="596" font-size="18" text-anchor="middle" fill="#222">aims 37° upstream</text>
 <text x="214" y="300" font-size="18" fill="#7c3aed">150 s</text>
 </g>
-aim, and the current bends its path into a straight line from A to B.
-It pays in
+So the ferry takes that aim, and the current bends its path into a straight line from A to B.
 <g id="time">
-<text x="800" y="660" font-size="20" text-anchor="middle" fill="#7c3aed">crossing: 150 s, not 120 s</text>
+<text x="800" y="660" font-size="20" text-anchor="middle" fill="#7c3aed" data-val="W/u" data-fmt="0">crossing: {} s, not 120 s</text>
 </g>
-time: only 2.0 of its 2.5 metres per second carry it across, so the crossing takes 150 seconds instead of 120.
+It pays in time: only 2.0 of its 2.5 metres per second carry it across, so the crossing takes 150 seconds instead of 120.
 If the current ran at 3 metres per second, faster than the ferry, could any aim still take it straight to B?`,
   },
   {
@@ -111,12 +106,11 @@ t3 175 100–700: in just over two hours. Most of the rise comes at the end.
 #g1 figure 100,300 800×420 "bowls"`,
     script: String.raw`{{highlight p=3 "Most of the rise comes at the end."}} The pace is steady per cell, not per bowl, so the growth piles up at the end.
 <plan>
-Case: 400 ml doubling every 45 min: 800 at 45, 1600 at 90, 3200 at 135. Gains 400, 800, 1600 (the last beats the first two together). One cell → 2, 4, 8.
+Case: 400 ml doubling every 45 min: v = 400·2^(t/45), 800 at 45, 1600 at 90, 3200 at 135. Gains 400, 800, 1600. One cell → 2, 4, 8.
 BOARD viewBox="0 0 1000 680"
 regions: cells (40–340, 90–480) one row per 45 min; chart (360–960, 90–600) 0–135 min → x 420–900, 0–3200 ml → y 560–120; brackets (420–900, 600–650)
-groups: yeast; axes; curve; steps; same
+groups: yeast; curve; steps; same
 </plan>
-Every
 <g id="yeast">
 <text x="50" y="110" font-size="18" fill="#222">yeast cells</text>
 <text x="50" y="176" font-size="16" fill="#888">0 min</text>
@@ -128,35 +122,26 @@ Every
 <text x="50" y="416" font-size="16" fill="#888">135 min</text>
 <g fill="none" stroke="#222" stroke-width="2"><circle cx="150" cy="410" r="9"/><circle cx="174" cy="410" r="9"/><circle cx="198" cy="410" r="9"/><circle cx="222" cy="410" r="9"/><circle cx="246" cy="410" r="9"/><circle cx="270" cy="410" r="9"/><circle cx="294" cy="410" r="9"/><circle cx="318" cy="410" r="9"/></g>
 </g>
-yeast cell splits in two each 45 minutes, so 1 becomes 2, then 4, then 8.
-Put the dough's volume against time on these
-<g id="axes">
-<line x1="420" y1="560" x2="920" y2="560" stroke="#222" stroke-width="2"/>
-<line x1="420" y1="560" x2="420" y2="110" stroke="#222" stroke-width="2"/>
-<g stroke="#222" stroke-width="2"><line x1="580" y1="560" x2="580" y2="568"/><line x1="740" y1="560" x2="740" y2="568"/><line x1="900" y1="560" x2="900" y2="568"/><line x1="414" y1="505" x2="420" y2="505"/><line x1="414" y1="450" x2="420" y2="450"/><line x1="414" y1="340" x2="420" y2="340"/><line x1="414" y1="120" x2="420" y2="120"/></g>
-<g font-size="16" fill="#888" text-anchor="middle"><text x="420" y="586">0</text><text x="580" y="586">45</text><text x="740" y="586">90</text><text x="900" y="586">135 min</text></g>
-<g font-size="16" fill="#888" text-anchor="end"><text x="408" y="510">400</text><text x="408" y="455">800</text><text x="408" y="345">1600</text><text x="408" y="125">3200</text></g>
-</g>
-axes, and the
-<g id="curve">
+Every yeast cell splits in two each 45 minutes, so 1 becomes 2, then 4, then 8.
+<g id="curve" data-const="v0=400 T=45">
+<g data-axes="ax" data-x="0,135" data-y="0,3200" data-box="420,120,480,440" data-frame="" data-ticks-x="0,45,90,135" data-ticks-y="400,800,1600,3200" data-unit-x=" min"/>
 <text x="432" y="100" font-size="18" fill="#222">dough volume (ml)</text>
-<polyline points="420,505 473.3,490.7 526.7,472.7 580,450 633.3,421.4 686.7,385.4 740,340 793.3,282.8 846.7,210.7 900,120" fill="none" stroke="#222" stroke-width="3"/>
-<g fill="#222"><circle cx="420" cy="505" r="5"/><circle cx="580" cy="450" r="5"/><circle cx="740" cy="340" r="5"/><circle cx="900" cy="120" r="5"/></g>
+<path id="volume" data-fn="v0*2^(x/T)" data-axes="ax" fill="none" stroke="#222" stroke-width="3"/>
 </g>
-curve follows the cells: 400 millilitres doubles to 800, then 1600, then 3200, bending upward.
-Now read the
+The dough's volume follows the cells: on this curve 400 millilitres doubles to 800, then 1600, then 3200, bending upward.
 <g id="steps">
-<g stroke="#888" stroke-width="1.5" stroke-dasharray="6 5"><line x1="420" y1="505" x2="580" y2="505"/><line x1="580" y1="450" x2="740" y2="450"/><line x1="740" y1="340" x2="900" y2="340"/></g>
-<g stroke="#222" stroke-width="3"><line x1="580" y1="505" x2="580" y2="450"/><line x1="740" y1="450" x2="740" y2="340"/><line x1="900" y1="340" x2="900" y2="120"/></g>
-<g font-size="18" fill="#222"><text x="590" y="484">+400</text><text x="750" y="402">+800</text><text x="910" y="236">+1600</text></g>
+<g stroke="#888" stroke-width="1.5" stroke-dasharray="6 5"><line data-from="at(volume, x=0)" data-to="pt(ax, T, v0)"/><line data-from="at(volume, x=T)" data-to="pt(ax, 2*T, 2*v0)"/><line data-from="at(volume, x=2*T)" data-to="pt(ax, 3*T, 4*v0)"/></g>
+<g stroke="#222" stroke-width="3"><line data-from="pt(ax, T, v0)" data-to="at(volume, x=T)"/><line data-from="pt(ax, 2*T, 2*v0)" data-to="at(volume, x=2*T)"/><line data-from="pt(ax, 3*T, 4*v0)" data-to="at(volume, x=3*T)"/></g>
+<text data-at="at(volume, x=T)" dx="10" dy="34" font-size="18" fill="#222" data-val="v0" data-fmt="0">+{}</text>
+<text data-at="at(volume, x=2*T)" dx="10" dy="62" font-size="18" fill="#222" data-val="2*v0" data-fmt="0">+{}</text>
+<text data-at="at(volume, x=3*T)" dx="10" dy="116" font-size="18" fill="#222" data-val="4*v0" data-fmt="0">+{}</text>
 </g>
-steps: the first 45 minutes add 400 millilitres, the next add 800, and the last add 1600, more than both before them together.
-Each step takes the
+Now read the steps: the first 45 minutes add 400 millilitres, the next add 800, and the last add 1600, more than both before them together.
 <g id="same">
 <path d="M420,604 V614 H580 V604 M580,614 H740 V604 M740,614 H900 V604" fill="none" stroke="#7c3aed" stroke-width="2.5"/>
 <g font-size="17" fill="#7c3aed" text-anchor="middle"><text x="500" y="640">45 min, ×2</text><text x="660" y="640">45 min, ×2</text><text x="820" y="640">45 min, ×2</text></g>
 </g>
-same 45 minutes and makes the same doubling; what grows is the amount being doubled, so the last doubling adds the most.
+Each step takes the same 45 minutes and makes the same doubling; what grows is the amount being doubled, so the last doubling adds the most.
 If a warm kitchen made the cells split every 30 minutes, how long would 400 millilitres take to reach 3200?`,
   },
 ];

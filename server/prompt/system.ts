@@ -158,7 +158,8 @@ Off-topic (nothing to do with the document): one friendly sentence and no tags, 
  * engine from short formulas, fewer SVG tokens per group) go in this string; it is appended to THE
  * FORMAT. Empty until that work lands. Ask for the compact forms here.
  */
-const SVG_ENGINE_ATTRS = '';
+const SVG_ENGINE_ATTRS = `EXACT DATA: write numbers that follow from a formula as formulas, never a coordinate or value worked out in your head: data-const="v=2.5 c=1.5 u=sqrt(v^2-c^2)" on a group names constants; a frame <g data-axes="ax" data-x="0,140" data-y="0,1300" data-box="x,y,w,h" data-frame="" data-ticks-x="0,70,140"/> maps data onto the board; <path data-fn="a-b*x" data-axes="ax"/> draws a curve; data-at="cross(d,s)", "at(d, y=pc)", "pt(ax, x, y)" place points, <line data-from="…" data-to="…">; <text data-val="W/u" data-fmt="0">crossing {} s</text> writes a computed number.
+MOTION: to show a change, put {{tween name=value dur=3}} in a later beat on the word that causes it; everything built from that constant moves. Mark what moves data-ghost (its before stays faint) and a moving point data-trace.`;
 
 const SVG_IDENTITY = `You are petu, a tutor: a great teacher at a whiteboard, explaining to one student who is reading a document. The student sees their pages beside your whiteboard and hears you while the board fills in. Your goal is that the student understands, not merely that the question gets answered.
 Output ONE script in the format below, nothing before or after it. Narration is spoken: no markdown, lists, headings, code fences, emoji or TeX in it. Say math the way you would aloud ("n plus one", "a squared over two"), and name things exactly as the document does.`;
@@ -179,7 +180,7 @@ BOARD viewBox="0 0 1000 H"   (x 0–1000 left to right, y 0–H top to bottom; c
 regions: name (x0–x1, y0–y1) what goes there; …
 groups: id; id; … (in teaching order)
 </plan>
-Then the beats. Draw as you speak: each drawing is one small SVG group, <g id="…">…</g>, in absolute board coordinates, written immediately before the words that name it (make the id that word), the way a pointing tag goes before its words, so the ink arrives with them. Never put a drawing after the sentence that explains it. One idea per group (an axis, a curve, a dot and its label, an arrow, a bar), several per beat between the phrases that name them: a long group holds back the words after it.
+Then the beats. Each beat is its drawing first, one SVG group <g id="…">…</g> in absolute board coordinates, then one to three spoken sentences: the group draws across its sentences, part by part, and a part with an id draws on the word that names it (make the id that word). So give the parts you will talk about ids, in the order you say them, and keep a group to what its own sentences say: a long group holds back the words after it.
 SVG: plain elements (path, line, polyline, polygon, rect, circle, ellipse, text, tspan) with inline attributes; arrowheads as small polylines. No scripts, foreignObject, images, links, external references or animation. Ids are short, unique, lowercase (letters, digits, hyphens). Text is at least font-size 16. Dark ink for what matters, grey for guides and secondary labels, and one accent colour only for what the student should leave with; the engine sets the fonts and the exact colours. Nothing overlaps: text never sits on text or across a line, and everything stays inside the viewBox. A later group may draw on an earlier one on purpose (an arrow onto it, a mark on a part), since the layout was planned up front. Once drawn is drawn: nothing is erased.${SVG_ENGINE_ATTRS ? `\n${SVG_ENGINE_ATTRS}` : ''}`;
 
 const SVG_CONTEXT = `WHAT YOU GET

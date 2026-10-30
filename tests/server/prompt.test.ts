@@ -128,7 +128,7 @@ describe('system prompt (tags)', () => {
 
 /** The BOARD height a script's plan declares. */
 const boardH = (script: string) => Number(/BOARD (?:extend )?viewBox="0 0 1000 (\d+)"/.exec(script)?.[1]);
-/** A script's groups (top level; nested groups stay inside), each with the narration that follows it up to the next group (p6.1: a group comes just before the words that name it). */
+/** A script's beats (p6.1): its top-level <g id> group first, then the narration up to the next group (the group draws across it). */
 function beatsOf(script: string): { narration: string; id: string; svg: string }[] {
   const body = script.slice(script.indexOf('</plan>') + 7);
   const out: { narration: string; id: string; svg: string }[] = [];
@@ -137,12 +137,14 @@ function beatsOf(script: string): { narration: string; id: string; svg: string }
     const open = body.indexOf('<g id="', pos);
     if (open < 0) break;
     let depth = 0, end = -1;
-    for (const m of body.slice(open).matchAll(/<g[\s>]|<\/g>/g)) {
+    for (const m of body.slice(open).matchAll(/<g\b[^>]*?(\/?)>|<\/g>/g)) {
+      if (m[1] === '/') continue; // a self-closing frame (<g data-axes … />)
       depth += m[0] === '</g>' ? -1 : 1;
       if (depth === 0) { end = open + m.index! + 4; break; }
     }
     expect(end, 'unbalanced <g>').toBeGreaterThan(open);
     if (out.length) out[out.length - 1].narration = body.slice(pos, open);
+    else expect(body.slice(0, open).trim(), 'a beat starts with its group').toBe('');
     out.push({ narration: '', id: /<g id="([^"]+)"/.exec(body.slice(open))![1], svg: body.slice(open, end) });
     pos = end;
   }
@@ -171,7 +173,7 @@ describe('system prompt (svg, default)', () => {
   it('has no tag-DSL card: only page pointing tags', () => {
     expect(s).not.toMatch(/\bTAGS \(|KIT \(|SCENE \(|\{\{(sketch|scene|let|const|plot|grid|bars|node|val|show|svgboard)\b/);
     const kinds = new Set([...s.matchAll(/\{\{(\w+)/g)].map((m) => m[1]));
-    for (const k of kinds) expect(['scroll', 'highlight', 'underline', 'circle', 'box'], k).toContain(k);
+    for (const k of kinds) expect(['scroll', 'highlight', 'underline', 'circle', 'box', 'tween'], k).toContain(k); // tween: the svg engine's motion (data.ts)
   });
 
   it('every pointing tag it shows parses', () => {
@@ -196,7 +198,7 @@ describe('system prompt (svg, default)', () => {
 
   it('states the teacher-at-a-whiteboard brief and the streamed beat format', () => {
     for (const p of [/great teacher at a whiteboard/, /Draw the mechanism, not names/, /ONE concrete case/, /real numbers you compute/, /reads on its own/, /beats are your budget/,
-      /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 1000 H"/, /regions:/, /groups:/, /<g id=/, /immediately before the words that name it/, /Never put a drawing after the sentence/, /One idea per group/, /Start speaking at once/, /BUDGET line/, /Never write on the board what you say/,
+      /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 1000 H"/, /regions:/, /groups:/, /<g id=/, /drawing first/, /draws across its sentences/, /draws on the word that names it/, /Start speaking at once/, /data-fn=/, /data-val=/, /data-at=/, /data-const=/, /\{\{tween /, /data-ghost/, /data-trace/, /BUDGET line/, /Never write on the board what you say/,
       /No scripts, foreignObject/, /font-size 16/, /one accent colour/, /Nothing overlaps/, /inside the viewBox/, /BOARD extend/, /ghost/]) expect(s).toMatch(p);
   });
 
@@ -224,7 +226,7 @@ describe('system prompt (svg, default)', () => {
       expect(new Set(bs.map((b) => b.id)).size).toBe(bs.length);
       for (const b of bs) {
         expect(b.id).toMatch(/^[a-z][a-z0-9-]*$/);
-        expect(b.narration.trim().split(/\s+/).length, b.id).toBeGreaterThan(1); // the words it draws with (a phrase: fine groups sit between phrases)
+        expect(b.narration.trim().split(/\s+/).length, b.id).toBeGreaterThan(8); // the sentences it draws across
         const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${b.svg}</svg>`, 'image/svg+xml');
         expect(doc.querySelector('parsererror'), b.id).toBeNull();
         expect(b.svg).not.toMatch(/<(script|foreignObject|image|animate|a)\b|\bon\w+=|href=/i);
@@ -240,8 +242,13 @@ describe('system prompt (svg, default)', () => {
       }
     });
 
-    it('each group comes just before the word that names it (its id, within the next few words)', () => {
-      for (const b of beatsOf(ex.script)) expect(b.narration.toLowerCase().split(/[^a-z0-9-]+/).filter(Boolean).slice(0, 3), b.id).toContain(b.id);
+    it('each group id is a word its beat says (the engine draws it on that word)', () => {
+      for (const b of beatsOf(ex.script)) expect(b.narration.toLowerCase().split(/[^a-z0-9-]+/), b.id).toContain(b.id);
+    });
+
+    it('numbers that follow from a formula are formulas (the engine computes them)', () => {
+      expect(ex.script).toMatch(/data-const="/);
+      expect(ex.script).toMatch(/data-val="/);
     });
 
     it('the board never writes out the narration: no derivation lines, short labels only', () => {

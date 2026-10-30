@@ -502,7 +502,7 @@ export class LiveGate {
     // Groups ahead of the first word must be named by it (p6.1: a group just before the words that name it).
     for (const t of toks) {
       if (t.kind === 'word') break;
-      if (t.kind === 'tag' && isSvgTagBody(t.body.slice(0, 6)) && !namedBy(t.body, lead)) return false;
+      if (t.kind === 'tag' && isSvgTagBody(t.body.slice(0, 6)) && !this.groupsLead && !namedBy(t.body, lead)) return false;
     }
     const p = prev.trimEnd();
     if (!/[.!?…]["'’”)\]]*$/.test(p) && !/\}\}$/.test(p)) return false;
@@ -511,7 +511,7 @@ export class LiveGate {
       if (open < 0) break;
       const body = rest.slice(open + 2, -2);
       if (!isSvgTagBody(body.slice(0, 6))) break;
-      if (namedBy(body, lead)) return false;
+      if (this.groupsLead || namedBy(body, lead)) return false;
       rest = rest.slice(0, open).trimEnd();
     }
     return true;
@@ -522,6 +522,8 @@ export class LiveGate {
    * group just before the words that name it opens the next beat (p6.1), else it closes its own (p6.0).
    */
   private carry = '';
+  /** Whether groups lead their beat's sentences (p6.1) or close them (p6.0); null until the board opens. */
+  private groupsLead: boolean | null = null;
 
   /**
    * The length budget: once the released stage-2 words leave no room for more than the check question,
@@ -533,6 +535,13 @@ export class LiveGate {
   private paced(u0: PreflightUnit): PreflightUnit[] {
     if (u0.kind === 'opener' || !this.budget || !this.stage2) return [u0];
     let u = u0;
+    // The format: p6.1 speaks before its plan (words before the board opens), and each beat's group leads
+    // its sentences; p6.0 opens the board first, and a group closes its beat.
+    if (this.groupsLead == null) {
+      const at = u.text.indexOf('{{svgboard');
+      if (at >= 0) this.groupsLead = this.words2 > 0 || wordCount(u.text.slice(0, at)) > 0;
+      else if (/\{\{\s*svg\b/.test(u.text)) this.groupsLead = false;
+    }
     const go: PreflightUnit[] = [];
     let prev = this.released2;
     if (this.carry) {
@@ -541,7 +550,7 @@ export class LiveGate {
       const c = this.carry;
       this.carry = '';
       const lead = tokenize(u.text).filter((t): t is Word => t.kind === 'word').slice(0, 6).map((w) => w.text.toLowerCase().replace(/[^\p{L}\p{N}-]/gu, ''));
-      const ours = tokenize(c).some((t) => t.kind === 'tag' && isSvgTagBody(t.body.slice(0, 6)) && namedBy(t.body, lead));
+      const ours = this.groupsLead || tokenize(c).some((t) => t.kind === 'tag' && isSvgTagBody(t.body.slice(0, 6)) && namedBy(t.body, lead));
       if (ours) u = { ...u, text: c + u.text };
       else { go.push({ key: `${u.key}g`, kind: 'sentence', text: c }); prev += c; }
     }
@@ -562,8 +571,20 @@ export class LiveGate {
 
   /** The held units' last beat that asks the student a question (played); the rest are cut. */
   private closingBeat(): PreflightUnit[] {
-    const h = this.held;
+    let h = this.held;
     this.held = [];
+    // A beat's group leads its sentences (p6.1): a unit that is only groups joins the unit after it.
+    if (this.groupsLead) {
+      const f: PreflightUnit[] = [];
+      let pend: PreflightUnit | null = null;
+      for (const u of h) {
+        if (pend) { f.push({ ...u, key: pend.key, text: pend.text + u.text }); pend = null; continue; }
+        if (wordCount(u.text) === 0 && /\{\{\s*svg\b/.test(u.text)) { pend = u; continue; }
+        f.push(u);
+      }
+      if (pend) f.push(pend);
+      h = f;
+    }
     const starts = h.flatMap((u, i) => (i === 0 || this.opensBeat(u, h[i - 1].text) ? [i] : []));
     const asks = (us: PreflightUnit[]) => /\?/.test(us.map((u) => u.text.replace(/\{\{[^}]*\}\}/g, ' ')).join(' '));
     let keep: [number, number] | null = null;
