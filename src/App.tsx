@@ -1561,6 +1561,11 @@ export default function App() {
         report={import.meta.env.DEV ? captureReport : undefined}
       />
       <FollowPill visible={paused} onResume={resumeFollow} x={dock.x} />
+      {desk?.edge && desk.page && (
+        <button type="button" className={`lane-edge is-${desk.edge.dir}`} style={{ left: desk.page.x + 12 }} onClick={() => void deskRef.current?.showEdge()}>
+          <span aria-hidden="true">{desk.edge.dir === 'up' ? '↑' : '↓'}</span> p.{desk.edge.page} · marked
+        </button>
+      )}
       <OverviewPill />
       <SessionDrawer open={sessionOpen} rows={sessionRows} total={sessionTotal} onPick={pickSession} onClose={() => setSessionOpen(false)} />
       <RouteChip route={route} backTo={backTo} onBack={onBack} x={desk?.lane && desk.page ? desk.page.x + desk.page.w / 2 : dock.x} />

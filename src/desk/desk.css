@@ -287,6 +287,7 @@
   transition: opacity 160ms var(--ease-out, ease-out);
 }
 .lane-item.is-pinned::before, .lane-item.is-pinned::after { opacity: 1; }
+.lane-item.is-pinned.is-clipped::after { opacity: 0; }
 .lane-item.is-pinned > .trail-head:not(.is-aside) { visibility: hidden; }
 
 /* Leaders: 1 px accent from a dot on the page edge to the drawing (≤ 120 px, never across text). */

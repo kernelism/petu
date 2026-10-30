@@ -42,6 +42,8 @@ type Group = {
   secs: Section[]; head: HTMLElement | null;
   anchor: { page: number; y: number }; lift: number;
   top: number; h: number; live: boolean; folded: boolean; thumb: HTMLElement | null;
+  /** Its anchor is the view (the answer had not marked the page yet): its first page mark re-anchors it. */
+  provisional?: boolean;
   /** Its heads and sections in order (the lane stacks them in this order). */
   parts?: HTMLElement[];
 };
@@ -197,7 +199,7 @@ export class Desk implements DeskApi {
     if (f.lane) {
       // The lane: one sheet, nothing opens; the dock sits under the column the pen is in (spec §5.3).
       const col = this.penLane ? { x: f.lane.x, w: f.lane.w } : { x: f.page.pageX, w: f.page.pageW };
-      const s: DeskState = { split: this.open ? 'normal' : 'none', stacked: false, following: this.follow.following(), sketching: this.open, column: col, lane: true, page: { x: f.page.pageX, w: f.page.pageW } };
+      const s: DeskState = { split: this.open ? 'normal' : 'none', stacked: false, following: this.follow.following(), sketching: this.open, column: col, lane: true, page: { x: f.page.pageX, w: f.page.pageW }, ...(this.edge ? { edge: this.edge } : {}) };
       if (this.open && f.board) s.board = f.board;
       return s;
     }
@@ -346,6 +348,25 @@ export class Desk implements DeskApi {
     if (t.page == null) return;
     this.inked.unshift({ page: t.page, r });
     if (this.inked.length > 8) this.inked.length = 8;
+    const g = this.liveGroup;
+    if (!g || !this.lane()) return;
+    if (g.provisional) {
+      // The answer's first page mark: the drawing moves level with the passage it explains (one glide).
+      g.provisional = false;
+      g.anchor = { page: t.page, y: r.y + Math.min(r.h, 40) / 2 };
+      const from = g.item.getBoundingClientRect().top;
+      this.position();
+      this.glideFrom(g, from);
+    }
+    this.liveLane();
+  }
+
+  /** A FLIP glide of a group's item from its old screen top to where it is now (DOCK_MS; none under reduced motion). */
+  private glideFrom(g: Group, from: number) {
+    const dy = from - g.item.getBoundingClientRect().top;
+    const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced || Math.abs(dy) < 1 || typeof g.item.animate !== 'function') return;
+    g.item.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: DOCK_MS, easing: 'cubic-bezier(.2,.8,.2,1)' });
   }
 
   async reveal(t: Target, r: SRect, before?: BeforeMove, anchor?: SRect): Promise<boolean> {
@@ -868,6 +889,7 @@ export class Desk implements DeskApi {
   /** The slides or the board scrolled: wires follow (once per frame), visibility waiters re-check. */
   private onMove() {
     if (this.liveGroup && this.lane()) this.liveLane();
+    if (this.lane() && (this.liveGroup || this.edge)) this.edgeCheck();
     this.moved.forEach((f) => f());
     if (this.frameReq || !this.wires.length) return;
     this.frameReq = raf(() => { this.frameReq = 0; this.rerouteAll(); }) as unknown as number;
@@ -956,6 +978,30 @@ export class Desk implements DeskApi {
   /** The lane layout is on (a window ≥ LANE_MIN_W, and the viewer has its lane layer). */
   private lane(): boolean { return !!this.frame().lane; }
   private wasLane = false;
+  /** The edge marker shown now (null: none). */
+  private edge: DeskState['edge'] | null = null;
+
+  /** Recomputes the edge marker: the playing answer's latest page mark, out of the band above or below. */
+  private edgeCheck() {
+    let next: DeskState['edge'] | null = null;
+    const k = this.inked[0];
+    if (k && this.liveGroup && this.lane()) {
+      const r = this.deskRect(k.page, k.r);
+      const { H } = this.host.viewport(), top = this.host.scrollTop();
+      if (r && r.y + r.h < top + SAFE_TOP) next = { dir: 'up', page: k.page };
+      else if (r && r.y > top + H - safeBottom()) next = { dir: 'down', page: k.page };
+    }
+    if (next?.dir === this.edge?.dir && next?.page === this.edge?.page) return;
+    this.edge = next;
+    this.emit();
+  }
+
+  /** The edge marker was clicked: the sheet scrolls back to the answer's latest page mark. */
+  async showEdge(): Promise<void> {
+    const k = this.inked[0];
+    if (!k || !this.host.layout()) return;
+    await this.host.glideTo(() => this.inkFrame({ page: k.page }, k.r), 450);
+  }
 
   /**
    * A section's scale in the lane: the lane's width (mockups C1–C4: the drawing spans the margin; its
@@ -1000,7 +1046,7 @@ export class Desk implements DeskApi {
       const el = div('lane-group'), spacer = div('lane-spacer'), item = div('lane-item');
       el.append(spacer, item);
       const leader = this.leaders.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
-      const ng: Group = { el, spacer, item, leader, secs: [], head: null, anchor: this.anchorNow(page), lift: (head ? this.heads.get(sec)?.h ?? 0 : 0) + 8, top: 0, h: 0, live: true, folded: false, thumb: null };
+      const ng: Group = { el, spacer, item, leader, secs: [], head: null, provisional: !this.inked.length, anchor: this.anchorNow(page), lift: (head ? this.heads.get(sec)?.h ?? 0 : 0) + 8, top: 0, h: 0, live: true, folded: false, thumb: null };
       // A folded card opens in place on a click (before its head's own Replay).
       item.addEventListener('click', (e) => { if (ng.folded) { e.stopPropagation(); e.preventDefault(); this.fold(ng, false); this.position(); } }, true);
       this.content.insertBefore(el, this.leaders);
@@ -1063,10 +1109,7 @@ export class Desk implements DeskApi {
     const ay = this.anchorY(g.anchor), headH = g.head ? g.head.offsetHeight : 0;
     g.lift = ay - dockTop(now, g.h, ay, headH);
     this.position();
-    const dy = from - g.item.getBoundingClientRect().top;
-    const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (!animate || reduced || Math.abs(dy) < 1 || typeof g.item.animate !== 'function') return;
-    g.item.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: DOCK_MS, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    if (animate) this.glideFrom(g, from);
   }
 
   /** Puts the board where the layout says: the lane in the scroll content, or the split board on the stage. */
@@ -1130,8 +1173,11 @@ export class Desk implements DeskApi {
   private liveLane() {
     const g = this.liveGroup!;
     const top = g.item.getBoundingClientRect().top - this.content.getBoundingClientRect().top;
-    // Pinned: held in view well away from its place (the answer walked on); a nudge to fit the band is not.
-    g.item.classList.toggle('is-pinned', Math.abs(top - g.top) > LEADER_MAX);
+    // Pinned: held in view away from the passage it belongs to (the answer walked on), out of a leader's
+    // reach; a nudge to fit the band, with its anchor still beside it, is not.
+    g.item.classList.toggle('is-pinned', Math.abs(top - g.top) > LEADER_MAX && !leaderPath(this.anchorY(g.anchor), { top, h: g.h }, LANE_PAD, g.head?.offsetHeight ?? 0));
+    // A card taller than the band shows its newest part: its label would sit under the chrome row.
+    g.item.classList.toggle('is-clipped', g.item.getBoundingClientRect().top < SAFE_TOP);
     this.drawLeader(g, top);
   }
 
@@ -1260,7 +1306,7 @@ export class Desk implements DeskApi {
    */
   async overview(): Promise<void> {
     // The lane: the answer's group docks beside its main anchor (spec §5.2 rule 5).
-    if (this.lane() && this.liveGroup && !this.asideOpen) { this.dock(this.liveGroup, true); this.liveGroup = null; }
+    if (this.lane() && this.liveGroup && !this.asideOpen) { this.dock(this.liveGroup, true); this.liveGroup = null; this.edgeCheck(); }
     const sec = [...this.ids.values()].reverse().find((s) => s.scene);
     if (!sec || !this.open || !this.follow.following()) return;
     const ext = sec.scene!.space.extent(), box = this.boxOf(sec);

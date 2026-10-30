@@ -11,7 +11,7 @@ type Props = { open: boolean; rows: SessionRow[]; total: string; onPick(i: numbe
 export function SessionDrawer({ open, rows, total, onPick, onClose }: Props) {
   const ref = useRef<HTMLElement>(null);
   // Opening moves focus into the list (keyboard users land on it); S or Esc closes.
-  useEffect(() => { if (open) ref.current?.querySelector<HTMLButtonElement>('.session-row')?.focus({ preventScroll: true }); }, [open]);
+  useEffect(() => { if (open) (ref.current?.querySelector<HTMLButtonElement>('.session-row.is-current') ?? ref.current?.querySelector<HTMLButtonElement>('.session-row'))?.focus({ preventScroll: true }); }, [open]);
   return (
     <aside ref={ref} className={`session${open ? ' is-open' : ''}`} aria-label="Session" aria-hidden={!open}
       onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}>

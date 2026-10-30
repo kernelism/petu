@@ -73,6 +73,8 @@ export type DeskState = {
   lane?: boolean;
   /** Layout C: the page column in view px (journeys and edge markers sit over it). */
   page?: { x: number; w: number };
+  /** Layout C: the playing answer's latest page mark is out of view, above or below (spec §5.9 #5). */
+  edge?: { dir: 'up' | 'down'; page: number };
 };
 
 /** What the drawing toolkit needs to draw into one target. */

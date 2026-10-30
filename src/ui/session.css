@@ -48,6 +48,31 @@
 .session-meta { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .session-aside { margin-top: 6px; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
 
+/* The edge marker (mockup C2): the answer's latest page mark is out of view; a click brings it back. */
+.lane-edge {
+  position: fixed;
+  top: 64px;
+  z-index: 25;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .09), 0 2px 8px rgba(0, 0, 0, .06);
+  color: var(--ink-2);
+  font: 400 12.5px/1 var(--font);
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out, ease-out), box-shadow 120ms var(--ease-out, ease-out);
+}
+.lane-edge > span { color: var(--lane-accent, #8E4EC6); }
+.lane-edge.is-down { top: auto; bottom: 172px; }
+.lane-edge:hover { background: #FAFAF8; box-shadow: 0 0 0 1px rgba(0, 0, 0, .14), 0 4px 12px rgba(0, 0, 0, .08); }
+.lane-edge:active { background: #F2F1EE; }
+.lane-edge:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
 /* Past marks (M): the earlier answers' page marks, kept hidden; shown faintly on demand. */
 .petu-past { display: none; }
 html.petu-past-on .petu-past { display: inline; opacity: .45; }
