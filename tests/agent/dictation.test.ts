@@ -108,6 +108,25 @@ describe('Dictation', () => {
     expect(ends[0].error).toBe('Microphone access was blocked.');
   });
 
+  it('closes a mic that opens after the key was refused (either order)', async () => {
+    const run = async (micFirst: boolean) => {
+      const close = vi.fn();
+      const ends: { error?: string }[] = [];
+      const tick = () => Promise.resolve().then(() => {}).then(() => {});
+      const d = new Dictation({ onText: () => {}, onEnd: (r) => ends.push(r) }, {
+        token: async () => { if (micFirst) await tick(); throw new Error('Dictation is unavailable.'); },
+        mic: async () => { if (!micFirst) await tick(); return { sampleRate: 16000, onFrame: () => {}, close }; },
+        socket: () => { throw new Error('no'); },
+      });
+      await d.start();
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      expect(ends).toEqual([{ text: '', auto: false, error: 'Dictation is unavailable.' }]);
+      expect(close).toHaveBeenCalled();
+    };
+    await run(false);
+    await run(true);
+  });
+
   it('joins punctuation finals without a space', () => {
     expect(joinWords('', 'why')).toBe('why');
     expect(joinWords('why', 'is')).toBe('why is');

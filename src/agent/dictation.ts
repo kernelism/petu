@@ -59,9 +59,11 @@ export class Dictation {
 
   async start(): Promise<void> {
     try {
-      const [tok, mic] = await Promise.all([this.d.token(), this.d.mic()]);
-      this.mic = mic;
-      if (this.ended) { mic.close(); return; }
+      // The mic is owned as soon as it opens: a refused key (or a cancel) may end dictation first,
+      // and Promise.all would drop the stream with its tracks still live.
+      const micP = this.d.mic().then((m) => { this.mic = m; if (this.ended) m.close(); return m; });
+      const [tok, mic] = await Promise.all([this.d.token(), micP]);
+      if (this.ended) return;
       const sock = this.d.socket(`${tok.url}?jwt=${encodeURIComponent(tok.jwt)}`);
       sock.binaryType = 'arraybuffer';
       this.sock = sock;
