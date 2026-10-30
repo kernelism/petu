@@ -127,6 +127,54 @@ describe('Dictation', () => {
     await run(true);
   });
 
+  it('one EndOfStream, counting every frame sent (the held ones too), and no audio after it', async () => {
+    const f = fakes();
+    await f.d.start();
+    f.sock.onopen?.();
+    f.frame(); f.frame();
+    f.sock.emit({ message: 'RecognitionStarted' });
+    f.frame();
+    f.sock.emit({ message: 'AddTranscript', metadata: { transcript: 'why' } });
+    f.d.stop();
+    f.frame(); // a frame already in flight from the worklet
+    f.sock.emit({ message: 'EndOfUtterance' });
+    f.d.stop();
+    const eos = f.sent.findIndex((x) => typeof x === 'string' && JSON.parse(x).message === 'EndOfStream');
+    expect(json(f.sent).filter((m) => m.message === 'EndOfStream')).toEqual([{ message: 'EndOfStream', last_seq_no: 3 }]);
+    expect(f.sent.slice(0, eos).filter((x) => typeof x !== 'string')).toHaveLength(3);
+    expect(f.sent.slice(eos + 1)).toEqual([]);
+    f.sock.emit({ message: 'EndOfTranscript' });
+    expect(f.ends).toEqual([{ text: 'why', auto: false }]);
+  });
+
+  it('a stop or cancel before the mic and key arrive ends at once and closes the mic when it opens', async () => {
+    for (const end of ['stop', 'cancel'] as const) {
+      const f = fakes();
+      const p = f.d.start();
+      f.d[end]();
+      expect(f.ends).toEqual([{ text: '', auto: false }]);
+      await p;
+      expect(f.micClosed()).toBe(true);
+      expect(f.url()).toBe(''); // no socket opened
+    }
+  });
+
+  it('reports a quota close and a lost connection with what was heard', async () => {
+    const f = fakes();
+    await f.d.start();
+    f.sock.emit({ message: 'RecognitionStarted' });
+    f.sock.emit({ message: 'AddPartialTranscript', metadata: { transcript: 'why does' } });
+    f.sock.onclose?.({ code: 4005, reason: '' });
+    expect(f.ends).toEqual([{ text: 'why does', auto: false, error: 'Dictation is over its quota.' }]);
+    expect(f.micClosed()).toBe(true);
+
+    const g = fakes();
+    await g.d.start();
+    g.sock.onerror?.(new Event('error'));
+    g.sock.onclose?.({ code: 1006, reason: '' });
+    expect(g.ends).toEqual([{ text: '', auto: false, error: 'Dictation lost its connection.' }]);
+  });
+
   it('joins punctuation finals without a space', () => {
     expect(joinWords('', 'why')).toBe('why');
     expect(joinWords('why', 'is')).toBe('why is');

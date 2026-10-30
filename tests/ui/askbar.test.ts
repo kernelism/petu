@@ -136,4 +136,29 @@ describe('AskBar dictation', () => {
     b.heard('and why');
     expect(host!.querySelector('[aria-label="Stop answer"]')).not.toBeNull();
   });
+
+  it('the mic again stops (once: a double click does not start a second dictation); its end sends', () => {
+    const b = mount();
+    b.clickMic();
+    b.heard('what is');
+    b.clickMic();
+    expect(dict.stop).toHaveBeenCalledTimes(1);
+    expect(dict.start).toHaveBeenCalledTimes(1);
+    b.end({ text: 'what is elasticity', auto: false });
+    expect(b.props.onAsk).toHaveBeenCalledWith('what is elasticity');
+    expect(b.input.placeholder).not.toBe('Listening…');
+  });
+
+  it('Esc in the field drops what was heard; unmounting cancels the dictation', () => {
+    const b = mount();
+    b.clickMic();
+    b.heard('oops');
+    b.key(b.input, 'Escape');
+    expect(dict.cancel).toHaveBeenCalledTimes(1);
+    expect(b.input.value).toBe('');
+    b.clickMic();
+    act(() => root!.unmount());
+    root = null;
+    expect(dict.cancel).toHaveBeenCalledTimes(2);
+  });
 });
