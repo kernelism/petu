@@ -92,23 +92,40 @@ const polyOf = (pts: string | null): Pt[] => { const v = (pts ?? '').trim().spli
 const ellipse = (cx: number, cy: number, rx: number, ry: number): Pt[] => Array.from({ length: 25 }, (_, k) => ({ x: cx + rx * Math.cos((k / 24) * 2 * Math.PI), y: cy + ry * Math.sin((k / 24) * 2 * Math.PI) }));
 
 /**
- * The board font's real advance of a string in em, measured by the engine that draws it (canvas
- * measureText): WebKit's and Gecko's system sans run wider than the estimate below (founder WebKit
- * stills: "0.2€weights"). Null where there is no canvas (tests, the server): the estimate is used.
+ * The board font's real advance of a string in em, measured by the engine that draws it (an off-screen
+ * board text, so the board's CSS — tabular numerals — applies; canvas measureText ran ~15% short):
+ * WebKit's and Gecko's system sans run wider than the estimate below (founder WebKit stills:
+ * "0.2€weights"). Null without a DOM to measure in (tests, the server): the estimate is used.
  */
-let measureCtx: CanvasRenderingContext2D | null | undefined;
+let measureEl: SVGTextElement | null | undefined;
 const measured = new Map<string, number>();
 function measureEm(s: string): number | null {
-  if (measureCtx === undefined) {
-    measureCtx = null;
+  if (measureEl === undefined) {
+    measureEl = null;
     try {
-      const c = typeof document !== 'undefined' && !/jsdom/i.test(typeof navigator !== 'undefined' ? navigator.userAgent : '') ? document.createElement('canvas').getContext('2d') : null;
-      if (c) { c.font = `100px ${FONT_SANS}`; measureCtx = c; }
-    } catch { measureCtx = null; }
+      if (typeof document !== 'undefined' && document.body && !/jsdom/i.test(typeof navigator !== 'undefined' ? navigator.userAgent : '')) {
+        // An off-screen board text: the board's own CSS applies (tabular numerals), so it measures as drawn.
+        const NS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(NS, 'svg');
+        svg.setAttribute('data-svgboard', 'measure');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.setAttribute('style', 'position:fixed;left:-10000px;top:0;width:10px;height:10px;visibility:hidden;pointer-events:none');
+        const t = document.createElementNS(NS, 'text') as SVGTextElement;
+        t.setAttribute('font-size', '100'); t.setAttribute('font-family', FONT_SANS); t.setAttribute('x', '0'); t.setAttribute('y', '100');
+        svg.appendChild(t); document.body.appendChild(svg);
+        measureEl = t;
+      }
+    } catch { measureEl = null; }
   }
-  if (!measureCtx) return null;
+  if (!measureEl) return null;
   let v = measured.get(s);
-  if (v == null) { v = measureCtx.measureText(s).width / 100; if (measured.size > 4000) measured.clear(); measured.set(s, v); }
+  if (v == null) {
+    measureEl.textContent = s;
+    v = measureEl.getComputedTextLength() / 100;
+    if (!(v > 0)) return null;
+    if (measured.size > 4000) measured.clear();
+    measured.set(s, v);
+  }
   return v;
 }
 
