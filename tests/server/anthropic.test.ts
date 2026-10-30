@@ -238,7 +238,7 @@ describe('Anthropic prices and env', () => {
     const from = (o: Record<string, string>) => (k: string) => o[k];
     const e = parseEnv(from({ PETU_MODEL: 'claude-sonnet-5-5', PETU_EFFORT: 'none' }), opts);
     expect(e.model.model).toBe('claude-sonnet-5-5');
-    expect(() => parseEnv(from({ PETU_MODEL: 'claude-opus-5-5' }), opts)).toThrow(/thinking off/);
+    expect(() => parseEnv(from({ PETU_MODEL: 'claude-opus-5-5', PETU_EFFORT: 'none' }), opts)).toThrow(/thinking off/);
     expect(parseEnv(from({ PETU_MODEL: 'claude-opus-5-5', PETU_EFFORT: 'low' }), opts).model.effort).toBe('low');
     expect(() => parseEnv(from({ PETU_SCOUT_MODEL: 'claude-haiku-5-5' }), opts)).toThrow(/scout runs on OpenAI/);
   });

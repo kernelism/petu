@@ -40,9 +40,16 @@ const EFFORTS: Effort[] = ['none', 'low', 'medium', 'high'];
  * A/B: 2.09s vs 1.24s/1.42s), and verbosity low lost 0.25 judge points on the answers it changed.
  */
 export const DEFAULT_MODEL = 'gpt-6.1-terra';
-export const DEFAULT_EFFORT: Effort = 'none';
+/**
+ * 2026-10-30 (SVG board, p6.1): effort medium. On the held-out set terra-medium judged 3.67 vs Opus-low
+ * 3.80 at ~1/9 the cost, and a blind founder + coordinator A/B preferred it on 2 of 3; effort none drew
+ * visibly weaker boards. Founder decision: terra-medium is the default, Opus the opt-in "best quality".
+ */
+export const DEFAULT_EFFORT: Effort = 'medium';
 /** Stage 2's output budget: a script that walks several pages and draws (p3.2 answers used ≤ ~900). */
 export const DEFAULT_MAX_OUTPUT = 3200;
+/** With reasoning on, its tokens count against the output budget too. */
+export const DEFAULT_MAX_OUTPUT_REASONING = 6000;
 /** Stage 1 (spec A): the fast model at effort none; its JSON is the opener (one or two sentences), ≤ 6 pages and a plan of ≤ 100 words ending with its beats. */
 export const DEFAULT_SCOUT_MODEL = 'gpt-6.1-terra';
 export { SCOUT_MAX_OUTPUT } from './limits';
@@ -105,7 +112,7 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   if (effort === 'none' && ANTHROPIC_NO_NONE.has(model)) throw new Error(`petu: ${model} cannot turn thinking off; set PETU_EFFORT=low`);
   const verbosity = str('PETU_VERBOSITY') == null ? undefined : oneOf('PETU_VERBOSITY', ['low', 'medium'] as const, 'low');
   // Lessons v3: an answer may walk several pages and build a figure across them.
-  const maxOutput = Math.round(num('PETU_MAX_OUTPUT', DEFAULT_MAX_OUTPUT));
+  const maxOutput = Math.round(num('PETU_MAX_OUTPUT', effort === 'none' ? DEFAULT_MAX_OUTPUT : DEFAULT_MAX_OUTPUT_REASONING));
   if (maxOutput < 1) throw new Error('petu: PETU_MAX_OUTPUT must be ≥ 1');
 
   const scoutModel = str('PETU_SCOUT_MODEL') ?? DEFAULT_SCOUT_MODEL;
@@ -124,7 +131,8 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   if (storyEffort === 'none' && NO_NONE.has(storyModel)) throw new Error(`petu: ${storyModel} does not accept reasoning effort none; set PETU_STORYBOARD_EFFORT=low`);
   const storyOn = oneOf('PETU_STORYBOARD', ['0', '1'] as const, '0') === '1';
   const repairOn = oneOf('PETU_REPAIR', ['on', 'off'] as const, 'on') === 'on';
-  const repairEffort = oneOf('PETU_REPAIR_EFFORT', EFFORTS, effort);
+  // A repair has only REPAIR_MAX_OUTPUT tokens: above low, reasoning could spend all of them before any text.
+  const repairEffort = oneOf('PETU_REPAIR_EFFORT', EFFORTS, effort === 'none' || effort === 'low' ? effort : 'low');
   if (repairEffort === 'none' && (NO_NONE.has(model) || ANTHROPIC_NO_NONE.has(model))) throw new Error(`petu: ${model} does not accept effort none; set PETU_REPAIR_EFFORT=low`);
 
   const phase = oneOf('PETU_PHASE', PHASES, 'founder');
