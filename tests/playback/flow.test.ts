@@ -349,3 +349,16 @@ describe('Director unit highlights', () => {
     expect(b.order).toEqual(['highlight:compare the p-value and']);
   });
 });
+
+// Founder screenshot 2026-10-29: a lecture slide's equation in a math font extracts as glyph soup
+// ("$%$∑ Ixly ∑ Iyly !"!%$v"! = –$%$∑ IyIt !"!") and became the part title. Text that is mostly
+// symbols is never a title; the next real heading (or none) is used instead.
+describe('page titles skip glyph soup', () => {
+  const line = (text: string, y: number, h: number) => ({ id: 't', text, rect: { x: 50, y, w: 500, h }, runs: [], math: false });
+  it('rejects an equation extracted as symbols', async () => {
+    const { pageTitle } = await import('../../src/pdf/sections');
+    expect(pageTitle([line('$%$∑ Ixly ∑ Iyly !"!%$v"! = –$%$∑ IyIt !"!', 40, 40)])).toBeUndefined();
+    expect(pageTitle([line('$%$∑ Ixly ∑ Iyly !"!%$v"! = –$%$∑ IyIt !"!', 40, 40), line('Lucas–Kanade: solving for the flow', 120, 30)])).toBe('Lucas–Kanade: solving for the flow');
+    expect(pageTitle([line('Price Ceilings and Price Floors', 40, 30)])).toBe('Price Ceilings and Price Floors');
+  });
+});

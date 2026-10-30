@@ -63,10 +63,3 @@ export function closingQuestion(text: string): string | null {
   return q.length >= 6 ? q : null;
 }
 
-/**
- * After a check question, is what the student typed their answer to it? Not when it is itself a
- * question (ends with "?"): that is a follow-up, answered as one. The shape, never the words.
- */
-export function repliesToCheck(reply: string): boolean {
-  return !reply.trim().endsWith('?');
-}
