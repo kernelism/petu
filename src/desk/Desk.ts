@@ -9,7 +9,7 @@ import { routeGutter, maskBlocker } from './route';
 import { boardLayout, bodyPx, fitZoom, laneFrame, pageAt, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
 import { BOARD_HEAD, boardPad, MIN_TEXT_PX, SECTION_W, TEXT_UNITS } from './layout';
-import { dockTop, FOLDED_H, LANE_PAD, leaderPath, packLane, stickyInsets, wantFor } from './lane';
+import { dockTop, FOLDED_H, LANE_PAD, LEADER_MAX, leaderPath, packLane, stickyInsets, wantFor } from './lane';
 import { camFor, overviewCam, type Cam } from './scene/camera';
 
 export type { DeskHost } from './types';
@@ -174,6 +174,8 @@ export class Desk implements DeskApi {
       host.onScroll(() => this.onMove()),
       this.follow.subscribe(() => this.emit()),
     );
+    // Layout C: the lane is the sheet's margin, there before any drawing.
+    this.position();
   }
 
   destroy(): void { this.off.forEach((f) => f()); this.boardGlide?.abort(); this.stage.replaceChildren(); }
@@ -195,7 +197,7 @@ export class Desk implements DeskApi {
     if (f.lane) {
       // The lane: one sheet, nothing opens; the dock sits under the column the pen is in (spec §5.3).
       const col = this.penLane ? { x: f.lane.x, w: f.lane.w } : { x: f.page.pageX, w: f.page.pageW };
-      const s: DeskState = { split: this.open ? 'normal' : 'none', stacked: false, following: this.follow.following(), sketching: this.open, column: col, lane: true };
+      const s: DeskState = { split: this.open ? 'normal' : 'none', stacked: false, following: this.follow.following(), sketching: this.open, column: col, lane: true, page: { x: f.page.pageX, w: f.page.pageW } };
       if (this.open && f.board) s.board = f.board;
       return s;
     }
@@ -534,6 +536,17 @@ export class Desk implements DeskApi {
 
   /** Scrolls the board so the head `el` sits at its top (the trail: a question clicked or replayed). */
   async showHead(el: HTMLElement): Promise<void> {
+    const g = this.lane() ? this.groups.find((x) => x.head === el || x.parts?.includes(el)) : undefined;
+    if (g) {
+      // The lane: the card opens in place and the sheet scrolls to it (the session list, a replay).
+      this.fold(g, false);
+      this.position();
+      this.follow.userTookOver();
+      const { H } = this.host.viewport();
+      const y = g.top, h = Math.min(g.h, H - SAFE_TOP - safeBottom());
+      await this.host.glideTo(() => Math.max(0, Math.min(this.host.maxScroll(), y - SAFE_TOP - Math.max(16, (H - SAFE_TOP - safeBottom() - h) / 3))), 600);
+      return;
+    }
     if (!this.open) return;
     const top = parseFloat(el.style.top) || 0;
     await this.glideBoard(() => Math.max(0, top - 8));
@@ -950,7 +963,8 @@ export class Desk implements DeskApi {
    */
   private laneScale(sec: Section): number {
     const f = this.frame();
-    const cw = Math.max(1, (f.lane?.w ?? f.board?.w ?? 0) - 2 * LANE_PAD);
+    // An aside's inset is indented 24 px under the paused drawing (spec §5.6).
+    const cw = Math.max(1, (f.lane?.w ?? f.board?.w ?? 0) - 2 * LANE_PAD - (sec.el.classList.contains('is-aside') ? 24 : 0));
     return Math.max(cw / SECTION_W, Math.min(cw / SECTION_W, Math.max(bodyPx(sec.body, f.page.pageW), MIN_TEXT_PX) / TEXT_UNITS));
   }
 
@@ -1087,8 +1101,10 @@ export class Desk implements DeskApi {
     const cw = Math.max(1, lane.w - 2 * LANE_PAD);
     for (const s of this.sections) {
       const k = this.laneScale(s);
-      const w = s.scene ? cw : REGION_W * k, h = s.scene ? Math.round(cw * 0.62) : (s.y1 - s.y0) * k;
-      Object.assign(s.el.style, { left: '', top: '', width: `${w}px`, height: `${h}px`, marginLeft: `${LANE_PAD + Math.max(0, (cw - w) / 2)}px` });
+      // An aside's inset is indented under the paused drawing (spec §5.6), the width of its head.
+      const ind = s.el.classList.contains('is-aside') ? 24 : 0;
+      const w = s.scene ? cw - ind : REGION_W * k, h = s.scene ? Math.round((cw - ind) * 0.62) : (s.y1 - s.y0) * k;
+      Object.assign(s.el.style, { left: '', top: '', width: `${w}px`, height: `${h}px`, marginLeft: `${LANE_PAD + ind + Math.max(0, (cw - ind - w) / 2)}px` });
       const hd = this.heads.get(s);
       if (hd) Object.assign(hd.el.style, { left: '', top: '', width: `${cw - (hd.aside ? 24 : 0)}px`, height: `${hd.h}px`, marginLeft: `${LANE_PAD + (hd.aside ? 24 : 0)}px` });
     }
@@ -1114,7 +1130,8 @@ export class Desk implements DeskApi {
   private liveLane() {
     const g = this.liveGroup!;
     const top = g.item.getBoundingClientRect().top - this.content.getBoundingClientRect().top;
-    g.item.classList.toggle('is-pinned', Math.abs(top - g.top) > 4);
+    // Pinned: held in view well away from its place (the answer walked on); a nudge to fit the band is not.
+    g.item.classList.toggle('is-pinned', Math.abs(top - g.top) > LEADER_MAX);
     this.drawLeader(g, top);
   }
 

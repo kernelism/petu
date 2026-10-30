@@ -28,7 +28,7 @@ type Props = {
 type Row = { label: string; keys: string[][] };
 
 /** The rows, in groups (a hairline between groups). Each key is one or more keycaps; alternatives are listed side by side. */
-export function shortcutRows(o: { dev?: boolean; mac: boolean }): Row[][] {
+export function shortcutRows(o: { dev?: boolean; mac: boolean; lane?: boolean }): Row[][] {
   const m = o.mac ? '⌘' : 'Ctrl';
   return [
     [
@@ -44,7 +44,13 @@ export function shortcutRows(o: { dev?: boolean; mac: boolean }): Row[][] {
       { label: 'Close aside', keys: [['Esc']] },
       { label: 'Resume after an aside', keys: [['Return']] },
     ],
-    [
+    // Layout C (the lane): the overview zooms the whole sheet; the session list and past marks.
+    o.lane ? [
+      { label: 'Overview / back', keys: [['Z']] },
+      { label: 'Zoom out / in (or pinch)', keys: [[m, '−'], [m, '+']] },
+      { label: 'Session list', keys: [['S']] },
+      { label: 'Show past marks', keys: [['M']] },
+    ] : [
       { label: 'Zoom the board in / out', keys: [[m, '+'], [m, '−']] },
       { label: 'Fit the board', keys: [[m, '0']] },
       { label: 'Close the board (idle)', keys: [['Esc']] },
@@ -112,7 +118,7 @@ export function ShortcutsOverlay({ open, onClose, x, bottom = 96, dev, mac }: Pr
   const W = typeof window !== 'undefined' ? window.innerWidth : 1440;
   const half = CARD_W / 2 + 8;
   const left = W > 2 * half ? Math.max(half, Math.min(W - half, x)) : W / 2;
-  const groups = shortcutRows({ dev, mac: mac ?? isMacPlatform() });
+  const groups = shortcutRows({ dev, mac: mac ?? isMacPlatform(), lane: typeof document !== 'undefined' && document.documentElement.classList.contains('petu-lane') });
   return (
     <div
       ref={card}

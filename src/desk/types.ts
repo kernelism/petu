@@ -71,6 +71,8 @@ export type DeskState = {
   zoom?: number;
   /** Layout C: the lane is on; `column` is the column the pen is in (the page or the lane). */
   lane?: boolean;
+  /** Layout C: the page column in view px (journeys and edge markers sit over it). */
+  page?: { x: number; w: number };
 };
 
 /** What the drawing toolkit needs to draw into one target. */
