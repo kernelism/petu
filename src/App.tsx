@@ -15,7 +15,8 @@ import { barMode, closingQuestion } from './ui/barMode';
 import { answerHead, asideHead, clockOf, trailTitle, type TrailHead } from './ui/trail';
 import { aboutContext, asideContext, bboxOf, isLoop, pointedLabel, type Pointed } from './agent/moment';
 import { playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
-import { PacedClock } from './playback/clock';
+import { PacedClock, type NarrationClock } from './playback/clock';
+import { VoiceClock, fetchVoice, warmVoice, webAudioOut } from './playback/voiceClock';
 import { getSettings, setSettings, SPEEDS, stepSpeed, useSettings } from './settings/settings';
 import { DEMOS, DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
@@ -99,8 +100,20 @@ const STILL_THINKING = 'Still thinking…';
 const PAUSE_GRACE_MS = 350;
 /** A journey's route stays up this long after it starts (the travel, the arrival beat, a read). */
 const ROUTE_MS = 4000;
-/** The narration's clock: the wpm setting, played at the playback speed (both read on every word). */
-const narrationClock = () => new PacedClock(() => getSettings().wpm, undefined, undefined, () => getSettings().speed);
+let audioCtx: AudioContext | null = null;
+/**
+ * The narration's clock: the wpm setting, played at the playback speed (both read on every word).
+ * With a voice on, the voice's audio sets the timeline (src/playback/voiceClock.ts). Called from the
+ * question's Enter (a user gesture), so the audio context may start.
+ */
+const narrationClock = (): NarrationClock => {
+  const s = getSettings();
+  if (s.voice === 'off' || typeof AudioContext === 'undefined') return new PacedClock(() => getSettings().wpm, undefined, undefined, () => getSettings().speed);
+  audioCtx ??= new AudioContext();
+  void audioCtx.resume().catch(() => {});
+  warmVoice();
+  return new VoiceClock(fetchVoice(s.voice), webAudioOut(audioCtx), () => getSettings().wpm, () => getSettings().speed);
+};
 /** ← within this many words of a part's start goes to the part before; later, to its own start. */
 const PART_RESTART_WORDS = 8;
 /** Demos and dev scripts send no page marks: every `mark=` is skipped. */
