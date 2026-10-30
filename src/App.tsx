@@ -67,10 +67,13 @@ const DEV_SCRIPT = scriptParam ? SCRIPTS[scriptParam] ?? null : null;
 const DEV_SRC = import.meta.env.DEV ? params.get('src') ?? DEV_SCRIPT?.src ?? null : null;
 if (scriptParam && !DEV_SCRIPT) console.warn('[dev] unknown ?script=; known:', Object.keys(SCRIPTS).join(', '));
 const SUGGESTIONS = DEV_SCRIPT ? [DEV_SCRIPT.question] : DEMOS.map((d) => d.question);
-// Dev-only: ?fail=<n> makes the answer stream throw after n chunks (to review the error state).
+// Dev-only: ?fail=<n> cuts the answer stream after n chunks, as a dropped connection does (none: an
+// error; some: a cut-off, what arrived plays). ?failat=<c> cuts it after c characters (the demo's
+// chunking is random; this is the same cut every run).
 const FAIL_AFTER = import.meta.env.DEV && params.has('fail') ? Number(params.get('fail')) || 0 : null;
+const FAIL_AT = import.meta.env.DEV && params.has('failat') ? Number(params.get('failat')) || 0 : null;
 /** Demos, dev scripts and ?fail play canned scripts; every other question goes to the agent (POST /api/ask). */
-const DEMO_PATH = !!DEV_SCRIPT || demoParam != null || FAIL_AFTER != null;
+const DEMO_PATH = !!DEV_SCRIPT || demoParam != null || FAIL_AFTER != null || FAIL_AT != null;
 /** Dev-only: ?eval installs window.__petu for the eval runner (src/agent/evalHooks.ts). */
 const EVAL = import.meta.env.DEV && params.has('eval');
 /** ?ctx=new: the tiered huge-PDF context (src/agent/context/tiers.ts); default old until verified. */
@@ -834,7 +837,7 @@ export default function App() {
     /** The script stream has not ended: a pause in it is a gap the student can see. */
     let streamOpen = true;
     let firstChunk = true;
-    let chunks = 0;
+    let chunks = 0, sent = 0;
     const replay = run.replay;
     const inner: (signal: AbortSignal) => AsyncIterable<string> = replay
       ? async function* (signal) {
@@ -873,7 +876,16 @@ export default function App() {
     const source = async function* (signal: AbortSignal) {
       try {
         for await (const c of inner(signal)) {
-          if (!toAgent && FAIL_AFTER != null && chunks++ >= FAIL_AFTER) throw new Error('dev: ?fail');
+          if (!toAgent && ((FAIL_AFTER != null && chunks >= FAIL_AFTER) || (FAIL_AT != null && sent + c.length > FAIL_AT))) {
+            // As the agent's client does: nothing arrived yet is an error; past that, a cut-off (what played stays).
+            const head = FAIL_AT != null ? c.slice(0, Math.max(0, FAIL_AT - sent)) : '';
+            if (!sent && !head) throw new Error('dev: ?fail');
+            if (head) { log.chunk(head); entry.script += head; yield head; }
+            handlers.onCutOff?.('The answer was cut off.');
+            return;
+          }
+          chunks++;
+          sent += c.length;
           if (firstChunk && DEBUG) { firstChunk = false; const t = performance.now(); setDebug((d) => ({ ...d, chunk: t })); }
           run.rec?.chunk(c);
           log.chunk(c);

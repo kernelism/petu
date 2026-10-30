@@ -7,7 +7,7 @@
 // The tag scanner mirrors ScriptParser's rules (src/script/parser.ts): a tag closes at `}}` outside
 // quotes; a newline, a second `{{` or MAX_TAG_CHARS fails it and its text is narration.
 import { MAX_TAG_CHARS } from '../script/parser';
-import { isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
+import { cutTagBody, isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
 import { parseTag } from '../script/parseTag';
 import type { RawAction } from '../script/types';
 
@@ -17,7 +17,7 @@ export type Tok = Word | Tag;
 
 const QUOTE_CLOSE: Record<string, string> = { '"': '"', '“': '”' };
 
-function scan(buf: string, open: number): { close: number } | { fail: number } {
+function scan(buf: string, open: number): { close: number } | { fail: number; cut?: true } {
   const svg = isSvgTagBody(buf.slice(open + 2, open + 8));
   const limit = open + (svg ? SVG_TAG_MAX : MAX_TAG_CHARS);
   let quote: string | null = null;
@@ -30,11 +30,14 @@ function scan(buf: string, open: number): { close: number } | { fail: number } {
     if (c === '}' && buf[i + 1] === '}') return { close: i + 2 };
     if (c === '{' && buf[i + 1] === '{') return { fail: i };
   }
-  return { fail: buf.length };
+  return { fail: buf.length, cut: true };
 }
 
-/** Words and tags with offsets. Malformed tags (parseTag → null) stay as tags with `action: null`. */
-export function tokenize(script: string): Tok[] {
+/**
+ * Words and tags with offsets. Malformed tags (parseTag → null) stay as tags with `action: null`.
+ * `end`: the script is the stream's end, so a tag still open at its end was cut off (see below).
+ */
+export function tokenize(script: string, opts: { end?: boolean } = {}): Tok[] {
   const out: Tok[] = [];
   let wi = 0;
   const words = (from: number, to: number) => {
@@ -49,6 +52,13 @@ export function tokenize(script: string): Tok[] {
       if (open === -1) { words(pos, script.length); break; }
       words(pos, open);
       const s = scan(script, open);
+      if ('fail' in s && s.cut && opts.end) {
+        // The script ends inside this tag (a cut-off), as ScriptParser.end(): an svg group keeps its
+        // whole children, any other half tag is dropped; never narration.
+        const body = cutTagBody(script.slice(open + 2));
+        if (body) out.push({ kind: 'tag', body, start: open, end: script.length, action: parseTag(body), at: -1 });
+        break;
+      }
       if ('fail' in s) { words(open, s.fail); pos = s.fail; continue; }
       const body = script.slice(open + 2, s.close - 2);
       out.push({ kind: 'tag', body, start: open, end: s.close, action: parseTag(body), at: -1 });
@@ -132,7 +142,7 @@ export const leadsWithInk = (u: Unit) => u.tags.some((t) => (t.at === (u.words[0
 /** Groups sentences into beats. */
 export function beats(script: string, opts: BeatOpts = {}): Beat[] {
   const o = { ...BEAT_DEFAULTS, ...opts };
-  const us = units(script);
+  const us = units(script, tokenize(script, { end: true })); // a whole script: its end is the stream's
   const groups: Unit[][] = [];
   let cur: Unit[] = [];
   const nWords = (g: Unit[]) => g.reduce((s, u) => s + u.words.length, 0);
@@ -230,7 +240,7 @@ export class BeatSplitter {
     const cut = this.cut(final);
     if (cut <= 0 && !final) return [];
     const prefix = this.buf.slice(0, cut);
-    const us = units(prefix);
+    const us = units(prefix, tokenize(prefix, { end: final }));
     let consumed = 0;
     const sents: Sent[] = [];
     for (let i = 0; i < us.length; i++) {
