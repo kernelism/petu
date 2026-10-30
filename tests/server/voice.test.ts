@@ -131,6 +131,7 @@ function fakeLedger(refuse = false) {
 }
 
 describe('routeVoice', () => {
+  afterEach(() => { vi.useRealTimers(); });
   function setup(refuse = false) {
     const { s, sent } = fakeSocket();
     const l = new VoiceLine('k', () => { setTimeout(() => s.onopen?.(), 0); return s; });
@@ -147,6 +148,92 @@ describe('routeVoice', () => {
     };
     return { s, sent, l, call, logs, ...led };
   }
+
+  const usage = { input_tokens: 90, output_tokens: 130, output_token_details: { audio_tokens: 110 } };
+
+  it('refuses with 402 when the ledger does, sending nothing', async () => {
+    const { call, calls, sent } = setup(true);
+    const a = call('One.');
+    await tick();
+    expect(a.over()).toBe(true);
+    expect(a.res.statusCode).toBe(402);
+    expect(JSON.parse(a.res.body)).toEqual({ error: 'cap reached' });
+    expect(calls.map((c) => c.op)).toEqual(['reserve']);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('streams the audio, settles from usage and logs a verbatim read', async () => {
+    const { s, sent, call, calls, closed, logs } = setup();
+    const a = call('Supply rises.');
+    await tick();
+    expect(calls[0]).toMatchObject({ op: 'reserve', id: a.id, usd: voiceWorstUsd('Supply rises.'.length) });
+    const r = created(s, sent);
+    s.emit({ type: 'response.output_audio.delta', response_id: r, delta: pcm(960) });
+    s.emit({ type: 'response.output_audio_transcript.delta', response_id: r, delta: 'Supply rises.' });
+    s.emit({ type: 'response.done', response: { id: r, status: 'completed', usage } });
+    await tick();
+    expect(a.over()).toBe(true);
+    expect(a.res).toMatchObject({ statusCode: 200, bytes: 960, ended: 'end' });
+    expect(closed(a.id)).toEqual([{ op: 'settle', id: a.id, usd: voiceUsd(usage), estimated: undefined }]);
+    expect(logs[0]).toMatchObject({ kind: 'voice', ok: true, verbatim: true, chars: 13 });
+    expect(logs[0].text).toBeUndefined();
+  });
+
+  it('logs the text and what was said when the read is not verbatim', async () => {
+    const { s, sent, call, logs } = setup();
+    call('Supply rises.');
+    await tick();
+    const r = created(s, sent);
+    s.emit({ type: 'response.output_audio.delta', response_id: r, delta: pcm(960) });
+    s.emit({ type: 'response.output_audio_transcript.delta', response_id: r, delta: 'Supply goes up.' });
+    s.emit({ type: 'response.done', response: { id: r, status: 'completed', usage } });
+    await tick();
+    expect(logs[0]).toMatchObject({ ok: true, verbatim: false, text: 'Supply rises.', said: 'Supply goes up.' });
+  });
+
+  it('a request closed mid-response cancels it and settles what it used', async () => {
+    const { s, sent, call, closed } = setup();
+    const a = call('Supply rises.');
+    await tick();
+    const r = created(s, sent);
+    s.emit({ type: 'response.output_audio.delta', response_id: r, delta: pcm(480) });
+    a.res.emit('close');
+    expect(sent.at(-1)).toEqual({ type: 'response.cancel' });
+    s.emit({ type: 'response.done', response: { id: r, status: 'cancelled', usage } });
+    await tick();
+    expect(a.over()).toBe(true);
+    expect(closed(a.id)).toEqual([{ op: 'settle', id: a.id, usd: voiceUsd(usage), estimated: undefined }]);
+  });
+
+  it('a response that fails before any audio releases its reservation and destroys the stream', async () => {
+    const { s, sent, call, closed, logs } = setup();
+    const a = call('Supply rises.');
+    await tick();
+    created(s, sent);
+    s.emit({ type: 'error', error: { message: 'server error' } });
+    await tick();
+    expect(a.over()).toBe(true);
+    expect(a.res.ended).toBe('destroy');
+    expect(closed(a.id)).toEqual([{ op: 'release', id: a.id }]);
+    expect(logs[0]).toMatchObject({ ok: false, error: 'server error', firstAudioMs: null });
+  });
+
+  it('a response that stalls after some audio settles its worst case and ends the stream', async () => {
+    vi.useFakeTimers();
+    const { s, sent, call, closed } = setup();
+    const a = call('Supply rises.');
+    await vi.advanceTimersByTimeAsync(0);
+    const r = created(s, sent);
+    s.emit({ type: 'response.output_audio.delta', response_id: r, delta: pcm(480) });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(a.over()).toBe(true);
+    expect(a.res).toMatchObject({ bytes: 480, ended: 'end' });
+    expect(closed(a.id)).toEqual([{ op: 'settle', id: a.id, usd: voiceWorstUsd('Supply rises.'.length), estimated: true }]);
+    // Its usage, reported late, is not booked twice.
+    s.emit({ type: 'response.done', response: { id: r, status: 'cancelled', usage } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(closed(a.id)).toHaveLength(1);
+  });
 
   it('a request closed while queued ends, and its reservation is released', async () => {
     const { s, call, closed, sent } = setup();
@@ -189,6 +276,25 @@ describe('VoiceLine, reconnecting', () => {
     const r = created(socks[1].s, socks[1].sent);
     socks[1].s.emit({ type: 'response.done', response: { id: r, status: 'completed', usage: {} } });
     expect(b.done).toMatchObject({ ok: true });
+  });
+
+  it('a socket that closes mid-queue fails the response in flight and reconnects for the rest', async () => {
+    const socks: ReturnType<typeof fakeSocket>[] = [];
+    const l = new VoiceLine('k', () => { const f = fakeSocket(); socks.push(f); setTimeout(() => f.s.onopen?.(), 0); return f.s; });
+    const out = [0, 1, 2].map(() => ({ audio: 0 }) as { audio: number; done?: SpeakResult });
+    out.forEach((o, i) => l.speak(job(`S${i}.`, o)));
+    await tick();
+    created(socks[0].s, socks[0].sent);
+    socks[0].s.onclose?.({ code: 1001, reason: 'going away' });
+    expect(out[0].done).toMatchObject({ ok: false, error: 'connection closed (1001)' });
+    await tick();
+    for (const i of [1, 2]) {
+      const r = created(socks[1].s, socks[1].sent);
+      socks[1].s.emit({ type: 'response.done', response: { id: r, status: 'completed', usage: {} } });
+      await tick();
+      expect(out[i].done).toMatchObject({ ok: true });
+    }
+    expect(socks).toHaveLength(2);
   });
 });
 
