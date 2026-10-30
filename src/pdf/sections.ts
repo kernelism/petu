@@ -15,8 +15,19 @@ import { garbled } from './mathGlyphs';
 const MAX_LABEL = 48;
 
 const trim = (s: string) => { const t = clean(s).replace(/\s+/g, ' ').trim(); return t.length > MAX_LABEL ? `${t.slice(0, MAX_LABEL - 1).trimEnd()}…` : t; };
+/**
+ * Reads as words: most characters are letters, digits, spaces or ordinary punctuation. An equation set
+ * in a math font often extracts as ASCII glyph soup ("$%$∑ Ixly !"!%$v"!"), which `garbled` doesn't see.
+ */
+export function readsAsWords(text: string): boolean {
+  const t = text.replace(/\s+/g, '');
+  if (!t) return false;
+  const plain = t.match(/[\p{L}\p{N}.,:;'’()\-–—&/?]/gu)?.length ?? 0;
+  return plain / t.length >= 0.85;
+}
+
 /** A readable label, or undefined. */
-const readable = (s: string) => { const t = trim(s); return t && !garbled(t) ? t : undefined; };
+const readable = (s: string) => { const t = trim(s); return t && !garbled(t) && readsAsWords(t) ? t : undefined; };
 
 /** The deepest bookmark at or before `page` (bookmarks sorted by page, then depth), if its title reads. */
 export function sectionFor(bookmarks: Bookmark[], page: number): string | undefined {

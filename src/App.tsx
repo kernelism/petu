@@ -11,7 +11,7 @@ import { deriveParts, nextSentence, partAt, partProgress, partText, partTitle, r
 import { SectionLabels } from './pdf/sections';
 import { RouteChip, type Route } from './ui/RouteChip';
 import type { PartsView } from './ui/PartsBar';
-import { barMode, closingQuestion, repliesToCheck } from './ui/barMode';
+import { barMode, closingQuestion } from './ui/barMode';
 import { answerHead, asideHead, clockOf, trailTitle, type TrailHead } from './ui/trail';
 import { aboutContext, asideContext, bboxOf, isLoop, pointedLabel, type Pointed } from './agent/moment';
 import { playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
@@ -616,6 +616,8 @@ export default function App() {
     setReached(0);
     setParts([]);
     partsRef.current = [];
+    // An open check question belongs to the answer (and document) it closed; it never carries over.
+    setCheck(null);
   }, []);
 
   // ---------------------------------------------------------------------------------------------
@@ -720,10 +722,12 @@ export default function App() {
     setCheck(null);
     const moment = { ...(point ? { about: aboutContext(point) } : {}), ...(run.check ? { check: run.check } : {}) };
     // The session trail: this answer's header goes above its first section on the board.
+    // The header is always what the student typed: after a check question they may answer it or ask
+    // something new, and only the model (which sees the open check question) can tell which.
     const kindCheck = run.again ? !!run.again.check : !!run.check;
-    const title = run.again?.title ?? trailTitle(kindCheck ? 'check' : 'answer', kindCheck ? run.check! : q, point ? pointedLabel(point) : null);
-    const entry: TrailEntry = { num: run.again?.num ?? (kindCheck ? '✓' : String(++trailN.current)), question: q, title, page: pageRef.current, script: '', head: null as unknown as TrailHead, ...(kindCheck ? { check: run.again?.check ?? run.check } : {}) };
-    entry.head = answerHead({ num: entry.num, question: title, check: kindCheck, onReplay: () => replayRef.current(entry) });
+    const title = run.again?.title ?? trailTitle('answer', q, point ? pointedLabel(point) : null);
+    const entry: TrailEntry = { num: run.again?.num ?? String(++trailN.current), question: q, title, page: pageRef.current, script: '', head: null as unknown as TrailHead, ...(kindCheck ? { check: run.again?.check ?? run.check } : {}) };
+    entry.head = answerHead({ num: entry.num, question: title, check: false, onReplay: () => replayRef.current(entry) });
     // Eval runs keep the board as the judge has always seen it (no trail headers).
     if (!EVAL) deskRef.current?.headNext(entry.head.el, entry.head.h);
     answerRef.current = { question: q, plan: '', toAgent, head: EVAL ? null : entry.head };
@@ -745,7 +749,7 @@ export default function App() {
     if (toAgent && ag.blocked && !run.replay) { flash(ag.blocked, CAP_CAPTION_MS); settle(); return; }
 
     setCaptionWords([]);
-    setQuestion(kindCheck ? `Check · ${run.again?.check ?? run.check}` : q);
+    setQuestion(q);
     setWaiting(true);
     setCaptionVisible(true);
     setBusy(true);
@@ -1024,7 +1028,7 @@ export default function App() {
   const onAsk = useCallback((q: string) => {
     if (asideRef.current || sessionRef.current) { askAsideRef.current(q); return; }
     const c = checkRef.current;
-    void runAnswer(q, c && repliesToCheck(q) ? { check: c } : {});
+    void runAnswer(q, c ? { check: c } : {});
   }, [runAnswer]);
   /** The trail: a header clicked replays its answer from the recorded script (no new call). */
   const replayRef = useRef<(e: TrailEntry) => void>(() => {});
