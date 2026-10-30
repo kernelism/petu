@@ -377,7 +377,9 @@ export class Desk implements DeskApi {
       const sec = this.ids.get(t.region);
       if (!sec || !this.open) return false;
       if (this.lane()) {
-        // A docked group drawn into again (its answer continues it): the page scrolls it into the band.
+        // The playing group is sticky: scrolling the page cannot move it, so it never does (a group taller
+        // than the band shows its newest part). A docked group drawn into again: the page scrolls to it.
+        if (sec.group?.live) return false;
         const v = this.viewRect(sec, r);
         if (!v) return false;
         await before?.();
@@ -1105,6 +1107,12 @@ export class Desk implements DeskApi {
       return !!r && r.y + r.h / 2 >= top + SAFE_TOP && r.y + r.h / 2 <= top + H - safeBottom();
     });
     if (seen) g.anchor = { page: seen.page, y: seen.r.y + Math.min(seen.r.h, 40) / 2 };
+    else {
+      // None of the answer's marks is in view: the drawing stays where the student is looking (it never
+      // leaves the screen at the answer's end); its anchor becomes the page point level with it.
+      const L = this.host.layout(), y = now + (g.head ? g.head.offsetHeight : 0) + 8;
+      if (L) { const p = Math.max(1, Math.min(L.tops.length, pageAt(L, y))); g.anchor = { page: p, y: Math.max(0, (y - L.tops[p - 1]) / (L.pageW / 1000)) }; }
+    }
     this.position();
     const ay = this.anchorY(g.anchor), headH = g.head ? g.head.offsetHeight : 0;
     g.lift = ay - dockTop(now, g.h, ay, headH);
