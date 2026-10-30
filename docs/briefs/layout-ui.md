@@ -70,7 +70,7 @@ gallery scenes of the same names (moments c1-rule, c2-gap, end, c3-aside, c5-fol
 
 `?demo=1|side|plane`, `?script=kit|toolkit|relational|lec09`, `?src=<pdf url>` (`/api/dev-pdf/<n>.pdf`
 from `PETU_PDF_DIRS`), `&page=N` (with `&eval`), `&debug`, `&noplay`, `&style=hand|clean`, `&eval`
-(installs `window.__petu`), `&nogen` (replay only), `&fail=N` (cut the stream after N chunks).
+(installs `window.__petu`), `&nogen` (replay only), `&fail=N` (cut the stream after N chunks; `&failat=C` after C characters, deterministic; gallery scene `cutoff`).
 Demo/script/fail paths play canned scripts and make no API call.
 
 - **Flow across the document** (spec section of that name): the director reports journeys (a scroll

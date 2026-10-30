@@ -36,8 +36,16 @@ describe('ScriptParser', () => {
     expect(summary(p.push('ld '))).toEqual(['world']);
   });
 
-  it('skips malformed tags; an unterminated tag at the end comes out as words', () => {
-    expect(summary(runChunks(['a {{wiggle p=1}} b {{circle p=1']))).toEqual(['a', 'b', '{{circle', 'p=1', '|end']);
+  it('skips malformed tags; a tag the stream cut off is dropped, never spoken', () => {
+    expect(summary(runChunks(['a {{wiggle p=1}} b {{circle p=1']))).toEqual(['a', 'b', '|end']);
+  });
+
+  it('a cut-off svg group keeps its whole children (closed), else it is dropped', () => {
+    const svg = (chunks: string[]) => runChunks(chunks).flatMap((e) => (e.type === 'action' && e.action.kind === 'svg' ? [(e.action as { svg: string }).svg] : []));
+    expect(svg(['Here {{svg <g id="r"> <line x1="0" y1="0" x2="5" y2="5"/> <circle cx="4']))
+      .toEqual(['<g id="r"> <line x1="0" y1="0" x2="5" y2="5"/></g>']);
+    expect(svg(['Here {{svg <g id="r"> <text x="1">Hel'])).toEqual([]);
+    expect(summary(runChunks(['Here {{svg <g id="r"> <text x="1">Hel']))).toEqual(['Here', '|end']);
   });
 
   it('an unterminated tag does not swallow the rest of the answer (newline, another tag, 800 chars)', () => {
@@ -72,7 +80,7 @@ describe('ScriptParser', () => {
     }
     expect(whole).toContain('<clear>');
     expect(whole).toContain('<label>');
-    expect(whole.at(-2)).toBe('p=1');
+    expect(whole.at(-2)).toBe('end'); // the cut-off {{circle p=1 at the end is dropped
   });
 });
 

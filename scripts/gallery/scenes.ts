@@ -51,6 +51,9 @@ export const SCENES: Scene[] = [
   // The svg board (p6, the default answer format): the prompt's two examples and the svgboard
   // experiment's four recorded answers, streamed as beats through the server's own filter.
   { name: 'svg-ferry', query: 'script=svg-ferry', moments: [mid(14000), mid(30000), END] },
+  // A cut-off inside the first group (live gate): its whole children (the banks) draw, no SVG is spoken,
+  // the caption offers Retry, the slides stay, the board stays closable.
+  { name: 'cutoff', query: 'script=svg-ferry&gate=live&repair=fake&failat=500', moments: [END], audit: false },
   { name: 'svg-dough', query: 'script=svg-dough', moments: [mid(14000), mid(30000), END] },
   { name: 'svg-skater', query: 'script=svg-skater', moments: [mid(12000), END] },
   { name: 'svg-tunnel', query: 'script=svg-tunnel', moments: [mid(12000), END] },

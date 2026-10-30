@@ -3,7 +3,7 @@
 // words it said) or that it was rejected. The judge transcript and the `malformed` metric read this,
 // so a working {{const}}/{{find}}/{{val}} is never shown or counted as a failure.
 // Imports the app parser, so entry points need `--import ./scripts/lib/tsResolve.mjs --experimental-transform-types`.
-import { ScriptParser } from '../../src/script/parser.ts';
+import { CUT_TAG, ScriptParser } from '../../src/script/parser.ts';
 import { GateState } from '../../src/gate/engine.ts';
 import type { RawAction } from '../../src/script/types.ts';
 import type { EvalResult } from '../../src/agent/evalHooks.ts';
@@ -17,17 +17,17 @@ export type ScriptParse = { tags: TagParse[]; malformed: number };
 const MALFORMED = '[script] skipped malformed tag';
 
 /** Runs `f` with console.warn captured; returns how many parser rejections it warned. */
-function counting<T>(f: () => T): { out: T; rejected: number } {
+function counting<T>(f: () => T): { out: T; rejected: number; cut: number } {
   const warn = console.warn;
-  let rejected = 0;
-  console.warn = (...a: unknown[]) => { if (typeof a[0] === 'string' && a[0].startsWith(MALFORMED)) rejected++; };
-  try { return { out: f(), rejected }; } finally { console.warn = warn; }
+  let rejected = 0, cut = 0;
+  console.warn = (...a: unknown[]) => { if (typeof a[0] === 'string' && a[0].startsWith(MALFORMED)) rejected++; else if (typeof a[0] === 'string' && a[0].startsWith(CUT_TAG)) cut++; };
+  try { return { out: f(), rejected, cut }; } finally { console.warn = warn; }
 }
 
 export function parseScript(raw: string): ScriptParse {
   // The count: the whole script through one parser, as the app streams it.
   const whole = counting(() => { const p = new ScriptParser(); return [...p.push(raw), ...p.end()]; });
-  const unclosed = whole.out.filter((e) => e.type === 'word' && e.text.includes('{{')).length;
+  const unclosed = whole.cut + whole.out.filter((e) => e.type === 'word' && e.text.includes('{{')).length;
 
   // Per tag: one parser (one value model, in stream order) fed each tag on its own.
   const p = new ScriptParser(new GateState());

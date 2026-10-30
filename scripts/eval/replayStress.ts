@@ -17,7 +17,7 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from '
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ScriptParser } from '../../src/script/parser.ts';
+import { CUT_TAG, ScriptParser } from '../../src/script/parser.ts';
 import { blockPart } from '../../src/script/pointExpr.ts';
 import { colRef } from '../../src/script/parseKit.ts';
 import type { RawAction } from '../../src/script/types.ts';
@@ -99,6 +99,7 @@ export function stressScript(script: string, env: ReplayEnv = {}): ScriptReport 
   console.warn = (...a: unknown[]) => {
     const m = typeof a[0] === 'string' ? a[0] : '';
     if (m.startsWith('[script] skipped malformed tag')) malformed.push(String(a[1]).split(/\s+/)[0] || '?');
+    else if (m.startsWith(CUT_TAG)) unclosed++;
     else if (m.startsWith('[script] let:')) letDropped.push(m.includes('twice') ? 'name defined twice' : 'bad definition');
   };
   try {
