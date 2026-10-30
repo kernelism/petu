@@ -253,3 +253,97 @@ svg[data-svgboard] [data-live]:is(path, line, polyline, polygon, circle, ellipse
 svg[data-svgboard] [data-live] :is(path, line, polyline, polygon, circle, ellipse):not([stroke="none"]):not([fill-opacity^="0."]) { stroke: var(--board-live); }
 svg[data-svgboard] [data-live]:is(circle)[fill]:not([fill="none"]):not([fill="#FFFFFE"]),
 svg[data-svgboard] [data-live] circle[fill]:not([fill="none"]):not([fill="#FFFFFE"]) { fill: var(--board-live); }
+
+/* ───────── Layout C: the anchored lane (src/desk/lane.ts, mockups C1–C5) ─────────
+   The board becomes a paper margin joined to the page, inside the page's own scroll: one sheet. Each
+   answer is a group level with the passage it explains; the playing one is sticky (a card while it is
+   pinned away from its place), and docks at its end; finished answers fold to cards. */
+.pv-lane { position: absolute; inset: 0; pointer-events: none; }
+.desk-board.is-lane {
+  overflow: visible;
+  border-radius: 0;
+  background: var(--lane-paper, #F8F7F3);
+  box-shadow: inset 1px 0 0 rgba(0, 0, 0, .045), 1px 0 0 rgba(0, 0, 0, .05), 4px 0 8px -4px rgba(0, 0, 0, .06);
+  opacity: 1;
+  transform: none;
+  transition: none;
+  pointer-events: auto;
+}
+/* Not a scroll container (the sticky group must stick to the page's scroll). */
+.desk-board.is-lane .desk-board-scroll { position: absolute; inset: 0; overflow: visible; }
+.desk-board.is-lane .desk-board-content { position: relative; min-height: 0; background: none; }
+.desk-board.is-lane .desk-board-close, .desk-board.is-lane .desk-zoom { display: none; }
+/* The lane is the paper: a scene draws straight onto it (no box, no dot grid). */
+.desk-board.is-lane { --board-dot: transparent; }
+.desk-board.is-lane .desk-region.is-scene { background: transparent; }
+
+.lane-group { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
+.lane-item { position: relative; isolation: isolate; padding-bottom: 12px; pointer-events: auto; }
+.lane-group.is-live { z-index: 2; }
+.lane-group.is-live > .lane-item { position: sticky; }
+.lane-item > .desk-region, .lane-item > .trail-head { position: relative; }
+.lane-item > .trail-head:not(.is-aside) .trail-row { height: 36px; font-size: 14.5px; }
+/* Pinned (the answer walked away from the passage): a card under a quiet label. */
+.lane-item::before {
+  content: '';
+  position: absolute;
+  /* --lane-clip (Desk.clipLane): how far the item's top is above the comfort band; the card and its
+     label stay in the band (never under the chrome row) while the item's content runs on above it, masked. */
+  inset: calc(30px + var(--lane-clip, 0px)) 14px 0;
+  z-index: -1;
+  border-radius: 10px;
+  background: #FCFBF9;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .065), 0 1px 3px rgba(0, 0, 0, .04);
+  opacity: 0;
+  transition: opacity 160ms var(--ease-out, ease-out);
+}
+.lane-item::after {
+  content: 'pinned while the answer plays';
+  position: absolute;
+  top: calc(6px + var(--lane-clip, 0px));
+  left: 26px;
+  font: 400 12px/18px var(--font);
+  color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms var(--ease-out, ease-out);
+}
+.lane-item.is-pinned::before, .lane-item.is-pinned::after { opacity: 1; }
+.lane-item.is-pinned > .trail-head:not(.is-aside):not(.is-mid) { visibility: hidden; }
+/* A follow-up's header inside an extended svg section (BOARD extend): over its first new group. */
+.lane-item > .trail-head.is-mid { position: absolute; z-index: 1; }
+.lane-group.is-folded .trail-head.is-mid { display: none; }
+
+/* Leaders: 1 px accent from a dot on the page edge to the drawing (≤ 120 px, never across text). */
+.lane-leaders { position: absolute; left: 0; top: 0; width: 100%; overflow: visible; pointer-events: none; z-index: 3; }
+.lane-leaders path { fill: none; stroke: var(--lane-accent, #8E4EC6); stroke-width: 1; stroke-linecap: round; }
+.lane-leaders circle { fill: var(--lane-accent, #8E4EC6); }
+
+/* Folded: a finished answer as a card at its anchor (question, thumbnail); a click opens it in place. */
+.lane-group.is-folded .desk-region { display: none; }
+.lane-group.is-folded .lane-item {
+  margin: 0 14px;
+  padding: 0;
+  height: 36px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .08), 0 2px 8px rgba(0, 0, 0, .05);
+  cursor: pointer;
+}
+.lane-group.is-folded .trail-head { width: auto !important; height: 36px !important; margin-left: 0 !important; }
+.lane-group.is-folded .trail-row { height: 36px; padding-left: 6px; border-radius: 10px; }
+.lane-group.is-folded .trail-row:hover { box-shadow: none; }
+.lane-thumb { position: relative; flex: none; width: 48px; height: 26px; border-radius: 5px; overflow: hidden; background: var(--lane-paper, #F8F7F3); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .06); }
+.lane-thumb > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.lane-group:not(.is-folded) .lane-thumb { display: none; }
+
+/* Asides: a nested card under the paused drawing, indented, warm grey (spec §5.6). */
+.lane-item > .trail-head.is-aside { margin-top: 16px; border-radius: 12px 12px 0 0; box-shadow: inset 0 1px 0 rgba(120,108,88,.22), inset 1px 0 0 rgba(120,108,88,.22), inset -1px 0 0 rgba(120,108,88,.22); }
+.lane-item > .desk-region.is-aside { background: rgba(120,108,88,.06); border-radius: 0 0 12px 12px; box-shadow: inset 1px 0 0 rgba(120,108,88,.22), inset -1px 0 0 rgba(120,108,88,.22), inset 0 -1px 0 rgba(120,108,88,.22); }
+.lane-item > .trail-head.is-aside.is-collapsed { margin-top: 4px; border-radius: 0; box-shadow: none; }
+.lane-item > .desk-region.is-collapsed { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lane-item::before, .lane-item::after { transition: none; }
+}

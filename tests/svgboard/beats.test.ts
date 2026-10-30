@@ -10,7 +10,7 @@ import { newScope } from '../../src/svgboard/data';
 import { checkGroups, groupGeometry, newBoardState, acceptGroups, pathPolys, segHitsBox } from '../../src/svgboard/check';
 import { namesWord } from '../../src/playback/scheduler';
 import { anchorWords } from '../../src/script/parseTag';
-import { rawSvgScript } from '../../src/svgboard/wire';
+import { completeSvg, rawSvgScript } from '../../src/svgboard/wire';
 import type { RawAction } from '../../src/script/types';
 
 const wire = (raw: string, step: number) => {
@@ -200,6 +200,36 @@ describe('follow-ups remember the svg board', () => {
     expect(t).toMatch(/board layout: BOARD viewBox="0 0 1000 \d+"/);
     for (const id of f.groups) expect(t).toContain(`svg group ${id}`);
     expect(r.sections).toEqual([{ id: 'board', kind: 'svgboard' }]);
+  });
+});
+
+describe('svg beats: a cut-off group', () => {
+  it('completeSvg keeps whole children and closes the root; none whole, or not a group start: null', () => {
+    expect(completeSvg('<g id="a"><line x1="0"/><g><circle r="2"/></g><text x="1">Hel')).toBe('<g id="a"><line x1="0"/><g><circle r="2"/></g></g>');
+    expect(completeSvg('<g id="a"><line x1="0" y1="')).toBeNull();
+    expect(completeSvg('<g id="a"><g><circle r="2"/>')).toBeNull(); // the inner group is not whole
+    expect(completeSvg('<g id="a"><line/></g>')).toBe('<g id="a"><line/></g>');
+    expect(completeSvg('text <g>')).toBeNull();
+    expect(completeSvg('<g id="a"><text>a &gt; b</text><!-- c --><path d="M0')).toBe('<g id="a"><text>a &gt; b</text></g>');
+  });
+
+  it('the server filter cuts a half element off a group at the stream end (it would not parse), or drops the group', () => {
+    const half = wire('Look.\n<g id="up"><path d="M0 0 L5 5" stroke="red"/><circle cx="4', 3);
+    expect(half.out).toContain('{{svg <g id="up"><path d="M0 0 L5 5" stroke="red"/></g>}}');
+    expect(groupGeometry('<g id="up"><path d="M0 0 L5 5" stroke="red"/></g>').error).toBeUndefined();
+    const none = wire('Look.\n<g id="up"><path d="M0 0 L5', 3);
+    expect(none.out).not.toContain('{{svg');
+    expect(none.f.notes.join(' ')).toMatch(/cut off/);
+  });
+
+  it('the gate at the stream end: a half group is its whole children, never words; mid-stream it waits', () => {
+    const s = new BeatSplitter('sentence');
+    const out = [...s.push('Here is the river. {{svg <g id="r"> <line x1="0"/> <circle cx="4'), ...s.end()];
+    const ts = tokenize(out[out.length - 1].text, { end: true });
+    expect(ts.filter((t) => t.kind === 'word')).toEqual([]);
+    const tag = ts.find((t) => t.kind === 'tag') as { action: { kind: string; svg: string } };
+    expect(tag.action).toMatchObject({ kind: 'svg', svg: '<g id="r"> <line x1="0"/></g>' });
+    expect(actions('Here is the river. {{svg <g id="r"> <line x1="0"/> <circle cx="4')).toMatchObject([{ kind: 'svg', svg: '<g id="r"> <line x1="0"/></g>' }]);
   });
 });
 

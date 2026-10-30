@@ -133,6 +133,11 @@ function shadowViewer(live: () => ViewerApi | null, host: HTMLDivElement): Viewe
     whenVisible: async () => true,
     ensureSize: async (p) => { await v()?.ensureSize(p); },
     cancelScroll: () => {},
+    goToPage: async () => {},
+    actedPage: () => null,
+    onActedChange: () => () => {},
+    pageZoom: () => 1,
+    setPageZoom: () => {},
     deskHost: () => { throw new Error('shadow viewer: no desk host'); },
   } as ViewerApi;
 }

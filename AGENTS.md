@@ -115,7 +115,7 @@ Dev URLs (append to the dev server URL):
   constants that move under `{{tween}}` (docs/briefs/board-engine.md "Live geometry")
 - `?src=<pdf url>` — open a PDF by URL (e.g. `/api/dev-pdf/<name>.pdf` from `PETU_PDF_DIRS`)
 - `&page=N` (with `&eval`) · `&debug` latency/cost/plan panel · `&noplay` no autoplay · `&style=hand|clean`
-- `&eval` installs `window.__petu` (eval hooks) · `&nogen` replay only · `&fail=N` cut the stream after N chunks
+- `&eval` installs `window.__petu` (eval hooks) · `&nogen` replay only · `&fail=N` cut the stream after N chunks (`&failat=C`: after C characters, deterministic; a cut-off like a dropped connection: what arrived plays, a half tag is dropped, a half svg group keeps its whole children)
 
 ## How it works
 

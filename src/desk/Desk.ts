@@ -6,9 +6,10 @@ import type { Stroke } from '../ink/agent/strokes';
 import { animateScrollTo } from '../pdf/scroll';
 import { Follow, ScrollOwner, wheelPx, wheelScrolls } from './follow';
 import { routeGutter, maskBlocker } from './route';
-import { boardLayout, bodyPx, fitZoom, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
+import { boardLayout, bodyPx, fitZoom, laneFrame, pageAt, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
-import { BOARD_HEAD, boardPad } from './layout';
+import { BOARD_HEAD, boardPad, MIN_TEXT_PX, SECTION_W, TEXT_UNITS } from './layout';
+import { dockTop, FOLDED_H, LANE_PAD, LEADER_MAX, leaderPath, packLane, stickyInsets, wantFor } from './lane';
 import { camFor, overviewCam, type Cam } from './scene/camera';
 
 export type { DeskHost } from './types';
@@ -34,7 +35,33 @@ type GestureLike = Event & { scale?: number; clientX?: number; clientY?: number 
  */
 /** One board section (DOM + state); `createSection` builds it (the gate's shadow board builds the same). */
 export type DeskSection = Section;
-type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; full: number; y0: number; y1: number; dx: number | null; scene?: Scene; /** An svg board: grows as tall as its canvas (no kit cap). */ svg?: boolean };
+type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; full: number; y0: number; y1: number; dx: number | null; scene?: Scene; /** An svg board: grows as tall as its canvas (no kit cap). */ svg?: boolean; group?: Group };
+/**
+ * Layout C (the anchored lane, src/desk/lane.ts): one answer's head and sections, stacked in the lane
+ * level with the passage they explain. `el` spans the lane's whole height (the sticky item's
+ * containing block); `spacer` puts the item at its top; `item` holds the head and sections in flow.
+ * `anchor`: the page point it explains (page model units); `lift`: px from the item's top down to it.
+ */
+type Group = {
+  el: HTMLDivElement; spacer: HTMLDivElement; item: HTMLDivElement; leader: SVGGElement;
+  secs: Section[]; head: HTMLElement | null;
+  anchor: { page: number; y: number }; lift: number;
+  top: number; h: number; live: boolean; folded: boolean; thumb: HTMLElement | null;
+  /** Its anchor is the view (the answer had not marked the page yet): its first page mark re-anchors it. */
+  provisional?: boolean;
+  /** Its heads and sections in order (the lane stacks them in this order). */
+  parts?: HTMLElement[];
+  /** Taller than the band while it plays: the part being drawn (px from the item's top) and the sticky top that shows it. */
+  pen?: { top: number; h: number } | null; stick?: number | null;
+};
+/** The docking glide at an answer's end (spec §5.2 rule 5). */
+const DOCK_MS = 300;
+/** The comfort band's top: the lane's live item sticks this far below the window top (under the chrome row). */
+const LANE_STICK = SAFE_TOP + 16;
+/** The pinned card's top below its item's top (desk.css .lane-item::before), its label above it. */
+const PIN_CARD = 30;
+/** The fade where the lane is masked at the comfort band's top. */
+const LANE_FADE = 16;
 /** A scene section's world: its camera (world units, zoom), its claims, the last thing framed. */
 type Scene = { cam: Cam; claims: SceneClaim[]; space: SceneSpace; focus: SRect | null; glide: AbortController | null; paper: SVGRectElement | null };
 /** A camera glide over the scene: at most this long. */
@@ -116,6 +143,12 @@ export class Desk implements DeskApi {
   private asideFrom: Desk['last'] = null;
   /** The student's board zoom: a multiplier on every section's scale (1 = the board as laid out). */
   private zoomK = 1;
+  /** Layout C: the lane's groups, oldest first, and the one this answer draws into. */
+  private groups: Group[] = [];
+  private liveGroup: Group | null = null;
+  private leaders: SVGSVGElement;
+  /** Layout C: the pen's column (the dock follows it): the page, or the lane once the answer draws there. */
+  private penLane = false;
   private zoomCtl: { out: HTMLButtonElement; pct: HTMLSpanElement; in: HTMLButtonElement; fit: HTMLButtonElement };
 
   constructor(private host: DeskHost, private stage: HTMLDivElement, private opts: { onClose?: () => void } = {}) {
@@ -139,6 +172,10 @@ export class Desk implements DeskApi {
     this.scroller.appendChild(this.content);
     this.zoomCtl = this.makeZoomControl();
     this.board.append(this.scroller, close, this.zoomCtl.out.parentElement!);
+    this.leaders = document.createElementNS(SVG, 'svg') as SVGSVGElement;
+    this.leaders.setAttribute('class', 'lane-leaders');
+    this.leaders.setAttribute('aria-hidden', 'true');
+    this.content.appendChild(this.leaders);
     this.wireLayer = document.createElement('div');
     this.wireLayer.className = 'desk-wires';
     stage.append(this.board, this.wireLayer);
@@ -172,6 +209,8 @@ export class Desk implements DeskApi {
       host.onScroll(() => this.onMove()),
       this.follow.subscribe(() => this.emit()),
     );
+    // Layout C: the lane is the sheet's margin, there before any drawing.
+    this.position();
   }
 
   destroy(): void { this.off.forEach((f) => f()); this.boardGlide?.abort(); this.stage.replaceChildren(); }
@@ -190,6 +229,13 @@ export class Desk implements DeskApi {
 
   state(): DeskState {
     const f = this.frame();
+    if (f.lane) {
+      // The lane: one sheet, nothing opens; the dock sits under the column the pen is in (spec §5.3).
+      const col = this.penLane ? { x: f.lane.x, w: f.lane.w } : { x: f.page.pageX, w: f.page.pageW };
+      const s: DeskState = { split: this.open ? 'normal' : 'none', stacked: false, following: this.follow.following(), sketching: this.open, column: col, lane: true, page: { x: f.page.pageX, w: f.page.pageW }, ...(this.edge ? { edge: this.edge } : {}) };
+      if (this.open && f.board) s.board = f.board;
+      return s;
+    }
     const L = this.host.layout();
     const column = this.heading ?? (this.open ? columnOf(f) : { x: L?.pageX ?? f.page.pageX, w: L?.pageW ?? f.page.pageW });
     const s: DeskState = { split: this.open ? f.ratio ?? 'normal' : 'none', stacked: this.open && f.stacked, following: this.follow.following(), sketching: this.open, column };
@@ -204,7 +250,7 @@ export class Desk implements DeskApi {
     return {
       id, page: sec.page, size: sec.size, layers: sec.layers,
       // The section's own scale: board ink is sized for it, unaffected by the student's zoom.
-      scale: () => (this.boxOf(sec)?.s ?? 0.5 * this.zoomK) / this.zoomK,
+      scale: () => (this.lane() ? this.laneScale(sec) : (this.boxOf(sec)?.s ?? 0.5 * this.zoomK) / this.zoomK),
       body: () => bodyPx(sec.body, this.frame().page.pageW),
       ...(sec.scene ? { scene: sec.scene.space } : {}),
     };
@@ -226,11 +272,14 @@ export class Desk implements DeskApi {
           this.nextHead = null;
           this.midHeads.push({ sec: old, el: h.el, h: h.h, from: inkBottom(old) ?? old.y1, y: null });
           h.el.classList.add('is-mid');
-          this.content.appendChild(h.el);
+          // The lane: it rides in the answer's group (over the section, at its new groups' top).
+          if (old.group) (old.group.parts ??= []).push(h.el);
+          (this.lane() && old.group ? old.group.item : this.content).appendChild(h.el);
         }
         if (old.y0 !== 0 || old.y1 !== old.full) { old.y0 = 0; old.y1 = old.full; old.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${old.full}`)); this.position(); }
-        this.last = { t: { region: spec.id }, r: WHOLE_REGION };
-        if (!this.open) await this.openBoard('normal', before);
+        this.pen({ t: { region: spec.id }, r: WHOLE_REGION });
+        if (this.lane() && old.group) { this.relive(old.group); this.open = true; this.position(); }
+        else if (!this.open) await this.openBoard('normal', before);
         return ep === this.epoch ? this.region(spec.id) ?? 'desk reset' : 'desk reset';
       }
     }
@@ -238,30 +287,42 @@ export class Desk implements DeskApi {
     if (!prev && this.ids.has(spec.id)) return 'duplicate region id';
     if (prev) {
       this.ids.set(spec.id, prev);
-      this.last = { t: { region: spec.id }, r: WHOLE_REGION };
-      if (!this.open) await this.openBoard('normal', before);
+      this.pen({ t: { region: spec.id }, r: WHOLE_REGION });
+      if (this.lane() && prev.group) { this.relive(prev.group); this.open = true; this.position(); }
+      else if (!this.open) await this.openBoard('normal', before);
       if (this.follow.following()) await this.showScene(prev, before);
       return ep === this.epoch ? this.region(spec.id) ?? 'desk reset' : 'desk reset';
     }
     // The sections above are finished: each keeps just its ink, so the board has no dead space between them.
     // An aside leaves the paused answer's sections as they are (it draws on in them when it resumes).
-    if (!this.asideOpen) this.sections.forEach((s) => this.crop(s));
+    if (!this.asideOpen) this.sections.filter((s) => !this.lane() || s.group !== this.liveGroup).forEach((s) => this.crop(s));
     const sec = this.makeSection(spec);
     // An svg board's section is as tall as its canvas from the start, so it lands (head at the top) where it will stay.
     if (spec.svg) { sec.svg = true; if (spec.h && spec.h > sec.full) { sec.full = sec.y1 = Math.ceil(spec.h); sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${sec.full}`)); } }
     if (this.asideOpen) sec.el.classList.add('is-aside');
+    let head: HTMLElement | null = null;
     if (this.nextHead) {
       const h = this.nextHead;
       this.nextHead = null;
       this.heads.set(sec, { ...h, collapsed: false });
       h.el.classList.toggle('is-aside', this.asideOpen);
       this.content.appendChild(h.el);
+      head = h.el;
     }
     this.sections.push(sec);
     this.ids.set(spec.id, sec);
     this.content.appendChild(sec.el);
-    this.last = { t: { region: spec.id }, r: WHOLE_REGION };
+    this.joinGroup(sec, head, spec.page);
+    this.pen({ t: { region: spec.id }, r: WHOLE_REGION });
     const live = () => ep === this.epoch && this.ids.get(spec.id) === sec;
+    if (this.lane()) {
+      // The lane: nothing opens or glides; the section lands in its group, in view (the group is sticky).
+      this.open = true;
+      this.split = 'normal';
+      this.position();
+      sec.el.classList.add('is-shown');
+      return live() ? this.region(spec.id) ?? 'desk reset' : 'desk reset';
+    }
     // A size=l sketch widens the split; it stays wide while such a section is on the board.
     const want: Split = this.sections.some((s) => s.size === 'l') ? 'wide' : 'normal';
     const moved = !this.open || want !== this.split;
@@ -339,7 +400,10 @@ export class Desk implements DeskApi {
         m.y = Math.max(m.from, r.y);
         this.position();
         const box = this.boxOf(sec);
-        if (box && this.follow.following()) {
+        if (box && this.follow.following() && this.lane()) {
+          const top = m.y - m.h / box.s;
+          void this.reveal(t, { x: r.x, y: top, w: r.w, h: r.y + r.h - top });
+        } else if (box && this.follow.following()) {
           const top = m.y - m.h / box.s;
           void this.glideBoard(() => this.boardTop(sec, { x: r.x, y: top, w: r.w, h: r.y + r.h - top }));
         }
@@ -348,15 +412,59 @@ export class Desk implements DeskApi {
     if (t.page == null) return;
     this.inked.unshift({ page: t.page, r });
     if (this.inked.length > 8) this.inked.length = 8;
+    const g = this.liveGroup;
+    if (!g || !this.lane()) return;
+    if (g.provisional) {
+      // The answer's first page mark: the drawing moves level with the passage it explains (one glide).
+      g.provisional = false;
+      g.anchor = { page: t.page, y: r.y + Math.min(r.h, 40) / 2 };
+      const from = g.item.getBoundingClientRect().top;
+      this.position();
+      this.glideFrom(g, from);
+    }
+    this.liveLane();
+  }
+
+  /** A FLIP glide of a group's item from its old screen top to where it is now (DOCK_MS; none under reduced motion). */
+  private glideFrom(g: Group, from: number) {
+    const dy = from - g.item.getBoundingClientRect().top;
+    const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced || Math.abs(dy) < 1 || typeof g.item.animate !== 'function') return;
+    g.item.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: DOCK_MS, easing: 'cubic-bezier(.2,.8,.2,1)' });
   }
 
   async reveal(t: Target, r: SRect, before?: BeforeMove, anchor?: SRect): Promise<boolean> {
     const ep = this.epoch;
-    this.last = { t, r };
+    this.pen({ t, r });
     if (!this.follow.following() || this.isVisible(t, r)) return false;
     if (t.region != null) {
       const sec = this.ids.get(t.region);
       if (!sec || !this.open) return false;
+      if (this.lane()) {
+        // The playing group is sticky: scrolling the page cannot move it, so it never does. A group taller
+        // than the band follows the pen instead: its sticky top shifts so the part being drawn is in view.
+        // A docked group drawn into again: the page scrolls to it.
+        if (sec.group?.live) {
+          const g = sec.group, v = this.viewRect(sec, r);
+          if (!v) return false;
+          // With air above for the pinned card's top and the band's fade.
+          const air = PIN_CARD + LANE_FADE;
+          g.pen = { top: v.y - g.item.getBoundingClientRect().top - air, h: v.h + air };
+          const from = g.item.getBoundingClientRect().top;
+          this.position();
+          this.glideFrom(g, from);
+          return Math.abs(g.item.getBoundingClientRect().top - from) >= 1;
+        }
+        const v = this.viewRect(sec, r);
+        if (!v) return false;
+        await before?.();
+        if (ep !== this.epoch) return false;
+        const { H } = this.host.viewport(), band = H - SAFE_TOP - safeBottom();
+        const dy = v.h > band ? v.y - LANE_STICK : v.y < LANE_STICK ? v.y - LANE_STICK : v.y + v.h - (H - safeBottom() - 16);
+        const top0 = this.host.scrollTop();
+        await this.host.glideTo(() => Math.max(0, Math.min(this.host.maxScroll(), top0 + dy)), 450);
+        return true;
+      }
       if (sec.scene) return this.frameScene(sec, r, before);
       await before?.();
       if (ep !== this.epoch) return false;
@@ -371,6 +479,13 @@ export class Desk implements DeskApi {
   }
 
   isVisible(t: Target, r: SRect): boolean {
+    if (t.region != null && this.lane()) {
+      const sec = this.ids.get(t.region);
+      const v = sec ? this.viewRect(sec, isWhole(r) ? { x: 0, y: sec.y0, w: REGION_W, h: Math.min(REGION_H, sec.y1 - sec.y0) } : r) : null;
+      if (!v) return false;
+      const { H } = this.host.viewport();
+      return inWindow({ y: v.y, h: v.h }, SAFE_TOP, H - SAFE_TOP - safeBottom());
+    }
     if (t.region != null) {
       const sec = this.ids.get(t.region);
       const box = sec && this.open ? this.boxOf(sec) : null;
@@ -401,7 +516,7 @@ export class Desk implements DeskApi {
   async frameBoth(a: ConnectorEnd, b: ConnectorEnd, before?: BeforeMove): Promise<void> {
     const ep = this.epoch;
     const pageEnd = a.t.page != null ? a : b, regEnd = a.t.page != null ? b : a;
-    this.last = regEnd;
+    this.pen(regEnd);
     if (!this.follow.following() || pageEnd.t.page == null || regEnd.t.region == null) return;
     const sec = this.ids.get(regEnd.t.region);
     if (!sec) return;
@@ -413,12 +528,12 @@ export class Desk implements DeskApi {
     // The slides and the board scroll independently: both ends come into view together.
     await Promise.all([
       needPage ? this.host.glideTo(() => this.inkFrame(pageEnd.t, pageEnd.r), 450) : null,
-      needBoard ? (sec.scene ? this.frameScene(sec, regEnd.r) : this.glideBoard(() => this.boardTop(sec, regEnd.r))) : null,
+      needBoard && this.lane() ? this.reveal(regEnd.t, regEnd.r) : needBoard ? (sec.scene ? this.frameScene(sec, regEnd.r) : this.glideBoard(() => this.boardTop(sec, regEnd.r))) : null,
     ]);
   }
 
   async scrollToPage(page: number, y?: number): Promise<void> {
-    this.last = { t: { page }, r: { x: 0, y: 0, w: 1000, h: 0 } };
+    this.pen({ t: { page }, r: { x: 0, y: 0, w: 1000, h: 0 } });
     if (!this.follow.following()) return;
     await this.host.scrollToPage(page, y);
   }
@@ -449,6 +564,10 @@ export class Desk implements DeskApi {
    */
   async reset(ms: number): Promise<void> {
     this.epoch++;
+    // The lane: the last answer's group docks (if it still plays) and every earlier answer folds to its card (spec §5.5).
+    if (this.liveGroup) this.dock(this.liveGroup, false);
+    this.liveGroup = null;
+    if (this.lane()) { for (const g of this.groups) this.fold(g, true); this.penLane = false; this.position(); }
     this.inked = [];
     this.follow.setAnswering(true);
     this.ids.clear();
@@ -515,6 +634,17 @@ export class Desk implements DeskApi {
 
   /** Scrolls the board so the head `el` sits at its top (the trail: a question clicked or replayed). */
   async showHead(el: HTMLElement): Promise<void> {
+    const g = this.lane() ? this.groups.find((x) => x.head === el || x.parts?.includes(el)) : undefined;
+    if (g) {
+      // The lane: the card opens in place and the sheet scrolls to it (the session list, a replay).
+      this.fold(g, false);
+      this.position();
+      this.follow.userTookOver();
+      const { H } = this.host.viewport();
+      const y = g.top, h = Math.min(g.h, H - SAFE_TOP - safeBottom());
+      await this.host.glideTo(() => Math.max(0, Math.min(this.host.maxScroll(), y - SAFE_TOP - Math.max(16, (H - SAFE_TOP - safeBottom() - h) / 3))), 600);
+      return;
+    }
     if (!this.open) return;
     const top = parseFloat(el.style.top) || 0;
     await this.glideBoard(() => Math.max(0, top - 8));
@@ -541,7 +671,22 @@ export class Desk implements DeskApi {
     this.sections = [];
     this.heads.clear();
     this.nextHead = null;
-    void wait(GLIDE_MS).then(() => goneHeads.forEach((e) => e.remove()));
+    const goneGroups = this.groups.map((g) => g.el);
+    this.groups = [];
+    this.liveGroup = null;
+    this.penLane = false;
+    this.leaders.replaceChildren();
+    if (this.lane()) {
+      // The lane stays (it is the sheet's margin): only its drawings leave.
+      gone.forEach((s) => s.el.remove());
+      goneHeads.forEach((e) => e.remove());
+      goneGroups.forEach((e) => e.remove());
+      this.open = false;
+      this.split = 'none';
+      this.emit();
+      return;
+    }
+    void wait(GLIDE_MS).then(() => { goneHeads.forEach((e) => e.remove()); goneGroups.forEach((e) => e.remove()); });
     this.open = false;
     this.split = 'none';
     this.board.classList.remove('is-open');
@@ -607,7 +752,8 @@ export class Desk implements DeskApi {
   wheel(e: WheelEvent, manual = true): void { this.onWheel(e, manual); }
 
   private onWheel(e: WheelEvent, manual: boolean) {
-    if (e.defaultPrevented) return;
+    // The lane is part of the sheet: a pinch zooms the whole surface (the viewer's overview), a wheel scrolls it.
+    if (e.defaultPrevented || this.lane()) return;
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
       // A Safari pinch is already zooming through its gesture events.
@@ -627,6 +773,7 @@ export class Desk implements DeskApi {
   /** The zoom a Safari pinch started from (its gesture events carry the scale since the start). */
   private gesture: { z: number } | null = null;
   private onGesture(e: GestureLike) {
+    if (this.lane()) return;
     e.preventDefault();
     if (e.type === 'gesturestart') { this.gesture = { z: this.zoomK }; return; }
     if (e.type === 'gestureend') { this.gesture = null; return; }
@@ -682,7 +829,7 @@ export class Desk implements DeskApi {
 
   private frame(): Frame {
     const { W, H } = this.host.viewport();
-    return frameFor(W, H, this.open ? this.split : 'none', this.host.aspect(1));
+    return frameFor(W, H, this.open ? this.split : 'none', this.host.aspect(1), !!this.host.laneEl?.());
   }
 
   private makeSection(spec: RegionSpec): Section {
@@ -693,7 +840,7 @@ export class Desk implements DeskApi {
     // Before the board opens: the board the normal split would give (what the first section lands in);
     // `split`: the board that split would give (the svg board opens wide).
     const { W, H } = this.host.viewport();
-    const f = this.open && !split ? this.frame() : frameFor(W, H, split ?? 'normal', this.host.aspect(1));
+    const f = this.open && !split ? this.frame() : frameFor(W, H, split ?? 'normal', this.host.aspect(1), !!this.host.laneEl?.());
     return { boardPx: f.board?.w ?? 0, bodyPx: (b) => bodyPx(b, f.page.pageW) };
   }
 
@@ -771,6 +918,12 @@ export class Desk implements DeskApi {
     return boardLayout(f.board.w, this.specs(f), this.zoomK).boxes;
   }
   private boxOf(sec: Section): SectionBox | null {
+    if (this.lane()) {
+      const g = sec.group, s = this.laneScale(sec);
+      if (!g) return null;
+      const w = sec.el.offsetWidth || REGION_W * s, h = sec.el.offsetHeight || (sec.y1 - sec.y0) * s;
+      return { x: sec.el.offsetLeft, y: g.top + sec.el.offsetTop, w, h, s };
+    }
     const i = this.sections.indexOf(sec);
     return i < 0 ? null : this.boxes()[i] ?? null;
   }
@@ -812,6 +965,13 @@ export class Desk implements DeskApi {
 
   /** Section-space rect → view px (where it is on screen now). */
   private viewRect(sec: Section, r: SRect): ViewRect | null {
+    if (this.lane()) {
+      // The lane is in the page's scroll and its live group is sticky: where the section is now is the DOM's to say.
+      if (!sec.el.isConnected || !sec.group || sec.group.folded) return null;
+      const e = sec.el.getBoundingClientRect(), s = this.laneScale(sec);
+      if (sec.scene) { const { cam } = sec.scene, k = s * cam.z; return { x: e.left + (r.x - cam.x) * k, y: e.top + (r.y - cam.y) * k, w: r.w * k, h: r.h * k }; }
+      return { x: e.left + (r.x + (sec.dx ?? 0)) * s, y: e.top + (r.y - sec.y0) * s, w: r.w * s, h: r.h * s };
+    }
     const box = this.boxOf(sec), b = this.frame().board;
     if (!box || !b) return null;
     if (sec.scene) {
@@ -824,7 +984,9 @@ export class Desk implements DeskApi {
   /** Puts the board, its sections and every wire where the current window says. */
   private position() {
     const f = this.frame();
-    if (this.open && f.board) {
+    this.mountLane(f);
+    if (f.lane) this.positionLane(f);
+    else if (this.open && f.board) {
       const b = f.board;
       Object.assign(this.board.style, { left: `${b.x}px`, top: `${b.y}px`, width: `${b.w}px`, height: `${b.h}px` });
       this.board.classList.toggle('is-stacked', f.stacked);
@@ -858,6 +1020,9 @@ export class Desk implements DeskApi {
 
   /** The slides or the board scrolled: wires follow (once per frame), visibility waiters re-check. */
   private onMove() {
+    if (this.liveGroup && this.lane()) this.liveLane();
+    if (this.lane()) for (const g of this.groups) if (g !== this.liveGroup) this.clipLane(g);
+    if (this.lane() && (this.liveGroup || this.edge)) this.edgeCheck();
     this.moved.forEach((f) => f());
     if (this.frameReq || !this.wires.length) return;
     this.frameReq = raf(() => { this.frameReq = 0; this.rerouteAll(); }) as unknown as number;
@@ -938,6 +1103,288 @@ export class Desk implements DeskApi {
   }
 
   private emit() { const s = this.state(); this.subs.forEach((f) => f(s)); }
+
+  // ---------------------------------------------------------------------------------------------
+  // Layout C: the anchored lane (src/desk/lane.ts). The board element becomes the lane, mounted in the
+  // viewer's scroll content beside the page column: one sheet, one scroll.
+
+  /** The lane layout is on (a window ≥ LANE_MIN_W, and the viewer has its lane layer). */
+  private lane(): boolean { return !!this.frame().lane; }
+  private wasLane = false;
+  /** The edge marker shown now (null: none). */
+  private edge: DeskState['edge'] | null = null;
+
+  /** Recomputes the edge marker: the playing answer's latest page mark, out of the band above or below. */
+  private edgeCheck() {
+    let next: DeskState['edge'] | null = null;
+    const k = this.inked[0];
+    if (k && this.liveGroup && this.lane()) {
+      const r = this.deskRect(k.page, k.r);
+      const { H } = this.host.viewport(), top = this.host.scrollTop();
+      if (r && r.y + r.h < top + SAFE_TOP) next = { dir: 'up', page: k.page };
+      else if (r && r.y > top + H - safeBottom()) next = { dir: 'down', page: k.page };
+    }
+    if (next?.dir === this.edge?.dir && next?.page === this.edge?.page) return;
+    this.edge = next;
+    this.emit();
+  }
+
+  /** The edge marker was clicked: the sheet scrolls back to the answer's latest page mark. */
+  async showEdge(): Promise<void> {
+    const k = this.inked[0];
+    if (!k || !this.host.layout()) return;
+    await this.host.glideTo(() => this.inkFrame({ page: k.page }, k.r), 450);
+  }
+
+  /**
+   * A section's scale in the lane: the lane's width (mockups C1–C4: the drawing spans the margin; its
+   * text keeps its own floor, svgMinFont), at least the type cap the split board would give it.
+   */
+  private laneScale(sec: Section): number {
+    const f = this.frame();
+    // An aside's inset is indented 24 px under the paused drawing (spec §5.6).
+    const cw = Math.max(1, (f.lane?.w ?? f.board?.w ?? 0) - 2 * LANE_PAD - (sec.el.classList.contains('is-aside') ? 24 : 0));
+    return Math.max(cw / SECTION_W, Math.min(cw / SECTION_W, Math.max(bodyPx(sec.body, f.page.pageW), MIN_TEXT_PX) / TEXT_UNITS));
+  }
+
+  /** The pen moved: `last` is where the answer is; in the lane the dock follows the pen's column. */
+  private pen(l: { t: Target; r: SRect }) {
+    this.last = l;
+    const inLane = l.t.region != null;
+    if (inLane !== this.penLane) { this.penLane = inLane; if (this.lane()) this.emit(); }
+  }
+
+  /** The page point the answer is explaining now: its latest page ink, else the reading line in view. */
+  private anchorNow(page: number): Group['anchor'] {
+    const k = this.inked[0];
+    if (k) return { page: k.page, y: k.r.y + Math.min(k.r.h, 40) / 2 };
+    const L = this.host.layout();
+    if (!L) return { page, y: 0 };
+    const { H } = this.host.viewport();
+    const y = this.host.scrollTop() + SAFE_TOP + 0.12 * (H - SAFE_TOP - safeBottom());
+    const p = Math.max(1, Math.min(L.tops.length, pageAt(L, y)));
+    return { page: p, y: Math.max(0, (y - L.tops[p - 1]) / (L.pageW / 1000)) };
+  }
+
+  /** An anchor's content y now. */
+  private anchorY(a: Group['anchor']): number {
+    return this.deskRect(a.page, { x: 0, y: a.y, w: 0, h: 0 })?.y ?? 0;
+  }
+
+  /** A section joins this answer's group (the first one opens it, at the answer's anchor); `head` goes above it. */
+  private joinGroup(sec: Section, head: HTMLElement | null, page: number) {
+    let g = this.liveGroup;
+    if (!g) {
+      const div = (cls: string) => { const e = document.createElement('div'); e.className = cls; return e; };
+      const el = div('lane-group'), spacer = div('lane-spacer'), item = div('lane-item');
+      el.append(spacer, item);
+      const leader = this.leaders.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
+      const ng: Group = { el, spacer, item, leader, secs: [], head: null, provisional: !this.inked.length, anchor: this.anchorNow(page), lift: (head ? this.heads.get(sec)?.h ?? 0 : 0) + 8, top: 0, h: 0, live: true, folded: false, thumb: null };
+      // A folded card opens in place on a click (before its head's own Replay).
+      item.addEventListener('click', (e) => { if (ng.folded) { e.stopPropagation(); e.preventDefault(); this.fold(ng, false); this.position(); } }, true);
+      this.content.insertBefore(el, this.leaders);
+      this.groups.push(ng);
+      this.liveGroup = g = ng;
+    }
+    if (head) { (g.parts ??= []).push(head); g.head ??= head; }
+    (g.parts ??= []).push(sec.el);
+    sec.group = g;
+    g.secs.push(sec);
+  }
+
+  /** A docked group is drawn into again (a follow-up continues its board): it opens and plays again. */
+  private relive(g: Group) {
+    if (this.liveGroup && this.liveGroup !== g) this.dock(this.liveGroup, false);
+    this.fold(g, false);
+    g.live = true;
+    this.liveGroup = g;
+  }
+
+  /** Folds a finished answer's group to its card (its head, a thumbnail of its drawing), or opens it again. */
+  private fold(g: Group, on: boolean) {
+    if (g.live || !g.head || g.folded === on) return;
+    g.folded = on;
+    g.el.classList.toggle('is-folded', on);
+    if (on && !g.thumb) {
+      const ink = g.secs[0]?.el.querySelector('.desk-region-ink');
+      if (ink) {
+        const t = document.createElement('span');
+        t.className = 'lane-thumb';
+        t.setAttribute('aria-hidden', 'true');
+        const c = ink.cloneNode(true) as SVGSVGElement;
+        c.removeAttribute('style');
+        c.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        t.appendChild(c);
+        g.thumb = t;
+        g.head.querySelector('.trail-row')?.prepend(t);
+      }
+    }
+  }
+
+  /**
+   * The answer has ended (or the next begins): its group stops being sticky and docks beside its main
+   * anchor (the answer's latest page ink in view, else where it began), moving as little as it can.
+   */
+  private dock(g: Group, animate: boolean) {
+    if (!g.live) return;
+    const from = g.item.getBoundingClientRect().top;
+    const now = from - this.content.getBoundingClientRect().top;
+    g.live = false;
+    g.item.classList.remove('is-pinned');
+    for (const s of g.secs) this.crop(s);
+    const { H } = this.host.viewport(), top = this.host.scrollTop();
+    const seen = this.inked.find((k) => {
+      const r = this.deskRect(k.page, k.r);
+      return !!r && r.y + r.h / 2 >= top + SAFE_TOP && r.y + r.h / 2 <= top + H - safeBottom();
+    });
+    if (seen) g.anchor = { page: seen.page, y: seen.r.y + Math.min(seen.r.h, 40) / 2 };
+    else {
+      // None of the answer's marks is in view: the drawing stays where the student is looking (it never
+      // leaves the screen at the answer's end); its anchor becomes the page point level with it.
+      const L = this.host.layout(), y = now + (g.head ? g.head.offsetHeight : 0) + 8;
+      if (L) { const p = Math.max(1, Math.min(L.tops.length, pageAt(L, y))); g.anchor = { page: p, y: Math.max(0, (y - L.tops[p - 1]) / (L.pageW / 1000)) }; }
+    }
+    this.position();
+    const ay = this.anchorY(g.anchor), headH = g.head ? g.head.offsetHeight : 0;
+    g.lift = ay - dockTop(now, g.h, ay, headH);
+    this.position();
+    if (animate) this.glideFrom(g, from);
+  }
+
+  /** Puts the board where the layout says: the lane in the scroll content, or the split board on the stage. */
+  private mountLane(f: Frame) {
+    const laneEl = f.lane ? this.host.laneEl?.() ?? null : null;
+    const lane = !!laneEl;
+    if (laneEl && this.board.parentElement !== laneEl) laneEl.appendChild(this.board);
+    if (!laneEl && this.board.parentElement !== this.stage) this.stage.insertBefore(this.board, this.wireLayer);
+    this.board.classList.toggle('is-lane', lane);
+    if (lane) this.board.classList.add('is-open');
+    else if (!this.open) this.board.classList.remove('is-open');
+    for (const g of this.groups) for (const p of g.parts ?? []) {
+      const want = lane ? g.item : this.content;
+      if (p.parentElement !== want) want.appendChild(p);
+    }
+    if (typeof document !== 'undefined') document.documentElement.classList.toggle('petu-lane', lane);
+    if (lane !== this.wasLane) {
+      this.wasLane = lane;
+      // Leaving the lane with drawings up: the split board opens (the viewer re-lays its column).
+      if (!lane && this.open) { if (this.split === 'none') this.split = 'normal'; void this.host.setSplit(this.split, 0); }
+      for (const s of this.sections) for (const k of ['marginLeft', 'left', 'top', 'width', 'height'] as const) s.el.style[k] = '';
+      for (const h of this.heads.values()) for (const k of ['marginLeft', 'left', 'top', 'width', 'height'] as const) h.el.style[k] = '';
+    }
+  }
+
+  /** Lays the lane out: sections sized, groups packed at their anchors, the live one sticky, leaders drawn. */
+  private positionLane(f: Frame) {
+    const lane = f.lane!, L = this.host.layout();
+    const total = L ? `${L.total}px` : '100%';
+    Object.assign(this.board.style, { left: `${lane.x}px`, top: '0px', width: `${lane.w}px`, height: total });
+    Object.assign(this.content.style, { height: total, width: '' });
+    const cw = Math.max(1, lane.w - 2 * LANE_PAD);
+    for (const s of this.sections) {
+      const k = this.laneScale(s);
+      // An aside's inset is indented under the paused drawing (spec §5.6), the width of its head.
+      const ind = s.el.classList.contains('is-aside') ? 24 : 0;
+      const w = s.scene ? cw - ind : REGION_W * k, h = s.scene ? Math.round((cw - ind) * 0.62) : (s.y1 - s.y0) * k;
+      Object.assign(s.el.style, { left: '', top: '', width: `${w}px`, height: `${h}px`, marginLeft: `${LANE_PAD + ind + Math.max(0, (cw - ind - w) / 2)}px` });
+      const hd = this.heads.get(s);
+      if (hd) Object.assign(hd.el.style, { left: '', top: '', width: `${cw - (hd.aside ? 24 : 0)}px`, height: `${hd.h}px`, marginLeft: `${LANE_PAD + (hd.aside ? 24 : 0)}px` });
+    }
+    for (const s of this.sections) if (s.scene) this.applyCam(s);
+    for (const g of this.groups) g.h = g.folded ? FOLDED_H : g.item.offsetHeight;
+    const tops = packLane(this.groups.map((g) => ({ want: g.live && g.lift === (g.head ? g.head.offsetHeight : 0) + 8 ? wantFor(this.anchorY(g.anchor), g.lift - 8) : this.anchorY(g.anchor) - g.lift, h: g.h })));
+    const { H } = this.host.viewport();
+    this.groups.forEach((g, i) => {
+      g.top = tops[i];
+      g.spacer.style.height = `${g.top}px`;
+      g.el.classList.toggle('is-live', g.live);
+      if (g.live) {
+        const ins = stickyInsets(g.h, H, LANE_STICK, safeBottom() + 12, g.pen, g.stick);
+        g.stick = g.pen ? ins.top : null;
+        Object.assign(g.item.style, { top: `${ins.top}px`, bottom: `${ins.bottom}px` });
+      } else { g.pen = g.stick = null; Object.assign(g.item.style, { top: '', bottom: '' }); }
+      // A follow-up's header inside an extended svg section: over its first new group (units → px).
+      for (const m of this.midHeads) {
+        if (m.sec.group !== g) continue;
+        const s = this.laneScale(m.sec), y0 = m.sec.el.offsetTop;
+        const floor = y0 + (m.from - m.sec.y0) * s;
+        const top = m.y == null ? floor : Math.max(floor, y0 + (m.y - m.sec.y0) * s - m.h);
+        Object.assign(m.el.style, { left: `${LANE_PAD}px`, top: `${top}px`, width: `${cw}px`, height: `${m.h}px`, marginLeft: '' });
+      }
+    });
+    this.leaders.style.height = total;
+    for (const g of this.groups) { this.drawLeader(g); if (g !== this.liveGroup) this.clipLane(g); }
+    if (this.liveGroup) this.liveLane();
+  }
+
+  /** The live group on scroll: pinned (stuck away from its place: the card look) or in place; its leader follows. */
+  private liveLane() {
+    const g = this.liveGroup!;
+    const top = g.item.getBoundingClientRect().top - this.content.getBoundingClientRect().top;
+    // Pinned: held in view away from the passage it belongs to (the answer walked on), out of a leader's
+    // reach; a nudge to fit the band, with its anchor still beside it, is not.
+    g.item.classList.toggle('is-pinned', Math.abs(top - g.top) > LEADER_MAX && !leaderPath(this.anchorY(g.anchor), { top, h: g.h }, LANE_PAD, g.head?.offsetHeight ?? 0));
+    this.clipLane(g);
+    this.drawLeader(g, top);
+  }
+
+  /**
+   * Nothing in the lane sits under the chrome row. A group whose top has gone above the comfort band
+   * (a docked one scrolled up with the page, or a live one taller than the band) is masked there with a
+   * short fade. The live group's card and its "pinned" label stay in the band (--lane-clip moves them
+   * down): its content is masked down to the card's top, not to the window's.
+   */
+  private clipLane(g: Group) {
+    const r = g.item.getBoundingClientRect();
+    const live = g.live && !g.folded, pinned = live && g.item.classList.contains('is-pinned');
+    const band = live ? LANE_STICK : SAFE_TOP;
+    const clip = r.bottom > 0 && r.top < band ? band - r.top : 0;
+    g.item.style.setProperty('--lane-clip', `${Math.round(clip)}px`);
+    g.item.classList.toggle('is-clipped', clip > 0);
+    const mask = (el: HTMLElement | SVGElement, cut: number) => {
+      const v = cut > 0 ? `linear-gradient(to bottom, transparent ${cut.toFixed(1)}px, #000 ${(cut + LANE_FADE).toFixed(1)}px)` : '';
+      el.style.setProperty('mask-image', v);
+      el.style.setProperty('-webkit-mask-image', v);
+    };
+    if (!live) {
+      mask(g.item, clip);
+      for (const el of [...g.item.children] as HTMLElement[]) if (el.style.maskImage || el.style.getPropertyValue('-webkit-mask-image')) mask(el, 0);
+      return;
+    }
+    // The live item itself is never masked (its card and label are its own pseudo-elements): its parts are.
+    mask(g.item, 0);
+    const line = band + (pinned ? PIN_CARD : 0);
+    for (const el of [...g.item.children] as HTMLElement[]) mask(el, clip > 0 ? line - el.getBoundingClientRect().top : 0);
+  }
+
+  /**
+   * A group's leader: from the page edge level with its anchor (the answer's latest page ink while it
+   * plays) to the drawing, ≤ 120 px; none when the drawing sits too far from it.
+   */
+  private drawLeader(g: Group, itemTop = g.top) {
+    const head = g.head && !g.folded ? g.head.offsetHeight : 0;
+    let path: { d: string; y1: number } | null = null, y0 = 0;
+    if (!g.folded && g.secs.length) {
+      const k = g.live ? this.inked[0] : undefined;
+      const ys = [k ? this.anchorY({ page: k.page, y: k.r.y + Math.min(k.r.h, 40) / 2 }) : null, this.anchorY(g.anchor)];
+      for (const y of ys) {
+        if (y == null) continue;
+        path = leaderPath(y, { top: itemTop, h: g.h }, LANE_PAD - 6, head);
+        if (path) { y0 = y; break; }
+      }
+    }
+    if (!path) { g.leader.replaceChildren(); return; }
+    let line = g.leader.firstChild as SVGPathElement | null, dot = g.leader.lastChild as SVGCircleElement | null;
+    if (!line || line === dot) {
+      g.leader.replaceChildren();
+      line = g.leader.appendChild(document.createElementNS(SVG, 'path')) as SVGPathElement;
+      dot = g.leader.appendChild(document.createElementNS(SVG, 'circle')) as SVGCircleElement;
+      dot.setAttribute('r', '3');
+      dot.setAttribute('cx', '0');
+    }
+    line.setAttribute('d', path.d);
+    dot!.setAttribute('cy', y0.toFixed(1));
+  }
 
   // ---------------------------------------------------------------------------------------------
   // Board v2 scenes: one world per scene section, seen through a camera.
@@ -1034,6 +1481,8 @@ export class Desk implements DeskApi {
    * show the whole scene, centred (the explanation's map at a glance, every connection visible).
    */
   async overview(): Promise<void> {
+    // The lane: the answer's group docks beside its main anchor (spec §5.2 rule 5).
+    if (this.lane() && this.liveGroup && !this.asideOpen) { this.dock(this.liveGroup, true); this.liveGroup = null; this.edgeCheck(); }
     const sec = [...this.ids.values()].reverse().find((s) => s.scene);
     if (!sec || !this.open || !this.follow.following()) return;
     const ext = sec.scene!.space.extent(), box = this.boxOf(sec);

@@ -3,26 +3,21 @@ import type { PdfDoc } from './loadPdf';
 import type { TextRun } from '../locate/locateQuote';
 import { textLines, type TextLine } from '../agent/context/textLines';
 import { resolveOutline, type Bookmark } from '../agent/context/outline';
+import { clean } from './textRuns';
+import { garbled } from './mathGlyphs';
 
 /**
  * Where a page sits in the document, for the journey route ("p3 → p12 · Confidence intervals") and
  * the answer's part titles: the deepest bookmark at or before the page, else the page's own title
- * (its largest line near the top).
+ * (its largest line near the top). A label that reads as broken glyphs (a title set in a math font
+ * with a wrong ToUnicode map) is never used: the caller falls back to "Page N".
  */
 const MAX_LABEL = 48;
 
-const trim = (s: string) => { const t = s.replace(/\s+/g, ' ').trim(); return t.length > MAX_LABEL ? `${t.slice(0, MAX_LABEL - 1).trimEnd()}…` : t; };
-
-/** The deepest bookmark at or before `page` (bookmarks sorted by page, then depth). */
-export function sectionFor(bookmarks: Bookmark[], page: number): string | undefined {
-  let best: Bookmark | undefined;
-  for (const b of bookmarks) if (b.page <= page && (!best || b.page > best.page || (b.page === best.page && (b.depth ?? 0) >= (best.depth ?? 0)))) best = b;
-  return best ? trim(best.title) : undefined;
-}
-
+const trim = (s: string) => { const t = clean(s).replace(/\s+/g, ' ').trim(); return t.length > MAX_LABEL ? `${t.slice(0, MAX_LABEL - 1).trimEnd()}…` : t; };
 /**
  * Reads as words: most characters are letters, digits, spaces or ordinary punctuation. An equation set
- * in a math font often extracts as glyph soup ("$%$∑ Ixly !"!%$v"!"), which is never a title.
+ * in a math font often extracts as ASCII glyph soup ("$%$∑ Ixly !"!%$v"!"), which `garbled` doesn't see.
  */
 export function readsAsWords(text: string): boolean {
   const t = text.replace(/\s+/g, '');
@@ -31,9 +26,19 @@ export function readsAsWords(text: string): boolean {
   return plain / t.length >= 0.85;
 }
 
-/** A page's title: the tallest line with letters in its top quarter (a slide title, a heading). */
+/** A readable label, or undefined. */
+const readable = (s: string) => { const t = trim(s); return t && !garbled(t) && readsAsWords(t) ? t : undefined; };
+
+/** The deepest bookmark at or before `page` (bookmarks sorted by page, then depth), if its title reads. */
+export function sectionFor(bookmarks: Bookmark[], page: number): string | undefined {
+  let best: Bookmark | undefined;
+  for (const b of bookmarks) if (b.page <= page && (!best || b.page > best.page || (b.page === best.page && (b.depth ?? 0) >= (best.depth ?? 0)))) best = b;
+  return best ? readable(best.title) : undefined;
+}
+
+/** A page's title: the tallest readable line with letters in its top quarter (a slide title, a heading). */
 export function pageTitle(lines: TextLine[]): string | undefined {
-  const top = lines.filter((l) => l.rect.y < 250 && !l.math && /\p{L}{2,}/u.test(l.text) && !/^\d+$/.test(l.text.trim()) && readsAsWords(l.text));
+  const top = lines.filter((l) => l.rect.y < 250 && !l.math && /\p{L}{2,}/u.test(l.text) && !/^\d+$/.test(l.text.trim()) && readable(l.text));
   if (!top.length) return undefined;
   const t = top.reduce((a, b) => (b.rect.h > a.rect.h * 1.05 || (b.rect.h >= a.rect.h * 0.95 && b.rect.y < a.rect.y) ? b : a));
   return trim(t.text);

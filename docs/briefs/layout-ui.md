@@ -34,6 +34,23 @@ dock, follow mode and settings. All geometry derives from the window, never the 
 | `src/pdf/sections.ts` | `SectionLabels`: a page's label = deepest bookmark at or before it, else the page title (tallest top line). |
 | `src/ui/ui.css`, `src/app.css`, `src/styles/tokens.css`, `src/desk/desk.css`, `src/pdf/viewer.css` | Styles; tokens are the source for ink colours/weights (`ink/agent/tokens.ts` mirrors them). |
 
+## Layout C, the anchored lane (W ≥ 1200; spec docs/superpowers/specs/2026-10-30-anchored-lane-design.md)
+
+The page column and a paper **lane** are one sheet on the viewer's one scroll (mockups C1–C5).
+Below 1200 px (or a lane < 440) everything below ("States") still applies: the split board (B).
+
+| Path | What it is |
+|---|---|
+| `src/desk/layout.ts` `laneFrame` | 1440: page 800 + lane 544, margins 48; 2560: page 1100 + lane 1000, centred. `frameFor(…, lane = true)`: the page column is the same reading or drawing (nothing glides). |
+| `src/desk/lane.ts` | Pure maths: `packLane` (anchor top, 24 px stacking, earlier groups never move), `dockTop` (move least, anchor inside), `leaderPath` (≤ 120 px, dot on the page edge), `stickyInsets`. Tests `tests/desk/lane.test.ts`. |
+| `Desk` lane mode | The board element mounts in the viewer's `.pv-lane` (`DeskHost.laneEl`). Each answer is a **group** (`.lane-group` › spacer + `.lane-item`: head + sections in flow) at its anchor (its first page mark; before one, the reading line, re-anchored with a glide at the first mark). The playing group is `position: sticky` (card + "pinned while the answer plays" when its anchor is out of reach), **docks** at `overview()` (answer end) beside its latest in-view page mark (FLIP 300 ms), **folds** to a 36 px card (thumbnail) when the next question starts; a click opens it. Asides append to the paused group, indented 24 px. Region rects come from the DOM (sticky). `DeskState.lane/page/edge`; `column` = the pen's column (the dock follows it). Esc never clears the lane. A live group taller than the band **follows the pen** (svg part by part: `reveal` shifts its sticky top, `stickyInsets(…, pen)`); a `BOARD extend` header rides in the group. **Nothing sits under the top bar** (`clipLane`: the card and label keep to the comfort band via `--lane-clip`, parts above are masked with a fade). The dock's column ends its reading band above the dock (`--dock-col-x/w`, app.css three-layer mask). |
+| `src/ui/SessionDrawer.tsx`, `session.css` | S: the session list (time order, asides under their answer); a pick → `Desk.showHead` (opens the card, scrolls to it). M: past marks (`retireOut` in `ink/agent/marks.ts` keeps the last answer's page marks in a hidden `.petu-past` group). Edge marker "↑ p.N · marked". |
+| `src/pdf/overview.ts`, `src/ui/OverviewPill.tsx` | Overview zoom 50–200 % of the whole sheet: pinch / ⌘+wheel / Safari gestures / Z / ⌘±0; `.pv-zoom` clips only while zoomed (`overflow: clip`, sticky keeps working). B4's page zoom (`.pv-pagezoom`, `src/pdf/column.ts`) and the slide's band fit apply outside the lane only; the board's own pinch zoom stands down in the lane. |
+| `src/settings/settings.ts` `highlight` | `'violet'` wash (default) or `'yellow'` marker. |
+
+Dev: `?script=lane-econ`, `?script=lane-session` (OpenStax Economics p.87–88, needs the corpus PDF);
+gallery scenes of the same names (moments c1-rule, c2-gap, end, c3-aside, c5-follow, c5-session, c5-overview).
+
 ## States and data flow
 
 - **Reading** (`split: 'none'`): pages centred (`readingColumn`, ≤ 860px). No board.
@@ -53,7 +70,7 @@ dock, follow mode and settings. All geometry derives from the window, never the 
 
 `?demo=1|side|plane`, `?script=kit|toolkit|relational|lec09`, `?src=<pdf url>` (`/api/dev-pdf/<n>.pdf`
 from `PETU_PDF_DIRS`), `&page=N` (with `&eval`), `&debug`, `&noplay`, `&style=hand|clean`, `&eval`
-(installs `window.__petu`), `&nogen` (replay only), `&fail=N` (cut the stream after N chunks).
+(installs `window.__petu`), `&nogen` (replay only), `&fail=N` (cut the stream after N chunks; `&failat=C` after C characters, deterministic; gallery scene `cutoff`).
 Demo/script/fail paths play canned scripts and make no API call.
 
 - **Flow across the document** (spec section of that name): the director reports journeys (a scroll

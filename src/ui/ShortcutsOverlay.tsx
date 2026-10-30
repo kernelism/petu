@@ -2,6 +2,7 @@
 import { useEffect, useRef } from 'react';
 import { isTypingTarget } from './playbackKeys';
 import { isMacPlatform } from './zoomKeys';
+import { LARGE_W } from './layout';
 import './ui.css';
 
 /**
@@ -27,39 +28,51 @@ type Props = {
 
 type Row = { label: string; keys: string[][] };
 
-/** The rows, in groups (a hairline between groups). Each key is one or more keycaps; alternatives are listed side by side. */
-export function shortcutRows(o: { dev?: boolean; mac: boolean }): Row[][] {
+/**
+ * The rows, in groups (a hairline between groups). Each key is one or more keycaps; alternatives are
+ * listed side by side. Esc is listed once: it stops or closes whatever is in front (an answer, an
+ * aside, drawing). The card's own key (?) is in its header, not a row.
+ */
+export function shortcutRows(o: { dev?: boolean; mac: boolean; lane?: boolean }): Row[][] {
   const m = o.mac ? '⌘' : 'Ctrl';
   return [
     [
       { label: 'Ask a question', keys: [['/']] },
-      { label: 'Stop the answer', keys: [['Esc']] },
       { label: 'Pause / resume', keys: [['Space']] },
       { label: 'Replay the sentence', keys: [['R']] },
-      { label: 'Previous / next sentence', keys: [['⇧', '←'], ['⇧', '→']] },
-      { label: 'Previous / next part', keys: [['←'], ['→']] },
+      { label: 'Sentence back / forward', keys: [['⇧', '←'], ['⇧', '→']] },
+      { label: 'Part back / forward', keys: [['←'], ['→']] },
       { label: 'Slower / faster', keys: [['<'], ['>']] },
+      { label: 'Stop · close an aside or drawing', keys: [['Esc']] },
+      { label: 'Resume after an aside', keys: [[o.mac ? 'Return' : 'Enter']] },
     ],
-    [
-      { label: 'Close aside', keys: [['Esc']] },
-      { label: 'Resume after an aside', keys: [['Return']] },
-    ],
-    [
-      { label: 'Zoom the board in / out', keys: [[m, '+'], [m, '−']] },
+    // Layout C (the lane): the overview zooms the whole sheet; the session list and past marks.
+    o.lane ? [
+      { label: 'Go to page', keys: [['G']] },
+      { label: 'Overview / back', keys: [['Z']] },
+      { label: 'Zoom out / in (or pinch)', keys: [[m, '−'], [m, '+']] },
+      { label: 'Session list', keys: [['S']] },
+      { label: 'Show past marks', keys: [['M']] },
+    ] : [
+      { label: 'Go to page', keys: [['G']] },
+      { label: 'Zoom the board', keys: [[m, '+'], [m, '−']] },
       { label: 'Fit the board', keys: [[m, '0']] },
-      { label: 'Close the board (idle)', keys: [['Esc']] },
     ],
     [
       { label: 'Draw on / off', keys: [['D']] },
       { label: 'Pen · highlighter · eraser', keys: [['P'], ['H'], ['E']] },
       { label: 'Undo my ink', keys: [[m, 'Z']] },
-      { label: 'Stop drawing', keys: [['Esc']] },
     ],
-    [
-      ...(o.dev ? [{ label: 'Report a problem', keys: [['⇧', 'R']] }] : []),
-      { label: 'Shortcuts', keys: [['?']] },
-    ],
+    ...(o.dev ? [[{ label: 'Report a problem', keys: [['⇧', 'R']] }]] : []),
   ];
+}
+
+/**
+ * Opens the card from elsewhere in the chrome (the settings popover's "Show ?"): the same as pressing
+ * `?`, which App listens for on the window. Deferred a tick, so the caller's own close lands first.
+ */
+export function requestShortcuts(): void {
+  window.setTimeout(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: '?', shiftKey: true })), 0);
 }
 
 type KeyLike = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'defaultPrevented' | 'target'> & { isComposing?: boolean };
@@ -69,7 +82,23 @@ export function isShortcutsKey(e: KeyLike): boolean {
   return e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.defaultPrevented && !e.isComposing && !isTypingTarget(e.target);
 }
 
-const CARD_W = 320;
+/** The card's width (ui.css .keys), and from LARGE_W up. */
+const CARD_W = 360;
+const CARD_W_LARGE = 400;
+/** Below this window height the groups sit in two columns, this wide, so the card stays in the window. */
+const SHORT_H = 720;
+const WIDE_W = 660;
+/** The card sits this far above the dock and keeps this much air under the window's top. */
+const GAP = 10;
+const TOP_AIR = 16;
+
+/** The card's centre x (clamped into the window), its layout, and the height it may take above the dock. */
+export function cardPlace(W: number, H: number, x: number, bottom: number): { wide: boolean; left: number; maxHeight: number } {
+  const wide = H < SHORT_H && W >= WIDE_W + 16;
+  const half = (wide ? WIDE_W : W >= LARGE_W ? CARD_W_LARGE : CARD_W) / 2 + 8;
+  const left = W > 2 * half ? Math.max(half, Math.min(W - half, x)) : W / 2;
+  return { wide, left, maxHeight: Math.max(160, H - bottom - GAP - TOP_AIR) };
+}
 
 export function ShortcutsOverlay({ open, onClose, x, bottom = 96, dev, mac }: Props) {
   const card = useRef<HTMLDivElement>(null);
@@ -110,38 +139,40 @@ export function ShortcutsOverlay({ open, onClose, x, bottom = 96, dev, mac }: Pr
 
   if (!open) return null;
   const W = typeof window !== 'undefined' ? window.innerWidth : 1440;
-  const half = CARD_W / 2 + 8;
-  const left = W > 2 * half ? Math.max(half, Math.min(W - half, x)) : W / 2;
-  const groups = shortcutRows({ dev, mac: mac ?? isMacPlatform() });
+  const H = typeof window !== 'undefined' ? window.innerHeight : 900;
+  const { wide, left, maxHeight } = cardPlace(W, H, x, bottom);
+  const groups = shortcutRows({ dev, mac: mac ?? isMacPlatform(), lane: typeof document !== 'undefined' && document.documentElement.classList.contains('petu-lane') });
   return (
     <div
       ref={card}
-      className="keys"
+      className={`keys${wide ? ' is-wide' : ''}`}
       role="dialog"
-      aria-label="Keyboard shortcuts"
+      aria-labelledby="keys-title"
       tabIndex={-1}
-      style={{ left: `${left}px`, bottom: `${bottom + 10}px` }}
+      style={{ left: `${left}px`, bottom: `${bottom + GAP}px`, maxHeight: `${maxHeight}px` }}
     >
       <header className="keys-head">
-        <span className="keys-title">Shortcuts</span>
-        <kbd className="keycap">?</kbd>
+        <span className="keys-title" id="keys-title">Keyboard shortcuts</span>
+        <kbd className="keycap" title="? opens and closes this card">?</kbd>
       </header>
-      {groups.map((rows, g) => (
-        <ul key={g} className="keys-group">
-          {rows.map((r) => (
-            <li key={r.label} className="keys-row">
-              <span className="keys-label">{r.label}</span>
-              <span className="keys-caps">
-                {r.keys.map((combo, i) => (
-                  <span key={i} className="keys-combo">
-                    {combo.map((k) => <kbd key={k} className="keycap">{k}</kbd>)}
-                  </span>
-                ))}
-              </span>
-            </li>
-          ))}
-        </ul>
-      ))}
+      <div className="keys-body">
+        {groups.map((rows, g) => (
+          <ul key={g} className="keys-group">
+            {rows.map((r) => (
+              <li key={r.label} className="keys-row">
+                <span className="keys-label">{r.label}</span>
+                <span className="keys-caps">
+                  {r.keys.map((combo, i) => (
+                    <span key={i} className="keys-combo">
+                      {combo.map((k) => <kbd key={k} className="keycap">{k}</kbd>)}
+                    </span>
+                  ))}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ))}
+      </div>
     </div>
   );
 }

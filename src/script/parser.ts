@@ -1,7 +1,7 @@
 import type { RawAction, ScriptEvent, ValAction } from './types';
 import { parseTag } from './parseTag';
 import { GateState, UNBOUND_TEXT } from '../gate/engine';
-import { isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
+import { cutTagBody, isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
 
 const words = (s: string): ScriptEvent[] =>
   s.split(/\s+/).filter(Boolean).map((text) => ({ type: 'word', text }));
@@ -11,7 +11,10 @@ const words = (s: string): ScriptEvent[] =>
 export const MAX_TAG_CHARS = 800;
 const QUOTE_CLOSE: Record<string, string> = { '"': '"', '“': '”' };
 
-type Scan = { kind: 'close'; end: number } | { kind: 'fail'; cut: number } | { kind: 'wait' };
+/** Warned when the stream ends inside a tag and nothing of it is kept (the eval counts these as unclosed). */
+export const CUT_TAG = '[script] dropped a tag the stream cut off:';
+
+type Scan = { kind: 'close'; end: number } | { kind: 'fail'; cut: number } | { kind: 'wait' } | { kind: 'cut' };
 
 /**
  * Looks for the `}}` closing the tag opened at `open`, skipping quoted spans ("…" and “…”), so a
@@ -37,7 +40,8 @@ function scanTag(buf: string, open: number, final: boolean): Scan {
     if (c === '}' && buf[i + 1] === '}') return { kind: 'close', end: i + 2 };
     if (c === '{' && buf[i + 1] === '{') return { kind: 'fail', cut: i };
   }
-  return final ? { kind: 'fail', cut: buf.length } : { kind: 'wait' };
+  // The stream ended inside the tag (a cut-off): half a tag is never narration.
+  return final ? { kind: 'cut' } : { kind: 'wait' };
 }
 
 /**
@@ -144,6 +148,15 @@ export class ScriptParser {
       this.buf = this.buf.slice(open);
       const s = scanTag(this.buf, 0, final);
       if (s.kind === 'wait') return out;
+      if (s.kind === 'cut') {
+        // An svg group keeps its whole children (completeSvg); any other half tag is dropped.
+        const body = cutTagBody(this.buf.slice(2));
+        const action = body ? parseTag(body) : null;
+        if (action) this.take(action, out, open > 0 && /\S/.test(before.slice(-1)));
+        else console.warn(CUT_TAG, this.buf.slice(0, 60));
+        this.buf = '';
+        continue;
+      }
       if (s.kind === 'fail') {
         // Not a tag: its text is narration.
         out.push(...words(this.buf.slice(0, s.cut)));

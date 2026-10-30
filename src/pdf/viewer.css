@@ -72,3 +72,51 @@
 .pv-highlight {
   mix-blend-mode: multiply;
 }
+
+/* Page zoom: − NN% + | Fit at the slide column's bottom-right, just above the dock; shown only while
+   the slides are zoomed (the board's control, desk.css .desk-zoom, is its twin). */
+.pv-pagezoom {
+  position: fixed;
+  bottom: var(--view-bottom, 172px);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 34px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 0 0 .5px var(--hairline), 0 2px 8px rgba(0, 0, 0, .08);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  user-select: none;
+  -webkit-user-select: none;
+  animation: pv-fade-in 160ms var(--ease-out, ease-out);
+}
+.pv-pagezoom-btn {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out, ease-out), color 120ms var(--ease-out, ease-out), transform 120ms var(--ease-out, ease-out);
+}
+.pv-pagezoom-btn:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.pv-pagezoom-btn:active:not(:disabled) { background: var(--press); transform: scale(.94); }
+.pv-pagezoom-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+.pv-pagezoom-btn:disabled { color: rgba(0, 0, 0, .22); cursor: default; }
+.pv-pagezoom-fit { padding: 0 6px; font-weight: 500; }
+.pv-pagezoom-pct { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; font-weight: 500; }
+.pv-pagezoom-sep { width: 1px; height: 14px; margin: 0 2px; background: var(--hairline); }
+
+@media (prefers-reduced-motion: reduce) {
+  .pv-pagezoom { animation: none; }
+  .pv-pagezoom-btn { transition: none; }
+}

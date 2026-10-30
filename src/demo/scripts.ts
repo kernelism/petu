@@ -16,6 +16,7 @@ function example(title: string): Demo & { src: string; page: number } {
 }
 import { LEARNER_SCRIPT, type DevStep } from './learner';
 import { SVG_DEMOS } from './svg';
+import { LANE_SCRIPTS } from './lane';
 
 /**
  * Dev-only named scripts for real PDFs: `?script=<name>` (optionally `&src=<pdf url>`) opens the
@@ -472,6 +473,8 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number;
   // The prompt's examples (server/prompt/examples.ts) on their own slides.
   // The svg board (the default answer format, p6): the prompt's examples and the experiment's answers.
   ...SVG_DEMOS,
+  // Layout C, the anchored lane: the founder-approved mockup answer and session (src/demo/lane.ts).
+  ...LANE_SCRIPTS,
   'ex-village': example('coins as marks'),
   'ex-lighthouse': example('made to happen'),
   'ex-counter': example("slide's own chart"),

@@ -15,7 +15,7 @@
  * hears beat 1 while its group is still being written: no silence waiting for the whole board.
  */
 import { ScriptFilter } from './scriptFilter.ts';
-import { escapeSvg } from '../src/svgboard/wire.ts';
+import { completeSvg, escapeSvg } from '../src/svgboard/wire.ts';
 
 /** A group longer than this is dropped (the client sanitizer caps it again). */
 export const GROUP_MAX = 20000;
@@ -154,10 +154,13 @@ export class SvgBeatFilter extends ScriptFilter {
         this.el.depth = depth;
         return 'wait';
       }
-      // The stream ended inside a group: close what is open (the gate parses it, or drops it).
+      // The stream ended inside a group: its whole children are kept and it is closed (completeSvg);
+      // with none whole, it is dropped (half an element would fail to parse and lose the group).
       this.el.text += this.sbuf;
       this.sbuf = '';
-      return this.emit(this.el.text + `</${name}>`.repeat(Math.max(0, depth)));
+      const whole = completeSvg(name === 'g' || name === 'defs' ? this.el.text : `<g>${this.el.text}`);
+      if (!whole) { this.notes.push(`group cut off before a whole element: ${this.el.text.slice(0, 60)}`); this.st = 'text'; this.el = { name: '', depth: 0, text: '' }; return ''; }
+      return this.emit(whole);
     }
     const text = this.el.text + this.sbuf.slice(0, endAt);
     this.sbuf = this.sbuf.slice(endAt);

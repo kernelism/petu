@@ -5,8 +5,10 @@
   inset: 0;
 }
 /* The viewer's visible band: under the chrome row, ending above the dock (or, stacked, above the
-   board). The scroller stays full-window (its framing math is unchanged); only what shows is masked,
-   with a short fade at both edges so pages (and their shadows) leave the band softly, not cut. */
+   board). The scroller stays full-window (its framing math is unchanged); only what shows is masked.
+   The top edge is exact: the band starts at --view-top with no outer fade, so the page above a framed
+   one never shows as a pale sliver under the chrome row. The foot fades softly just outside the band,
+   so pages (and their shadows) leave it under the dock without a cut. */
 @property --view-bottom { syntax: '<length>'; inherits: true; initial-value: 0px; }
 @property --view-top { syntax: '<length>'; inherits: true; initial-value: 0px; }
 .stage {
@@ -15,22 +17,44 @@
 .stage > .pv-scroll {
   position: absolute;
   --fade: 12px;
-  /* Fully visible inside the band (a page framed at its top edge is whole); the fades lie just outside it. */
   -webkit-mask-image: linear-gradient(to bottom,
-    transparent calc(var(--view-top) - var(--fade)), #000 var(--view-top),
+    transparent var(--view-top), #000 var(--view-top),
     #000 calc(100% - var(--view-bottom)), transparent calc(100% - var(--view-bottom) + var(--fade)));
   mask-image: linear-gradient(to bottom,
-    transparent calc(var(--view-top) - var(--fade)), #000 var(--view-top),
+    transparent var(--view-top), #000 var(--view-top),
     #000 calc(100% - var(--view-bottom)), transparent calc(100% - var(--view-bottom) + var(--fade)));
 }
 /* While an answer draws on the board, set the neighbouring pages back so the page being explained
-   reads as the one in frame. They come back when the answer ends or the student scrolls (App.tsx). */
+   reads as the one in frame. They come back when the answer ends or the student scrolls (App.tsx).
+   Only once the answer has scrolled to or acted on the current page (the viewer marks it
+   `.pv-page.is-acted`, B4's flag): an answer that never touched the slides leaves them all as they are,
+   never dimming the meaningful page beside a blank one. */
 .stage .pv-page { transition: opacity var(--glide, 420ms) var(--ease-out, ease-out); }
-.stage.is-sketching .pv-page:not(.is-current) { opacity: .5; }
+.stage.is-sketching:has(.pv-page.is-current.is-acted) .pv-page:not(.is-current) { opacity: .5; }
 
 @media (prefers-reduced-motion: reduce) {
   .stage, .stage .pv-page { transition: none; }
 }
+
+/* Layout C (src/desk/lane.ts): the page and the lane are one sheet on the desk; no page is set back
+   while the lane draws. The chrome row floats over the sheet, but while the dock sits under the page
+   column (the pen is on the page; --dock-col-x/w from App) that column ends its reading band above the
+   dock, as the split layout does: no page text the student may be reading shows under the caption.
+   The lane runs on to the window's foot (its live group keeps clear of the dock by itself). */
+html.petu-lane, html.petu-lane body, html.petu-lane #root { background: #ECEAE5; }
+html.petu-lane .stage > .pv-scroll {
+  --foot: linear-gradient(to bottom, #000 calc(100% - var(--view-bottom)), transparent calc(100% - var(--view-bottom) + var(--fade)));
+  -webkit-mask-image: linear-gradient(#000, #000), var(--foot), linear-gradient(#000, #000);
+  mask-image: linear-gradient(#000, #000), var(--foot), linear-gradient(#000, #000);
+  -webkit-mask-size: var(--dock-col-x, 0px) 100%, var(--dock-col-w, 0px) 100%, 100% 100%;
+  mask-size: var(--dock-col-x, 0px) 100%, var(--dock-col-w, 0px) 100%, 100% 100%;
+  -webkit-mask-position: 0 0, var(--dock-col-x, 0px) 0, calc(var(--dock-col-x, 0px) + var(--dock-col-w, 0px)) 0;
+  mask-position: 0 0, var(--dock-col-x, 0px) 0, calc(var(--dock-col-x, 0px) + var(--dock-col-w, 0px)) 0;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+html.petu-lane .stage.is-sketching .pv-page:not(.is-current) { opacity: 1; }
+html.petu-lane .pv-page { border-radius: 0; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .05); }
 
 /* ───────── ?debug ───────── */
 .debug {
@@ -40,7 +64,7 @@
   width: 232px;
   padding: 8px 10px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-m);
   background: rgba(28,28,30,.86);
   color: rgba(255,255,255,.88);
   font: 11px/1.55 ui-monospace, "SF Mono", Menlo, monospace;
@@ -52,9 +76,9 @@
 .debug-pill {
   width: auto;
   padding: 5px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: rgba(255,255,255,.8);
-  transition: background-color 120ms ease-out;
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 .debug-pill:hover { background: rgba(28,28,30,.95); }
 .debug-pill:active { background: #000; }

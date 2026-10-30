@@ -8,6 +8,7 @@ import { drawStrokes, prefersReducedMotion } from '../ink/agent/animate';
 import { weightOf, weightStyle } from '../ink/agent/weights';
 import { token, tokenNum } from '../ink/agent/tokens';
 import { drawHighlight } from '../ink/agent/marks';
+import { HIGHLIGHTS } from '../settings/settings';
 import { locateQuote } from '../locate/locateQuote';
 import { plotStrokes } from './plot';
 import { nudge, placeClear, placeLabel, segHitsRect, type Seg } from './nudge';
@@ -292,7 +293,8 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
         draw: async (_sig, k) => {
           const g = own(ctx.layers.highlight);
           env.registry.define({ id: a.id, kind: a.kind, target: ctx.target, bbox, boxes: [], anchor: { x: bbox.x + bbox.w, y: bbox.y }, group: g });
-          await drawHighlight(g, rects, env.settings.highlightColor, 0.5, k.speed);
+          const hl = HIGHLIGHTS[env.settings.highlight] ?? HIGHLIGHTS.violet;
+          await drawHighlight(g, rects, hl.color, hl.opacity, k.speed);
         },
       };
     }

@@ -142,7 +142,7 @@ export class GatePreflight implements Preflight {
     const parser = new ScriptParser(new GateState(this.env.grounding?.()));
     const warn = console.warn;
     console.warn = () => {};
-    const toks = tokenize(u.text);
+    const toks = tokenize(u.text, { end: !!u.end });
     const tagActs = new Map<Tag, RawAction[]>();
     try {
       parser.push(this.accepted);
@@ -150,7 +150,9 @@ export class GatePreflight implements Preflight {
       for (const t of toks) {
         if (t.kind !== 'tag') continue;
         parser.push(u.text.slice(pos, t.start));
-        const evs = parser.push(u.text.slice(t.start, t.end));
+        // A tag the stream cut off (the last unit's end) is what the session's parser makes of it at its end.
+        const cut = !!u.end && t.end === u.text.length && !u.text.endsWith('}}');
+        const evs = cut ? [...parser.push(u.text.slice(t.start, t.end)), ...parser.end()] : parser.push(u.text.slice(t.start, t.end));
         tagActs.set(t, evs.flatMap((e) => (e.type === 'action' ? [e.action] : [])));
         pos = t.end;
       }

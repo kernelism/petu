@@ -62,6 +62,30 @@ export async function drawHighlight(g: SVGGElement, rects: SRect[], color: strin
   }
 }
 
+/**
+ * A new answer's fade of the last one's page marks (layout C, spec §5.5): they fade out, then move into
+ * a hidden `.petu-past` sibling of their layer (Show past marks, M, brings them back faintly).
+ */
+export function retireOut(groups: SVGGElement[], ms = 300): Promise<void> {
+  for (const g of groups) { g.style.transition = `opacity ${ms}ms ease-out`; g.style.opacity = '0'; }
+  return new Promise((r) => setTimeout(() => {
+    for (const g of groups) {
+      const parent = g.parentNode;
+      if (parent && g.firstChild) {
+        let past = g.previousElementSibling as SVGGElement | null;
+        if (!past?.classList.contains('petu-past')) {
+          past = document.createElementNS('http://www.w3.org/2000/svg', 'g') as SVGGElement;
+          past.setAttribute('class', 'petu-past');
+          parent.insertBefore(past, g);
+        }
+        while (g.firstChild) past.appendChild(g.firstChild);
+      }
+      g.style.transition = ''; g.style.opacity = '1';
+    }
+    r();
+  }, ms));
+}
+
 /** Fades out and removes all children of the given groups. */
 export function fadeOut(groups: SVGGElement[], ms = 300): Promise<void> {
   for (const g of groups) { g.style.transition = `opacity ${ms}ms ease-out`; g.style.opacity = '0'; }

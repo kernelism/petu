@@ -35,6 +35,8 @@ import { BoardPen } from './ui/BoardPen';
 import { Caption, joinWords } from './ui/Caption';
 import { AskBar, type Transcript } from './ui/AskBar';
 import { FollowPill } from './ui/FollowPill';
+import { OverviewPill } from './ui/OverviewPill';
+import { SessionDrawer, type SessionRow } from './ui/SessionDrawer';
 import { dockPlacement, dockReserve } from './ui/layout';
 import { DOCK_GAP, margin, SAFE_TOP, setSafeBottom } from './desk/layout';
 import { takeSentences } from './ui/text';
@@ -68,10 +70,13 @@ const DEV_SCRIPT = scriptParam ? SCRIPTS[scriptParam] ?? null : null;
 const DEV_SRC = import.meta.env.DEV ? params.get('src') ?? DEV_SCRIPT?.src ?? null : null;
 if (scriptParam && !DEV_SCRIPT) console.warn('[dev] unknown ?script=; known:', Object.keys(SCRIPTS).join(', '));
 const SUGGESTIONS = DEV_SCRIPT ? [DEV_SCRIPT.question] : DEMOS.map((d) => d.question);
-// Dev-only: ?fail=<n> makes the answer stream throw after n chunks (to review the error state).
+// Dev-only: ?fail=<n> cuts the answer stream after n chunks, as a dropped connection does (none: an
+// error; some: a cut-off, what arrived plays). ?failat=<c> cuts it after c characters (the demo's
+// chunking is random; this is the same cut every run).
 const FAIL_AFTER = import.meta.env.DEV && params.has('fail') ? Number(params.get('fail')) || 0 : null;
+const FAIL_AT = import.meta.env.DEV && params.has('failat') ? Number(params.get('failat')) || 0 : null;
 /** Demos, dev scripts and ?fail play canned scripts; every other question goes to the agent (POST /api/ask). */
-const DEMO_PATH = !!DEV_SCRIPT || demoParam != null || FAIL_AFTER != null;
+const DEMO_PATH = !!DEV_SCRIPT || demoParam != null || FAIL_AFTER != null || FAIL_AT != null;
 /** Dev-only: ?eval installs window.__petu for the eval runner (src/agent/evalHooks.ts). */
 const EVAL = import.meta.env.DEV && params.has('eval');
 /** ?ctx=new: the tiered huge-PDF context (src/agent/context/tiers.ts); default old until verified. */
@@ -326,7 +331,7 @@ function registryRows(reg: Registry): RegistryRow[] {
 /** An aside's state in the dock: its question, words so far, and how it stands. */
 type Aside = { question: string; words: string[]; state: 'thinking' | 'playing' | 'done' | 'error'; paused: boolean };
 /** One answer on the session trail: its header on the board and what replays it. */
-type TrailEntry = { num: string; question: string; title: string; page: number; script: string; grounding?: Grounding; head: TrailHead; check?: string };
+type TrailEntry = { num: string; question: string; title: string; page: number; script: string; grounding?: Grounding; head: TrailHead; check?: string; /** Asides asked during it (the session drawer lists them under it). */ asides?: string[]; /** How long it played (ms), once done. */ ms?: number };
 /** A dev script's aside when it has none of its own (no API call on the demo path). */
 const asideFallback = (q: string) => `Here the side answer to "${q}" would play, with its own small drawing. Press Return to go back to the answer.`;
 
@@ -578,6 +583,8 @@ export default function App() {
     setCaptionVisible(true);
     hideTimer.current = window.setTimeout(() => setCaptionVisible(false), ms);
   }, []);
+  const flashRef = useRef(flash);
+  flashRef.current = flash;
 
   const stopAll = useCallback(() => {
     const s = sessionRef.current;
@@ -609,6 +616,8 @@ export default function App() {
     setReached(0);
     setParts([]);
     partsRef.current = [];
+    // An open check question belongs to the answer (and document) it closed; it never carries over.
+    setCheck(null);
   }, []);
 
   // ---------------------------------------------------------------------------------------------
@@ -843,7 +852,7 @@ export default function App() {
     /** The script stream has not ended: a pause in it is a gap the student can see. */
     let streamOpen = true;
     let firstChunk = true;
-    let chunks = 0;
+    let chunks = 0, sent = 0;
     const replay = run.replay;
     const inner: (signal: AbortSignal) => AsyncIterable<string> = replay
       ? async function* (signal) {
@@ -882,7 +891,16 @@ export default function App() {
     const source = async function* (signal: AbortSignal) {
       try {
         for await (const c of inner(signal)) {
-          if (!toAgent && FAIL_AFTER != null && chunks++ >= FAIL_AFTER) throw new Error('dev: ?fail');
+          if (!toAgent && ((FAIL_AFTER != null && chunks >= FAIL_AFTER) || (FAIL_AT != null && sent + c.length > FAIL_AT))) {
+            // As the agent's client does: nothing arrived yet is an error; past that, a cut-off (what played stays).
+            const head = FAIL_AT != null ? c.slice(0, Math.max(0, FAIL_AT - sent)) : '';
+            if (!sent && !head) throw new Error('dev: ?fail');
+            if (head) { log.chunk(head); entry.script += head; yield head; }
+            handlers.onCutOff?.('The answer was cut off.');
+            return;
+          }
+          chunks++;
+          sent += c.length;
           if (firstChunk && DEBUG) { firstChunk = false; const t = performance.now(); setDebug((d) => ({ ...d, chunk: t })); }
           run.rec?.chunk(c);
           log.chunk(c);
@@ -952,7 +970,8 @@ export default function App() {
         if (spoken.length) setTranscript({ question: q, answer: joinWords(spoken) });
         sessionRef.current = null;
         // The trail: where it was asked and how long it played; what replays it resolves as it did.
-        entry.head.setMeta(`p.${page} · ${clockOf(performance.now() - t0)}`);
+        entry.ms = performance.now() - t0;
+        entry.head.setMeta(`p.${page} · ${clockOf(entry.ms)}`);
         entry.grounding = groundingRef.current;
         if (spoken.length) setAnswered(true);
         if (st === 'done') {
@@ -1157,6 +1176,8 @@ export default function App() {
     });
     desk?.setAside(true);
     desk?.headNext(head.el, head.h);
+    const host = trailRef.current.find((e) => e.head === answerRef.current.head);
+    if (host) (host.asides ??= []).push(q);
     const dir = asideDirector();
     dir.stop();
     dir.registry.clear();
@@ -1303,7 +1324,7 @@ export default function App() {
         ink.setTool('pen');
         ink.add({ page: c.page, tool: 'pen', color: PEN_COLORS[0], points: pts });
       }
-      if (st.zoom) deskRef.current?.setZoom(st.zoom);
+      if (st.zoom) { if (deskRef.current?.state().lane) viewerRef.current?.setOverview?.(st.zoom); else deskRef.current?.setZoom(st.zoom); }
       if (st.shortcuts) setShortcutsOpen(true);
     }
   };
@@ -1428,8 +1449,41 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Esc between answers closes the board (while playing, Esc stops the answer first).
-  const boardOpen = !!desk && desk.split !== 'none';
+  // Layout C: S opens the session list, M shows the earlier answers' page marks (spec §5.5).
+  const [sessionOpen, setSessionOpen] = useState(false);
+  const [pastOn, setPastOn] = useState(false);
+  const [sessionPick, setSessionPick] = useState<number | null>(null);
+  useEffect(() => { document.documentElement.classList.toggle('petu-past-on', pastOn); }, [pastOn]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+      if (typing || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || document.querySelector('.popover')) return;
+      const k = e.key.toLowerCase();
+      if (k === 's') { e.preventDefault(); setSessionOpen((o) => !o); }
+      else if (k === 'm' && !e.shiftKey) {
+        e.preventDefault();
+        const on = !document.documentElement.classList.contains('petu-past-on');
+        setPastOn(on);
+        if (!busyRef.current) flashRef.current(on ? 'Past marks shown (M hides them)' : 'Past marks hidden', 1800);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  const sessionRows: SessionRow[] = sessionOpen
+    ? trailRef.current.map((e, i) => ({ num: e.num, title: e.title, meta: `p.${e.page}${e.ms != null ? ` · ${clockOf(e.ms)}` : ''}`, asides: e.asides ?? [], current: i === (sessionPick ?? trailRef.current.length - 1) }))
+    : [];
+  const sessionTotal = clockOf(trailRef.current.reduce((a, e) => a + (e.ms ?? 0), 0));
+  const pickSession = useCallback((i: number) => {
+    const e = trailRef.current[i];
+    if (!e) return;
+    setSessionPick(i);
+    void deskRef.current?.showHead(e.head.el);
+  }, []);
+
+  // Esc between answers closes the board (while playing, Esc stops the answer first). The lane stays (it is the sheet's margin).
+  const boardOpen = !!desk && desk.split !== 'none' && !desk.lane;
   useEffect(() => {
     if (!boardOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -1509,7 +1563,11 @@ export default function App() {
           --view-top/--view-bottom: the viewer's visible band (under the chrome row, above the dock). */}
       <main
         className={`stage${desk?.sketching && desk.following && busy ? ' is-sketching' : ''}`}
-        style={{ '--glide': `${GLIDE_MS}ms`, '--view-top': `${SAFE_TOP}px`, '--view-bottom': `${viewBottom}px` } as CSSProperties}
+        style={{
+          '--glide': `${GLIDE_MS}ms`, '--view-top': `${SAFE_TOP}px`, '--view-bottom': `${viewBottom}px`,
+          // Layout C: with the pen on the page, the page column ends its reading band above the dock (app.css).
+          ...(desk?.lane && desk.page && Math.abs(desk.column.x - desk.page.x) < 1 ? { '--dock-col-x': `${desk.column.x}px`, '--dock-col-w': `${desk.column.w}px` } : {}),
+        } as CSSProperties}
       >
         <PdfViewer
           doc={doc}
@@ -1528,9 +1586,17 @@ export default function App() {
         onOpenSettings={toggleSettings}
         onOpenFile={(f) => void openFile(f)}
         report={import.meta.env.DEV ? captureReport : undefined}
+        onGoToPage={(n) => void viewerRef.current?.goToPage(n, { reason: 'student' })}
       />
       <FollowPill visible={paused} onResume={resumeFollow} x={dock.x} />
-      <RouteChip route={route} backTo={backTo} onBack={onBack} x={dock.x} />
+      {desk?.edge && desk.page && (
+        <button type="button" className={`lane-edge is-${desk.edge.dir}`} style={{ left: desk.page.x + 12 }} onClick={() => void deskRef.current?.showEdge()}>
+          <span aria-hidden="true">{desk.edge.dir === 'up' ? '↑' : '↓'}</span> p.{desk.edge.page} · marked
+        </button>
+      )}
+      <OverviewPill />
+      <SessionDrawer open={sessionOpen} rows={sessionRows} total={sessionTotal} onPick={pickSession} onClose={() => setSessionOpen(false)} />
+      <RouteChip route={route} backTo={backTo} onBack={onBack} x={desk?.lane && desk.page ? desk.page.x + desk.page.w / 2 : dock.x} />
       <SettingsPopover open={settingsOpen} onClose={closeSettings} />
       <CanvasToolbar />
       {inkState.canvasOn && inkState.tool === 'pen' && desk?.board && !desk.stacked && (
