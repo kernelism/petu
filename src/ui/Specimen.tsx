@@ -3,9 +3,10 @@
 // while the caption speaks. One orchestrated sequence on load (CSS, landing.css); it rests on the
 // finished frame, and with reduced motion it is that frame from the start.
 //
-// The slide is the sample deck's own (econ.pdf p12: a per-unit tax), so what the picture promises is
-// what "Try the sample deck" shows. The board follows the board's grammar: drawn in the accent, then
-// settled to ink; the region hatched.
+// The slide is a real fixture's (public/fixtures/econ.pdf p12: a per-unit tax; its numbers are the
+// slide's), not the sample deck's: "Try the sample deck" opens epipolar.pdf, which the demo scripts and
+// the suggestion chips are written for. So nothing here names the sample. The board follows the
+// board's grammar: drawn in the accent, then settled to ink; the region hatched.
 
 const CAPTION = 'The tax drives a 2-dollar wedge between buyers and sellers, so 5 trades that were worth making stop. The lost value is the triangle: half of 2 times 5.'.split(' ');
 
