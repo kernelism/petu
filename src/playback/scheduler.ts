@@ -89,6 +89,26 @@ export class Scheduler {
     return n;
   }
 
+  /**
+   * The words from the one being spoken to the end of its beat (the next svg group's word, or the
+   * words so far), each with how soon it is spoken (ms from now; words not yet timed are estimated
+   * at 300 ms each). An svg group paces its parts across them.
+   */
+  beatWords(max = 80): { text: string; inMs: number }[] {
+    const now = this.clock.now();
+    let to = this.words.length;
+    for (let i = this.fired; i < this.acts.length; i++) if (this.acts[i].action.kind === 'svg') { to = Math.min(to, this.acts[i].word); break; }
+    const out: { text: string; inMs: number }[] = [];
+    let last = now;
+    for (let i = this.spoken; i < Math.min(to, this.spoken + max); i++) {
+      const s = i < this.released ? this.clock.wordStart(i) : null;
+      const t = s ?? last + 300;
+      out.push({ text: this.words[i], inMs: Math.max(0, t - now) });
+      last = t;
+    }
+    return out;
+  }
+
   /** Whether pause, resume, hold and seek work (the clock can re-time its words). */
   canPause(): boolean { return !!this.clock.retime; }
   isPaused(): boolean { return this.paused; }
