@@ -106,6 +106,22 @@ describe('LiveGate', () => {
     expect(h.gate.stats).toMatchObject({ drops: 1, droppedWords: 4 });
   });
 
+  it('a unit dropped for its words only still releases its svg groups (founder lec06: the last drawing never drew)', async () => {
+    const h = harness({ preflight: fakePreflight() });
+    await h.play([{ handoff: true }, 'Good one. ', 'Mid FIXME words. {{svg <g id="gate"><line x1="0" y1="0" x2="9" y2="9"/></g>}} ', 'Good two. ']);
+    const text = h.out.join('');
+    expect(text).not.toContain('FIXME');
+    expect(text).toContain('{{svg <g id="gate">');
+    expect(text).toContain('Good two.');
+    expect(h.gates().find((e) => e.action === 'drop')).toMatchObject({ k: '1', result: 'fail' });
+  });
+
+  it('a unit whose own tag failed is still dropped whole, its svg too', async () => {
+    const h = harness({ preflight: fakePreflight() });
+    await h.play([{ handoff: true }, 'Good one. ', 'Look {{point BAD}} here. {{svg <g id="g2"></g>}} ', 'Good two. ']);
+    expect(h.out.join('')).not.toContain('svg');
+  });
+
   it('strips a failed page highlight when nothing later names it, and releases the rest', async () => {
     const h = harness({ preflight: fakePreflight() });
     await h.play([{ handoff: true }, 'The rate {{highlight STRIPME}} doubles. ', 'Then it settles. ']);
