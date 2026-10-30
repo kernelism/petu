@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { sanitizeGroup } from '../../src/svgboard/sanitize';
 import { prepareText } from '../../src/svgboard/polish';
 import { resolveData, newScope } from '../../src/svgboard/data';
-import { applyGrammar, isTickText, newTypeState, typeScale, type TypeState } from '../../src/svgboard/grammar';
+import { applyGrammar, isTickText, newTypeState, RAISE_MAX, TITLE_K, typeScale, type TypeState } from '../../src/svgboard/grammar';
 import { INK } from '../../src/svgboard/style';
 
 // Verbatim: the svg-ceiling card the founder flagged ("no text hierarchy"; four slightly different sizes and greys).
@@ -59,7 +59,8 @@ describe('board grammar', () => {
     const st = newTypeState(SCALE);
     st.titled = true;
     const ts = run(CARD, st);
-    expect(new Set(ts.map(size))).toEqual(new Set([28.8]));
+    // One size, raised toward the target (28.8) only as far as the proportion rule allows: RAISE_MAX × the model's median (20).
+    expect(new Set(ts.map(size))).toEqual(new Set([Math.min(28.8, RAISE_MAX * 20)]));
     for (const t of ts) {
       expect(t.getAttribute('fill')).toBe(INK.ink);
       expect(t.getAttribute('font-weight')).toBe('400');
@@ -67,7 +68,7 @@ describe('board grammar', () => {
     }
     const ys = ts.map((t) => Number(t.getAttribute('y')));
     const steps = ys.slice(1).map((y, i) => y - ys[i]);
-    for (const s of steps) expect(s).toBeCloseTo(1.7 * 28.8, 1);
+    for (const s of steps) expect(s).toBeCloseTo(1.7 * RAISE_MAX * 20, 1);
     expect(ys[0] - 70).toBeGreaterThan(32);
     const rect = ts[0].ownerDocument.querySelector('rect') ?? ts[0].parentElement!.querySelector('rect')!;
     expect(70 + Number(rect.getAttribute('height'))).toBeGreaterThan(ys[ys.length - 1] + 20);
@@ -90,7 +91,7 @@ describe('board grammar', () => {
     const title = by(ts, 'Dough rises in steps');
     expect(title.getAttribute('data-role')).toBe('title');
     expect(title.getAttribute('font-weight')).toBe('600');
-    expect(size(title)).toBe(36);
+    expect(size(title)).toBeCloseTo(TITLE_K * Math.min(SCALE.content, RAISE_MAX * 18)); // title = 1.25 × content; content raised ≤ 1.3 × the model's median (18)
     expect(by(ts, 'dough volume (ml)').getAttribute('font-weight')).toBe('400');
   });
 
