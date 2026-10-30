@@ -81,8 +81,11 @@ const FAIL_AT = import.meta.env.DEV && params.has('failat') ? Number(params.get(
 const DEMO_PATH = !!DEV_SCRIPT || demoParam != null || FAIL_AFTER != null || FAIL_AT != null;
 /** Dev-only: ?eval installs window.__petu for the eval runner (src/agent/evalHooks.ts). */
 const EVAL = import.meta.env.DEV && params.has('eval');
-/** ?ctx=new: the tiered huge-PDF context (src/agent/context/tiers.ts); default old until verified. */
-const CTX = params.get('ctx') === 'new' ? 'new' : 'old';
+/**
+ * The scout's context (src/agent/context/tiers.ts): by default the tiered context for documents over
+ * 60 pages (NEW_CTX_MIN_PAGES) and the digest below; ?ctx=old or ?ctx=new forces one for every document.
+ */
+const CTX = params.get('ctx') === 'new' ? 'new' : params.get('ctx') === 'old' ? 'old' : 'auto';
 /** One context builder per opened document (src/agent/context/build.ts). */
 const MAKE_CONTEXT: MakeContext = (doc, name) => new ContextBuilder(doc, name, { ctx: CTX });
 const SAMPLE_URL = '/fixtures/epipolar.pdf';

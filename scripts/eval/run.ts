@@ -103,8 +103,8 @@ export async function captureEnd(chrome: Chrome, qdir: string, prefix: string): 
   writeFileSync(join(qdir, `${prefix}board.jpg`), Buffer.from(out.split(',')[1], 'base64'));
 }
 
-/** PETU_CTX=old|new: which scout context the app builds (?ctx=; src/agent/context/tiers.ts). */
-const CTX = process.env.PETU_CTX === 'new' ? '&ctx=new' : '';
+/** PETU_CTX=old|new: which scout context the app builds (?ctx=; src/agent/context/tiers.ts). Unset: the app's default (new over 60 pages). */
+const CTX = process.env.PETU_CTX === 'new' ? '&ctx=new' : process.env.PETU_CTX === 'old' ? '&ctx=old' : '';
 /** EXPERIMENT: PETU_EVAL_URL_EXTRA (e.g. `&e5`) is appended to the app's URL, and PETU_EVAL_TAG to the run id. */
 const URL_EXTRA = process.env.PETU_EVAL_URL_EXTRA ?? '';
 const urlFor = (base: string, open: StoredQuestion['open'], nogen: boolean, gate = '') => `${base}/?src=${encodeURIComponent(open.src)}&page=${open.page}&eval${nogen ? '&nogen' : ''}${CTX}${gate}${URL_EXTRA}`;

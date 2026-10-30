@@ -22,7 +22,7 @@ import { bucketMap, capMap, formatMap, headingLines, headingMap, outlineTree, wi
 import { LabelIndex } from './labels.ts';
 import { candidates as findCandidates, formatCandidates, resolveFind, type Candidate } from './candidates.ts';
 import { offsetFromHeaders, offsetFromLabels, samplePages } from './printed.ts';
-import { sectionCard, sectionWindow, tierOf, tokens, windowBoilerplate, type Tier } from './tiers.ts';
+import { sectionCard, sectionWindow, SMALL_MAX, tierOf, tokens, windowBoilerplate, type Tier } from './tiers.ts';
 import { boilerplate } from './digest.ts';
 import { inkSummary } from './ink.ts';
 import { inkCrop, renderPage, type Jpeg } from './image.ts';
@@ -81,6 +81,13 @@ async function pageLines(page: PDFPageProxy): Promise<TextLine[]> {
 
 /** `old`: one digest for every document (as before the tiers). `new`: the tiered context (tiers.ts). */
 export type CtxMode = 'old' | 'new';
+/**
+ * The default (`auto`): the tiered context from this many pages on, the digest below. Small documents
+ * lose nothing to the digest (every page at its full 360 chars, spec "Huge-PDF context" §1); past
+ * SMALL_MAX it thins to < 120 chars a page and the scout cannot find a chapter from a title page.
+ */
+export const NEW_CTX_MIN_PAGES = SMALL_MAX + 1;
+export const ctxFor = (numPages: number, ctx: CtxMode | 'auto' = 'auto'): CtxMode => (ctx !== 'auto' ? ctx : numPages >= NEW_CTX_MIN_PAGES ? 'new' : 'old');
 
 /** What ?debug shows about the context of one question. */
 export type CtxInfo = { mode: CtxMode; tier: Tier | 'old'; tokens: Record<string, number>; candidates: string[]; printedOffset?: number; ms: number };
@@ -150,10 +157,10 @@ export class ContextBuilder {
   private fullDigest: string | null = null;
   private searchPages: { n: number; pages: Map<number, string[]> } | null = null;
 
-  constructor(doc: PdfDoc, name: string, opts: { OPS?: Record<string, number>; ctx?: CtxMode } = {}) {
+  constructor(doc: PdfDoc, name: string, opts: { OPS?: Record<string, number>; ctx?: CtxMode | 'auto' } = {}) {
     this.doc = doc;
     this.name = name;
-    this.mode = opts.ctx ?? 'old';
+    this.mode = ctxFor(doc.numPages, opts.ctx);
     if (opts.OPS) this.ops = Promise.resolve(opts.OPS);
     // The index reads text only (no operator list) and never touches the page LRU.
     this.index = new PageIndex(doc.numPages, async (p) => {

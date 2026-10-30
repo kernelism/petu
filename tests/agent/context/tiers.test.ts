@@ -10,9 +10,9 @@ import { capMap, formatMap, headingLines, headingMap, outlineTree, withRanges, M
 import { LabelIndex, mentions, pageLabels } from '../../../src/agent/context/labels';
 import { candidates, formatCandidates, neighbourhood, resolveFind } from '../../../src/agent/context/candidates';
 import { edgeNumbers, offsetFromHeaders, offsetFromLabels, pagesNamed, samplePages } from '../../../src/agent/context/printed';
-import { sectionCard, sectionWindow, tierOf } from '../../../src/agent/context/tiers';
+import { sectionCard, sectionWindow, SMALL_MAX, tierOf } from '../../../src/agent/context/tiers';
 import { deckDigest, DIGEST_CHARS } from '../../../src/agent/context/digest';
-import { ContextBuilder } from '../../../src/agent/context/build';
+import { ContextBuilder, ctxFor, NEW_CTX_MIN_PAGES } from '../../../src/agent/context/build';
 import type { PdfDoc } from '../../../src/pdf/loadPdf';
 
 const O = OPS as unknown as Record<string, number>;
@@ -210,7 +210,7 @@ describe('ContextBuilder, ctx=new', () => {
   });
 
   it('old mode keeps the digest path (no map, no candidates)', async () => {
-    const b = new ContextBuilder(bookDoc(80), 'book.pdf', { OPS: O });
+    const b = new ContextBuilder(bookDoc(80), 'book.pdf', { OPS: O, ctx: 'old' });
     const s = await b.scout(5, 'q');
     expect(s.digest.startsWith('DECK book.pdf (80 pages)')).toBe(true);
     expect(s.candidates).toBeUndefined();
@@ -218,3 +218,42 @@ describe('ContextBuilder, ctx=new', () => {
     b.destroy();
   });
 });
+
+describe('ContextBuilder, the default (auto): tiered over 60 pages, the digest below', () => {
+  it('the threshold: ≤ 60 pages old, > 60 new; an explicit ctx wins either way', () => {
+    expect(NEW_CTX_MIN_PAGES).toBe(SMALL_MAX + 1);
+    expect([1, 12, 60, 61, 80, 400, 1232].map((n) => ctxFor(n))).toEqual(['old', 'old', 'old', 'new', 'new', 'new', 'new']);
+    expect(ctxFor(1232, 'old')).toBe('old');
+    expect(ctxFor(12, 'new')).toBe('new');
+    expect(new ContextBuilder(bookDoc(60), 'deck.pdf', { OPS: O }).mode).toBe('old');
+    expect(new ContextBuilder(bookDoc(61), 'book.pdf', { OPS: O }).mode).toBe('new');
+    expect(new ContextBuilder(bookDoc(500), 'book.pdf', { OPS: O, ctx: 'old' }).mode).toBe('old');
+  });
+
+  it('a small deck keeps today\'s context byte for byte', async () => {
+    const auto = new ContextBuilder(bookDoc(40), 'deck.pdf', { OPS: O });
+    const old = new ContextBuilder(bookDoc(40), 'deck.pdf', { OPS: O, ctx: 'old' });
+    const [a, o] = [await auto.scout(3, 'what is this?'), await old.scout(3, 'what is this?')];
+    expect(a.digest).toBe(o.digest);
+    expect(a.candidates).toBeUndefined();
+    expect(a.info).toMatchObject({ mode: 'old', tier: 'old' });
+    expect((await auto.pagePrefix(3)).docText).toBe((await old.pagePrefix(3)).docText);
+    auto.destroy(); old.destroy();
+  });
+
+  it('a book asked on its title page: the map and the named chapter reach the scout (the yo-yo answer stayed on p1)', async () => {
+    const b = new ContextBuilder(bookDoc(), 'book.pdf', { OPS: O });
+    // The index fills in the background (2–3 s per 1,000 pages) before the student asks.
+    await (b as unknown as { index: { fill(): Promise<void> } }).index.fill();
+    const s = await b.scout(1, 'explain figure 9.12');
+    expect(s.info).toMatchObject({ mode: 'new', tier: 'huge' });
+    expect(s.digest).toContain('  9.2 Section p411–420');
+    expect(s.info.candidates[0]).toBe('p412 figure 9.12');
+    expect(s.candidates).toMatch(/p412/);
+    // The old context had neither the chapter's page nor a candidate.
+    const old = await new ContextBuilder(bookDoc(), 'book.pdf', { OPS: O, ctx: 'old' }).scout(1, 'explain figure 9.12');
+    expect(old.candidates).toBeUndefined();
+    b.destroy();
+  });
+});
+
