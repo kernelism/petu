@@ -70,7 +70,42 @@ export type Frame = {
   board: Rect | null;
   /** The page column inside the viewer. */
   page: Column;
+  /** Layout C: the lane beside the page (view x = content x). Absent below LANE_MIN_W. */
+  lane?: { x: number; w: number };
 };
+
+// ------------------------------------------------------------------------------------------------
+// Layout C, the anchored lane (spec layout-ux-research §5.1, mockups C1–C5): the page and a paper
+// lane joined into one sheet on one scroll. The lane is always there at W ≥ LANE_MIN_W; narrower
+// windows keep the split board (B, stacked below MIN_SLIDE_COL).
+
+/** Below this window width the lane gives way to the split board (B). */
+export const LANE_MIN_W = 1200;
+/** The lane is never narrower than this (else B). */
+export const LANE_MIN = 440;
+/** The lane never grows past this; the rest is desk, split evenly left and right. */
+export const LANE_MAX = 1000;
+/** The page column never grows past this (2560: the sheet stays centred with desk either side). */
+export const LANE_PAGE_MAX = 1100;
+/** The page's share of the sheet (mockup C at 1440: page 800, lane 544). */
+export const LANE_PAGE_SHARE = 0.595;
+
+export type LaneFrame = { m: number; page: Column; lane: { x: number; w: number } };
+
+/** The sheet's outer margin (mockup: 48 px at 1440). */
+export const laneMargin = (W: number) => Math.round(clamp(0.033 * W, 16, 64));
+
+/** The lane frame for a window W px wide; null below LANE_MIN_W (the split board takes over). */
+export function laneFrame(W: number): LaneFrame | null {
+  if (W < LANE_MIN_W) return null;
+  const m = laneMargin(W);
+  const sheet = W - 2 * m;
+  const pageW = Math.round(Math.min(LANE_PAGE_MAX, sheet * LANE_PAGE_SHARE));
+  const laneW = Math.min(LANE_MAX, sheet - pageW);
+  if (laneW < LANE_MIN) return null;
+  const x0 = Math.round((W - pageW - laneW) / 2);
+  return { m, page: { pageX: x0, pageW }, lane: { x: x0 + pageW, w: laneW } };
+}
 
 /** Reading: the page column, centred (unchanged from the viewer before the split layout). */
 export function readingColumn(W: number): Column {
@@ -83,7 +118,13 @@ export function readingColumn(W: number): Column {
  * Split: margin m all round, a gutter of m, slide column : board = 1:1 (or 0.4:0.6 wide), sharing
  * top (under the chrome row) and bottom (m above the window edge) edges. The page fills its column.
  */
-export function frameFor(W: number, H: number, split: Split, aspect: number): Frame {
+export function frameFor(W: number, H: number, split: Split, aspect: number, lane = true): Frame {
+  const lf = lane ? laneFrame(W) : null;
+  if (lf) {
+    // The lane: one sheet whatever the split; nothing glides when the first drawing lands.
+    const { m, page, lane } = lf;
+    return { split, ratio: split === 'none' ? null : 'normal', stacked: false, m, slides: { x: page.pageX, y: 0, w: page.pageW, h: H }, board: { x: lane.x, y: 0, w: lane.w, h: H }, page, lane };
+  }
   const m = margin(W);
   const bottom = H - m;
   if (split === 'none') {
@@ -279,8 +320,8 @@ export type View = { top: number; H: number; max: number };
  * and no sliver of the page above shows. Every move to a page (a scroll, a journey, the reframe when
  * the board opens) lands here.
  */
-export function pageFrameTop(page: { top: number; h: number }, W: number, H: number, split: Split, aspect: number): number {
-  if (split !== 'none') return page.top - SAFE_TOP - (frameFor(W, H, split, aspect).stacked ? STACK_PAD : 0);
+export function pageFrameTop(page: { top: number; h: number }, W: number, H: number, split: Split, aspect: number, lane = true): number {
+  if (split !== 'none' && !(lane && laneFrame(W))) return page.top - SAFE_TOP - (frameFor(W, H, split, aspect, false).stacked ? STACK_PAD : 0);
   const room = H - SAFE_TOP - safeBottom();
   return page.top - SAFE_TOP - Math.max(0, (room - page.h) / 2);
 }

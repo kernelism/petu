@@ -3,6 +3,8 @@ import type { DeskState } from '../desk/types';
 
 /** The dock is this wide at most, and never wider than its column. */
 export const DOCK_MAX = 560;
+/** Layout C: the dock keeps this much of its column clear on each side. */
+export const LANE_DOCK_AIR = 22;
 
 /**
  * Where the dock (caption + ask bar, one unit) sits: centred under the slide column (the page
@@ -10,7 +12,9 @@ export const DOCK_MAX = 560;
  */
 export function dockPlacement(W: number, s: DeskState | null): { x: number; w: number } {
   const col = s ? s.column : { x: 16, w: W - 32 };
-  return { x: col.x + col.w / 2, w: Math.max(0, Math.min(DOCK_MAX, col.w)) };
+  // The lane (layout C): centred under the column the pen is in, with air either side (mockups C1, C2).
+  const inset = s?.lane ? 2 * LANE_DOCK_AIR : 0;
+  return { x: col.x + col.w / 2, w: Math.max(0, Math.min(DOCK_MAX, col.w - inset)) };
 }
 
 /** The caption sits right on the ask bar: one unit, no gap (ui.css .caption bottom: 100%). */

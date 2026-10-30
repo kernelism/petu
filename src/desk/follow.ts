@@ -67,10 +67,21 @@ export function wheelScrolls(el: { scrollTop: number; scrollLeft: number; scroll
 export class ScrollOwner {
   private expected: number | null = null;
   private gliding = 0;
+  /** When the last glide ran to its end by itself (performance.now()); -Infinity if none. */
+  private settledAt = -Infinity;
   constructor(private tol = 2) {}
   write(el: { scrollTop: number }, top: number): void { this.expected = top; el.scrollTop = top; this.expected = el.scrollTop; }
   glideStart(): void { this.gliding++; }
-  glideEnd(): void { this.gliding = Math.max(0, this.gliding - 1); }
+  /** `natural`: the glide reached its target (not stopped by the student or aborted). */
+  glideEnd(natural = false): void {
+    this.gliding = Math.max(0, this.gliding - 1);
+    if (natural && !this.gliding) this.settledAt = performance.now();
+  }
+  /**
+   * Within `ms` after an engine glide landed by itself (§5.7): a Magic Mouse's tail momentum from
+   * before the glide is not the student taking over.
+   */
+  justSettled(now = performance.now(), ms = 150): boolean { return !this.gliding && now - this.settledAt < ms; }
   /**
    * Call from the scroll listener. True when this scroll was not the engine's. `max` is the current
    * maximum scrollTop: landing on it when the engine's last position is now past it is the browser

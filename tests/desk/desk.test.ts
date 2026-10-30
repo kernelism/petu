@@ -14,7 +14,7 @@ function fakeHost(W = 1440, H = 900, pages = 5) {
   const s = { W, H, top: 0, split: 'none' as Split };
   const cbs = { layout: new Set<() => void>(), scroll: new Set<() => void>(), user: new Set<() => void>() };
   const sub = (set: Set<() => void>) => (cb: () => void) => { set.add(cb); return () => { set.delete(cb); }; };
-  const layout = () => computeLayout(frameFor(s.W, s.H, s.split, 9 / 16).page, aspects, s.H);
+  const layout = () => computeLayout(frameFor(s.W, s.H, s.split, 9 / 16, false).page, aspects, s.H);
   const host: DeskHost & { s: typeof s; resize(W: number, H: number): void; user(): void; scroll(top: number): void } = {
     s,
     viewport: () => ({ W: s.W, H: s.H }),
@@ -66,7 +66,7 @@ describe('Desk: the board', () => {
     expect(h.setSplit).toHaveBeenCalledOnce();
     expect(h.setSplit).toHaveBeenCalledWith('normal', GLIDE_MS);
     const s = d.state();
-    const f = frameFor(1440, 900, 'normal', 9 / 16);
+    const f = frameFor(1440, 900, 'normal', 9 / 16, false);
     expect(s.split).toBe('normal');
     expect(s.column).toEqual({ x: f.slides.x, w: f.slides.w });
     expect(s.board).toEqual(f.board);
@@ -88,10 +88,10 @@ describe('Desk: the board', () => {
     d.subscribe((s) => cols.push(s.column.x));
     const a = d.addRegion(spec('side'));
     await flush();
-    expect(d.state().column.x).toBe(frameFor(1440, 900, 'normal', 9 / 16).slides.x);
+    expect(d.state().column.x).toBe(frameFor(1440, 900, 'normal', 9 / 16, false).slides.x);
     await vi.advanceTimersByTimeAsync(GLIDE_MS + 50);
     await a;
-    expect(cols[cols.length - 1]).toBe(frameFor(1440, 900, 'normal', 9 / 16).slides.x);
+    expect(cols[cols.length - 1]).toBe(frameFor(1440, 900, 'normal', 9 / 16, false).slides.x);
   });
   it('size=l widens the split; s and m are the normal split', async () => {
     const h = fakeHost();
@@ -230,7 +230,7 @@ describe('Desk: the board', () => {
     h.resize(900, 800);
     await flush();
     expect(d.state().stacked).toBe(true);
-    expect(parseFloat(boardOf(stage).style.left)).toBe(frameFor(900, 800, 'normal', 9 / 16).board!.x);
+    expect(parseFloat(boardOf(stage).style.left)).toBe(frameFor(900, 800, 'normal', 9 / 16, false).board!.x);
     h.resize(1440, 900);
     await flush();
     expect(d.state().stacked).toBe(false);
@@ -240,7 +240,7 @@ describe('Desk: the board', () => {
     const d = new Desk(h, stage);
     const r = await d.addRegion(spec('side', 2, { body: 0.03 }));
     if (typeof r === 'string') throw new Error(r);
-    const pageW = frameFor(1440, 900, 'normal', 9 / 16).page.pageW;
+    const pageW = frameFor(1440, 900, 'normal', 9 / 16, false).page.pageW;
     expect(r.body()).toBeCloseTo(Math.min(36, 0.03 * pageW));
     expect(r.scale()).toBeGreaterThan(0);
   });
@@ -289,7 +289,7 @@ describe('Desk: connectors', () => {
     await d.addRegion(spec('side', 1));
     const c = d.addConnector({ t: { page: 1 }, r: { x: 300, y: 300, w: 20, h: 20 } }, { t: { region: 'side' }, r: { x: 300, y: 300, w: 10, h: 10 } });
     if (typeof c === 'string') throw new Error(c);
-    const f = frameFor(1440, 900, 'normal', 9 / 16);
+    const f = frameFor(1440, 900, 'normal', 9 / 16, false);
     const end = c.stroke[c.stroke.length - 1];
     expect(end.x).toBeGreaterThan(f.board!.x); // it arrives on the board
     expect(c.stroke[0].x).toBeLessThan(f.slides.x + f.slides.w); // from the slide

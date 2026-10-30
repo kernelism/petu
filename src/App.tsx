@@ -35,6 +35,7 @@ import { BoardPen } from './ui/BoardPen';
 import { Caption, joinWords } from './ui/Caption';
 import { AskBar, type Transcript } from './ui/AskBar';
 import { FollowPill } from './ui/FollowPill';
+import { OverviewPill } from './ui/OverviewPill';
 import { dockPlacement, dockReserve } from './ui/layout';
 import { DOCK_GAP, margin, SAFE_TOP, setSafeBottom } from './desk/layout';
 import { takeSentences } from './ui/text';
@@ -1521,6 +1522,7 @@ export default function App() {
         report={import.meta.env.DEV ? captureReport : undefined}
       />
       <FollowPill visible={paused} onResume={resumeFollow} x={dock.x} />
+      <OverviewPill />
       <RouteChip route={route} backTo={backTo} onBack={onBack} x={dock.x} />
       <SettingsPopover open={settingsOpen} onClose={closeSettings} />
       <CanvasToolbar />

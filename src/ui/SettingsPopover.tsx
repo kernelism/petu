@@ -1,5 +1,5 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
-import { HIGHLIGHT_COLORS, INK_COLORS, setSettings, useSettings } from '../settings/settings';
+import { HIGHLIGHTS, HIGHLIGHT_STYLES, INK_COLORS, setSettings, useSettings } from '../settings/settings';
 import type { InkStyle } from '../ink/agent/marks';
 import './ui.css';
 
@@ -10,7 +10,6 @@ const STYLES: { value: InkStyle; label: string }[] = [
 ];
 const COLOR_NAMES: Record<string, string> = {
   '#F2600C': 'Orange', '#E5484D': 'Red', '#0A84FF': 'Blue', '#30A46C': 'Green', '#8E4EC6': 'Purple',
-  '#FFD60A': 'Yellow', '#7EE787': 'Green', '#7CC4FF': 'Blue', '#FF9ECF': 'Pink',
 };
 
 function Swatches({ label, colors, value, onPick }: { label: string; colors: string[]; value: string; onPick(c: string): void }) {
@@ -89,8 +88,22 @@ export function SettingsPopover({ open, onClose }: { open: boolean; onClose(): v
       </section>
 
       <section className="pop-row">
-        <div className="pop-label">Highlight</div>
-        <Swatches label="Highlight color" colors={HIGHLIGHT_COLORS} value={s.highlightColor} onPick={(c) => setSettings({ highlightColor: c })} />
+        <div className="pop-label" id="pop-highlight">Highlight</div>
+        <div className="segmented segmented-2" role="radiogroup" aria-labelledby="pop-highlight">
+          {HIGHLIGHT_STYLES.map((h) => (
+            <button
+              key={h}
+              type="button"
+              role="radio"
+              aria-checked={s.highlight === h}
+              className={`seg${s.highlight === h ? ' is-on' : ''}`}
+              onClick={() => setSettings({ highlight: h })}
+            >
+              <span className="seg-wash" aria-hidden style={{ '--wash': HIGHLIGHTS[h].color, '--wash-a': HIGHLIGHTS[h].opacity } as CSSProperties} />
+              {HIGHLIGHTS[h].label}
+            </button>
+          ))}
+        </div>
       </section>
 
       <section className="pop-row">

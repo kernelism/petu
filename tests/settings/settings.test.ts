@@ -26,6 +26,30 @@ describe('settings', () => {
     expect(s.getSettings().inkColor).toBe('#F2600C');
     expect(s.getSettings()).not.toHaveProperty('v');
   });
+  it('the page highlight defaults to the violet wash (the accent, light) and yellow keeps the marker look', async () => {
+    const s = await fresh();
+    expect(s.getSettings().highlight).toBe('violet');
+    expect(s.HIGHLIGHTS.violet.color).toBe('#8E4EC6');
+    // multiply over white: 255 − a·(255 − c) ≈ rgb(236,226,246), the mockup's wash
+    const on = (c: number) => Math.round(255 - s.HIGHLIGHTS.violet.opacity * (255 - c));
+    [[0x8e, 236], [0x4e, 226], [0xc6, 246]].forEach(([c, want]) => expect(Math.abs(on(c) - want)).toBeLessThanOrEqual(2));
+    expect(s.HIGHLIGHTS.yellow).toMatchObject({ color: '#FFD60A', opacity: 0.5 });
+  });
+  it('a stored legacy highlightColor (the old yellow default or a retired swatch) becomes the violet wash; a choice is kept', async () => {
+    localStorage.setItem(KEY, JSON.stringify({ highlightColor: '#FFD60A', wpm: 190, v: 2 }));
+    let s = await fresh();
+    expect(s.getSettings()).toMatchObject({ highlight: 'violet', wpm: 190 });
+    expect(s.getSettings()).not.toHaveProperty('highlightColor');
+    localStorage.setItem(KEY, JSON.stringify({ highlightColor: '#7EE787' }));
+    s = await fresh();
+    expect(s.getSettings().highlight).toBe('violet');
+    s.setSettings({ highlight: 'yellow' });
+    s = await fresh();
+    expect(s.getSettings().highlight).toBe('yellow');
+    localStorage.setItem(KEY, JSON.stringify({ highlight: 'neon' }));
+    s = await fresh();
+    expect(s.getSettings().highlight).toBe('violet');
+  });
   it('playback speed: 1× by default, remembered, an unknown stored value falls back to 1×', async () => {
     let s = await fresh();
     expect(s.getSettings().speed).toBe(1);

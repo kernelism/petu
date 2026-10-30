@@ -10,7 +10,7 @@ export type ScrollOpts = {
   /** Aborting stops the glide where it is and resolves. */
   signal?: AbortSignal;
   /** Marks the glide's writes as the engine's (follow mode tells them from the student's). */
-  owner?: { glideStart(): void; glideEnd(): void; write(el: { scrollTop: number }, top: number): void };
+  owner?: { glideStart(): void; glideEnd(natural?: boolean): void; write(el: { scrollTop: number }, top: number): void };
 };
 
 /**
@@ -37,7 +37,7 @@ export function animateScrollTo(el: HTMLElement, target: number | (() => number)
     const stop = (e?: Event) => {
       // A wheel with no delta (a touch-surface mouse brushed while the cursor moves) is not the user taking over.
       if (done || (e?.type === 'wheel' && !(e as WheelEvent).deltaX && !(e as WheelEvent).deltaY)) return;
-      done = true; cleanup(); o.owner?.glideEnd(); resolve();
+      done = true; cleanup(); o.owner?.glideEnd(!e); resolve(); // no event: the glide reached its end
     };
     events.forEach((e) => el.addEventListener(e, stop, { passive: true }));
     o.signal?.addEventListener('abort', stop);

@@ -69,6 +69,8 @@ export type DeskState = {
   board?: ViewRect;
   /** The student's board zoom (1 = as laid out), while the board is open. */
   zoom?: number;
+  /** Layout C: the lane is on; `column` is the column the pen is in (the page or the lane). */
+  lane?: boolean;
 };
 
 /** What the drawing toolkit needs to draw into one target. */
@@ -204,4 +206,6 @@ export interface DeskHost {
   contentMask?(page: number): ContentMask | null;
   /** A crisp copy of a page region (model coords), `pxW` device px wide, as an image URL (null: can't render). */
   crop?(page: number, r: { x: number; y: number; w: number; h: number }, pxW: number): Promise<string | null>;
+  /** The anchored lane's layer in the scroll content (layout C; null before the first layout). */
+  laneEl?(): HTMLElement | null;
 }
