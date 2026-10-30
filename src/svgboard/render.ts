@@ -14,7 +14,7 @@ import { namesWord } from '../playback/scheduler';
 import { INK, type Palette } from './style';
 import { isBound, newScope, resolveData, type DataScope } from './data';
 import { prepareText } from './polish';
-import { applyGrammar, LEGIBLE_PX, newTypeState, typeScale, type TypeState } from './grammar';
+import { applyGrammar, LEGIBLE_PX, MIN_PX, newTypeState, typeScale, type TypeState } from './grammar';
 import type { SRect } from '../geometry/space';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -117,8 +117,11 @@ export function prepareGroup(b: SvgBoard, src: string, minPx: number, pxPerUnit:
   if (b.type) b.type.scale = scale; else b.type = newTypeState(scale);
   // The floor any text is raised to before the grammar sets it (a legibility floor on screen, not the
   // grammar's sizes: those are raised only as far as the drawing has room, grammar.ts roomSizes).
-  const st = b.type, min = pxPerUnit > 0 ? Math.min(Math.max(8, scale.small), LEGIBLE_PX / pxPerUnit) : Math.max(8, scale.small);
-  st.floor = min;
+  const st = b.type, floor = pxPerUnit > 0 ? Math.min(Math.max(8, scale.small), LEGIBLE_PX / pxPerUnit) : Math.max(8, scale.small);
+  st.floor = floor;
+  // A text in a row too tight for the floor may go to what the model wrote, never under MIN_PX (grammar.ts).
+  const min = pxPerUnit > 0 ? Math.min(floor, MIN_PX / pxPerUnit) : floor;
+  st.minFloor = min;
   const s = sanitizeGroup(src, { ns: b.ns, palette: b.palette, minFont: min, w: b.w, h: b.h, ids: b.ids, prepare: (g) => { resolveData(g, b.scope); prepareText(g, min, applyGrammar(g, st)); } });
   // Washes: the board's hatch (an attribute, so a serialised board carries it with its pattern).
   if (typeof s !== 'string') s.el.querySelectorAll('[data-wash]').forEach((e) => e.setAttribute('fill', `url(#${hatchId(b.ns)})`));

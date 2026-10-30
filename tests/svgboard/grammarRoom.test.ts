@@ -12,8 +12,8 @@ import { core, groupGeometry, overlapArea, segHitsBox } from '../../src/svgboard
 import { inkBox } from '../../src/svgboard/grammar';
 
 const run = (src: string, st: TypeState) => {
-  const r = sanitizeGroup(src, { ns: 'b', palette: { accent: '#7c3aed', hue: null }, minFont: Math.min(st.scale.small, LEGIBLE_PX / 0.5), w: 1000, h: 720, ids: new Map(), doc: document,
-    prepare: (g) => { resolveData(g, newScope()); prepareText(g, Math.min(st.scale.small, LEGIBLE_PX / 0.5), applyGrammar(g, st)); } });
+  const r = sanitizeGroup(src, { ns: 'b', palette: { accent: '#7c3aed', hue: null }, minFont: st.minFloor ?? 0, w: 1000, h: 720, ids: new Map(), doc: document,
+    prepare: (g) => { resolveData(g, newScope()); prepareText(g, st.minFloor ?? 0, applyGrammar(g, st)); } });
   if (typeof r === 'string') throw new Error(r);
   return r.el;
 };
@@ -59,7 +59,7 @@ const GLYPHS = `<g id="glyphs">
 const SPARSE = `<g id="sparse"><circle cx="300" cy="300" r="80" fill="none" stroke="#222"/><text x="420" y="300" font-size="16">one label</text></g>`;
 
 // The lane at 1440: ~500 px for 1000 units; slide body 18 px → the grammar's content target 16.2 px = 32.4 units.
-const LANE = (): TypeState => ({ ...newTypeState(typeScale(18, 0.5, 500)), floor: LEGIBLE_PX / 0.5 });
+const LANE = (): TypeState => ({ ...newTypeState(typeScale(18, 0.5, 500)), floor: LEGIBLE_PX / 0.5, minFloor: 8 / 0.5 });
 
 describe('text keeps to the room the drawing gives it', () => {
   it('a dense board: no text runs into another text or a stroke it was clear of', () => {
@@ -88,5 +88,15 @@ describe('text keeps to the room the drawing gives it', () => {
     const b = run(SPARSE.replace('sparse', 'sp2').replace('cy="300"', 'cy="500"').replace('y="300"', 'y="500"'), st);
     const fa = Math.max(...Array.from(a.querySelectorAll('text[data-role="content"]')).map((t) => Number(t.getAttribute('font-size'))));
     expect(Number(b.querySelector('text')!.getAttribute('font-size'))).toBeLessThanOrEqual(fa + 1e-6);
+  });
+
+  it('a row too tight even for the legibility floor: only its texts go smaller (to what the model wrote), clear of each other', () => {
+    const row = `<g id="tight"><text x="40" y="40" font-size="18">a heading with room</text><g font-size="17" text-anchor="middle">
+      <text x="100" y="120">factors 0.25, 0.25</text><text x="260" y="120">factors 0.25, 0.25</text><text x="420" y="120">factors 0.25, 0.25</text></g></g>`;
+    const g = run(row, LANE());
+    expect(collisions(g)).toBe(0);
+    const sz = (s: string) => Number(Array.from(g.querySelectorAll('text')).find((t) => t.textContent === s)!.getAttribute('font-size'));
+    expect(sz('factors 0.25, 0.25')).toBeGreaterThanOrEqual(16);
+    expect(sz('a heading with room')).toBeGreaterThan(sz('factors 0.25, 0.25'));
   });
 });

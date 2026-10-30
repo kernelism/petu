@@ -22,11 +22,13 @@ type Seg = { x1: number; y1: number; x2: number; y2: number };
  * the content size the board's drawing has room for (set by its tightest group so far, never grows);
  * `drawn`: earlier groups' text boxes and strokes (a later label keeps clear of them too).
  */
-export type TypeState = { scale: TypeScale; axes: Seg[]; ticks: Seg[]; titled: boolean; room?: number; /** The legibility floor in user units (render.ts): a model's smaller text counts as this. */ floor?: number; drawn?: { texts: TextBox[]; segs: GSeg[] } };
+export type TypeState = { scale: TypeScale; axes: Seg[]; ticks: Seg[]; titled: boolean; room?: number; /** The legibility floor in user units (render.ts): a model's smaller text counts as this. */ floor?: number; /** The hard floor (units) a text may go to on its own, to clear a collision. */ minFloor?: number; drawn?: { texts: TextBox[]; segs: GSeg[] } };
 
 export const SMALL_MIN_PX = 11;
 /** No board text is ever set under this on screen (a model's tiny text is raised to it first). */
 export const LEGIBLE_PX = 10;
+/** A text in a row too tight for LEGIBLE_PX may go this small (and no smaller than the model wrote it). */
+export const MIN_PX = 8;
 export const TITLE_K = 1.25;
 export const SMALL_K = 0.82;
 
@@ -222,10 +224,11 @@ export const RAISE_MAX = 1.5;
  */
 function roomSizes(g: Element, roles: Map<Element, Role>, st: TypeState): Map<Element, number> {
   const els = Array.from(roles.keys());
-  const own = new Map<Element, number>();
+  const own = new Map<Element, number>(), raw = new Map<Element, number>();
   for (const el of els) {
     let fs = 16;
     for (let e: Element | null = el; e; e = e.parentElement) { const v = e.getAttribute('font-size'); if (v != null) { fs = num(v, 16); break; } }
+    raw.set(el, fs);
     own.set(el, Math.max(fs, st.floor ?? 0));
   }
   const target = st.scale.content;
@@ -273,6 +276,28 @@ function roomSizes(g: Element, roles: Map<Element, Role>, st: TypeState): Map<El
   } else c = Math.max(Math.min(hi, target), Math.min(lo, hi));
   if (contentOwn.length) st.room = Math.min(st.room ?? Infinity, c);
   const sizes = sizesAt(c);
+  // A text that still runs into one it was clear of at the model's size (a row so tight that even the
+  // legibility floor collides) is set smaller on its own, down to what the model wrote (never under
+  // `minFloor`): the rest of the group keeps its size.
+  const base0 = hits(null);
+  for (let i = 0; base0 && i < 12; i++) {
+    const h = hits(sizes);
+    if (!h) break;
+    const bad = [...h].filter((k) => !base0.has(k));
+    if (!bad.length) break;
+    const all = Array.from(g.querySelectorAll('text'));
+    const idx = new Set<number>();
+    for (const k of bad) { const m = /^([tps])(\d+):(\d+)$/.exec(k); if (!m) continue; idx.add(+m[2]); if (m[1] === 't') idx.add(+m[3]); }
+    let moved = false;
+    for (const n of idx) {
+      const el = all[n], v = el && sizes.get(el);
+      if (!el || v == null) continue;
+      const lim = Math.max(raw.get(el) ?? v, st.minFloor ?? 0);
+      const nv = Math.max(lim, v * 0.93);
+      if (nv < v - 1e-3) { sizes.set(el, nv); moved = true; }
+    }
+    if (!moved) break;
+  }
   // What this group leaves on the board, for the next group's room.
   try {
     const cl = g.cloneNode(true) as Element;
