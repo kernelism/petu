@@ -278,6 +278,38 @@ describe('VoiceLine, reconnecting', () => {
     expect(b.done).toMatchObject({ ok: true });
   });
 
+  it('reconnects for a response asked after the session\'s 55 minutes, not before', async () => {
+    const socks: ReturnType<typeof fakeSocket>[] = [];
+    let now = 0;
+    let closedOld = 0;
+    const l = new VoiceLine('k', () => {
+      const f = fakeSocket();
+      f.s.close = () => { closedOld++; };
+      socks.push(f);
+      setTimeout(() => f.s.onopen?.(), 0);
+      return f.s;
+    }, () => now);
+    const run = async (text: string) => {
+      const o = { audio: 0 } as { audio: number; done?: SpeakResult };
+      l.speak(job(text, o));
+      await tick();
+      const f = socks.at(-1)!;
+      f.s.emit({ type: 'response.done', response: { id: created(f.s, f.sent), status: 'completed', usage: {} } });
+      await tick();
+      return o;
+    };
+    await run('One.');
+    now = 54 * 60_000;
+    await run('Two.');
+    expect(socks).toHaveLength(1);
+    now = 56 * 60_000;
+    const c = await run('Three.');
+    expect(socks).toHaveLength(2);
+    expect(closedOld).toBe(1);
+    expect(c.done).toMatchObject({ ok: true });
+    expect(socks[1].sent[0].type).toBe('session.update'); // a new session is set up again
+  });
+
   it('a socket that closes mid-queue fails the response in flight and reconnects for the rest', async () => {
     const socks: ReturnType<typeof fakeSocket>[] = [];
     const l = new VoiceLine('k', () => { const f = fakeSocket(); socks.push(f); setTimeout(() => f.s.onopen?.(), 0); return f.s; });

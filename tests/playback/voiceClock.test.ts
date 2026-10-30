@@ -160,6 +160,42 @@ describe('VoiceClock', () => {
     expect(played[1].stopped).toBe(false);
   });
 
+  it('a piece arriving after dispose plays nothing and times nothing', async () => {
+    const { clock, asked, played } = make();
+    enqueueAll(clock, 'Supply rises.');
+    clock.dispose();
+    asked[0].resolve(500);
+    await flush();
+    expect(played).toHaveLength(0);
+    expect(clock.wordStart(0)).toBeNull();
+  });
+
+  it('a piece arriving after a retime plays at the retimed start, not before', async () => {
+    const { clock, asked, played } = make();
+    enqueueAll(clock, 'Supply rises.');
+    clock.retime(0, 3000); // a hold before the first word, its audio still loading
+    asked[0].resolve(500);
+    await flush();
+    expect(played[0].at).toBe(3000);
+    expect(clock.wordStart(0)).toBe(3000);
+    expect(clock.endsAt()).toBe(3500);
+  });
+
+  it('a seek back replays from that word and the piece still loading follows the replay', async () => {
+    const { clock, asked, played } = make();
+    enqueueAll(clock, 'Supply rises. Demand falls.');
+    asked[0].resolve(1000);
+    await flush();
+    vi.advanceTimersByTime(800);
+    clock.retime(0, 1050);
+    expect(played[0].stopped).toBe(true);
+    expect(played[1]).toMatchObject({ at: 1050, offset: 0, stopped: false });
+    asked[1].resolve(600);
+    await flush();
+    expect(played[2].at).toBe(2050);
+    expect(clock.wordStart(2)).toBe(2050);
+  });
+
   describe('with the scheduler', () => {
     const ev = (t: string): ScriptEvent[] => t.split(' ').map((text) => ({ type: 'word' as const, text }));
     const drive = () => {
