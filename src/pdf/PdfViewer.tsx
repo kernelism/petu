@@ -12,7 +12,7 @@ import { prefersReducedMotion } from '../ink/agent/animate';
 import { ink } from '../ink/student/store';
 import { PageSlot, type SlotHandle } from './PageSlot';
 import { computeLayout, frameFor, pageAt, pageFrameTop, SAFE_TOP, safeBottom, setStackBottom, type PageLayout, type Split } from '../desk/layout';
-import { ScrollOwner, isScrollKey } from '../desk/follow';
+import { ScrollOwner, isScrollKey, wheelTakesOver } from '../desk/follow';
 import type { DeskHost } from '../desk/types';
 import './viewer.css';
 
@@ -415,9 +415,12 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     el.addEventListener('scroll', onScroll, { passive: true });
     // The reader taking over (wheel incl. pinch/ctrl+wheel, touch, scroll keys, zoom) ends the agent's focus page and follow mode.
     const onUserScroll = () => intent();
+    // A wheel that moves nothing (a Magic Mouse or trackpad brushed while the cursor moves, the slides
+    // already at their end) is not the reader taking over: it must not stop the board following.
+    const onUserWheel = (e: WheelEvent) => { if (wheelTakesOver(el, e)) intent(); };
     const onKey = (e: KeyboardEvent) => { if (isScrollKey(e)) intent(); };
     const onZoom = () => { if ((window.visualViewport?.scale ?? 1) !== 1) intent(); };
-    el.addEventListener('wheel', onUserScroll, { passive: true });
+    el.addEventListener('wheel', onUserWheel, { passive: true });
     el.addEventListener('touchstart', onUserScroll, { passive: true });
     window.addEventListener('keydown', onKey);
     window.visualViewport?.addEventListener('resize', onZoom);
@@ -627,7 +630,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       glide?.abort();
       if (glideRef.current) { window.clearTimeout(glideRef.current.timer); glideRef.current.done(); glideRef.current = null; }
       el.removeEventListener('scroll', onScroll);
-      el.removeEventListener('wheel', onUserScroll);
+      el.removeEventListener('wheel', onUserWheel);
       el.removeEventListener('touchstart', onUserScroll);
       window.removeEventListener('keydown', onKey);
       window.visualViewport?.removeEventListener('resize', onZoom);

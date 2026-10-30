@@ -373,7 +373,7 @@ export class Director {
       const body = await this.bodyOf(v, page);
       if (signal.aborted) return;
       // Lands ink in flight only if opening the board moves the view (the split glide, a board scroll).
-      const r = await desk.addRegion({ id: a.id, page, size: a.size, body, ...(a.scene ? { scene: true } : {}), ...(a.svgboard ? { svg: true, ...(a.svgboard.extend ? { extend: true } : {}) } : {}) }, this.land);
+      const r = await desk.addRegion({ id: a.id, page, size: a.size, body, ...(a.scene ? { scene: true } : {}), ...(a.svgboard ? { svg: true, h: (a.svgboard.h * REGION_W) / (a.svgboard.w || REGION_W), ...(a.svgboard.extend ? { extend: true } : {}) } : {}) }, this.land);
       if (typeof r === 'string') { console.warn('[director] sketch skipped:', r, a.id); return r; }
       if (a.svgboard) {
         const { height } = mountBoard(r.layers.agent, a.svgboard, a.id, this.d.settings().inkColor);
