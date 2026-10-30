@@ -51,9 +51,12 @@ The model draws the board itself, in SVG, one group per beat; the engine streams
 and draws it. The tag kit above stays for the `tags` prompt variant (`PETU_PROMPT_VARIANT=tags`).
 
 - **Format** (the model's raw output; `server/prompt/system.ts`, examples `server/prompt/svgExamples.ts`):
-  a hidden `<plan>` ending with `BOARD viewBox="0 0 1000 H"` (`BOARD extend …` to draw on into the
-  last board), regions and groups in teaching order; then beats: 1–3 sentences (page pointing tags
-  as before), then that beat's `<g id="…">…</g>`.
+  (p6.1) one or two sentences with no drawing (page pointing; they play while the plan is written),
+  a compact hidden `<plan>` ending with `BOARD viewBox="0 0 1000 H"` (`BOARD extend …` to draw on into
+  the last board), regions and groups in teaching order; then beats: the beat's `<g id="…">` first
+  (drawn across its sentences; parts with ids draw on the word naming them), then 1–3 sentences. The
+  board holds the picture, labels, key numbers and one takeaway, never the narration's derivation.
+  The prompt's `SVG_ENGINE_ATTRS` (system.ts) carries the data-attribute and tween lines.
 - **Wire** (`server/svgBeats.ts` → `src/svgboard/wire.ts`): the plan is lifted (`done.plan`) and its
   BOARD line becomes `{{svgboard h=H}}` at once; each top-level element becomes ONE tag
   `{{svg <g id="…">…</g>}}` (braces as `&#123;`/`&#125;`, newlines folded), sent the moment it closes.

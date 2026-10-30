@@ -6,6 +6,7 @@ import { SvgBeatFilter, boardOf } from '../../server/svgBeats';
 import { SVG_EXAMPLES } from '../../server/prompt/svgExamples';
 import { ScriptParser } from '../../src/script/parser';
 import { BeatSplitter, tokenize, units } from '../../src/gate/segment';
+import { newScope } from '../../src/svgboard/data';
 import { checkGroups, groupGeometry, newBoardState, acceptGroups, pathPolys, segHitsBox } from '../../src/svgboard/check';
 import { namesWord } from '../../src/playback/scheduler';
 import { anchorWords } from '../../src/script/parseTag';
@@ -27,7 +28,9 @@ describe('svg beats: the server filter', () => {
       const a = wire(ex.script, 1000000).out;
       for (const step of [1, 3, 7, 50]) expect(wire(ex.script, step).out).toBe(a);
       const { f } = wire(ex.script, 5);
-      expect(a.startsWith('{{svgboard h=')).toBe(true);
+      // p6.1: the first sentence (page pointing, no drawing) plays before the board opens; no group before it.
+      expect(a.indexOf('{{svgboard h=')).toBeGreaterThan(0);
+      expect(a.indexOf('{{svgboard h=')).toBeLessThan(a.indexOf('{{svg <'));
       expect(a).not.toMatch(/<plan>|BOARD viewBox|```/);
       expect(f.plan).toMatch(/BOARD viewBox/);
       const groups = ex.script.match(/<g id="[^"]+"/g)!.map((g) => g.slice(7, -1));
@@ -37,7 +40,7 @@ describe('svg beats: the server filter', () => {
       // No tag in the wire form has a newline or a brace inside.
       for (const m of a.matchAll(/\{\{svg ([\s\S]*?)\}\}/g)) expect(m[1]).not.toMatch(/[\n{}]/);
       const acts = actions(a);
-      expect(acts[0]).toMatchObject({ kind: 'sketch', svgboard: { w: 1000 } });
+      expect(acts.find((x) => x.kind === 'sketch')).toMatchObject({ kind: 'sketch', svgboard: { w: 1000 } });
       const svgs = acts.filter((x) => x.kind === 'svg');
       expect(svgs.map((x) => (x as { id?: string }).id)).toEqual(f.groups);
       // Narration survives intact (no SVG leaks into captions).
@@ -51,10 +54,12 @@ describe('svg beats: the server filter', () => {
     it(`the gate's checks pass the examples (${ex.title.slice(0, 30)})`, () => {
       const a = wire(ex.script, 1e6).out;
       const acts = actions(a);
-      const sb = acts[0] as Extract<RawAction, { kind: 'sketch' }>;
+      const sb = acts.find((x) => x.kind === 'sketch') as Extract<RawAction, { kind: 'sketch' }>;
       const board = newBoardState(sb.svgboard!.w, sb.svgboard!.h);
+      // One data scope for the answer (as the live gate keeps it): later groups read earlier constants, frames and curves.
+      const scope = newScope();
       for (const g of acts.filter((x): x is Extract<RawAction, { kind: 'svg' }> => x.kind === 'svg')) {
-        const r = checkGroups([g.svg], board, 16);
+        const r = checkGroups([g.svg], board, 16, scope);
         expect(r.flags, g.id).toEqual([]);
         acceptGroups(board, r.geos, r.grow);
       }
@@ -87,9 +92,9 @@ describe('svg beats: the server filter', () => {
 describe('svg beats: the gate splitter keeps a beat\'s group with its sentences', () => {
   const ex = SVG_EXAMPLES[0];
   const text = wire(ex.script, 1e6).out;
-  it('sentence units: every group rides with the sentence before it', () => {
+  it('sentence units: every group rides in a unit with words (p6.1: the group first, then its sentences)', () => {
     const us = units(text);
-    for (const u of us) for (const t of u.tags) if (t.action?.kind === 'svg') expect(t.start).toBeGreaterThan(u.words[0]?.start ?? -1);
+    for (const u of us) if (u.tags.some((t) => t.action?.kind === 'svg')) expect(u.words.length).toBeGreaterThan(0);
   });
   for (const mode of ['sentence', 'beat'] as const) {
     it(`incremental (${mode} mode) gives the stream back and never splits a group from its beat`, () => {
@@ -101,11 +106,10 @@ describe('svg beats: the gate splitter keeps a beat\'s group with its sentences'
         expect(out.join('')).toBe(text);
         // A unit that starts with a group is that group alone (its sentences went out before it).
         for (const u of out.slice(1)) if (u.trimStart().startsWith('{{svg <')) expect(u.replace(/\{\{svg <[^}]*\}\}/g, '').trim()).toBe('');
-        if (mode === 'beat') {
-          const withGroups = out.filter((u) => /\{\{svg </.test(u));
-          // Each beat unit ends with its group.
-          for (const u of withGroups) expect(u.trimEnd().endsWith('}}')).toBe(true);
-        }
+        // p6.1: a beat's group comes before its sentences, so a group is never released after them (the
+        // splitter may send it with the sentence before; the scheduler paces it across its own beat's words).
+        const at = (id: string) => out.join('').indexOf(`<g id="${id}"`);
+        expect(at('drift')).toBeLessThan(out.join('').indexOf('Point it straight'));
       }
     });
   }
@@ -220,5 +224,19 @@ describe('svg demos (gallery scenes)', () => {
         acceptGroups(board, r.geos, r.grow);
       }
     }
+  });
+});
+
+describe('p6.1: the first sentence before the plan', () => {
+  it('passes the sentence through at once, with a boundary, and lifts the plan after it', async () => {
+    const { SvgBeatFilter } = await import('../../server/svgBeats');
+    const f = new SvgBeatFilter(() => 0);
+    let out = f.push('{{highlight p=2 "x"}} It holds because the push never stops.');
+    out += f.push('<plan>\ncase\nBOARD viewBox="0 0 1000 600"\ngroups: axes\n</plan>\nOn these <g id="axes"><line x1="0" y1="0" x2="10" y2="10"/></g> axes, the');
+    out += f.end();
+    expect(out.startsWith('{{highlight p=2 "x"}} It holds because the push never stops. ')).toBe(true);
+    expect(out).toContain('{{svgboard h=600}}');
+    expect(out).toMatch(/On these \{\{svg <g id="axes">.*\}\}\s+axes, the/);
+    expect(f.plan).toMatch(/BOARD viewBox/);
   });
 });

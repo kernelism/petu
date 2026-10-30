@@ -238,3 +238,73 @@ describe('GatePreflight', () => {
     expect(rebuilt).toEqual([0]);
   });
 });
+
+describe('live gate: the length budget', () => {
+  // Old format (words, then the beat's group) and the new one (a group before the words that name it).
+  const beat = (i: number, words = 30) => `\n\n${Array.from({ length: words }, (_, j) => `w${i}x${j}`).join(' ')}. {{svg <g id="g${i}"></g>}} `;
+  const check = '\n\nWhat would change if it doubled? ';
+  const svgPreflight = (): Preflight => ({ check: () => ({ flags: [], notes: [], tags: [] }), accept() {}, reject() {} });
+
+  it('past the budget, closes at the next beat boundary and plays only the check question', async () => {
+    const h = harness({ preflight: svgPreflight() });
+    h.gate.setBudget({ capWords: 80 }); // closes once 62 words are out: beat 3 crosses it mid-beat and finishes
+    await h.play(['Opener sentence. ', { handoff: true }, beat(1), beat(2), beat(3), beat(4), check]);
+    const text = h.out.join('');
+    expect(text).toContain('w1x0');
+    expect(text).toContain('w3x29.'); // the beat that crossed the budget finished, with its group
+    expect(text).toContain('<g id="g3">');
+    expect(text).not.toContain('w4x0');
+    expect(text).not.toContain('g4');
+    expect(text.trim().endsWith('What would change if it doubled?')).toBe(true);
+    const cuts = h.gates().filter((g) => g.action === 'cut');
+    expect(cuts.length).toBeGreaterThan(0);
+    expect(h.gates().some((g) => g.action === 'drop')).toBe(false);
+    expect(h.gate.closed()).toBe(true);
+  });
+
+  it('never splits a beat from its group (group before its words)', async () => {
+    const h = harness({ preflight: svgPreflight() });
+    h.gate.setBudget({ capWords: 40 });
+    // The splitter keeps each group with the sentence before it: the group whose name opens the next beat belongs to that beat.
+    const nb = (i: number) => `{{svg <g id="curve${i}"></g>}} curve${i} ${Array.from({ length: 24 }, (_, j) => `v${i}x${j}`).join(' ')}. `;
+    await h.play(['Opener. ', { handoff: true }, 'First words here. ', nb(1), nb(2), nb(3), check]);
+    const text = h.out.join('');
+    for (const i of [1, 2, 3]) expect(text.includes(`curve${i}"`), `group ${i}`).toBe(text.includes(`v${i}x0`));
+    expect(text).not.toContain('v3x0');
+    expect(text.trim().endsWith('doubled?')).toBe(true);
+  });
+
+  it('within the budget (or without one) everything plays', async () => {
+    for (const cap of [1000, 0]) {
+      const h = harness({ preflight: svgPreflight() });
+      if (cap) h.gate.setBudget({ capWords: cap });
+      await h.play(['Opener. ', { handoff: true }, beat(1), beat(2), check]);
+      expect(h.out.join('')).toContain('w2x29');
+      expect(h.out.join('')).toContain('doubled?');
+      expect(h.gates().some((g) => g.action === 'cut')).toBe(false);
+    }
+  });
+
+  it('no check question in what is held: the answer simply ends at the boundary', async () => {
+    const h = harness({ preflight: svgPreflight() });
+    h.gate.setBudget({ capWords: 40 });
+    await h.play(['Opener. ', { handoff: true }, beat(1), beat(2), beat(3)]);
+    expect(h.out.join('')).not.toContain('w2x0');
+    expect(h.out.join('')).toContain('<g id="g1">');
+  });
+});
+
+describe('live gate: the length budget, p6.1 (spoken first, then the plan; each beat its group first)', () => {
+  const pre = (): Preflight => ({ check: () => ({ flags: [], notes: [], tags: [] }), accept() {}, reject() {} });
+  it("cuts before a beat's group, never between a group and its sentences, even when the id is named late", async () => {
+    const h = harness({ preflight: pre() });
+    h.gate.setBudget({ capWords: 60 });
+    const beat = (id: string, n: number) => `{{svg <g id="${id}"></g>}} ${Array.from({ length: n }, (_, j) => `${id}w${j}`).join(' ')} the ${id}. `;
+    await h.play(['Opener. ', { handoff: true }, 'It holds because the push never stops. {{svgboard h=600}} ', beat('river', 20), beat('drift', 20), beat('triangle', 20), '{{svg <g id="time"></g>}} What if the current were faster? ']);
+    const text = h.out.join('');
+    for (const id of ['river', 'drift', 'triangle']) expect(text.includes(`id="${id}"`), id).toBe(text.includes(`${id}w0`));
+    expect(text).toContain('driftw19');
+    expect(text).not.toContain('trianglew0');
+    expect(text.trim().endsWith('faster?')).toBe(true);
+  });
+});

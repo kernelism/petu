@@ -50,6 +50,7 @@ import type { Registry } from './desk/registry';
 import { groundingOf, type PageGround } from './agent/context/types';
 import { AnswerLog, boardOf, buildReport } from './report/capture';
 import { LiveGate, GatePreflight, HEADROOM_MS, HEADROOM_OPUS_MS } from './gate/live';
+import { budgetOf } from './agent/pacing';
 import { ShadowStage } from './gate/shadow';
 import { parseFaults } from './gate/faults';
 import type { GateEvent, GateLogEvent, GateSetting, RepairFn } from './gate/events';
@@ -126,6 +127,8 @@ const GATE_FAULTS = parseFaults(params.get('gatefail'));
 const GATE_LOG = params.has('gatelog');
 const GATE_CHECK_ALL = params.get('gatecheck') === 'all';
 const REPAIR_PARAM = params.get('repair');
+/** `&budget=off`: no length budget (the gate never closes an answer early; A/B replays). */
+const BUDGET_OFF = params.get('budget') === 'off';
 const REPAIR_MS = Number(params.get('repairms')) || 1500;
 const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
 const hasFiles = (e: DragEvent) => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
@@ -815,7 +818,10 @@ export default function App() {
         if (gate) { gate.setReq(e.reqId); if (/opus/i.test(e.model)) gate.setHeadroom(HEADROOM_OPUS_MS); }
         if (DEBUG) setDebug((d) => ({ ...d, meta: e }));
       },
-      onScout: (e) => { if (answerRef.current.question === q) answerRef.current.plan = e.plan ?? ''; if (DEBUG) setDebug((d) => ({ ...d, scout: e })); },
+      onScout: (e) => {
+        // The length budget by the plan's scope (src/agent/pacing.ts): the gate closes the answer at a beat boundary past it.
+        if (gate && !BUDGET_OFF) gate.setBudget(budgetOf(e.plan, e.opener));
+        if (answerRef.current.question === q) answerRef.current.plan = e.plan ?? ''; if (DEBUG) setDebug((d) => ({ ...d, scout: e })); },
       onStoryboard: (e) => { if (DEBUG) setDebug((d) => ({ ...d, storyboard: e })); },
       onHandoff: (e) => {
         gate?.handoff();

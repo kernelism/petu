@@ -20,7 +20,8 @@ export type GateEvent = {
   k: string;
   unit: 'opener' | 'sentence' | 'beat';
   result: 'pass' | 'strip' | 'fail';
-  action: 'release' | 'repair' | 'drop';
+  /** `cut`: not checked and never played: past the answer's length budget (src/agent/pacing.ts), the answer closed at a beat boundary. */
+  action: 'release' | 'repair' | 'drop' | 'cut';
   flags: GateFlag[];
   notes: string[];
   ms: number;

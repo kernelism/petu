@@ -34,6 +34,7 @@
 //
 // Secrets: the key is used only in the Authorization header below. It is never logged, emitted or
 // booked; upstream error text is scrubbed of it.
+import { budgetNote, budgetOf } from '../src/agent/pacing.ts';
 import { randomUUID } from 'node:crypto';
 import { HARD_STOP_USD, type AskEvent, type AskRequest, type AskContext } from '../src/agent/protocol';
 import { costUsd, worstCaseUsd, PRICES, type Usage } from './prices';
@@ -191,7 +192,8 @@ function groundingTail(c: AskContext, cfg: ModelConfig): unknown[] {
   if (c.searchText) tail.push({ type: 'input_text', text: c.searchText });
   if (c.scout) {
     const order = c.scout.pages.join(', ');
-    tail.push({ type: 'input_text', text: `PLAN (a first read of the whole document; pages in teaching order: ${order})${c.scout.plan ? `: ${c.scout.plan}` : ''}` });
+    const budget = budgetNote(budgetOf(c.scout.plan, c.opener)); // the plan's scope as a length (src/agent/pacing.ts)
+    tail.push({ type: 'input_text', text: `PLAN (a first read of the whole document; pages in teaching order: ${order})${c.scout.plan ? `: ${c.scout.plan}` : ''}${budget ? `\n${budget}` : ''}` });
     if (c.memory && c.scout.relation) tail.push({ type: 'input_text', text: relationNote(c.scout.relation) });
   }
   if (c.ink) {

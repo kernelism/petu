@@ -109,3 +109,15 @@ describe('scoutLive / scoutPages (client)', () => {
     expect(await live.verdict).toBeNull();
   });
 });
+
+describe('clipPlan: a long plan keeps its beats and scope (the length budget)', () => {
+  it('cuts the prose, never the numbered beats or the scope', async () => {
+    const { clipPlan } = await import('../../src/agent/scout');
+    const prose = 'Draw two 1-kg masses at 1 m and pull them in to 0.5 m while the spin rises. '.repeat(12);
+    const out = clipPlan(`${prose}1. Arms in, inertia drops; 2. Constant momentum; 3. Check energy source. Scope: narrow`, 750);
+    expect(out.length).toBeLessThanOrEqual(750);
+    expect(out.endsWith('1. Arms in, inertia drops; 2. Constant momentum; 3. Check energy source. Scope: narrow')).toBe(true);
+    expect(out).toContain('…');
+    expect(clipPlan('short plan. Scope: broad', 750)).toBe('short plan. Scope: broad');
+  });
+});

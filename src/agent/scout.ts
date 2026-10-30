@@ -105,10 +105,23 @@ export function parseScout(text: string, numPages: number, visible: number): { p
     if (Number.isInteger(n) && n >= 1 && n <= numPages && !pages.includes(n)) pages.push(n);
     if (pages.length >= SCOUT_MAX_PAGES) break;
   }
-  const plan = clipWords(typeof o.plan === 'string' ? o.plan.replace(/\s+/g, ' ').trim() : '', SCOUT_PLAN_CHARS);
+  const plan = clipPlan(typeof o.plan === 'string' ? o.plan.replace(/\s+/g, ' ').trim() : '', SCOUT_PLAN_CHARS);
   const find = (Array.isArray(o.find) ? o.find : []).filter((x): x is string => typeof x === 'string').map((x) => x.replace(/\s+/g, ' ').trim().slice(0, FIND_CHARS)).filter(Boolean).slice(0, SCOUT_FIND);
   if (!pages.length) return { pages: [visible], plan, fallback: 'scout chose no valid page', ...(find.length ? { find } : {}), ...rel };
   return { pages, plan, ...(find.length ? { find } : {}), ...rel };
+}
+
+/**
+ * A long plan is cut in its prose, never in its tail: the numbered beats and the scope are the answer's
+ * length budget (src/agent/pacing.ts), so they are kept whole (a run cut "4. Check half versus full orbit.…"
+ * and lost its scope).
+ */
+export function clipPlan(s: string, n: number): string {
+  if (s.length <= n) return s;
+  const at = s.search(/(?:\bBeats?\s*:\s*)?(?:^|[\s;:])1[.)]?\s+(?=\p{L})(?![^]*(?:^|[\s;:])1[.)]\s+\p{L})/u);
+  const tail = at > 0 ? s.slice(at).trim() : (/\bscope\s*:\s*\w+\.?$/i.exec(s)?.[0] ?? '');
+  if (!tail || tail.length > n * 0.6) return clipWords(s, n);
+  return `${clipWords(s.slice(0, at > 0 ? at : s.length - tail.length).trim(), n - tail.length - 1)} ${tail}`;
 }
 
 function clipWords(s: string, n: number): string {
