@@ -58,6 +58,10 @@ type Group = {
 const DOCK_MS = 300;
 /** The comfort band's top: the lane's live item sticks this far below the window top (under the chrome row). */
 const LANE_STICK = SAFE_TOP + 16;
+/** The pinned card's top below its item's top (desk.css .lane-item::before), its label above it. */
+const PIN_CARD = 30;
+/** The fade where the lane is masked at the comfort band's top. */
+const LANE_FADE = 16;
 /** A scene section's world: its camera (world units, zoom), its claims, the last thing framed. */
 type Scene = { cam: Cam; claims: SceneClaim[]; space: SceneSpace; focus: SRect | null; glide: AbortController | null; paper: SVGRectElement | null };
 /** A camera glide over the scene: at most this long. */
@@ -443,7 +447,9 @@ export class Desk implements DeskApi {
         if (sec.group?.live) {
           const g = sec.group, v = this.viewRect(sec, r);
           if (!v) return false;
-          g.pen = { top: v.y - g.item.getBoundingClientRect().top, h: v.h };
+          // With air above for the pinned card's top and the band's fade.
+          const air = PIN_CARD + LANE_FADE;
+          g.pen = { top: v.y - g.item.getBoundingClientRect().top - air, h: v.h + air };
           const from = g.item.getBoundingClientRect().top;
           this.position();
           this.glideFrom(g, from);
@@ -1015,6 +1021,7 @@ export class Desk implements DeskApi {
   /** The slides or the board scrolled: wires follow (once per frame), visibility waiters re-check. */
   private onMove() {
     if (this.liveGroup && this.lane()) this.liveLane();
+    if (this.lane()) for (const g of this.groups) if (g !== this.liveGroup) this.clipLane(g);
     if (this.lane() && (this.liveGroup || this.edge)) this.edgeCheck();
     this.moved.forEach((f) => f());
     if (this.frameReq || !this.wires.length) return;
@@ -1306,7 +1313,7 @@ export class Desk implements DeskApi {
       }
     });
     this.leaders.style.height = total;
-    for (const g of this.groups) this.drawLeader(g);
+    for (const g of this.groups) { this.drawLeader(g); if (g !== this.liveGroup) this.clipLane(g); }
     if (this.liveGroup) this.liveLane();
   }
 
@@ -1317,9 +1324,37 @@ export class Desk implements DeskApi {
     // Pinned: held in view away from the passage it belongs to (the answer walked on), out of a leader's
     // reach; a nudge to fit the band, with its anchor still beside it, is not.
     g.item.classList.toggle('is-pinned', Math.abs(top - g.top) > LEADER_MAX && !leaderPath(this.anchorY(g.anchor), { top, h: g.h }, LANE_PAD, g.head?.offsetHeight ?? 0));
-    // A card taller than the band shows its newest part: its label would sit under the chrome row.
-    g.item.classList.toggle('is-clipped', g.item.getBoundingClientRect().top < SAFE_TOP);
+    this.clipLane(g);
     this.drawLeader(g, top);
+  }
+
+  /**
+   * Nothing in the lane sits under the chrome row. A group whose top has gone above the comfort band
+   * (a docked one scrolled up with the page, or a live one taller than the band) is masked there with a
+   * short fade. The live group's card and its "pinned" label stay in the band (--lane-clip moves them
+   * down): its content is masked down to the card's top, not to the window's.
+   */
+  private clipLane(g: Group) {
+    const r = g.item.getBoundingClientRect();
+    const live = g.live && !g.folded, pinned = live && g.item.classList.contains('is-pinned');
+    const band = live ? LANE_STICK : SAFE_TOP;
+    const clip = r.bottom > 0 && r.top < band ? band - r.top : 0;
+    g.item.style.setProperty('--lane-clip', `${Math.round(clip)}px`);
+    g.item.classList.toggle('is-clipped', clip > 0);
+    const mask = (el: HTMLElement | SVGElement, cut: number) => {
+      const v = cut > 0 ? `linear-gradient(to bottom, transparent ${cut.toFixed(1)}px, #000 ${(cut + LANE_FADE).toFixed(1)}px)` : '';
+      el.style.setProperty('mask-image', v);
+      el.style.setProperty('-webkit-mask-image', v);
+    };
+    if (!live) {
+      mask(g.item, clip);
+      for (const el of [...g.item.children] as HTMLElement[]) if (el.style.maskImage || el.style.getPropertyValue('-webkit-mask-image')) mask(el, 0);
+      return;
+    }
+    // The live item itself is never masked (its card and label are its own pseudo-elements): its parts are.
+    mask(g.item, 0);
+    const line = band + (pinned ? PIN_CARD : 0);
+    for (const el of [...g.item.children] as HTMLElement[]) mask(el, clip > 0 ? line - el.getBoundingClientRect().top : 0);
   }
 
   /**

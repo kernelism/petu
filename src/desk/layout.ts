@@ -173,7 +173,8 @@ export function computeLayout(col: Column, aspects: Float64Array, H = 0): PageLa
     y += heights[i] + (i < n - 1 ? PAGE_GAP : 0);
   }
   const last = n ? heights[n - 1] : 0;
-  return { ...col, tops, heights, total: y + Math.max(BOTTOM_PAD, H - SAFE_TOP - last) };
+  // The foot: the last page can scroll its top to the band's top, and its bottom (and any ink there) clear of the dock.
+  return { ...col, tops, heights, total: y + Math.max(BOTTOM_PAD, dockPx + 24, H - SAFE_TOP - last) };
 }
 
 /** 1-based page whose slot (including the gap below it) contains content-y `y`. */

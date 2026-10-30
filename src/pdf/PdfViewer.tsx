@@ -387,7 +387,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
   const layout = useMemo(
     () => (column && aspectsRef.current ? computeLayout(column.col, aspectsRef.current, viewH) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [column?.col.pageW, column?.col.pageX, viewH, aspectsVersion],
+    [column?.col.pageW, column?.col.pageX, viewH, aspectsVersion, dock],
   );
   // Stacked, the slides' band ends at the board: framing keeps ink above it.
   useLayoutEffect(() => {

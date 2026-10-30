@@ -21,6 +21,7 @@ import { SCENES, SIZES, audited, pickBrowsers, type Scene } from './scenes.ts';
 import { auditGate } from './audit.ts';
 import { renderSheet } from './sheet.ts';
 import { pdfDirs } from '../eval/decks.ts';
+import { corpusDir } from '../corpus/sources.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -242,7 +243,9 @@ export async function runGallery(o: GalleryOptions = {}): Promise<Manifest & { d
   const sizes = (o.sizes?.length ? o.sizes : [...SIZES]);
   const skipped: string[] = [...picked.skipped];
   const scenes = SCENES.filter((s) => !o.only?.length || o.only.includes(s.name)).filter((s) => {
-    if (s.needs && !existsSync(join(ROOT, s.needs))) { skipped.push(`${s.name} (needs ${s.needs})`); return false; }
+    // A corpus PDF may live outside the checkout (PETU_CORPUS_DIR, as the dev server's PDF dirs see it).
+    const found = (n: string) => existsSync(join(ROOT, n)) || (n.startsWith('.petu/corpus/') && existsSync(join(corpusDir(ROOT), n.slice('.petu/corpus/'.length))));
+    if (s.needs && !found(s.needs)) { skipped.push(`${s.name} (needs ${s.needs})`); return false; }
     return true;
   });
   let commit = '';

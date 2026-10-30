@@ -287,7 +287,9 @@ svg[data-svgboard] [data-live] circle[fill]:not([fill="none"]):not([fill="#FFFFF
 .lane-item::before {
   content: '';
   position: absolute;
-  inset: 30px 14px 0;
+  /* --lane-clip (Desk.clipLane): how far the item's top is above the comfort band; the card and its
+     label stay in the band (never under the chrome row) while the item's content runs on above it, masked. */
+  inset: calc(30px + var(--lane-clip, 0px)) 14px 0;
   z-index: -1;
   border-radius: 10px;
   background: #FCFBF9;
@@ -298,7 +300,7 @@ svg[data-svgboard] [data-live] circle[fill]:not([fill="none"]):not([fill="#FFFFF
 .lane-item::after {
   content: 'pinned while the answer plays';
   position: absolute;
-  top: 6px;
+  top: calc(6px + var(--lane-clip, 0px));
   left: 26px;
   font: 400 12px/18px var(--font);
   color: var(--muted);
@@ -307,7 +309,6 @@ svg[data-svgboard] [data-live] circle[fill]:not([fill="none"]):not([fill="#FFFFF
   transition: opacity 160ms var(--ease-out, ease-out);
 }
 .lane-item.is-pinned::before, .lane-item.is-pinned::after { opacity: 1; }
-.lane-item.is-pinned.is-clipped::after { opacity: 0; }
 .lane-item.is-pinned > .trail-head:not(.is-aside):not(.is-mid) { visibility: hidden; }
 /* A follow-up's header inside an extended svg section (BOARD extend): over its first new group. */
 .lane-item > .trail-head.is-mid { position: absolute; z-index: 1; }

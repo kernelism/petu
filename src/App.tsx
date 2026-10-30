@@ -1559,7 +1559,11 @@ export default function App() {
           --view-top/--view-bottom: the viewer's visible band (under the chrome row, above the dock). */}
       <main
         className={`stage${desk?.sketching && desk.following && busy ? ' is-sketching' : ''}`}
-        style={{ '--glide': `${GLIDE_MS}ms`, '--view-top': `${SAFE_TOP}px`, '--view-bottom': `${viewBottom}px` } as CSSProperties}
+        style={{
+          '--glide': `${GLIDE_MS}ms`, '--view-top': `${SAFE_TOP}px`, '--view-bottom': `${viewBottom}px`,
+          // Layout C: the column the dock sits under (the pen's) ends its reading band above the dock (app.css).
+          ...(desk?.lane ? { '--dock-col-x': `${desk.column.x}px`, '--dock-col-w': `${desk.column.w}px` } : {}),
+        } as CSSProperties}
       >
         <PdfViewer
           doc={doc}
