@@ -1,4 +1,5 @@
 import { prefersReducedMotion } from '../ink/agent/animate';
+import { wheelTakesOver } from '../desk/follow';
 
 const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
@@ -35,8 +36,9 @@ export function animateScrollTo(el: HTMLElement, target: number | (() => number)
     const events = ['wheel', 'touchstart', 'keydown'];
     const cleanup = () => { events.forEach((e) => el.removeEventListener(e, stop)); o.signal?.removeEventListener('abort', stop); };
     const stop = (e?: Event) => {
-      // A wheel with no delta (a touch-surface mouse brushed while the cursor moves) is not the user taking over.
-      if (done || (e?.type === 'wheel' && !(e as WheelEvent).deltaX && !(e as WheelEvent).deltaY)) return;
+      // A wheel that moves nothing (no delta, or pushing past the end: a touch-surface mouse brushed while
+      // the cursor moves) is not the user taking over: the glide goes on rather than stopping half-way.
+      if (done || (e?.type === 'wheel' && !wheelTakesOver(el, e as WheelEvent))) return;
       done = true; cleanup(); o.owner?.glideEnd(); resolve();
     };
     events.forEach((e) => el.addEventListener(e, stop, { passive: true }));

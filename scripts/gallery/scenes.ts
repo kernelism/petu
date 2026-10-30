@@ -56,6 +56,9 @@ export const SCENES: Scene[] = [
   { name: 'svg-tunnel', query: 'script=svg-tunnel', moments: [mid(12000), END] },
   { name: 'svg-rent', query: 'script=svg-rent', moments: [mid(12000), END] },
   { name: 'svg-sinx', query: 'script=svg-sinx', moments: [mid(12000), END] },
+  // A session on the svg board (src/demo/svg/session.ts): a board taller than the view followed down, an
+  // aside, a follow-up that extends the board below, a fresh board under everything.
+  { name: 'svg-session', query: 'script=svg-session', moments: [mid(16000), mid(40000), mid(70000), END] },
   { name: 'ex-village', query: 'script=ex-village', moments: [mid(14000), mid(30000), END] },
   { name: 'ex-lighthouse', query: 'script=ex-lighthouse', moments: [mid(16000), mid(24000), END] },
   { name: 'ex-counter', query: 'script=ex-counter', moments: [mid(22000), END] },

@@ -4,7 +4,7 @@ import type { PageLayers } from '../pdf/viewerApi';
 import { REGION_H, REGION_W, type RegionSize, type Target } from '../script/types';
 import type { Stroke } from '../ink/agent/strokes';
 import { animateScrollTo } from '../pdf/scroll';
-import { Follow, ScrollOwner, wheelScrolls } from './follow';
+import { Follow, ScrollOwner, wheelPx, wheelScrolls } from './follow';
 import { routeGutter, maskBlocker } from './route';
 import { boardLayout, bodyPx, fitZoom, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
@@ -22,6 +22,11 @@ const WIRE_PAD = 8;
 /** Air kept around ink the board scrolls to. */
 const BOARD_AIR = 16;
 const WHOLE_REGION = { x: 0, y: 0, w: REGION_W, h: REGION_H };
+/** A pinch: zoom ×e^(−px·rate) per wheel event, each event's px capped (a ctrl+wheel notch is ~100 px). */
+const PINCH_RATE = 0.01;
+const PINCH_MAX_PX = 25;
+/** Safari's GestureEvent (not in the DOM typings). */
+type GestureLike = Event & { scale?: number; clientX?: number; clientY?: number };
 
 /**
  * `full`: the section's height in units (700, or more once kit blocks grow it). `y0`–`y1`: the part
@@ -29,7 +34,7 @@ const WHOLE_REGION = { x: 0, y: 0, w: REGION_W, h: REGION_H };
  */
 /** One board section (DOM + state); `createSection` builds it (the gate's shadow board builds the same). */
 export type DeskSection = Section;
-type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; full: number; y0: number; y1: number; dx: number | null; scene?: Scene };
+type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; full: number; y0: number; y1: number; dx: number | null; scene?: Scene; /** An svg board: grows as tall as its canvas (no kit cap). */ svg?: boolean };
 /** A scene section's world: its camera (world units, zoom), its claims, the last thing framed. */
 type Scene = { cam: Cam; claims: SceneClaim[]; space: SceneSpace; focus: SRect | null; glide: AbortController | null; paper: SVGRectElement | null };
 /** A camera glide over the scene: at most this long. */
@@ -133,7 +138,23 @@ export class Desk implements DeskApi {
     stage.append(this.board, this.wireLayer);
 
     const user = () => this.follow.userTookOver();
-    this.scroller.addEventListener('wheel', (e) => { if (e.ctrlKey || wheelScrolls(this.scroller, e)) user(); }, { passive: true });
+    // Not passive: a pinch over the board zooms the board (never the browser's page zoom, which moves everything).
+    this.scroller.addEventListener('wheel', (e) => this.onWheel(e, false), { passive: false });
+    // Safari sends a trackpad pinch as gesture events (no ctrl+wheel); unhandled, the whole page zooms.
+    // A drag across a drawing never selects it (a stray highlight, an accidental "about:" chip): a press
+    // on a drawing that is not on a word starts no selection (WebKit ignores user-select there). A press
+    // on a word still selects (select-to-ask), and a press elsewhere clears an old selection.
+    this.content.addEventListener('mousedown', (e) => {
+      const t = e.target as Element | null;
+      if (e.button !== 0 || !t?.closest?.('.desk-region') || t.closest('text')) return;
+      e.preventDefault();
+      const sel = typeof getSelection === 'function' ? getSelection() : null;
+      if (sel && !sel.isCollapsed) sel.removeAllRanges();
+    });
+    // Over the board or the pen laid over it (src/ui/BoardPen.tsx).
+    const onGesture = (e: Event) => { if ((e.target as Element | null)?.closest?.('.desk-board.is-open, .board-pen')) this.onGesture(e as GestureLike); };
+    for (const t of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(t, onGesture, { passive: false });
+    this.off.push(() => { for (const t of ['gesturestart', 'gesturechange', 'gestureend']) document.removeEventListener(t, onGesture); });
     this.scroller.addEventListener('touchstart', user, { passive: true });
     this.scroller.addEventListener('scroll', () => {
       if (this.owner.isForeign(this.scroller.scrollTop, this.scroller.scrollHeight - this.scroller.clientHeight)) user();
@@ -212,6 +233,8 @@ export class Desk implements DeskApi {
     // An aside leaves the paused answer's sections as they are (it draws on in them when it resumes).
     if (!this.asideOpen) this.sections.forEach((s) => this.crop(s));
     const sec = this.makeSection(spec);
+    // An svg board's section is as tall as its canvas from the start, so it lands (head at the top) where it will stay.
+    if (spec.svg) { sec.svg = true; if (spec.h && spec.h > sec.full) { sec.full = sec.y1 = Math.ceil(spec.h); sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${sec.full}`)); } }
     if (this.asideOpen) sec.el.classList.add('is-aside');
     if (this.nextHead) {
       const h = this.nextHead;
@@ -263,7 +286,9 @@ export class Desk implements DeskApi {
   growRegion(id: string, h: number): void {
     const sec = this.ids.get(id);
     if (!sec || sec.scene || !(h > sec.full) || sec.y0 !== 0 || sec.y1 !== sec.full) return;
-    sec.full = sec.y1 = Math.ceil(Math.min(h, 4 * REGION_H));
+    // Kit content stops at four sections' height; an svg board grows as tall as its canvas (else its lower
+    // groups would sit past the board's scroll range, never brought into view).
+    sec.full = sec.y1 = Math.ceil(sec.svg ? h : Math.min(h, 4 * REGION_H));
     sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${sec.full}`));
     this.position();
   }
@@ -505,35 +530,79 @@ export class Desk implements DeskApi {
 
   zoom(): number { return this.zoomK; }
 
-  /** Zooms the board to `z` (clamped), or to the zoom at which all of its content fits its height (≤ 100%). */
-  setZoom(z: number | 'fit'): void {
+  /**
+   * Zooms the board to `z` (clamped), or to the zoom at which all of its content fits its height (≤ 100%).
+   * The student's act: following stops (rule 6). `at` (client px, a pinch's cursor): that point of the
+   * drawing stays under it; else the top of the view (and its horizontal centre) stays put.
+   */
+  setZoom(z: number | 'fit', at?: { x: number; y: number }): void {
     const f = this.frame();
     const b = f.board;
     let next = z === 'fit' ? (b ? fitZoom(b.h, boardLayout(b.w, this.specs(f), 1)) : 1) : z;
     next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Number.isFinite(next) ? next : 1));
+    this.follow.userTookOver();
     if (Math.abs(next - this.zoomK) < 1e-4) {
       // Fit when already fitted still brings the whole board into view.
       if (z === 'fit') this.owner.write(this.scroller, 0);
       return;
     }
     if (!this.open || !b) { this.zoomK = next; this.syncZoomControl(); return; }
-    // The anchor: what sits at the top of the view now (a section and a unit in it), and the view's horizontal centre.
-    const before = this.boxes(), top = this.scroller.scrollTop;
-    const i = before.findIndex((x) => top < x.y + x.h);
-    const at = i >= 0 ? before[i] : null;
-    const unit = at ? Math.max(0, top - at.y) / at.s : 0;
-    const cx = (this.scroller.scrollLeft + b.w / 2) / Math.max(1, this.content.offsetWidth || b.w);
+    // The anchor, in view px: the pinch's cursor, else the top of the view at its horizontal centre.
+    const r = at ? this.scroller.getBoundingClientRect() : null;
+    const vy = r && at ? Math.max(0, Math.min(b.h, at.y - r.top)) : 0;
+    const vx = r && at ? Math.max(0, Math.min(b.w, at.x - r.left)) : b.w / 2;
+    // …in content px, and as a point of the section under it (units), which keeps its place on screen.
+    const before = this.boxes(), top = this.scroller.scrollTop, ay = top + vy, ax = this.scroller.scrollLeft + vx;
+    const i = before.findIndex((x) => ay < x.y + x.h);
+    const sec0 = i >= 0 ? before[i] : null;
+    const uy = sec0 ? Math.max(0, ay - sec0.y) / sec0.s : 0, ux = sec0 ? (ax - sec0.x) / sec0.s : 0;
     this.boardGlide?.abort();
     this.zoomK = next;
     this.position();
-    const after = this.boxes();
-    const nt = at && after[i] ? (top < at.y ? top - at.y + after[i].y : after[i].y + unit * after[i].s) : top;
-    this.owner.write(this.scroller, z === 'fit' ? 0 : Math.max(0, nt));
-    const w = this.content.offsetWidth || b.w;
-    this.scroller.scrollLeft = Math.max(0, cx * w - b.w / 2);
+    const after = this.boxes(), sec1 = sec0 ? after[i] : null;
+    const ny = sec0 && sec1 ? (ay < sec0.y ? ay - sec0.y + sec1.y : sec1.y + uy * sec1.s) : ay;
+    this.owner.write(this.scroller, z === 'fit' ? 0 : Math.max(0, ny - vy));
+    const nx = sec0 && sec1 ? sec1.x + ux * sec1.s : ax;
+    this.scroller.scrollLeft = Math.max(0, nx - vx);
     this.syncZoomControl();
     this.onMove();
     this.emit();
+  }
+
+  /**
+   * A wheel over the board. A pinch (ctrl / ⌘ + wheel; a trackpad pinch arrives as ctrl+wheel) zooms
+   * the board around the cursor, continuously, and never the browser's page. Any other wheel scrolls
+   * the board (natively; `manual`: by hand, for an overlay above it such as the pen) and stops
+   * following only if it moves it. A scene section's own pinch (its camera) has already handled it.
+   */
+  wheel(e: WheelEvent, manual = true): void { this.onWheel(e, manual); }
+
+  private onWheel(e: WheelEvent, manual: boolean) {
+    if (e.defaultPrevented) return;
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      // A Safari pinch is already zooming through its gesture events.
+      if (this.gesture || !e.deltaY) return;
+      const dy = Math.max(-PINCH_MAX_PX, Math.min(PINCH_MAX_PX, wheelPx(e.deltaY, e.deltaMode)));
+      this.setZoom(this.zoomK * Math.exp(-dy * PINCH_RATE), { x: e.clientX, y: e.clientY });
+      return;
+    }
+    if (wheelScrolls(this.scroller, e)) this.follow.userTookOver();
+    if (manual) {
+      e.preventDefault();
+      const page = this.scroller.clientHeight || 800;
+      this.scroller.scrollBy({ top: wheelPx(e.deltaY, e.deltaMode, page), left: wheelPx(e.deltaX, e.deltaMode, page) });
+    }
+  }
+
+  /** The zoom a Safari pinch started from (its gesture events carry the scale since the start). */
+  private gesture: { z: number } | null = null;
+  private onGesture(e: GestureLike) {
+    e.preventDefault();
+    if (e.type === 'gesturestart') { this.gesture = { z: this.zoomK }; return; }
+    if (e.type === 'gestureend') { this.gesture = null; return; }
+    if (!this.gesture || !(e.scale && e.scale > 0)) return;
+    this.setZoom(this.gesture.z * e.scale, e.clientX != null && e.clientY != null ? { x: e.clientX, y: e.clientY } : undefined);
   }
 
   /** One zoom step in or out (see ZOOM_STEPS). */

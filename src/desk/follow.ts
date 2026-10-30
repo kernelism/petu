@@ -60,6 +60,17 @@ export function wheelScrolls(el: { scrollTop: number; scrollLeft: number; scroll
 }
 
 /**
+ * Whether a wheel event is the student moving the view `el` shows: a pinch (ctrl / ⌘ + wheel: a
+ * trackpad pinch arrives as ctrl+wheel) or a wheel that will scroll `el`. A wheel with no delta, or
+ * one pushing past the end (a Magic Mouse or trackpad brushed while the cursor moves), is not.
+ */
+export const wheelTakesOver = (el: Parameters<typeof wheelScrolls>[0], e: { deltaX: number; deltaY: number; ctrlKey?: boolean; metaKey?: boolean }): boolean =>
+  (!!(e.ctrlKey || e.metaKey) && (e.deltaX !== 0 || e.deltaY !== 0)) || wheelScrolls(el, e);
+
+/** A wheel delta in px (Firefox reports a mouse wheel in lines, deltaMode 1; pages, deltaMode 2). */
+export const wheelPx = (d: number, mode: number, page = 800): number => (mode === 1 ? d * 16 : mode === 2 ? d * page : d);
+
+/**
  * Tells the student's scrolls from the engine's. Every programmatic write to scrollTop goes
  * through `write()`; a scroll event that lands more than `tol` px from the last written value, while
  * no glide is writing, came from somewhere else (scrollbar drag, find-in-page, middle-click, focus).

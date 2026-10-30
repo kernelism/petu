@@ -192,13 +192,19 @@ describe('follow-ups remember the svg board', () => {
 describe('svg demos (gallery scenes)', () => {
   it('every svg demo opens a board and draws groups that pass the gate checks at the board minimum', async () => {
     const { SVG_DEMOS } = await import('../../src/demo/svg');
-    expect(Object.keys(SVG_DEMOS).sort()).toEqual(['svg-dough', 'svg-ferry', 'svg-rent', 'svg-sinx', 'svg-skater', 'svg-tunnel']);
+    expect(Object.keys(SVG_DEMOS).sort()).toEqual(['svg-dough', 'svg-ferry', 'svg-rent', 'svg-session', 'svg-sinx', 'svg-skater', 'svg-tunnel']);
     for (const [k, d] of Object.entries(SVG_DEMOS)) {
       const acts = actions(d.script);
       expect(acts[0], k).toMatchObject({ kind: 'sketch', svgboard: {} });
       const groups = acts.filter((x) => x.kind === 'svg');
       expect(groups.length, k).toBeGreaterThanOrEqual(4);
       for (const g of groups) expect(groupGeometry((g as { svg: string }).svg).error, k).toBeUndefined();
+      // A session's later answers (aside, follow-ups) open (or extend) a board and pass the same checks.
+      for (const [q, a] of Object.entries(d.answers ?? {})) {
+        const later = actions(a);
+        expect(later[0], `${k}: ${q}`).toMatchObject({ kind: 'sketch', svgboard: {} });
+        for (const g of later.filter((x) => x.kind === 'svg')) expect(groupGeometry((g as { svg: string }).svg).error, `${k}: ${q}`).toBeUndefined();
+      }
     }
   });
 });
