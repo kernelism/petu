@@ -131,6 +131,7 @@ export class Scheduler {
     this.paused = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.clock.halt?.();
     return true;
   }
 
@@ -220,6 +221,7 @@ export class Scheduler {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.clock.dispose?.();
     this.words = [];
     this.acts = [];
   }
