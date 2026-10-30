@@ -183,6 +183,19 @@ describe('VoiceClock', () => {
       expect(played.slice(0, 3).filter((p) => !p.stopped && p.at + p.ms > t + 250)).toEqual([]);
     });
 
+    it('a hold before a piece still loading waits for the piece being heard', async () => {
+      const { s, asked, played } = drive();
+      s.push(ev('One two three. Four five six.'));
+      await flush();
+      asked[0].resolve(2000);
+      await vi.advanceTimersByTimeAsync(10);
+      s.hold(Date.now() + 5000, 1000);
+      asked[1].resolve(1000);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(played[0].stopped).toBe(false);
+      expect(played[1].at).toBeGreaterThanOrEqual(played[0].at + 2000);
+    });
+
     it('a hold keeps the piece being heard and delays the next', async () => {
       const { s, asked, played } = drive();
       s.push(ev('One two three. Four five six.'));
