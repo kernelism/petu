@@ -27,7 +27,9 @@ describe('svg beats: the server filter', () => {
       const a = wire(ex.script, 1000000).out;
       for (const step of [1, 3, 7, 50]) expect(wire(ex.script, step).out).toBe(a);
       const { f } = wire(ex.script, 5);
-      expect(a.startsWith('{{svgboard h=')).toBe(true);
+      // p6.1: the first sentence (page pointing, no drawing) plays before the board opens; no group before it.
+      expect(a.indexOf('{{svgboard h=')).toBeGreaterThan(0);
+      expect(a.indexOf('{{svgboard h=')).toBeLessThan(a.indexOf('{{svg <'));
       expect(a).not.toMatch(/<plan>|BOARD viewBox|```/);
       expect(f.plan).toMatch(/BOARD viewBox/);
       const groups = ex.script.match(/<g id="[^"]+"/g)!.map((g) => g.slice(7, -1));
@@ -37,7 +39,7 @@ describe('svg beats: the server filter', () => {
       // No tag in the wire form has a newline or a brace inside.
       for (const m of a.matchAll(/\{\{svg ([\s\S]*?)\}\}/g)) expect(m[1]).not.toMatch(/[\n{}]/);
       const acts = actions(a);
-      expect(acts[0]).toMatchObject({ kind: 'sketch', svgboard: { w: 1000 } });
+      expect(acts.find((x) => x.kind === 'sketch')).toMatchObject({ kind: 'sketch', svgboard: { w: 1000 } });
       const svgs = acts.filter((x) => x.kind === 'svg');
       expect(svgs.map((x) => (x as { id?: string }).id)).toEqual(f.groups);
       // Narration survives intact (no SVG leaks into captions).
@@ -51,7 +53,7 @@ describe('svg beats: the server filter', () => {
     it(`the gate's checks pass the examples (${ex.title.slice(0, 30)})`, () => {
       const a = wire(ex.script, 1e6).out;
       const acts = actions(a);
-      const sb = acts[0] as Extract<RawAction, { kind: 'sketch' }>;
+      const sb = acts.find((x) => x.kind === 'sketch') as Extract<RawAction, { kind: 'sketch' }>;
       const board = newBoardState(sb.svgboard!.w, sb.svgboard!.h);
       for (const g of acts.filter((x): x is Extract<RawAction, { kind: 'svg' }> => x.kind === 'svg')) {
         const r = checkGroups([g.svg], board, 16);
@@ -200,5 +202,19 @@ describe('svg demos (gallery scenes)', () => {
       expect(groups.length, k).toBeGreaterThanOrEqual(4);
       for (const g of groups) expect(groupGeometry((g as { svg: string }).svg).error, k).toBeUndefined();
     }
+  });
+});
+
+describe('p6.1: the first sentence before the plan', () => {
+  it('passes the sentence through at once, with a boundary, and lifts the plan after it', async () => {
+    const { SvgBeatFilter } = await import('../../server/svgBeats');
+    const f = new SvgBeatFilter(() => 0);
+    let out = f.push('{{highlight p=2 "x"}} It holds because the push never stops.');
+    out += f.push('<plan>\ncase\nBOARD viewBox="0 0 1000 600"\ngroups: axes\n</plan>\nOn these <g id="axes"><line x1="0" y1="0" x2="10" y2="10"/></g> axes, the');
+    out += f.end();
+    expect(out.startsWith('{{highlight p=2 "x"}} It holds because the push never stops. ')).toBe(true);
+    expect(out).toContain('{{svgboard h=600}}');
+    expect(out).toMatch(/On these \{\{svg <g id="axes">.*\}\}\s+axes, the/);
+    expect(f.plan).toMatch(/BOARD viewBox/);
   });
 });

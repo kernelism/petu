@@ -19,6 +19,7 @@ import type { Grounding } from '../geometry/resolve';
 import type { RawAction } from '../script/types';
 import { acceptGroups, checkGroups, newBoardState, type BoardState, type GroupGeo } from '../svgboard/check';
 import type { NarrationClock } from '../playback/clock';
+import { CHECK_WORDS } from '../agent/pacing';
 import type { FaultMode, Faults, GateFlag, GateLogEvent, GateMode, GateSetting, RepairFn, RepairReport, RepairResult } from './events';
 
 /** Checked narration that must still be playing before the gate checks whole beats (and may repair). */
@@ -327,7 +328,14 @@ export class LiveGate {
   private queue = new Chan<PreflightUnit>();
   reqId: string | null = null;
   /** Counters (?debug, replay). */
-  readonly stats = { units: 0, fails: 0, strips: 0, drops: 0, droppedWords: 0, repairs: 0, repairOk: 0, released: 0 };
+  readonly stats = { units: 0, fails: 0, strips: 0, drops: 0, droppedWords: 0, repairs: 0, repairOk: 0, released: 0, cuts: 0, cutWords: 0 };
+  /** The answer's length budget (stage-2 words; src/agent/pacing.ts), from the scout's plan. */
+  private budget: { capWords: number } | null = null;
+  /** Stage-2 words released so far. */
+  private words2 = 0;
+  /** Past the budget at a beat boundary: units are held, and only the check question's beat plays at the end. */
+  private closing = false;
+  private held: PreflightUnit[] = [];
 
   constructor(private d: LiveGateDeps) { this.t0 = d.clock.now(); }
 
@@ -348,8 +356,16 @@ export class LiveGate {
     if (carry) this.enqueue(this.splitter.push(carry));
   }
   setReq(reqId: string): void { this.reqId = reqId; }
-  /** Opus repairs take longer: more checked narration before repairs are allowed. */
-  setHeadroom(ms: number): void { this.d.headroomMs = ms; }
+  /** The length budget (null: none). Set before stage 2 (the scout's verdict comes first). */
+  setBudget(b: { capWords: number } | null): void { this.budget = b && b.capWords > 0 ? { capWords: b.capWords } : null; }
+  /** Whether the answer was closed early by its budget. */
+  closed(): boolean { return this.closing; }
+  /**
+   * Opus repairs take longer: more checked narration before repairs are allowed, and a repair is only
+   * asked when the narration still to play outlasts it (Opus repairs took 8.7–11.7 s in answers.jsonl,
+   * 2026-10-30): one asked with less room ran the narration dry and played "…" before its drop.
+   */
+  setHeadroom(ms: number): void { this.d.headroomMs = ms; this.d.minRepairMs = Math.max(this.d.minRepairMs ?? MIN_REPAIR_MS, ms + 1000); }
   /** Everything released so far (opener and stage 2): what the student heard and saw. */
   releasedText(): string { return this.releasedAll; }
 
@@ -396,7 +412,10 @@ export class LiveGate {
       finally { this.end(); }
     })();
     const worker = (async () => {
-      try { for await (const u of this.queue.drain()) { if (signal.aborted) break; await this.process(u, out, signal); } }
+      try {
+        for await (const u of this.queue.drain()) { if (signal.aborted) break; if (this.paced(u)) continue; await this.process(u, out, signal); }
+        if (!signal.aborted && this.held.length) for (const u of this.closingBeat()) { if (signal.aborted) break; await this.process(u, out, signal); }
+      }
       catch (e) { err ??= e; }
       finally { out.close(); }
     })();
@@ -405,7 +424,7 @@ export class LiveGate {
     if (err && !signal.aborted) throw err;
   }
 
-  private emitGate(u: PreflightUnit, result: 'pass' | 'strip' | 'fail', action: 'release' | 'repair' | 'drop', r: PreflightResult | null, ms: number, extra: { stripped?: string[]; repaired?: boolean; notes?: string[]; text?: string } = {}) {
+  private emitGate(u: PreflightUnit, result: 'pass' | 'strip' | 'fail', action: 'release' | 'repair' | 'drop' | 'cut', r: PreflightResult | null, ms: number, extra: { stripped?: string[]; repaired?: boolean; notes?: string[]; text?: string } = {}) {
     const text = extra.text ?? u.text;
     this.d.onEvent({
       t: 'gate', k: u.key, unit: u.kind, result, action, flags: r?.flags ?? [], notes: [...(r?.notes ?? []), ...(extra.notes ?? [])],
@@ -418,7 +437,7 @@ export class LiveGate {
   private release(u: PreflightUnit, text: string, out: Out) {
     this.d.preflight.accept({ ...u, text });
     const sent = this.bounded(u, text);
-    if (u.kind !== 'opener') this.released2 += sent;
+    if (u.kind !== 'opener') { this.released2 += sent; this.words2 += wordCount(sent); }
     this.releasedAll += sent;
     this.stats.released++;
     this.dropsInRow = 0;
@@ -445,6 +464,54 @@ export class LiveGate {
     return t;
   }
 
+
+  /**
+   * A stage-2 unit opens a beat: it starts a new paragraph or with an svg group, or the unit before it
+   * closed with its group (a beat's words then its group). Cutting there never splits a beat from its
+   * drawing: a group whose words were said is never left undrawn, and no group plays without its words.
+   */
+  private opensBeat(u: PreflightUnit, prev: string): boolean {
+    if (/^[ \t]*\r?\n/.test(u.text) || /^\s*\{\{\s*svg\b/.test(u.text)) return true;
+    const p = prev.trimEnd();
+    return /\}\}$/.test(p) && /\{\{\s*svg\b[^]*\}\}$/.test(p.slice(p.lastIndexOf('{{')));
+  }
+
+  /**
+   * The length budget: once the released stage-2 words leave no room for more than the check question,
+   * the answer closes at the next beat boundary. Everything after it is held; at the stream's end only
+   * the check question's beat is checked and played (closingBeat). Returns whether the unit was held.
+   */
+  private paced(u: PreflightUnit): boolean {
+    if (u.kind === 'opener' || !this.budget || !this.stage2) return false;
+    if (this.closing) { this.held.push(u); return true; }
+    if (this.words2 >= this.budget.capWords - CHECK_WORDS && this.opensBeat(u, this.released2)) {
+      this.closing = true;
+      this.held.push(u);
+      return true;
+    }
+    return false;
+  }
+
+  /** The held units' last beat that asks the student a question (played); the rest are cut. */
+  private closingBeat(): PreflightUnit[] {
+    const h = this.held;
+    this.held = [];
+    const starts = h.flatMap((u, i) => (i === 0 || this.opensBeat(u, h[i - 1].text) ? [i] : []));
+    const asks = (us: PreflightUnit[]) => /\?/.test(us.map((u) => u.text.replace(/\{\{[^}]*\}\}/g, ' ')).join(' '));
+    let keep: [number, number] | null = null;
+    for (let j = starts.length - 1; j >= 0 && !keep; j--) {
+      const a = starts[j], b = j + 1 < starts.length ? starts[j + 1] : h.length;
+      if (asks(h.slice(a, b))) keep = [a, b];
+    }
+    const out: PreflightUnit[] = [];
+    h.forEach((u, i) => {
+      if (keep && i >= keep[0] && i < keep[1]) { out.push({ ...u, ...(i === keep[1] - 1 ? { end: true } : {}) }); return; }
+      this.stats.cuts++;
+      this.stats.cutWords += wordCount(u.text);
+      this.emitGate(u, 'pass', 'cut', null, 0, { notes: ['budget: past the answer\'s length, closed at a beat boundary'] });
+    });
+    return out;
+  }
 
   private drop(u: PreflightUnit, r: PreflightResult | null, ms: number, notes: string[] = []) {
     this.d.preflight.reject(u);

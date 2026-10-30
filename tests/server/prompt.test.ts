@@ -128,7 +128,7 @@ describe('system prompt (tags)', () => {
 
 /** The BOARD height a script's plan declares. */
 const boardH = (script: string) => Number(/BOARD (?:extend )?viewBox="0 0 1000 (\d+)"/.exec(script)?.[1]);
-/** A script's beats: narration, then its top-level <g id> group (nested groups stay inside). */
+/** A script's groups (top level; nested groups stay inside), each with the narration that follows it up to the next group (p6.1: a group comes just before the words that name it). */
 function beatsOf(script: string): { narration: string; id: string; svg: string }[] {
   const body = script.slice(script.indexOf('</plan>') + 7);
   const out: { narration: string; id: string; svg: string }[] = [];
@@ -142,9 +142,11 @@ function beatsOf(script: string): { narration: string; id: string; svg: string }
       if (depth === 0) { end = open + m.index! + 4; break; }
     }
     expect(end, 'unbalanced <g>').toBeGreaterThan(open);
-    out.push({ narration: body.slice(pos, open), id: /<g id="([^"]+)"/.exec(body.slice(open))![1], svg: body.slice(open, end) });
+    if (out.length) out[out.length - 1].narration = body.slice(pos, open);
+    out.push({ narration: '', id: /<g id="([^"]+)"/.exec(body.slice(open))![1], svg: body.slice(open, end) });
     pos = end;
   }
+  if (out.length) out[out.length - 1].narration = body.slice(pos);
   return out;
 }
 
@@ -153,7 +155,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.0');
+    expect(PROMPT_VERSION).toBe('p6.1');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -194,7 +196,7 @@ describe('system prompt (svg, default)', () => {
 
   it('states the teacher-at-a-whiteboard brief and the streamed beat format', () => {
     for (const p of [/great teacher at a whiteboard/, /Draw the mechanism, not names/, /ONE concrete case/, /real numbers you compute/, /reads on its own/, /beats are your budget/,
-      /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 1000 H"/, /regions:/, /groups:/, /<g id=/, /names its id/, /never write the whole board first/i,
+      /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 1000 H"/, /regions:/, /groups:/, /<g id=/, /immediately before the words that name it/, /Never put a drawing after the sentence/, /One idea per group/, /Start speaking at once/, /BUDGET line/, /Never write on the board what you say/,
       /No scripts, foreignObject/, /font-size 16/, /one accent colour/, /Nothing overlaps/, /inside the viewBox/, /BOARD extend/, /ghost/]) expect(s).toMatch(p);
   });
 
@@ -206,20 +208,23 @@ describe('system prompt (svg, default)', () => {
   describe.skipIf(typeof DOMParser === 'undefined').each(SVG_EXAMPLES.map((e) => [e.title, e] as const))('example: %s', (_t, ex) => {
     it('has a plan ending with the BOARD layout: viewBox, regions, groups in teaching order', () => {
       const plan = /<plan>([\s\S]*?)<\/plan>/.exec(ex.script)?.[1] ?? '';
-      expect(ex.script.trimStart().startsWith('<plan>')).toBe(true);
+      // p6.1: one or two spoken sentences with no drawing come first; they play while the plan is written.
+      const lead = ex.script.slice(0, ex.script.indexOf('<plan>'));
+      expect(lead.replace(/\{\{[^}]*\}\}/g, '').trim().split(/\s+/).length).toBeGreaterThan(8);
+      expect(lead).not.toMatch(/<g\b/);
       expect(boardH(plan)).toBeGreaterThan(0);
       expect(plan).toMatch(/\nregions: /);
       const listed = /\ngroups: (.*)/.exec(plan)![1].split(';').map((g) => g.trim().split(/\s/)[0]);
       expect(listed).toEqual(beatsOf(ex.script).map((b) => b.id));
     });
 
-    it('beats: narration, then one well-formed group; ids unique; every coordinate inside the viewBox; text ≥ 16', () => {
+    it('groups: each well-formed, followed by its words; ids unique; every coordinate inside the viewBox; text ≥ 16', () => {
       const H = boardH(ex.script), bs = beatsOf(ex.script);
       expect(bs.length).toBeGreaterThanOrEqual(4);
       expect(new Set(bs.map((b) => b.id)).size).toBe(bs.length);
       for (const b of bs) {
         expect(b.id).toMatch(/^[a-z][a-z0-9-]*$/);
-        expect(b.narration.trim().split(/\s+/).length, b.id).toBeGreaterThan(8); // say it, then draw it
+        expect(b.narration.trim().split(/\s+/).length, b.id).toBeGreaterThan(1); // the words it draws with (a phrase: fine groups sit between phrases)
         const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${b.svg}</svg>`, 'image/svg+xml');
         expect(doc.querySelector('parsererror'), b.id).toBeNull();
         expect(b.svg).not.toMatch(/<(script|foreignObject|image|animate|a)\b|\bon\w+=|href=/i);
@@ -235,8 +240,17 @@ describe('system prompt (svg, default)', () => {
       }
     });
 
-    it('each group id is a word its beat says (the engine draws it on that word)', () => {
-      for (const b of beatsOf(ex.script)) expect(b.narration.toLowerCase().split(/[^a-z0-9-]+/), b.id).toContain(b.id);
+    it('each group comes just before the word that names it (its id, within the next few words)', () => {
+      for (const b of beatsOf(ex.script)) expect(b.narration.toLowerCase().split(/[^a-z0-9-]+/).filter(Boolean).slice(0, 3), b.id).toContain(b.id);
+    });
+
+    it('the board never writes out the narration: no derivation lines, short labels only', () => {
+      for (const b of beatsOf(ex.script)) {
+        for (const m of b.svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)) {
+          expect(m[1].split(/\s+/).length, `${b.id}: ${m[1]}`).toBeLessThanOrEqual(6);
+          expect(m[1], b.id).not.toMatch(/=.*=|[×÷].*=/); // a worked step is spoken, not written
+        }
+      }
     });
 
     it('points at the page with tags that parse and quote listed text, and ends on a question to the student', () => {

@@ -25,7 +25,7 @@ function example(word: string): SvgDemo {
 }
 
 export const SVG_DEMOS: Record<string, SvgDemo> = {
-  'svg-ferry': example('river'),
+  'svg-ferry': example('banks'),
   'svg-dough': example('yeast'),
   ...Object.fromEntries(Object.entries(SVG_EXPERIMENT).map(([k, v]) => [`svg-${k}`, demo(v.question, toBeats(v.svg, v.narration))])),
 };

@@ -1,6 +1,6 @@
 // server/svgBeats.ts — the svg answer mode's stream filter (the default stage-2 format, p6).
 /**
- * The model streams: a short hidden `<plan>` ending with its BOARD layout (`BOARD viewBox="0 0 1000 H"`,
+ * The model streams (p6.1): a first sentence or two with no drawing, a short hidden `<plan>` ending with its BOARD layout (`BOARD viewBox="0 0 1000 H"`,
  * regions, groups in teaching order), then beats — 1–3 sentences of narration, then that beat's
  * `<g id="…">…</g>` — repeated. This filter sits in front of the ScriptFilter (it IS one, so the plan,
  * markdown clean-up and readUpstream stay the same) and rewrites only what is SVG:
@@ -60,7 +60,11 @@ export class SvgBeatFilter extends ScriptFilter {
   private now: () => number;
   constructor(now: () => number = () => performance.now()) { super(); this.now = now; }
 
-  override push(chunk: string): string { this.sbuf += chunk; return super.push(this.lift(false)); }
+  /** The last character this filter let through (a plan after narration owes that narration a boundary). */
+  private lastCh = '';
+  /** That boundary was added: the narration's own leading space after the plan is dropped once. */
+  private owedWs = false;
+  override push(chunk: string): string { this.sbuf += chunk; const s = this.lift(false); if (s) this.lastCh = s.slice(-1); return super.push(s); }
   override end(): string { const s = this.lift(true); return super.push(s) + super.end(); }
 
   private lift(final: boolean): string {
@@ -93,11 +97,20 @@ export class SvgBeatFilter extends ScriptFilter {
         continue;
       }
       // Narration: pass through up to the next marker.
+      if (this.owedWs && this.sbuf) { if (/^ /.test(this.sbuf)) this.sbuf = this.sbuf.slice(1); if (this.sbuf) this.owedWs = false; }
       const lt = this.sbuf.search(/<|```|\{\{\s*\/?svg\s*\}\}/i);
       if (lt < 0) { out += this.sbuf; this.sbuf = ''; return out; }
       out += this.sbuf.slice(0, lt);
       this.sbuf = this.sbuf.slice(lt);
-      if (/^<plan\s*>/i.test(this.sbuf)) { this.sbuf = this.sbuf.replace(/^<plan\s*>/i, ''); this.st = 'plan'; continue; }
+      if (/^<plan\s*>/i.test(this.sbuf)) {
+        this.sbuf = this.sbuf.replace(/^<plan\s*>/i, '');
+        this.st = 'plan';
+        // p6.1: the first sentence comes before the plan. Its last word goes out with a boundary now, so
+        // it is spoken while the plan is written (a word is released only once whitespace follows it).
+        const last = out ? out.slice(-1) : this.lastCh;
+        if (last && !/\s/.test(last)) { out += ' '; this.owedWs = true; }
+        continue;
+      }
       const w = WRAPPERS.exec(this.sbuf);
       if (w) { this.sbuf = this.sbuf.slice(w[0].length); continue; }
       const m = OPEN.exec(this.sbuf);
