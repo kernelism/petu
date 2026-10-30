@@ -65,7 +65,9 @@ describe('BeatSplitter', () => {
         const text = rec.script.slice(rec.stage2At);
         const b = split(text, 'beat', n + 7);
         expect(b.map((u) => u.text).join('')).toBe(text);
-        expect(b.map((u) => toks(u.text)).filter(Boolean)).toEqual(beats(text, { tail: false }).map(btoks));
+        // In the svg answer mode a closed group goes out as a unit of its own once its sentences are
+        // out (599844a), which beats() does not model: only scripts without svg groups must match it.
+        if (!text.includes('{{svg ')) expect(b.map((u) => toks(u.text)).filter(Boolean)).toEqual(beats(text, { tail: false }).map(btoks));
         n++;
       }
     }
