@@ -158,35 +158,49 @@ export function browserDeps(): DictationDeps {
     },
     async mic() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
-      const ctx = new AudioContext({ sampleRate: 16000 });
-      const src = ctx.createMediaStreamSource(stream);
-      const code = `registerProcessor('petu-mic', class extends AudioWorkletProcessor {
-        constructor() { super(); this.buf = new Float32Array(Math.round(sampleRate * ${FRAME_S})); this.n = 0; }
-        process(inputs) {
-          const ch = inputs[0] && inputs[0][0];
-          if (ch) for (let i = 0; i < ch.length; i++) { this.buf[this.n++] = ch[i]; if (this.n === this.buf.length) { this.port.postMessage(this.buf.slice(0)); this.n = 0; } }
-          return true;
-        }
-      });`;
-      const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
-      await ctx.audioWorklet.addModule(url);
-      URL.revokeObjectURL(url);
-      const node = new AudioWorkletNode(ctx, 'petu-mic');
-      src.connect(node);
-      let closed = false;
-      return {
-        sampleRate: ctx.sampleRate,
-        onFrame(f) { node.port.onmessage = (e) => { if (!closed) f(e.data as Float32Array); }; },
-        close() {
-          if (closed) return;
-          closed = true;
-          node.port.onmessage = null;
-          src.disconnect();
-          stream.getTracks().forEach((t) => t.stop());
-          void ctx.close().catch(() => {});
-        },
-      };
+      // A graph that fails to build (a browser that won't connect the mic to a 16 kHz context, a
+      // refused worklet) must not leave the mic live: the tracks are stopped and the context closed.
+      let ctx: AudioContext | null = null;
+      try {
+        ctx = new AudioContext({ sampleRate: 16000 });
+        return await graph(stream, ctx);
+      } catch (e) {
+        stream.getTracks().forEach((t) => t.stop());
+        void ctx?.close().catch(() => {});
+        throw e;
+      }
     },
     socket: (url) => new WebSocket(url) as unknown as DictationSocket,
+  };
+}
+
+/** The mic → AudioWorklet → ~FRAME_S float32 frames. */
+async function graph(stream: MediaStream, ctx: AudioContext): Promise<Awaited<ReturnType<DictationDeps['mic']>>> {
+  const src = ctx.createMediaStreamSource(stream);
+  const code = `registerProcessor('petu-mic', class extends AudioWorkletProcessor {
+    constructor() { super(); this.buf = new Float32Array(Math.round(sampleRate * ${FRAME_S})); this.n = 0; }
+    process(inputs) {
+      const ch = inputs[0] && inputs[0][0];
+      if (ch) for (let i = 0; i < ch.length; i++) { this.buf[this.n++] = ch[i]; if (this.n === this.buf.length) { this.port.postMessage(this.buf.slice(0)); this.n = 0; } }
+      return true;
+    }
+  });`;
+  const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+  await ctx.audioWorklet.addModule(url);
+  URL.revokeObjectURL(url);
+  const node = new AudioWorkletNode(ctx, 'petu-mic');
+  src.connect(node);
+  let closed = false;
+  return {
+    sampleRate: ctx.sampleRate,
+    onFrame(f) { node.port.onmessage = (e) => { if (!closed) f(e.data as Float32Array); }; },
+    close() {
+      if (closed) return;
+      closed = true;
+      node.port.onmessage = null;
+      src.disconnect();
+      stream.getTracks().forEach((t) => t.stop());
+      void ctx.close().catch(() => {});
+    },
   };
 }

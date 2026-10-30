@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Dictation, joinWords, type DictationDeps, type DictationSocket } from '../../src/agent/dictation';
+import { browserDeps, Dictation, joinWords, type DictationDeps, type DictationSocket } from '../../src/agent/dictation';
 import { mintSttToken, STT_MINT_URL } from '../../server/stt';
 
 function fakes() {
@@ -132,6 +132,36 @@ describe('Dictation', () => {
     expect(joinWords('why', 'is')).toBe('why is');
     expect(joinWords('why is it', '?')).toBe('why is it?');
   });
+});
+
+describe('browserDeps().mic', () => {
+  afterEach(() => { vi.unstubAllGlobals(); Reflect.deleteProperty(navigator, 'mediaDevices'); });
+  /** getUserMedia succeeds; the audio graph fails at `failAt`. */
+  function stub(failAt: 'source' | 'module') {
+    const stop = vi.fn();
+    const close = vi.fn(async () => {});
+    const stream = { getTracks: () => [{ stop }] };
+    Object.defineProperty(navigator, 'mediaDevices', { value: { getUserMedia: async () => stream }, configurable: true });
+    vi.stubGlobal('AudioContext', class {
+      sampleRate = 16000;
+      close = close;
+      audioWorklet = { addModule: async () => { if (failAt === 'module') throw new Error('addModule failed'); } };
+      createMediaStreamSource() {
+        if (failAt === 'source') throw new DOMException('different sample-rate', 'NotSupportedError');
+        return { connect() {}, disconnect() {} };
+      }
+    });
+    vi.stubGlobal('URL', Object.assign(Object.create(URL), { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} }));
+    return { stop, close };
+  }
+  for (const failAt of ['source', 'module'] as const) {
+    it(`stops the stream and closes the context when the graph fails (${failAt})`, async () => {
+      const s = stub(failAt);
+      await expect(browserDeps().mic()).rejects.toThrow();
+      expect(s.stop).toHaveBeenCalled();
+      expect(s.close).toHaveBeenCalled();
+    });
+  }
 });
 
 describe('mintSttToken', () => {
