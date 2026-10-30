@@ -59,3 +59,19 @@ describe('which fills are hatched (sanitize.ts data-wash)', () => {
     expect(washed('<g><rect x="100" y="100" width="80" height="300" fill="#7c3aed"/></g>', 'rect')).toBe(false);
   });
 });
+
+describe('which circles are points with a paper ring (sanitize.ts data-dot)', () => {
+  const dot = (src: string) => clean(`<g>${src}</g>`).querySelector('circle')!.hasAttribute('data-dot');
+  it('a small solid dot with no outline of its own is', () => {
+    expect(dot('<circle cx="50" cy="50" r="4" fill="#111"/>')).toBe(true);
+    expect(dot('<circle cx="50" cy="50" r="5" fill="#7c3aed" stroke="none"/>')).toBe(true);
+  });
+  it('a hollow point keeps its own outline (open vs closed endpoints)', () => {
+    expect(dot('<circle cx="50" cy="50" r="5" fill="#eee" stroke="#333" stroke-width="2"/>')).toBe(false);
+    expect(dot('<circle cx="50" cy="50" r="5" fill="#111" stroke="#333"/>')).toBe(false);
+  });
+  it('a pale dot is not (a paper ring would leave it invisible)', () => {
+    expect(dot('<circle cx="50" cy="50" r="5" fill="#c7d2fe"/>')).toBe(false);
+    expect(dot('<circle cx="50" cy="50" r="5" fill="#111" fill-opacity="0.3"/>')).toBe(false);
+  });
+});

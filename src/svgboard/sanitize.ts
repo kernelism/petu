@@ -181,8 +181,11 @@ export function sanitizeGroup(src: string, o: SanitizeOpts): Sanitized | string 
         // (render.ts prepareGroup, board CSS). A region is a shape; a rect only when drawn see-through.
         if (f !== INK.line && (name !== 'rect' || ownFill <= 0.5)) el.setAttribute('data-wash', '');
       }
-      // A point: a small solid dot gets a paper ring, so it sits on the lines it marks (board CSS).
-      if (name === 'circle' && f && f !== 'none' && f !== INK.paper && (num(el.getAttribute('r')) ?? 0) <= 9 && !el.hasAttribute('data-wash')) el.setAttribute('data-dot', '');
+      // A point: a small solid dot gets a paper ring, so it sits on the lines it marks (board CSS). Only
+      // a solid, near-ink one with no outline of its own: the ring replaces the stroke, so a hollow
+      // point (an open endpoint) would lose its outline and a pale dot would vanish into the paper.
+      const st = el.getAttribute('stroke'), fillOp = (num(el.getAttribute('fill-opacity')) ?? 1) * (num(el.getAttribute('opacity')) ?? 1);
+      if (name === 'circle' && f && f !== 'none' && f !== INK.paper && f !== INK.sheet && (!st || st === 'none') && fillOp >= 0.8 && (num(el.getAttribute('r')) ?? 0) <= 9 && !el.hasAttribute('data-wash')) el.setAttribute('data-dot', '');
     }
     // A backing rect over (nearly) the whole canvas: the board is already paper.
     if (name === 'rect' && depth <= 1) {
