@@ -1561,8 +1561,8 @@ export default function App() {
         className={`stage${desk?.sketching && desk.following && busy ? ' is-sketching' : ''}`}
         style={{
           '--glide': `${GLIDE_MS}ms`, '--view-top': `${SAFE_TOP}px`, '--view-bottom': `${viewBottom}px`,
-          // Layout C: the column the dock sits under (the pen's) ends its reading band above the dock (app.css).
-          ...(desk?.lane ? { '--dock-col-x': `${desk.column.x}px`, '--dock-col-w': `${desk.column.w}px` } : {}),
+          // Layout C: with the pen on the page, the page column ends its reading band above the dock (app.css).
+          ...(desk?.lane && desk.page && Math.abs(desk.column.x - desk.page.x) < 1 ? { '--dock-col-x': `${desk.column.x}px`, '--dock-col-w': `${desk.column.w}px` } : {}),
         } as CSSProperties}
       >
         <PdfViewer

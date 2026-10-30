@@ -37,19 +37,19 @@
 }
 
 /* Layout C (src/desk/lane.ts): the page and the lane are one sheet on the desk; no page is set back
-   while the lane draws. The chrome row floats over the sheet, but the column the dock sits under (the
-   pen's: the page or the lane, --dock-col-x/w from App) ends its reading band above the dock, as the
-   split layout does: no page text the student may be reading shows under the caption. The other
-   column runs on to the window's foot. */
+   while the lane draws. The chrome row floats over the sheet, but while the dock sits under the page
+   column (the pen is on the page; --dock-col-x/w from App) that column ends its reading band above the
+   dock, as the split layout does: no page text the student may be reading shows under the caption.
+   The lane runs on to the window's foot (its live group keeps clear of the dock by itself). */
 html.petu-lane, html.petu-lane body, html.petu-lane #root { background: #ECEAE5; }
 html.petu-lane .stage > .pv-scroll {
   --foot: linear-gradient(to bottom, #000 calc(100% - var(--view-bottom)), transparent calc(100% - var(--view-bottom) + var(--fade)));
   -webkit-mask-image: linear-gradient(#000, #000), var(--foot), linear-gradient(#000, #000);
   mask-image: linear-gradient(#000, #000), var(--foot), linear-gradient(#000, #000);
-  -webkit-mask-size: var(--dock-col-x, 0px) 100%, var(--dock-col-w, 100%) 100%, 100% 100%;
-  mask-size: var(--dock-col-x, 0px) 100%, var(--dock-col-w, 100%) 100%, 100% 100%;
-  -webkit-mask-position: 0 0, var(--dock-col-x, 0px) 0, calc(var(--dock-col-x, 0px) + var(--dock-col-w, 100%)) 0;
-  mask-position: 0 0, var(--dock-col-x, 0px) 0, calc(var(--dock-col-x, 0px) + var(--dock-col-w, 100%)) 0;
+  -webkit-mask-size: var(--dock-col-x, 0px) 100%, var(--dock-col-w, 0px) 100%, 100% 100%;
+  mask-size: var(--dock-col-x, 0px) 100%, var(--dock-col-w, 0px) 100%, 100% 100%;
+  -webkit-mask-position: 0 0, var(--dock-col-x, 0px) 0, calc(var(--dock-col-x, 0px) + var(--dock-col-w, 0px)) 0;
+  mask-position: 0 0, var(--dock-col-x, 0px) 0, calc(var(--dock-col-x, 0px) + var(--dock-col-w, 0px)) 0;
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
 }
