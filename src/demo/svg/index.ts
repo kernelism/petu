@@ -6,6 +6,7 @@ import { SvgBeatFilter } from '../../../server/svgBeats';
 import { SVG_EXAMPLES } from '../../../server/prompt/svgExamples';
 import { toBeats } from '../../svgboard/convert';
 import { SVG_EXPERIMENT } from './experiment';
+import { SVG_ENGINE_DEMOS } from './engine';
 
 const PAGE_TAG = /\{\{(?:highlight|underline|circle|box|scroll|arrow|line)\s+p=\d+[^}]*\}\}\s?/g;
 
@@ -27,5 +28,7 @@ function example(word: string): SvgDemo {
 export const SVG_DEMOS: Record<string, SvgDemo> = {
   'svg-ferry': example('river'),
   'svg-dough': example('yeast'),
+  // The exact-data engine: computed curves, crossings and readouts, constants tweened.
+  ...Object.fromEntries(Object.entries(SVG_ENGINE_DEMOS).map(([k, v]) => [`svg-${k}`, demo(v.question, v.raw)])),
   ...Object.fromEntries(Object.entries(SVG_EXPERIMENT).map(([k, v]) => [`svg-${k}`, demo(v.question, toBeats(v.svg, v.narration))])),
 };

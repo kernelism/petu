@@ -85,7 +85,8 @@ export function mapColor(v: string | null | undefined, role: 'stroke' | 'fill' |
   if (chroma < 0.12) {
     // Neutral: the ink tiers.
     if (role === 'fill' && l > 0.8) return { color: INK.sheet, alpha: a };
-    const color = l < 0.3 ? INK.ink : l < 0.5 ? INK.ink2 : l < 0.7 ? INK.muted : role === 'fill' ? INK.line : INK.faint;
+    // Text never goes lighter than the muted tier (≥ 4.5:1 on the paper); strokes may be faint.
+    const color = l < 0.3 ? INK.ink : l < 0.5 ? INK.ink2 : l < 0.7 || role === 'text' ? INK.muted : role === 'fill' ? INK.line : INK.faint;
     return { color, alpha: a };
   }
   // Chromatic: the first hue is the accent; any other is neutral grey (one accent colour per board).
