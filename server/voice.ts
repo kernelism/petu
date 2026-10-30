@@ -76,6 +76,8 @@ type Job = {
   /** Ends the job. `usage` whenever the response ran (a failed or cancelled one is billed too). */
   done(r: SpeakResult): void;
   cancelled: boolean;
+  /** Its response's id, from response.created (matched by metadata.job): only that response's events are its own. */
+  rid?: string;
 };
 
 /** The socket the voice uses; WebSocket-like (tests pass a fake). */
@@ -112,7 +114,7 @@ export class VoiceLine {
     return this.connect().catch(() => {});
   }
 
-  speak(job: Omit<Job, 'cancelled'>): { cancel(): void } {
+  speak(job: Omit<Job, 'cancelled' | 'rid'>): { cancel(): void } {
     const j: Job = { ...job, cancelled: false };
     this.queue.push(j);
     void this.pump();
@@ -190,7 +192,8 @@ export class VoiceLine {
     this.stall = setTimeout(() => { this.send({ type: 'response.cancel' }); this.finish({ ok: false, error: 'stalled' }); }, STALL_MS);
   }
 
-  private onEvent(e: { type: string; delta?: string; response?: { status?: string; usage?: RealtimeUsage; status_details?: unknown }; error?: { message?: string; code?: string } }) {
+  private onEvent(e: { type: string; delta?: string; response_id?: string; error?: { message?: string; code?: string };
+    response?: { id?: string; status?: string; usage?: RealtimeUsage; status_details?: unknown; metadata?: { job?: string } } }) {
     const j = this.current;
     if (e.type === 'error') {
       // A cancel with nothing to cancel is harmless; anything else fails the response in flight.
@@ -199,6 +202,10 @@ export class VoiceLine {
       return;
     }
     if (!j) return;
+    // A response abandoned on a stall or an error still runs on the server; its late events (audio, a
+    // cancelled done) belong to no job, never to the one sent after it.
+    if (e.type === 'response.created') { if (e.response?.metadata?.job === j.id) j.rid = e.response.id; return; }
+    if (!j.rid || (e.response_id ?? e.response?.id) !== j.rid) return;
     if (e.type === 'response.output_audio.delta' && e.delta) {
       this.arm();
       if (!j.cancelled) j.onAudio(Buffer.from(e.delta, 'base64'));

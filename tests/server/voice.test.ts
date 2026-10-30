@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { VoiceLine, normWords, routeVoice, validateVoice, voiceUsd, voiceWorstUsd, type SpeakResult, type VoiceSocket } from '../../server/voice';
 import type { Ledger } from '../../server/ledger';
 
@@ -14,6 +14,14 @@ function fakeSocket() {
     emit: (e) => s.onmessage?.({ data: JSON.stringify(e) }),
   };
   return { s, sent };
+}
+
+/** The server starts the last response asked for: its id, as its events carry it. */
+function created(s: ReturnType<typeof fakeSocket>['s'], sent: any[]): string {
+  const job = sent.filter((m) => m.type === 'response.create').at(-1).response.metadata.job;
+  const id = `resp_${job}`;
+  s.emit({ type: 'response.created', response: { id, status: 'in_progress', metadata: { job } } });
+  return id;
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -40,9 +48,10 @@ describe('VoiceLine', () => {
     expect(sent[0]).toMatchObject({ type: 'session.update', session: { audio: { output: { voice: 'marin', speed: 1, format: { type: 'audio/pcm', rate: 24000 } } } } });
     expect(sent[1]).toMatchObject({ type: 'response.create', response: { conversation: 'none', output_modalities: ['audio'] } });
     expect(sent[1].response.input[0].content[0].text).toBe('Supply rises.');
-    s.emit({ type: 'response.output_audio.delta', delta: pcm(480) });
-    s.emit({ type: 'response.output_audio_transcript.delta', delta: 'Supply rises.' });
-    s.emit({ type: 'response.done', response: { status: 'completed', usage: { input_tokens: 80, output_tokens: 120, output_token_details: { audio_tokens: 100 } } } });
+    const r = created(s, sent);
+    s.emit({ type: 'response.output_audio.delta', response_id: r, delta: pcm(480) });
+    s.emit({ type: 'response.output_audio_transcript.delta', response_id: r, delta: 'Supply rises.' });
+    s.emit({ type: 'response.done', response: { id: r, status: 'completed', usage: { input_tokens: 80, output_tokens: 120, output_token_details: { audio_tokens: 100 } } } });
     expect(out.audio).toBe(480);
     expect(out.done).toMatchObject({ ok: true, transcript: 'Supply rises.' });
   });
@@ -55,10 +64,10 @@ describe('VoiceLine', () => {
     l.speak({ ...job('Three.', c), speed: 1.5 });
     await tick();
     expect(sent.map((m) => m.type)).toEqual(['session.update', 'response.create']);
-    s.emit({ type: 'response.done', response: { status: 'completed', usage: {} } });
+    s.emit({ type: 'response.done', response: { id: created(s, sent), status: 'completed', usage: {} } });
     await tick();
     expect(sent.map((m) => m.type)).toEqual(['session.update', 'response.create', 'response.create']);
-    s.emit({ type: 'response.done', response: { status: 'completed', usage: {} } });
+    s.emit({ type: 'response.done', response: { id: created(s, sent), status: 'completed', usage: {} } });
     await tick();
     expect(sent.slice(3).map((m) => m.type)).toEqual(['session.update', 'response.create']);
     expect(sent[3].session.audio.output.speed).toBe(1.5);
@@ -71,10 +80,11 @@ describe('VoiceLine', () => {
     const ha = l.speak(job('One.', a));
     const hb = l.speak(job('Two.', b));
     await tick();
+    const r = created(s, sent);
     hb.cancel();
     ha.cancel();
     expect(sent.at(-1)).toEqual({ type: 'response.cancel' });
-    s.emit({ type: 'response.done', response: { status: 'cancelled', usage: { output_tokens: 10 } } });
+    s.emit({ type: 'response.done', response: { id: r, status: 'cancelled', usage: { output_tokens: 10 } } });
     await tick();
     expect(a.done).toMatchObject({ ok: false, error: 'cancelled', usage: { output_tokens: 10 } });
     expect(b.done).toEqual({ ok: false, error: 'cancelled' });
@@ -143,14 +153,48 @@ describe('routeVoice', () => {
     const a = call('One.');
     const b = call('Two.');
     await tick();
+    const r = created(s, sent);
     b.res.emit('close');
     await tick();
     expect(b.over()).toBe(true);
     expect(closed(b.id)).toEqual([{ op: 'release', id: b.id }]);
-    s.emit({ type: 'response.done', response: { status: 'completed', usage: { output_tokens: 50, output_token_details: { audio_tokens: 40 } } } });
+    s.emit({ type: 'response.done', response: { id: r, status: 'completed', usage: { output_tokens: 50, output_token_details: { audio_tokens: 40 } } } });
     await tick();
     expect(a.over()).toBe(true);
     expect(sent.filter((m) => m.type === 'response.create')).toHaveLength(1);
+  });
+});
+
+describe('VoiceLine, timed', () => {
+  afterEach(() => { vi.useRealTimers(); });
+  const job = (text: string, out: { audio: number; done?: SpeakResult }) => ({
+    id: text, text, voice: 'marin' as const, speed: 1,
+    onAudio: (b: Buffer) => { out.audio += b.length; },
+    done: (r: SpeakResult) => { out.done = r; },
+  });
+
+  it('a stalled response\'s late events never reach the next job', async () => {
+    vi.useFakeTimers();
+    const { s, sent } = fakeSocket();
+    const l = new VoiceLine('k', () => { setTimeout(() => s.onopen?.(), 0); return s; });
+    const a = { audio: 0 } as { audio: number; done?: SpeakResult }, b = { audio: 0 } as { audio: number; done?: SpeakResult };
+    l.speak(job('One.', a));
+    l.speak(job('Two.', b));
+    await vi.advanceTimersByTimeAsync(0);
+    const ra = created(s, sent);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(a.done).toMatchObject({ ok: false, error: 'stalled' });
+    expect(sent.filter((m) => m.type === 'response.create')).toHaveLength(2);
+    // A's response, cancelled late, still reports; B's has not started yet.
+    s.emit({ type: 'response.output_audio.delta', response_id: ra, delta: pcm(480) });
+    s.emit({ type: 'response.done', response: { id: ra, status: 'cancelled', metadata: { job: 'One.' }, usage: { output_tokens: 30 } } });
+    expect(b.done).toBeUndefined();
+    expect(b.audio).toBe(0);
+    const rb = created(s, sent);
+    s.emit({ type: 'response.output_audio.delta', response_id: rb, delta: pcm(240) });
+    s.emit({ type: 'response.done', response: { id: rb, status: 'completed', metadata: { job: 'Two.' }, usage: { output_tokens: 20 } } });
+    expect(b.audio).toBe(240);
+    expect(b.done).toMatchObject({ ok: true });
   });
 });
 
