@@ -128,4 +128,12 @@ describe('AskBar dictation', () => {
     b.key(b.mic()!, 'Escape');
     expect(b.props.onStop).toHaveBeenCalledTimes(1); // not listening: Esc stops the answer again
   });
+
+  it('the stop-answer button stays while listening during an answer', () => {
+    const b = mount({ busy: true, showStop: true });
+    b.clickMic();
+    expect(host!.querySelector('[aria-label="Stop answer"]')).not.toBeNull();
+    b.heard('and why');
+    expect(host!.querySelector('[aria-label="Stop answer"]')).not.toBeNull();
+  });
 });

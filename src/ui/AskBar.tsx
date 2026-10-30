@@ -220,7 +220,8 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
         </button>
       )}
       <div className="askbar-trail">
-        {listening ? null : hasText && !blocked ? (
+        {/* While listening the mic is the send; the answer's stop stays. */}
+        {hasText && !blocked && !listening ? (
           <button type="submit" className="askbar-btn is-send" aria-label={mode === 'check' ? 'Send your answer' : 'Ask'}>
             <ArrowUp size={18} strokeWidth={2} />
           </button>
@@ -228,7 +229,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
           <button type="button" className="askbar-btn is-stop" onClick={onStop} aria-label="Stop answer">
             <Square size={12} strokeWidth={0} fill="currentColor" />
           </button>
-        ) : (
+        ) : listening ? null : (
           <kbd className="keycap" aria-hidden="true">/</kbd>
         )}
       </div>
