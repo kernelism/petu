@@ -121,7 +121,11 @@ export class VoiceLine {
         if (j.cancelled) return;
         j.cancelled = true;
         if (this.current === j) this.send({ type: 'response.cancel' });
-        else this.queue = this.queue.filter((q) => q !== j);
+        else if (this.queue.includes(j)) {
+          // Never sent: it ends here (its request settles its reservation in done).
+          this.queue = this.queue.filter((q) => q !== j);
+          j.done({ ok: false, error: 'cancelled' });
+        }
       },
     };
   }

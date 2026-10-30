@@ -1,5 +1,8 @@
+import { EventEmitter } from 'node:events';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { describe, it, expect } from 'vitest';
-import { VoiceLine, normWords, validateVoice, voiceUsd, voiceWorstUsd, type SpeakResult, type VoiceSocket } from '../../server/voice';
+import { VoiceLine, normWords, routeVoice, validateVoice, voiceUsd, voiceWorstUsd, type SpeakResult, type VoiceSocket } from '../../server/voice';
+import type { Ledger } from '../../server/ledger';
 
 /** A fake Realtime socket: records what is sent; `emit` plays server events. */
 function fakeSocket() {
@@ -74,6 +77,7 @@ describe('VoiceLine', () => {
     s.emit({ type: 'response.done', response: { status: 'cancelled', usage: { output_tokens: 10 } } });
     await tick();
     expect(a.done).toMatchObject({ ok: false, error: 'cancelled', usage: { output_tokens: 10 } });
+    expect(b.done).toEqual({ ok: false, error: 'cancelled' });
     expect(sent.filter((m) => m.type === 'response.create')).toHaveLength(1);
   });
 
@@ -88,6 +92,65 @@ describe('VoiceLine', () => {
     await tick();
     s.onclose?.({ code: 1006, reason: '' });
     expect(b.done).toMatchObject({ ok: false });
+  });
+});
+
+/** A fake response: records status, bytes and how it ended; `close` is the browser hanging up. */
+function fakeRes() {
+  const r = Object.assign(new EventEmitter(), {
+    statusCode: 0, writableEnded: false, destroyed: false, bytes: 0, ended: '' as '' | 'end' | 'destroy', body: '',
+    setHeader: () => {}, flushHeaders: () => {},
+    write(b: Buffer) { r.bytes += b.length; return true; },
+    end(s?: string) { r.body = s ?? ''; r.writableEnded = true; r.ended = 'end'; r.emit('close'); },
+    destroy() { r.destroyed = true; r.ended = 'destroy'; r.emit('close'); },
+  });
+  return r;
+}
+
+/** A fake ledger: records every reserve, settle and release. */
+function fakeLedger(refuse = false) {
+  const calls: { op: string; id: string; usd?: number; estimated?: boolean }[] = [];
+  const ledger = {
+    reserve: (id: string, _p: string, usd: number) => { calls.push({ op: 'reserve', id, usd }); return refuse ? { code: 'total', message: 'cap reached', spentUsd: 1, capUsd: 1 } : null; },
+    settle: (e: { id: string; usd: number; estimated?: boolean }) => { calls.push({ op: 'settle', id: e.id, usd: e.usd, estimated: e.estimated }); },
+    release: (id: string) => { calls.push({ op: 'release', id }); },
+  };
+  /** The settle or release calls for `id`: exactly one once its request is over. */
+  const closed = (id: string) => calls.filter((c) => c.id === id && c.op !== 'reserve');
+  return { ledger: ledger as unknown as Ledger, calls, closed };
+}
+
+describe('routeVoice', () => {
+  function setup(refuse = false) {
+    const { s, sent } = fakeSocket();
+    const l = new VoiceLine('k', () => { setTimeout(() => s.onopen?.(), 0); return s; });
+    const led = fakeLedger(refuse);
+    let n = 0;
+    const logs: any[] = [];
+    const call = (text: string) => {
+      const res = fakeRes();
+      const id = `v${++n}`;
+      const p = routeVoice({} as IncomingMessage, res as unknown as ServerResponse, { text }, { line: l, ledger: led.ledger, phase: 'dev', id: () => id, log: (r) => logs.push(r) });
+      let over = false;
+      void p.then(() => { over = true; });
+      return { res, id, over: () => over };
+    };
+    return { s, sent, l, call, logs, ...led };
+  }
+
+  it('a request closed while queued ends, and its reservation is released', async () => {
+    const { s, call, closed, sent } = setup();
+    const a = call('One.');
+    const b = call('Two.');
+    await tick();
+    b.res.emit('close');
+    await tick();
+    expect(b.over()).toBe(true);
+    expect(closed(b.id)).toEqual([{ op: 'release', id: b.id }]);
+    s.emit({ type: 'response.done', response: { status: 'completed', usage: { output_tokens: 50, output_token_details: { audio_tokens: 40 } } } });
+    await tick();
+    expect(a.over()).toBe(true);
+    expect(sent.filter((m) => m.type === 'response.create')).toHaveLength(1);
   });
 });
 
