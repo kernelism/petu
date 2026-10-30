@@ -85,7 +85,7 @@ export type Deps = {
 export type AnswerBody = ReturnType<typeof buildRequest>;
 /** What the cache stats key an answer by. */
 export type CacheKey = { model: string; version: string; docHash: string; page: number };
-export type AnswerRecord = { at: string; phase: string; model: string; effort: string; page: number; question: string; script: string; lint: string[]; usd: number; error?: string;
+export type AnswerRecord = { at: string; phase: string; model: string; effort: string; page: number; question: string; script: string; lint: string[]; usd: number; error?: string; /** Why the upstream ended an answer early (its terminal status and reason). */ upstream?: string;
   /** The storyboard stage 2 performed (or why it ran on the scout's plan alone), its latency and cost. */
   storyboard?: { model: string; effort: string; version: string; ms: number; usd: number; board?: Storyboard; fallback?: string };
   /** EXPERIMENT (boardfirst): the model's script before the board-first reveal, and what it declared and revealed. */
@@ -646,7 +646,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
       // Stalled, cut short upstream (response.incomplete), or ended without a terminal event: what
       // arrived plays, then the client hears cut_off; with no text at all it is an error.
       if (!signal.aborted && !failed && (idle || !terminal || !complete)) {
-        const why = idle ? `${ep.vendor} stopped sending.` : terminal ? `${ep.vendor} ended the answer early.` : `The stream from ${ep.vendor} ended early.`;
+        const why = idle ? `${ep.vendor} stopped sending.` : terminal ? `${ep.vendor} ended the answer early${r.status ? ` (${r.status})` : ''}.` : `The stream from ${ep.vendor} ended early.`;
         failed = { t: 'error', code: outChars ? 'cut_off' : idle ? 'network' : 'upstream', message: why, retryable: true };
       }
     }
@@ -664,7 +664,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const u: Usage = usage ?? estimatedUsage(est, cachedGuess, Math.ceil(Math.max(read.rawChars, outChars) / 3.2));
   const usd = costUsd(cfg.model, u, '12h', cfg.fast);
   d.ledger.settle({ id: reqId, phase: d.phase, kind: 'answer', model: cfg.model, usd, estimated, tokens: tokens(u) });
-  try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
+  try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
   if (signal.aborted) return;
   if (failed && failed.code !== 'cut_off' && !outChars) { emit(failed); return; }
   const s = d.ledger.summary();
@@ -673,7 +673,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
 }
 
 /** What reading one upstream stream produced (readUpstream). */
-export type UpstreamRead = { usage?: Usage; terminal: boolean; complete: boolean; idle: boolean; rawChars: number; failed?: string };
+export type UpstreamRead = { usage?: Usage; terminal: boolean; complete: boolean; idle: boolean; rawChars: number; failed?: string; /** The terminal status, with the upstream's reason when cut short: "incomplete (max_output_tokens)". */ status?: string };
 export const newRead = (): UpstreamRead => ({ terminal: false, complete: false, idle: false, rawChars: 0 });
 /**
  * Reads an upstream answer stream (OpenAI Responses or Anthropic Messages SSE) through the script
@@ -699,7 +699,7 @@ export async function readUpstream(res: Response, ep: Endpoint, o: { signal: Abo
       for (const u of events.handle(ev)) {
         if (u.t === 'text') o.send(o.lint.push(o.filter.push(u.d)));
         else if (u.t === 'note') o.onNote?.(u.message);
-        else if (u.t === 'usage') { out.usage = u.usage; out.terminal = true; out.complete = u.complete; }
+        else if (u.t === 'usage') { out.usage = u.usage; out.terminal = true; out.complete = u.complete; out.status = u.status; }
         else if (u.t === 'error') { out.terminal = true; out.failed = scrub(u.message, ep.key); }
       }
     }
