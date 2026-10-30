@@ -180,3 +180,18 @@ describe('frameInk (page ink framing)', () => {
     expect(frameInk({ x: 0, y: 10, w: 1, h: 10 }, [], v)).toBe(0);
   });
 });
+
+describe('cropSpanX (a finished lane drawing shows the span it uses)', async () => {
+  const { cropSpanX, CROP_MAX_K, CROP_PAD_X } = await import('../../src/desk/layout');
+  it('crops to the drawing plus padding', () => {
+    expect(cropSpanX(60, 700)).toEqual({ x0: 60 - CROP_PAD_X, w: 700 + 2 * CROP_PAD_X });
+  });
+  it('never enlarges past CROP_MAX_K, centred on the drawing', () => {
+    const r = cropSpanX(400, 100)!;
+    expect(r.w).toBeCloseTo(1000 / CROP_MAX_K);
+    expect(r.x0 + r.w / 2).toBeCloseTo(450);
+  });
+  it('leaves a drawing that uses the canvas alone', () => {
+    expect(cropSpanX(20, 960)).toBeNull();
+  });
+});

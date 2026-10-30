@@ -6,7 +6,7 @@ import type { Stroke } from '../ink/agent/strokes';
 import { animateScrollTo } from '../pdf/scroll';
 import { Follow, ScrollOwner, wheelPx, wheelScrolls } from './follow';
 import { routeGutter, maskBlocker } from './route';
-import { boardLayout, bodyPx, fitZoom, laneFrame, pageAt, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
+import { boardLayout, bodyPx, fitZoom, laneFrame, pageAt, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, cropSpanX, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
 import { BOARD_HEAD, boardPad, MIN_TEXT_PX, SECTION_W, TEXT_UNITS } from './layout';
 import { dockTop, FOLDED_H, LANE_PAD, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, wantFor, zoomedInsets } from './lane';
@@ -35,7 +35,9 @@ type GestureLike = Event & { scale?: number; clientX?: number; clientY?: number 
  */
 /** One board section (DOM + state); `createSection` builds it (the gate's shadow board builds the same). */
 export type DeskSection = Section;
-type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; full: number; y0: number; y1: number; dx: number | null; scene?: Scene; /** An svg board: grows as tall as its canvas (no kit cap). */ svg?: boolean; group?: Group };
+type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; full: number; y0: number; y1: number; dx: number | null; scene?: Scene; /** An svg board: grows as tall as its canvas (no kit cap). */ svg?: boolean; group?: Group;
+  /** Lane, a finished svg board: the drawn content's span (units) the section shows, widened to the lane (crop). */
+  x0?: number; xw?: number };
 /**
  * Layout C (the anchored lane, src/desk/lane.ts): one answer's head and sections, stacked in the lane
  * level with the passage they explain. `el` spans the lane's whole height (the sticky item's
@@ -282,7 +284,7 @@ export class Desk implements DeskApi {
           if (old.group) (old.group.parts ??= []).push(h.el);
           (this.lane() && old.group ? old.group.item : this.content).appendChild(h.el);
         }
-        if (old.y0 !== 0 || old.y1 !== old.full) { old.y0 = 0; old.y1 = old.full; old.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${old.full}`)); this.position(); }
+        if (old.y0 !== 0 || old.y1 !== old.full || old.xw != null) { this.uncrop(old); this.position(); }
         this.pen({ t: { region: spec.id }, r: WHOLE_REGION });
         if (this.lane() && old.group) { this.relive(old.group); this.open = true; this.position(); }
         else if (!this.open) await this.openBoard('normal', before);
@@ -607,13 +609,10 @@ export class Desk implements DeskApi {
       for (const s of this.sections) {
         if (s.scene || s.y0 !== 0 || s.y1 !== s.full) continue;
         this.crop(s);
-        if (s.y0 !== 0 || s.y1 !== s.full) this.held.add(s);
+        if (s.y0 !== 0 || s.y1 !== s.full || s.xw != null) this.held.add(s);
       }
     } else {
-      for (const s of this.held) {
-        s.y0 = 0; s.y1 = s.full;
-        s.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${s.full}`));
-      }
+      for (const s of this.held) this.uncrop(s);
       this.held.clear();
     }
     if (!on) for (const [sec, hd] of this.heads) if (hd.aside && !hd.collapsed) this.collapse(sec, hd, true);
@@ -901,7 +900,26 @@ export class Desk implements DeskApi {
     }
     const { y0, y1 } = cropSpan(ink, sec.full);
     sec.y0 = y0; sec.y1 = y1;
-    sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 ${y0} ${REGION_W} ${y1 - y0}`));
+    // The lane: a finished svg board shows the span its drawing uses, scaled to the lane's width (the
+    // model's canvas is 1000 units; a drawing that used 650 of them read small: founder 2026-10-30).
+    // During the answer the canvas stays whole (a later group may use the rest); the dock is the moment.
+    const span = this.lane() && sec.svg ? this.inkSpanX(sec) : null;
+    if (span) { sec.x0 = span.x0; sec.xw = span.w; }
+    const vx = sec.x0 ?? 0, vw = sec.xw ?? REGION_W;
+    sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `${vx} ${y0} ${vw} ${y1 - y0}`));
+  }
+
+  /** A section back to its whole canvas (a follow-up draws on into it, an aside's crop ends). */
+  private uncrop(sec: Section) {
+    sec.y0 = 0; sec.y1 = sec.full; delete sec.x0; delete sec.xw;
+    sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${sec.full}`));
+  }
+
+  /** The x span (units) a lane svg board's drawing uses, padded; null when it uses nearly all of it. */
+  private inkSpanX(sec: Section): { x0: number; w: number } | null {
+    let b: { x: number; width: number } | null = null;
+    try { const g = sec.layers.agent; b = typeof g.getBBox === 'function' && g.childNodes.length ? g.getBBox() : null; } catch { b = null; }
+    return b && b.width > 0 ? cropSpanX(b.x, b.width) : null;
   }
 
   /** Opens the board (or changes its ratio): one movement, the slide column and the board together. */
@@ -964,7 +982,7 @@ export class Desk implements DeskApi {
     if (this.lane()) {
       const g = sec.group, s = this.laneScale(sec);
       if (!g) return null;
-      const w = sec.el.offsetWidth || REGION_W * s, h = sec.el.offsetHeight || (sec.y1 - sec.y0) * s;
+      const w = sec.el.offsetWidth || (sec.xw ?? REGION_W) * s, h = sec.el.offsetHeight || (sec.y1 - sec.y0) * s;
       return { x: sec.el.offsetLeft, y: g.top + sec.el.offsetTop, w, h, s };
     }
     const i = this.sections.indexOf(sec);
@@ -1013,7 +1031,7 @@ export class Desk implements DeskApi {
       if (!sec.el.isConnected || !sec.group || sec.group.folded) return null;
       const e = sec.el.getBoundingClientRect(), s = this.laneScale(sec);
       if (sec.scene) { const { cam } = sec.scene, k = s * cam.z; return { x: e.left + (r.x - cam.x) * k, y: e.top + (r.y - cam.y) * k, w: r.w * k, h: r.h * k }; }
-      return { x: e.left + (r.x + (sec.dx ?? 0)) * s, y: e.top + (r.y - sec.y0) * s, w: r.w * s, h: r.h * s };
+      return { x: e.left + (r.x + (sec.dx ?? 0) - (sec.x0 ?? 0)) * s, y: e.top + (r.y - sec.y0) * s, w: r.w * s, h: r.h * s };
     }
     const box = this.boxOf(sec), b = this.frame().board;
     if (!box || !b) return null;
@@ -1187,7 +1205,8 @@ export class Desk implements DeskApi {
     const f = this.frame();
     // An aside's inset is indented 24 px under the paused drawing (spec §5.6).
     const cw = Math.max(1, (f.lane?.w ?? f.board?.w ?? 0) - 2 * LANE_PAD - (sec.el.classList.contains('is-aside') ? 24 : 0));
-    return Math.max(cw / SECTION_W, Math.min(cw / SECTION_W, Math.max(bodyPx(sec.body, f.page.pageW), MIN_TEXT_PX) / TEXT_UNITS));
+    const w = sec.xw ?? SECTION_W;
+    return Math.max(cw / w, Math.min(cw / w, Math.max(bodyPx(sec.body, f.page.pageW), MIN_TEXT_PX) / TEXT_UNITS));
   }
 
   /** The pen moved: `last` is where the answer is; in the lane the dock follows the pen's column. */
@@ -1329,7 +1348,7 @@ export class Desk implements DeskApi {
       const k = this.laneScale(s);
       // An aside's inset is indented under the paused drawing (spec §5.6), the width of its head.
       const ind = s.el.classList.contains('is-aside') ? 24 : 0;
-      const w = s.scene ? cw - ind : REGION_W * k, h = s.scene ? Math.round((cw - ind) * 0.62) : (s.y1 - s.y0) * k;
+      const w = s.scene ? cw - ind : (s.xw ?? REGION_W) * k, h = s.scene ? Math.round((cw - ind) * 0.62) : (s.y1 - s.y0) * k;
       Object.assign(s.el.style, { left: '', top: '', width: `${w}px`, height: `${h}px`, marginLeft: `${LANE_PAD + ind + Math.max(0, (cw - ind - w) / 2)}px` });
       const hd = this.heads.get(s);
       if (hd) Object.assign(hd.el.style, { left: '', top: '', width: `${cw - (hd.aside ? 24 : 0)}px`, height: `${hd.h}px`, marginLeft: `${LANE_PAD + (hd.aside ? 24 : 0)}px` });
