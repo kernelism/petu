@@ -2,7 +2,35 @@
 import type { BuildEnv, ElementPlan } from '../desk/types';
 import type { SvgAction } from '../script/types';
 import { textPx } from '../desk/elements';
-import { boardIn, drawGroup, groupBox, growBoard, prepareGroup } from './render';
+import { boardIn, drawGroup, groupBox, growBoard, hasBound, prepareGroup, refreshData, type SvgBoard } from './render';
+import { kitStore, type KitStore } from '../desk/kit/kit';
+import type { SRect } from '../geometry/space';
+
+/** Stores a board already follows (a follow-up's answer has its own store). */
+const following = new WeakMap<SvgBoard, KitStore>();
+
+/**
+ * The board's exact data reads the answer's constants (KitStore: {{const}} tags, `data-const`), and a
+ * {{tween}} of them re-resolves every bound group each frame (KitStore.constsChanged).
+ */
+function linkStore(board: SvgBoard, store: KitStore, region: string): void {
+  if (board.scope.consts !== store.consts) {
+    for (const [k, v] of Object.entries(board.scope.consts)) if (!(k in store.consts)) store.consts[k] = v;
+    board.scope.consts = store.consts;
+  }
+  board.scope.define = (defs) => store.defineConsts(defs);
+  if (following.get(board) === store) return;
+  following.set(board, store);
+  store.onConsts(() => refreshData(board));
+  store.svgBox = () => {
+    const live = board.bound.filter((g) => g.isConnected);
+    if (!live.length) return null;
+    const bs = live.map((g) => groupBox(board, g)).filter((b): b is SRect => !!b);
+    if (!bs.length) return null;
+    const x = Math.min(...bs.map((b) => b.x)), y = Math.min(...bs.map((b) => b.y));
+    return { target: { region }, bbox: { x, y, w: Math.max(...bs.map((b) => b.x + b.w)) - x, h: Math.max(...bs.map((b) => b.y + b.h)) - y } };
+  };
+}
 
 /** Builds the plan: sanitized and measured now (hidden), drawn on its word. A string is a skip reason. */
 export async function buildSvgGroup(a: SvgAction, env: BuildEnv): Promise<ElementPlan | string> {
@@ -14,9 +42,11 @@ export async function buildSvgGroup(a: SvgAction, env: BuildEnv): Promise<Elemen
   if (!board) return 'no svg board';
   const pxPerUnit = ctx.scale() * (1000 / board.w);
   // The founder's rule: board text is never smaller than the board's body text.
+  linkStore(board, kitStore(env.registry), a.region);
   const s = prepareGroup(board, a.svg, textPx(ctx, 'm'), pxPerUnit);
   if (typeof s === 'string') return s;
   const g = s.el;
+  if (hasBound(g)) board.bound.push(g);
   // Measure it hidden (its box frames the board before it draws; a group below the canvas grows it).
   g.style.visibility = 'hidden';
   board.root.appendChild(g);
@@ -33,7 +63,7 @@ export async function buildSvgGroup(a: SvgAction, env: BuildEnv): Promise<Elemen
     target, bbox: box,
     draw: async (signal, k) => {
       env.registry.define({ ...(id ? { id } : {}), kind: 'svg', target, bbox: box!, boxes: [box!], anchor: { x: box!.x + box!.w / 2, y: box!.y + box!.h / 2 }, group: g });
-      await drawGroup(board, g, id, { signal, speed: k.speed, color: env.settings.inkColor });
+      await drawGroup(board, g, id, { signal, speed: k.speed, color: env.settings.inkColor, ...(k.beat ? { beat: k.beat } : {}), ...(k.stop ? { stop: k.stop } : {}) });
     },
   };
 }

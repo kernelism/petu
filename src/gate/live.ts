@@ -220,7 +220,7 @@ export class GatePreflight implements Preflight {
       }
       if (srcs.length) {
         sb ??= newBoardState();
-        const r = checkGroups(srcs, sb, this.env.svgMinFont?.() ?? 16);
+        const r = checkGroups(srcs, sb, this.env.svgMinFont?.() ?? 16, state.svg);
         v.flags.push(...r.flags);
         v.notes.push(...r.notes);
         svg = { board: sb, geos: r.geos, ...(r.grow ? { grow: r.grow } : {}) };

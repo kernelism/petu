@@ -9,20 +9,22 @@
  * crossing it only notes (the renderer's paper halo keeps it legible).
  */
 import { parseGroup } from './sanitize';
+import { newScope, resolveData, type DataScope } from './data';
+import { prepareText } from './polish';
 
 export type Pt = { x: number; y: number };
 export type Box = { x: number; y: number; w: number; h: number };
-export type TextBox = Box & { text: string; fs: number; group: string };
-export type Seg = { a: Pt; b: Pt; group: string };
-export type GroupGeo = { id?: string; texts: TextBox[]; segs: Seg[]; box: Box | null; error?: string };
+export type TextBox = Box & { text: string; fs: number; group: string; /** The <text> it came from (polish.ts nudges it). */ el?: Element; m?: M };
+export type Seg = { a: Pt; b: Pt; group: string; /** Part of a tiny shape (a dot, a tick): never counts as crossing text. */ tiny?: boolean };
+export type GroupGeo = { id?: string; texts: TextBox[]; segs: Seg[]; box: Box | null; error?: string; /** Data attributes that did not resolve (the element is not drawn). */ problems?: string[] };
 export type SvgFlag = { check: 'svg'; detail: string };
 
-type M = [number, number, number, number, number, number];
-const I: M = [1, 0, 0, 1, 0, 0];
-const mul = (m: M, n: M): M => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
-const ap = (m: M, p: Pt): Pt => ({ x: m[0] * p.x + m[2] * p.y + m[4], y: m[1] * p.x + m[3] * p.y + m[5] });
+export type M = [number, number, number, number, number, number];
+export const I: M = [1, 0, 0, 1, 0, 0];
+export const mul = (m: M, n: M): M => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+export const ap = (m: M, p: Pt): Pt => ({ x: m[0] * p.x + m[2] * p.y + m[4], y: m[1] * p.x + m[3] * p.y + m[5] });
 
-function parseTransform(t: string | null): M {
+export function parseTransform(t: string | null): M {
   if (!t) return I;
   let m = I;
   for (const x of t.matchAll(/(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]*)\)/g)) {
@@ -100,9 +102,12 @@ function styleOf(e: Element, k: string): string | null { const m = new RegExp(`(
 const stroked = (el: Element) => { const s = inherit(el, 'stroke'); return s != null && s !== 'none' && s !== 'transparent' && num(inherit(el, 'stroke-width'), 1) > 0; };
 
 /** Geometry of one group (raw SVG markup). `minFont`: text is never smaller (the renderer's rule). */
-export function groupGeometry(src: string, minFont = 16): GroupGeo {
-  const g = parseGroup(src);
+export function groupGeometry(src: string | Element, minFont = 16, scope?: DataScope): GroupGeo {
+  const g = typeof src === 'string' ? parseGroup(src) : src;
   if (typeof g === 'string') return { texts: [], segs: [], box: null, error: g };
+  // Exact data first (the geometry checked is the geometry drawn), then the text fitting the renderer does.
+  const problems = typeof src === 'string' ? resolveData(g, scope ?? newScope()).map((p) => p.detail) : [];
+  if (typeof src === 'string') prepareText(g, minFont);
   const id = g.getAttribute('id') ?? undefined;
   const label = id ?? '(group)';
   const texts: TextBox[] = [], segs: Seg[] = [];
@@ -111,12 +116,14 @@ export function groupGeometry(src: string, minFont = 16): GroupGeo {
     const q = poly.map((p) => ap(m, p));
     pts.push(...q);
     if (!stroked(el)) return;
-    for (let k = 1; k < q.length; k++) segs.push({ a: q[k - 1], b: q[k], group: label });
-    if (closed && q.length > 2) segs.push({ a: q[q.length - 1], b: q[0], group: label });
+    const xs = q.map((p) => p.x), ys = q.map((p) => p.y);
+    const tiny = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) < 3;
+    for (let k = 1; k < q.length; k++) segs.push({ a: q[k - 1], b: q[k], group: label, ...(tiny ? { tiny } : {}) });
+    if (closed && q.length > 2) segs.push({ a: q[q.length - 1], b: q[0], group: label, ...(tiny ? { tiny } : {}) });
   };
   const walk = (el: Element, m0: M) => {
     const name = el.nodeName.toLowerCase();
-    if (['defs', 'marker', 'clippath', 'pattern', 'lineargradient', 'radialgradient', 'symbol', 'title', 'desc'].includes(name)) return;
+    if (['defs', 'marker', 'clippath', 'pattern', 'lineargradient', 'radialgradient', 'symbol', 'title', 'desc'].includes(name) || el.hasAttribute('data-bad')) return;
     const m = mul(m0, parseTransform(el.getAttribute('transform')));
     switch (name) {
       case 'line': addPoly(m, [{ x: num(el.getAttribute('x1')), y: num(el.getAttribute('y1')) }, { x: num(el.getAttribute('x2')), y: num(el.getAttribute('y2')) }], el); return;
@@ -159,17 +166,17 @@ export function groupGeometry(src: string, minFont = 16): GroupGeo {
       const corners = [ap(m, { x: x0, y: top }), ap(m, { x: x0 + w, y: top }), ap(m, { x: x0, y: top + h }), ap(m, { x: x0 + w, y: top + h })];
       const bx = Math.min(...corners.map((p) => p.x)), by = Math.min(...corners.map((p) => p.y));
       const b = { x: bx, y: by, w: Math.max(...corners.map((p) => p.x)) - bx, h: Math.max(...corners.map((p) => p.y)) - by };
-      texts.push({ ...b, text: s, fs: r.fs * Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])), group: label });
+      texts.push({ ...b, text: s, fs: r.fs * Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])), group: label, el, m });
       pts.push(...corners);
     }
   };
   walk(g, I);
   const fin = pts.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
   const box = fin.length ? (() => { const x = Math.min(...fin.map((p) => p.x)), y = Math.min(...fin.map((p) => p.y)); return { x, y, w: Math.max(...fin.map((p) => p.x)) - x, h: Math.max(...fin.map((p) => p.y)) - y }; })() : null;
-  return { ...(id ? { id } : {}), texts, segs, box };
+  return { ...(id ? { id } : {}), texts, segs, box, ...(problems.length ? { problems } : {}) };
 }
 
-const overlapArea = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+export const overlapArea = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
 
 /** Does segment ab cross (or lie in) box r? */
 export function segHitsBox(a: Pt, b: Pt, r: Box): boolean {
@@ -181,7 +188,7 @@ export function segHitsBox(a: Pt, b: Pt, r: Box): boolean {
 }
 
 /** The core of a text box a stroke must not cross (estimates run a little wide and tall). */
-const core = (t: TextBox): Box => ({ x: t.x + Math.min(t.w * 0.12, t.fs * 0.3), y: t.y + t.h * 0.22, w: Math.max(0, t.w - 2 * Math.min(t.w * 0.12, t.fs * 0.3)), h: t.h * 0.56 });
+export const core = (t: TextBox): Box => ({ x: t.x + Math.min(t.w * 0.12, t.fs * 0.3), y: t.y + t.h * 0.22, w: Math.max(0, t.w - 2 * Math.min(t.w * 0.12, t.fs * 0.3)), h: t.h * 0.56 });
 
 export type BoardState = { w: number; h: number; ids: Set<string>; texts: TextBox[]; segs: Seg[] };
 export const newBoardState = (w = 1000, h = 700): BoardState => ({ w, h, ids: new Set(), texts: [], segs: [] });
@@ -189,16 +196,18 @@ export const newBoardState = (w = 1000, h = 700): BoardState => ({ w, h, ids: ne
 export const GROW = 1.6;
 
 /** Checks a beat's groups against the board so far. Pure; `board` is not changed. */
-export function checkGroups(srcs: string[], board: BoardState, minFont = 16): { flags: SvgFlag[]; notes: string[]; geos: GroupGeo[]; grow?: number } {
+export function checkGroups(srcs: string[], board: BoardState, minFont = 16, scope: DataScope = newScope()): { flags: SvgFlag[]; notes: string[]; geos: GroupGeo[]; grow?: number; scope: DataScope } {
   const flags: SvgFlag[] = [];
   const notes: string[] = [];
-  const geos = srcs.map((s) => groupGeometry(s, minFont));
+  const geos = srcs.map((s) => groupGeometry(s, minFont, scope));
   const ids = new Set(board.ids);
   const texts = [...board.texts], segs = [...board.segs];
   let grow: number | undefined;
   for (const g of geos) {
     const name = g.id ? `group ${g.id}` : 'a group';
     if (g.error) { flags.push({ check: 'svg', detail: `${name}: ${g.error}` }); continue; }
+    // A data attribute that does not resolve: that element is never drawn (fix the formula or drop it).
+    for (const p of g.problems ?? []) flags.push({ check: 'svg', detail: `${name}: ${p}` });
     if (g.id) { if (ids.has(g.id)) flags.push({ check: 'svg', detail: `id "${g.id}" is used twice` }); ids.add(g.id); }
     if (g.box) {
       const b = g.box, tol = 2;
@@ -218,7 +227,7 @@ export function checkGroups(srcs: string[], board: BoardState, minFont = 16): { 
     // Text against strokes, both ways: the new text over every stroke, the new strokes over every text.
     const crossed = new Set<string>();
     const test = (t: TextBox, s: Seg) => {
-      if (Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y) < 3) return;
+      if (s.tiny) return;
       const key = `${t.group}|${t.text}`;
       if (crossed.has(key)) return;
       if (!segHitsBox(s.a, s.b, core(t))) return;
@@ -232,7 +241,7 @@ export function checkGroups(srcs: string[], board: BoardState, minFont = 16): { 
     for (const s of g.segs) for (const t of texts) test(t, s);
     segs.push(...g.segs);
   }
-  return { flags, notes, geos, ...(grow ? { grow } : {}) };
+  return { flags, notes, geos, ...(grow ? { grow } : {}), scope };
 }
 
 /** Adds an accepted beat's groups to the board state. */

@@ -45,6 +45,8 @@ export class AnswerSession {
   position(): number { return this.scheduler?.position() ?? 0; }
   /** Words that start before `t` (see Scheduler.wordsBefore). */
   wordsBefore(t: number): number { return this.scheduler?.wordsBefore(t) ?? 0; }
+  /** The narration from the current word to the end of its beat, with how soon each word is spoken (Scheduler.beatWords). */
+  beatWords(): { text: string; inMs: number }[] { return this.scheduler?.beatWords() ?? []; }
   seek(word: number): boolean { return this.scheduler?.seek(word) ?? false; }
   /** The playback speed changed (the clock's rate): re-times the words not yet spoken. */
   respeed(): boolean { return this.scheduler?.respeed() ?? false; }

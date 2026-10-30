@@ -126,10 +126,15 @@ describe('svg checks', () => {
   it('flags text on text, text across a line, out of the canvas, a reused id and bad XML', () => {
     const b = newBoardState(1000, 700);
     expect(checkGroups([G('<text x="100" y="100" font-size="20">first label</text><text x="110" y="104" font-size="20">second label</text>')], b).flags[0].detail).toMatch(/overlaps/);
-    // Across groups a crossing fails; within one group it only notes (the halo keeps the label legible).
+    // Across groups a crossing fails; within one group the label is nudged off its own line (polish.ts)…
     const own = checkGroups([G('<line x1="50" y1="94" x2="400" y2="94" stroke="#000"/><text x="100" y="100" font-size="20">crossed</text>')], b);
     expect(own.flags).toEqual([]);
-    expect(own.notes[0]).toMatch(/crosses text/);
+    expect(own.notes).toEqual([]);
+    expect(Math.abs(own.geos[0].texts[0].y - (100 - 0.78 * 20))).toBeGreaterThan(3);
+    // …and where no nearby spot is clear it only notes (the halo keeps it legible).
+    const boxed = checkGroups([G('<path d="M60 70 H400 M60 84 H400 M60 94 H400 M60 104 H400 M60 118 H400 M60 130 H400 M90 40 V160 M180 40 V160" stroke="#000"/><text x="100" y="100" font-size="20">crossed</text>')], b);
+    expect(boxed.flags).toEqual([]);
+    expect(boxed.notes[0]).toMatch(/crosses text/);
     const b2 = newBoardState();
     acceptGroups(b2, checkGroups(['<g id="lab"><text x="100" y="100" font-size="20">crossed</text></g>'], b2).geos);
     expect(checkGroups(['<g id="ray"><line x1="50" y1="94" x2="400" y2="94" stroke="#000"/></g>'], b2).flags[0].detail).toMatch(/a line of ray crosses text "crossed" \(lab\)/);
@@ -146,9 +151,14 @@ describe('svg checks', () => {
   });
   it('text is measured at the board minimum (the renderer raises it)', () => {
     const b = newBoardState();
-    const src = G('<text x="100" y="100" font-size="10">aaaa</text><text x="100" y="116" font-size="10">bbbb</text>');
+    const src = G('<text x="100" y="100" font-size="10">aaaa</text><text x="125" y="100" font-size="10">bbbb</text>');
     expect(checkGroups([src], b, 10).flags).toEqual([]);
     expect(checkGroups([src], b, 22).flags.length).toBeGreaterThan(0);
+    // A list (one line under the other) is restacked when raised: its lines no longer collide.
+    const list = G('<text x="100" y="100" font-size="10">aaaa</text><text x="100" y="116" font-size="10">bbbb</text>');
+    const r = checkGroups([list], newBoardState(), 22);
+    expect(r.flags).toEqual([]);
+    expect(r.geos[0].texts[1].y).toBeGreaterThanOrEqual(r.geos[0].texts[0].y + 22);
   });
   it('geometry: transforms, tspans, paths', () => {
     const g = groupGeometry('<g id="a" transform="translate(100,50)"><text x="0" y="20" font-size="20" text-anchor="middle">ab<tspan x="0" dy="24">cd</tspan></text><path d="M0 0 C 10 0 20 10 20 20 Z" stroke="#000"/></g>');
@@ -194,13 +204,23 @@ describe('follow-ups remember the svg board', () => {
 describe('svg demos (gallery scenes)', () => {
   it('every svg demo opens a board and draws groups that pass the gate checks at the board minimum', async () => {
     const { SVG_DEMOS } = await import('../../src/demo/svg');
-    expect(Object.keys(SVG_DEMOS).sort()).toEqual(['svg-dough', 'svg-ferry', 'svg-rent', 'svg-sinx', 'svg-skater', 'svg-tunnel']);
+    expect(Object.keys(SVG_DEMOS).sort()).toEqual(['svg-ceiling', 'svg-dough', 'svg-ferry', 'svg-rent', 'svg-sinx', 'svg-skater', 'svg-slope', 'svg-spin', 'svg-tunnel']);
     for (const [k, d] of Object.entries(SVG_DEMOS)) {
       const acts = actions(d.script);
       expect(acts[0], k).toMatchObject({ kind: 'sketch', svgboard: {} });
       const groups = acts.filter((x) => x.kind === 'svg');
       expect(groups.length, k).toBeGreaterThanOrEqual(4);
       for (const g of groups) expect(groupGeometry((g as { svg: string }).svg).error, k).toBeUndefined();
+      // Every group passes the gate's checks in order, its data resolving (the engine demos' formulas included).
+      const sb = acts[0] as Extract<RawAction, { kind: 'sketch' }>;
+      const board = newBoardState(sb.svgboard!.w, sb.svgboard!.h);
+      let scope: ReturnType<typeof checkGroups>['scope'] | undefined;
+      if (k.startsWith('svg-ceiling') || k.startsWith('svg-spin') || k.startsWith('svg-slope')) for (const g of groups) {
+        const r = checkGroups([(g as { svg: string }).svg], board, 20, scope);
+        scope = r.scope;
+        expect(r.flags, `${k} ${(g as { id?: string }).id}`).toEqual([]);
+        acceptGroups(board, r.geos, r.grow);
+      }
     }
   });
 });
