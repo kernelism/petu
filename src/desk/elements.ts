@@ -400,12 +400,17 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
       // On a hand-drawn {{axes}} (named, or the region's latest when none is named): sampled into
       // strokes as before. Otherwise the engine draws the graph with its own axes (kit line view).
       const ax = a.axes ? await env.registry.wait(a.axes, REF_WAIT_MS) : env.registry.latest(ctx.target, 'axes');
-      if (!ax || ax.kind !== 'axes' || !a.fn || !a.domain) return buildKitPlot(a as Parameters<typeof buildKitPlot>[0], ctx, env);
-      // The answer's constants ({{const}}, a contrast's overrides), as on every other formula path.
-      const f = formula(a.fn, ['x'], withConsts(kitStore(env.registry).consts, a.with));
+      if (!ax || ax.kind !== 'axes' || !a.fn) return buildKitPlot(a as Parameters<typeof buildKitPlot>[0], ctx, env);
+      // The answer's constants ({{const}}, a contrast's overrides), as on every other formula path:
+      // in fn= and in a domain written with them (domain=0,T has no numeric domain).
+      const K = withConsts(kitStore(env.registry).consts, a.with);
+      const val = (src: string) => { const g = formula(src, [], K); return g ? g({}) : NaN; };
+      const domain = a.domainSrc ? [val(a.domainSrc[0]), val(a.domainSrc[1])] as [number, number] : a.domain;
+      if (!domain || !(Number.isFinite(domain[0]) && Number.isFinite(domain[1]) && domain[1] > domain[0])) return `bad domain ${(a.domainSrc ?? a.domain ?? []).join(',')}`;
+      const f = formula(a.fn, ['x'], K);
       if (!f) { console.warn('[desk] plot: bad fn', a.fn); return 'bad fn'; }
       const fn = (x: number) => f({ x });
-      const strokes = plotStrokes(fn, a.domain, { x: ax.bbox.x, y: ax.bbox.y + ax.bbox.h, w: ax.bbox.w, h: ax.bbox.h }, a.range);
+      const strokes = plotStrokes(fn, domain, { x: ax.bbox.x, y: ax.bbox.y + ax.bbox.h, w: ax.bbox.w, h: ax.bbox.h }, a.range);
       if (!strokes.length) return 'nothing to plot';
       return strokePlan(a, ctx, env, { strokes, dash: a.dash });
     }
