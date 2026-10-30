@@ -57,8 +57,11 @@ describe('VoiceClock', () => {
     expect(clock.wordStart(0)).toBe(0);
     expect(clock.wordStart(1)).toBeGreaterThan(200);
     expect(clock.wordStart(1)).toBeLessThan(1000);
-    expect(clock.endsAt()).toBe(1000);
+    expect(clock.endsAt()).toBeGreaterThan(1000); // 'Demand falls.' is still loading
     expect(clock.wordStart(2)).toBeNull();
+    asked[1].resolve(700);
+    await flush();
+    expect(clock.endsAt()).toBe(1700);
   });
 
   it('plays pieces back to back, in order, even when a later one loads first', async () => {
@@ -194,6 +197,31 @@ describe('VoiceClock', () => {
       await vi.advanceTimersByTimeAsync(10);
       expect(played[0].stopped).toBe(false);
       expect(played[1].at).toBeGreaterThanOrEqual(played[0].at + 2000);
+    });
+
+    it('a trailing action waits for the narration\'s audio, then fires at its end', async () => {
+      const { s, asked, acts, done } = drive();
+      s.push([...ev('One two three. Four five six.'), { type: 'action', action: { kind: 'clear' } }, { type: 'end' }]);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(acts).toEqual([]);
+      asked[0].resolve(1000);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(acts).toEqual([]); // the second sentence is still loading
+      asked[1].resolve(1000);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(acts).toHaveLength(1);
+      expect(acts[0]).toBeGreaterThanOrEqual(7000);
+      expect(done()).toBeGreaterThanOrEqual(acts[0]);
+    });
+
+    it('flushes an action waiting on the stream only once the voice has run dry', async () => {
+      const { s, asked, acts } = drive();
+      s.push([...ev('One two three.'), { type: 'action', action: { kind: 'clear' } }]); // its word hasn't come
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(acts).toEqual([]); // 'One two three.' is still loading: nothing has been said
+      asked[0].resolve(500);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(acts).toEqual([2000 + 500 + 200]);
     });
 
     it('a hold keeps the piece being heard and delays the next', async () => {

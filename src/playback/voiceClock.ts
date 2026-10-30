@@ -79,7 +79,19 @@ export class VoiceClock implements NarrationClock {
   now(): number { return this.clockNow(); }
   durationMs(word: string): number { return this.pacedAtRate.durationMs(word); }
   wordStart(i: number): number | null { return this.starts[i] ?? null; }
-  endsAt(): number { return this.end; }
+  /**
+   * The placed audio's end; while words are still to be placed (a piece loading, or waiting on one
+   * before it, or not yet sent), at least now plus their paced length. So the scheduler never thinks
+   * the narration has run dry, nor fires trailing or flushed actions, while its voice is on the way.
+   */
+  endsAt(): number {
+    const k = this.nextPiece;
+    const from = k < this.pieces.length ? (this.resumeWord ?? this.pieces[k].from) : this.open;
+    if (from >= this.words.length) return this.end;
+    let ms = 0;
+    for (let i = from; i < this.words.length; i++) ms += this.durationMs(this.words[i]);
+    return Math.max(this.end, this.clockNow(), this.resumeAt) + ms;
+  }
 
   enqueue(word: string): number {
     const i = this.words.length;
