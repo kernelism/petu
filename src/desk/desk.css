@@ -31,6 +31,9 @@
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* The engine places the board's scroll; the browser's scroll anchoring moving it when sections above
+     crop or grow would read as the student scrolling (follow stops). */
+  overflow-anchor: none;
   scrollbar-width: none;
 }
 .desk-board-scroll::-webkit-scrollbar { display: none; }
@@ -64,6 +67,10 @@
 
 /* One section per sketch: 1000 × 700 units, scaled uniformly into the board's width. */
 .desk-region { position: absolute; opacity: 0; transition: opacity 180ms var(--ease-out, ease-out); }
+/* A drag across a drawing never selects it (no stray highlight, no accidental "about:" chip); its words
+   still can: select-to-ask starts on a word. */
+.desk-region { -webkit-user-select: none; user-select: none; }
+.desk-region text { -webkit-user-select: text; user-select: text; }
 .desk-region.is-shown { opacity: 1; }
 .desk-region-layer { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; transition: transform 320ms var(--ease-out, ease-out); }
 .desk-region-hl { mix-blend-mode: multiply; }

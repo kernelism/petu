@@ -1339,6 +1339,7 @@ export default function App() {
   // …and circling something with the pen on a slide: the region, with the text inside it.
   const inkState = useInk();
   // …or circling part of the board: the drawn elements it covers, and the board text inside it.
+  const onBoardWheel = useCallback((e: WheelEvent) => deskRef.current?.wheel(e), []);
   const onBoardLoop = useCallback((r: { x: number; y: number; w: number; h: number }) => {
     const d = deskRef.current;
     const inside = (b: { x: number; y: number; w: number; h: number } | null) => !!b && b.x + b.w / 2 >= r.x && b.x + b.w / 2 <= r.x + r.w && b.y + b.h / 2 >= r.y && b.y + b.h / 2 <= r.y + r.h;
@@ -1533,7 +1534,7 @@ export default function App() {
       <SettingsPopover open={settingsOpen} onClose={closeSettings} />
       <CanvasToolbar />
       {inkState.canvasOn && inkState.tool === 'pen' && desk?.board && !desk.stacked && (
-        <BoardPen rect={desk.board} color={inkState.color} keep={!!pointed && pointed.kind === 'circle' && pointed.page == null} onLoop={onBoardLoop} />
+        <BoardPen rect={desk.board} color={inkState.color} keep={!!pointed && pointed.kind === 'circle' && pointed.page == null} onLoop={onBoardLoop} onWheel={onBoardWheel} />
       )}
       <ShortcutsOverlay open={shortcutsOpen} onClose={closeShortcuts} x={dock.x} bottom={dockBottom} dev={import.meta.env.DEV} />
       {/* left/width are set directly rather than through custom properties, so the dock's glide never

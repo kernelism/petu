@@ -2,7 +2,10 @@
 import type { BuildEnv, ElementPlan } from '../desk/types';
 import type { SvgAction } from '../script/types';
 import { textPx } from '../desk/elements';
-import { boardIn, drawGroup, groupBox, growBoard, hasBound, prepareGroup, refreshData, type SvgBoard } from './render';
+import { boardIn, drawGroup, groupBox, growBoard, hasBound, partBox, prepareGroup, refreshData, type SvgBoard } from './render';
+
+/** Air (section units) kept around the part being drawn when the board follows the pen: room for its label. */
+const PEN_AIR = 48;
 import { kitStore, type KitStore } from '../desk/kit/kit';
 import type { SRect } from '../geometry/space';
 
@@ -63,7 +66,14 @@ export async function buildSvgGroup(a: SvgAction, env: BuildEnv): Promise<Elemen
     target, bbox: box,
     draw: async (signal, k) => {
       env.registry.define({ ...(id ? { id } : {}), kind: 'svg', target, bbox: box!, boxes: [box!], anchor: { x: box!.x + box!.w / 2, y: box!.y + box!.h / 2 }, group: g });
-      await drawGroup(board, g, id, { signal, speed: k.speed, color: env.settings.inkColor, ...(k.beat ? { beat: k.beat } : {}), ...(k.stop ? { stop: k.stop } : {}) });
+      // A group taller than the view: the board follows the pen, part by part (each with room for the
+      // label beside it), while the student follows; a part already in view moves nothing.
+      const onStep = (el: SVGElement) => {
+        if (!env.desk.following()) return;
+        const r = partBox(board, el, PEN_AIR);
+        if (r && !env.desk.isVisible(target, r)) void env.desk.reveal(target, r);
+      };
+      await drawGroup(board, g, id, { signal, speed: k.speed, color: env.settings.inkColor, onStep, ...(k.beat ? { beat: k.beat } : {}), ...(k.stop ? { stop: k.stop } : {}) });
     },
   };
 }
