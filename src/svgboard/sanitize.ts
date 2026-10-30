@@ -10,7 +10,7 @@
  * halo behind text so a label stays legible where it meets a line. A full-board white backing rect is
  * dropped (the board is the paper).
  */
-import { FONT_SANS, INK, mapColor, mapFont, mapStrokeWidth, type Palette } from './style';
+import { FONT_FIGURE, INK, mapColor, mapFont, mapStrokeWidth, type Palette } from './style';
 
 const NS = 'http://www.w3.org/2000/svg';
 /** Elements kept (lowercase). */
@@ -147,7 +147,7 @@ export function sanitizeGroup(src: string, o: SanitizeOpts): Sanitized | string 
       const eff = font ?? 16;
       if (eff < o.minFont) { el.setAttribute('font-size', String(Math.round(o.minFont * 10) / 10)); font = o.minFont; }
       if (name === 'text') {
-        if (!el.hasAttribute('font-family')) el.setAttribute('font-family', FONT_SANS);
+        if (!el.hasAttribute('font-family')) el.setAttribute('font-family', FONT_FIGURE);
         if (!el.hasAttribute('fill') && !el.closest('[fill]')) el.setAttribute('fill', INK.ink);
         // A paper halo: text stays legible where a line passes behind it.
         if (!el.hasAttribute('stroke')) {
@@ -174,7 +174,11 @@ export function sanitizeGroup(src: string, o: SanitizeOpts): Sanitized | string 
         const fo = (num(el.getAttribute('fill-opacity')) ?? 1) * (num(el.getAttribute('opacity')) ?? 1);
         const cap = f === o.palette.accent ? 0.2 : f === INK.line ? 0.9 : 0.16;
         if (fo > cap) { el.setAttribute('fill-opacity', String(cap / (num(el.getAttribute('opacity')) ?? 1))); notes.push('fill softened'); }
+        // A wash (a shaded region, not a bar): drawn as the board's hatch (board CSS, render.ts ensureHatch).
+        if (f !== INK.line && Math.min(fo, cap) <= 0.3) el.setAttribute('data-wash', '');
       }
+      // A point: a small solid dot gets a paper ring, so it sits on the lines it marks (board CSS).
+      if (name === 'circle' && f && f !== 'none' && f !== INK.paper && (num(el.getAttribute('r')) ?? 0) <= 9 && !el.hasAttribute('data-wash')) el.setAttribute('data-dot', '');
     }
     // A backing rect over (nearly) the whole canvas: the board is already paper.
     if (name === 'rect' && depth <= 1) {

@@ -47,7 +47,44 @@ export function boardIn(layer: SVGGElement): SvgBoard | null {
  * Mounts a board (or, `extend`, takes the one already in the layer and grows it). Returns the section
  * height it needs, in section units (the caller grows the section).
  */
+/**
+ * The hatch every board's washes use (board CSS `[data-wash]`): one pair of patterns per document, in
+ * board units (a board is ~1000 wide, so lines ~10 units apart read as a fine diagonal hatch), over a
+ * faint tint of the same ink. `-live` is the accent's, for the part being drawn.
+ */
+export function ensureHatch(doc: Document, accent: string): void {
+  let defs = doc.getElementById('petu-hatch-defs') as Element | null;
+  if (!defs) {
+    const svg = doc.createElementNS(NS, 'svg');
+    svg.setAttribute('id', 'petu-hatch-defs');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('style', 'position:absolute;width:0;height:0;overflow:hidden');
+    doc.body.appendChild(svg);
+    defs = svg;
+  }
+  const host = defs;
+  const pattern = (id: string, ink: string) => {
+    let p = doc.getElementById(id) as Element | null;
+    if (!p) {
+      const pat = doc.createElementNS(NS, 'pattern');
+      for (const [k, v] of Object.entries({ id, patternUnits: 'userSpaceOnUse', width: '9', height: '9', patternTransform: 'rotate(45)' })) pat.setAttribute(k, v);
+      const tint = doc.createElementNS(NS, 'rect');
+      for (const [k, v] of Object.entries({ width: '9', height: '9', 'fill-opacity': '0.07' })) tint.setAttribute(k, v);
+      const line = doc.createElementNS(NS, 'line');
+      for (const [k, v] of Object.entries({ x1: '0', y1: '0', x2: '0', y2: '9', 'stroke-width': '2', 'stroke-opacity': '0.5' })) line.setAttribute(k, v);
+      pat.append(tint, line);
+      host.appendChild(pat);
+      p = pat;
+    }
+    p.querySelector('rect')?.setAttribute('fill', ink);
+    p.querySelector('line')?.setAttribute('stroke', ink);
+  };
+  pattern('petu-hatch', INK.ink2);
+  pattern('petu-hatch-live', accent);
+}
+
 export function mountBoard(layer: SVGGElement, spec: { w: number; h: number; extend?: boolean }, ns: string, accent: string): { board: SvgBoard; height: number } {
+  ensureHatch(layer.ownerDocument, accent);
   const old = boardIn(layer);
   if (old) {
     if (spec.h > old.h) { old.h = spec.h; old.root.setAttribute('viewBox', `0 0 ${old.w} ${old.h}`); old.root.setAttribute('height', String((old.h * 1000) / old.w)); }
