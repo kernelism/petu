@@ -1,5 +1,5 @@
 // src/ui/pageNav.ts — the top bar's page field: what a typed page means, and the key that opens it.
-import { isTypingTarget } from './playbackKeys';
+import { isTyping } from './playbackKeys';
 
 /** A typed page ("12", " 12 ", "p12") as a page of the document, clamped into 1…numPages; null if it isn't a number. */
 export function parsePage(text: string, numPages: number): number | null {
@@ -13,7 +13,7 @@ type KeyLike = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 's
 /** G opens the page field: not while typing, not with a modifier, not with a popover or card open. */
 export function isGoToPageKey(e: KeyLike, doc: ParentNode = document): boolean {
   return (e.key === 'g' || e.key === 'G') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat
-    && !e.defaultPrevented && !e.isComposing && !isTypingTarget(e.target) && !doc.querySelector('.popover, .keys');
+    && !e.defaultPrevented && !e.isComposing && !isTyping(e.target) && !doc.querySelector('.popover, .keys');
 }
 
 /**

@@ -1,5 +1,5 @@
 // src/ui/zoomKeys.ts
-import { isTypingTarget } from './playbackKeys';
+import { isTyping } from './playbackKeys';
 
 /**
  * Board zoom keys (pure, so it is testable without the app):
@@ -22,7 +22,7 @@ type KeyLike = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'd
 export function boardZoomKey(e: KeyLike, ctx: ZoomKeyContext): 'in' | 'out' | 'fit' | null {
   if (!ctx.boardOpen || e.defaultPrevented || e.altKey || e.isComposing) return null;
   const mod = ctx.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
-  if (!mod || isTypingTarget(e.target)) return null;
+  if (!mod || isTyping(e.target)) return null;
   switch (e.key) {
     case '+':
     case '=':
@@ -54,7 +54,7 @@ export type OverviewKeyContext = { lane: boolean; mac: boolean; popover: boolean
 export function overviewKey(e: KeyLike & { shiftKey?: boolean }, ctx: OverviewKeyContext): 'toggle' | 'in' | 'out' | 'reset' | null {
   if (!ctx.lane || e.defaultPrevented || e.isComposing) return null;
   if (e.key === 'z' || e.key === 'Z') {
-    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || ctx.popover || isTypingTarget(e.target)) return null;
+    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || ctx.popover || isTyping(e.target)) return null;
     return 'toggle';
   }
   const z = boardZoomKey(e, { boardOpen: true, mac: ctx.mac });

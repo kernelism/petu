@@ -15,7 +15,7 @@ import type { PartsView } from './ui/PartsBar';
 import { barMode, closingQuestion } from './ui/barMode';
 import { answerHead, asideHead, clockOf, trailTitle, type TrailHead } from './ui/trail';
 import { aboutContext, asideContext, bboxOf, isLoop, pointedLabel, type Pointed } from './agent/moment';
-import { playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
+import { isTyping, playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
 import { PacedClock, type NarrationClock } from './playback/clock';
 import { VoiceClock, fetchVoice, warmVoice, webAudioOut } from './playback/voiceClock';
 import { SwitchClock } from './playback/switchClock';
@@ -1525,9 +1525,7 @@ export default function App() {
   useEffect(() => { document.documentElement.classList.toggle('petu-past-on', pastOn); }, [pastOn]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-      if (typing || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || document.querySelector('.popover')) return;
+      if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || document.querySelector('.popover')) return;
       const k = e.key.toLowerCase();
       if (k === 's') { e.preventDefault(); setSessionOpen((o) => !o); }
       else if (k === 'm' && !e.shiftKey) {
