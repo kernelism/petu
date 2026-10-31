@@ -121,3 +121,23 @@ export function visibleLane(lane: { x: number; w: number }, W: number, z: number
   const x = Math.min(lane.x + lane.w - w, Math.max(lane.x, lane.x + (a - sx(lane.x)) / z));
   return { x, w };
 }
+
+/**
+ * The walk (an svg board that explains several pages): `pages` holds the page each of the answer's svg
+ * groups explains, in draw order (null: no page mark since it began), the live drawing showing those from
+ * `from` on. A page mark on `page` gives every unplaced group from `from` on that page (`placed`). When
+ * the drawing's earlier groups explain another page, they stay behind: `runs` (consecutive groups on one
+ * page each) become slices beside their pages and the live drawing shows from `at` on. Null runs: it stays whole.
+ */
+export function walkSplit(pages: readonly (number | null)[], from: number, page: number): { placed: number[]; runs: number[][] | null; at: number } {
+  const placed: number[] = [];
+  for (let i = from; i < pages.length; i++) if (pages[i] == null) placed.push(i);
+  const at = placed.length ? placed[0] : pages.length;
+  if (!placed.length) return { placed, runs: null, at: from };
+  const done: number[] = [];
+  for (let i = from; i < at; i++) if (pages[i] != null) done.push(i);
+  if (!done.length || done.every((i) => pages[i] === page)) return { placed, runs: null, at: from };
+  const runs: number[][] = [];
+  for (const i of done) { const last = runs[runs.length - 1]; if (last && pages[last[0]] === pages[i]) last.push(i); else runs.push([i]); }
+  return { placed, runs, at };
+}

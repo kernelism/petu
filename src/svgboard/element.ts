@@ -63,7 +63,7 @@ export async function buildSvgGroup(a: SvgAction, env: BuildEnv): Promise<Elemen
   box ??= { x: 0, y: 0, w: 1000, h: Math.min(700, (board.h * 1000) / board.w) };
   const id = a.id ?? s.id;
   return {
-    target, bbox: box,
+    target, bbox: box, el: g,
     draw: async (signal, k) => {
       env.registry.define({ ...(id ? { id } : {}), kind: 'svg', target, bbox: box!, boxes: [box!], anchor: { x: box!.x + box!.w / 2, y: box!.y + box!.h / 2 }, group: g });
       // A group taller than the view: the board follows the pen, part by part (each with room for the
