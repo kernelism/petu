@@ -66,6 +66,10 @@ export class VoiceClock implements NarrationClock {
   /** At the playback rate: the scheduler's buffering estimates. */
   private pacedAtRate: PacedClock;
   private halted = false;
+  /** Rests asked for (scheduler, after a drawn beat): ms of silence before the piece starting at that word. */
+  private rests = new Map<number, number>();
+  /** The next piece placed starts at a re-time's explicit start: no rest before it. */
+  private retimed = false;
 
   constructor(
     private speak: Speak,
@@ -95,8 +99,10 @@ export class VoiceClock implements NarrationClock {
     return Math.max(this.end, this.clockNow(), this.resumeAt) + ms;
   }
 
-  enqueue(word: string): number {
+  enqueue(word: string, restMs = 0): number {
     const i = this.words.length;
+    // A rest goes between pieces: the words before it go out as their own piece.
+    if (restMs > 0) { if (this.open < i) this.close(); this.rests.set(i, restMs); }
     this.words.push(word);
     this.starts.push(null);
     const n = i + 1 - this.open;
@@ -122,6 +128,7 @@ export class VoiceClock implements NarrationClock {
     this.resumeWord = k < this.pieces.length && from > this.pieces[k].from ? from : null;
     this.resumeAt = start;
     this.end = Math.min(this.end, start);
+    this.retimed = true;
     this.place();
   }
 
@@ -205,13 +212,17 @@ export class VoiceClock implements NarrationClock {
       if (p.state === 'loading') return;
       const startWord = this.resumeWord ?? p.from;
       const skip = p.offsets[startWord - p.from];
-      const at = Math.max(this.clockNow(), this.resumeAt, this.end);
+      const restMs = this.retimed || startWord !== p.from ? 0 : this.rests.get(p.from) ?? 0;
+      const r = this.rate();
+      const rest = restMs > 0 ? restMs / (Number.isFinite(r) && r > 0 ? r : 1) : 0;
+      const at = Math.max(this.clockNow(), this.resumeAt, this.end + rest);
       if (p.pcm) p.handle = this.out.play(p.pcm, at, skip);
       for (let i = startWord; i < p.to; i++) this.starts[i] = at + p.offsets[i - p.from] - skip;
       p.placed = true;
       this.end = p.endAt = at + p.durMs - skip;
       this.resumeWord = null;
       this.resumeAt = -Infinity;
+      this.retimed = false;
       this.nextPiece++;
     }
   }
