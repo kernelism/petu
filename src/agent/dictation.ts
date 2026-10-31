@@ -147,6 +147,13 @@ export function joinWords(a: string, b: string): string {
   return /^[.,!?;:%)\]'’]/.test(b) ? `${a}${b}` : `${a} ${b}`;
 }
 
+let available: Promise<boolean> | null = null;
+/** Whether the server has a Speechmatics key (GET /api/stt → { on }); false on any failure. Asked once. */
+export function dictationAvailable(): Promise<boolean> {
+  available ??= fetch('/api/stt').then((r) => (r.ok ? r.json() : null)).then((b) => b?.on === true).catch(() => false);
+  return available;
+}
+
 /** The browser: /api/stt for the key, getUserMedia + an AudioWorklet for the frames, a WebSocket. */
 export function browserDeps(): DictationDeps {
   return {

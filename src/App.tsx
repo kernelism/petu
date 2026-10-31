@@ -35,6 +35,7 @@ import { CanvasToolbar } from './ui/CanvasToolbar';
 import { BoardPen } from './ui/BoardPen';
 import { Caption, joinWords } from './ui/Caption';
 import { AskBar, type Transcript } from './ui/AskBar';
+import { dictationAvailable } from './agent/dictation';
 import { FollowPill } from './ui/FollowPill';
 import { OverviewPill } from './ui/OverviewPill';
 import { SessionDrawer, type SessionRow } from './ui/SessionDrawer';
@@ -416,6 +417,9 @@ export default function App() {
   /** Words spoken so far (the current part's progress). */
   const [spokenN, setSpokenN] = useState(0);
   const { speed } = useSettings();
+  // The ask bar's mic shows only when the server has a Speechmatics key (GET /api/stt).
+  const [dictationOn, setDictationOn] = useState(false);
+  useEffect(() => { let live = true; void dictationAvailable().then((on) => { if (live) setDictationOn(on); }); return () => { live = false; }; }, []);
   /** The aside (one level): a question asked mid-answer, with its own session and ink lane; the answer waits paused. */
   const [aside, setAside] = useState<Aside | null>(null);
   const asideRef = useRef<Aside | null>(null);
@@ -1645,6 +1649,7 @@ export default function App() {
           transcript={captionVisible ? null : transcript}
           blocked={DEMO_PATH ? undefined : agent.blocked}
           onIntent={onIntent}
+          dictation={dictationOn}
         />
       </div>
       <div className="sr-only" role="status" aria-live="polite">{liveText}</div>

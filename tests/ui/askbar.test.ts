@@ -47,6 +47,11 @@ function mount(over: Partial<Props> = {}) {
 }
 
 describe('AskBar dictation', () => {
+  it('no mic when dictation is not set up on the server (no SPEECHMATICS_API_KEY)', () => {
+    const b = mount({ dictation: false });
+    expect(b.mic()).toBeNull();
+    expect(dict.start).not.toHaveBeenCalled();
+  });
   it('fills the field as the student speaks and sends at the pause', () => {
     const b = mount();
     b.clickMic();

@@ -14,7 +14,7 @@ export type About = { label: string; page?: number };
 /** Typing this many characters counts as intent to ask (prewarm). */
 const INTENT_CHARS = 3;
 
-export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', showStop = busy, about, onClearAbout, onTyping, onResume, focusSeq, suggestions = [], restore, transcript, blocked, onIntent }: {
+export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', showStop = busy, about, onClearAbout, onTyping, onResume, focusSeq, suggestions = [], restore, transcript, blocked, onIntent, dictation = true }: {
   onAsk(q: string): void; onStop(): void; busy: boolean;
   /** What the bar means now (src/ui/barMode.ts): its placeholder says which. */
   mode?: BarMode;
@@ -39,6 +39,8 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   blocked?: string;
   /** The student is about to ask: the bar was focused, or the 3rd character was typed. */
   onIntent?(): void;
+  /** The mic shows (dictation is set up on the server: GET /api/stt). */
+  dictation?: boolean;
 }) {
   const [text, setText] = useState('');
   const [focused, setFocused] = useState(false);
@@ -205,7 +207,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
           {showTranscript ? 'Hide transcript' : 'Transcript'}
         </button>
       )}
-      {!blocked && (
+      {!blocked && dictation && (
         <button
           type="button"
           className={`askbar-mic${listening ? ' is-listening' : ''}`}

@@ -480,10 +480,19 @@ describe('/api/stt', () => {
     await api.handle(fakeReq(method, '/api/stt', method === 'POST' ? '{}' : ''), res, () => {});
     return { status: res.statusCode, body: res.body() };
   };
-  it('405 for anything but POST; 503 with the setup line without a key (Speechmatics is not called)', async () => {
+  it('GET says whether dictation is set up, and nothing else (never the key)', async () => {
+    const f = vi.fn();
+    const off = await post(createApi({ env: env(), root, fetch: f as unknown as typeof fetch }), 'GET');
+    expect(off).toEqual({ status: 200, body: JSON.stringify({ on: false }) });
+    const on = await post(createApi({ env: env({ SPEECHMATICS_API_KEY: SM }), root, fetch: f as unknown as typeof fetch }), 'GET');
+    expect(JSON.parse(on.body)).toEqual({ on: true });
+    expect(on.body).not.toContain(SM);
+    expect(f).not.toHaveBeenCalled();
+  });
+  it('405 for anything but GET or POST; 503 with the setup line without a key (Speechmatics is not called)', async () => {
     const f = vi.fn();
     const api = createApi({ env: env(), root, fetch: f as unknown as typeof fetch });
-    expect((await post(api, 'GET')).status).toBe(405);
+    expect((await post(api, 'PUT')).status).toBe(405);
     const r = await post(api);
     expect(r.status).toBe(503);
     expect(JSON.parse(r.body).error).toMatch(/SPEECHMATICS_API_KEY/);

@@ -16,6 +16,7 @@
 //   POST /api/report           { report, png? } → saved under .petu/reports/ (server/report.ts)
 //   POST /api/voice            { text, voice?, speed? } → raw PCM 24 kHz s16le mono, streamed (server/voice.ts);
 //                              402 cap, 503 no key; { warm: true } → 204 once the voice session is open
+//   GET  /api/stt              → { on }: whether SPEECHMATICS_API_KEY is set (the ask bar hides its mic when not)
 //   POST /api/stt              {} → { jwt, url }: a 60 s Speechmatics realtime key for the mic (server/stt.ts);
 //                              503 without SPEECHMATICS_API_KEY, 502 when Speechmatics refuses
 //   GET  /api/dev-pdf/<n>.pdf  <n>.pdf from the first PETU_PDF_DIRS directory that has it
@@ -119,7 +120,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
       if (path === '/api/stt') return await routeStt(req, res);
       if (path.startsWith('/api/dev-pdf/')) return routePdf(req, res, path.slice('/api/dev-pdf/'.length));
     } catch (e) {
-      const msg = [env.key, env.anthropicKey].filter(Boolean).reduce((m, k) => m.split(k).join('***'), String(e));
+      const msg = [env.key, env.anthropicKey, env.speechmaticsKey].filter(Boolean).reduce((m, k) => m.split(k).join('***'), String(e));
       console.error(`petu: ${path} failed: ${msg}`.slice(0, 300));
       if (!res.headersSent && !res.writableEnded) return json(res, 500, { error: 'internal error' });
       if (!res.writableEnded) res.end();
@@ -165,7 +166,9 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   }
 
   async function routeStt(req: IncomingMessage, res: ServerResponse) {
-    if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
+    // GET: whether dictation is set up (the ask bar shows its mic only then). A boolean, never the key.
+    if (req.method === 'GET') return json(res, 200, { on: !!env.speechmaticsKey });
+    if (req.method !== 'POST') return json(res, 405, { error: 'GET or POST only' });
     if (!env.speechmaticsKey) return json(res, 503, { error: 'Add SPEECHMATICS_API_KEY to .env and restart npm run dev.' });
     try { return json(res, 200, await mintSttToken(env.speechmaticsKey, o.fetch ?? fetch)); } catch (e) {
       console.error(`petu: /api/stt: ${String(e).split(env.speechmaticsKey).join('***')}`.slice(0, 300));
