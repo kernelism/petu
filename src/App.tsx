@@ -10,7 +10,7 @@ import { Director, type ActionTiming, type Journey } from './playback/director';
 import { AnswerSession, type ParsedScript, type SessionState } from './playback/session';
 import { deriveParts, nextSentence, partAt, partProgress, partText, partTitle, replayTarget, returnTarget, type Part } from './playback/parts';
 import { SectionLabels } from './pdf/sections';
-import { RouteChip, type Route } from './ui/RouteChip';
+import { RouteChip, upcomingPage, type Route } from './ui/RouteChip';
 import type { PartsView } from './ui/PartsBar';
 import { barMode, closingQuestion } from './ui/barMode';
 import { answerHead, asideHead, clockOf, trailTitle, type TrailHead } from './ui/trail';
@@ -466,6 +466,8 @@ export default function App() {
   const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
   const openShortcuts = useCallback(() => setShortcutsOpen(true), []);
   const labelsRef = useRef<SectionLabels | null>(null);
+  /** The scout's pages in teaching order (this answer's plan): where a pause says the answer is heading. */
+  const scoutPagesRef = useRef<number[]>([]);
   const [, setLabelTick] = useState(0);
   const journeyRef = useRef<(j: Journey) => void>(() => {});
   const [askT0, setAskT0] = useState(0);
@@ -780,6 +782,7 @@ export default function App() {
     originRef.current = pageRef.current;
     window.clearTimeout(routeTimer.current);
     setRoute(null);
+    scoutPagesRef.current = [];
     setAskedOn(pageRef.current);
     setReached(0);
     setParts([]);
@@ -872,6 +875,7 @@ export default function App() {
         if (DEBUG) setDebug((d) => ({ ...d, meta: e }));
       },
       onScout: (e) => {
+        scoutPagesRef.current = e.pages;
         // The length budget by the plan's scope (src/agent/pacing.ts): the gate closes the answer at a beat boundary past it.
         if (gate && !BUDGET_OFF) gate.setBudget(budgetOf(e.plan, e.opener));
         if (answerRef.current.question === q) answerRef.current.plan = e.plan ?? ''; if (DEBUG) setDebug((d) => ({ ...d, scout: e })); },
@@ -1103,6 +1107,19 @@ export default function App() {
     window.clearTimeout(routeTimer.current);
     routeTimer.current = window.setTimeout(() => setRoute(null), ROUTE_MS);
   };
+
+  // The one wait cue (captionWindow PAUSE_CUE_MS): the answer's next page in its plan, previewed quietly
+  // in the route row ("Next p52 · Gaussian filter"); on a plan that stays on this page, nothing at all.
+  // A journey's own route replaces it; the next word takes it away.
+  const waitCue = !aside && pausing && !userPaused;
+  useEffect(() => {
+    if (!waitCue) { setRoute((r) => (r?.upcoming ? null : r)); return; }
+    const next = upcomingPage(scoutPagesRef.current, page);
+    if (next == null) return;
+    const labels = labelsRef.current;
+    setRoute((r) => (r && !r.upcoming ? r : { from: page, to: next, label: labels?.get(next), back: false, upcoming: true }));
+    if (labels) void labels.load(next).then((label) => setRoute((r) => (r?.upcoming && r.to === next && label ? { ...r, label } : r)));
+  }, [waitCue, page]);
 
   const backTo = askedOn == null ? null : returnTarget(askedOn, page, reached);
   const onBack = useCallback(() => {
@@ -1718,7 +1735,6 @@ export default function App() {
           question={aside ? aside.question : question}
           waiting={aside ? aside.state === 'thinking' : waiting}
           hint={aside?.state === 'error' ? "That couldn't be answered. Press Return to go back to the answer." : undefined}
-          pausing={!aside && pausing && !userPaused}
           parts={partsView}
           error={answerError ? { message: answerError.message, onRetry: answerError.retry ? onRetry : undefined } : undefined}
           check={pinCheck ? check ?? undefined : undefined}

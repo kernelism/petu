@@ -84,11 +84,21 @@ describe('caption window', () => {
 });
 
 describe('the one wait cue', () => {
-  it('shows only after a real pause: 1.5 s past the last queued word, never during a sentence gap', () => {
-    expect(PAUSE_CUE_MS).toBe(1500);
-    // Words queued until t=4000, now t=1000: the cue may show at 4000 + 1500.
-    expect(1000 + pauseCueIn(4000, 1000)).toBe(5500);
-    // Everything already spoken: 1.5 s from now.
-    expect(pauseCueIn(900, 1000)).toBe(1500);
+  it('shows only after a real pause: 1 s past the last queued word, never during a sentence gap', () => {
+    expect(PAUSE_CUE_MS).toBe(1000);
+    // Words queued until t=4000, now t=1000: the cue may show at 4000 + 1000.
+    expect(1000 + pauseCueIn(4000, 1000)).toBe(5000);
+    // Everything already spoken: 1 s from now.
+    expect(pauseCueIn(900, 1000)).toBe(1000);
+  });
+});
+
+describe('the wait cue says where the answer is heading', () => {
+  it('the plan\'s next page after the one in view, its first page off the plan, nothing when it stays here', async () => {
+    const { upcomingPage } = await import('../../src/ui/RouteChip');
+    expect(upcomingPage([1, 52, 55], 1)).toBe(52);
+    expect(upcomingPage([52, 55], 1)).toBe(52);
+    expect(upcomingPage([52], 52)).toBeNull();
+    expect(upcomingPage([], 3)).toBeNull();
   });
 });

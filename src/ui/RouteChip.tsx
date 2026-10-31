@@ -14,7 +14,19 @@ import './ui.css';
  * The row holds one way back at a time. While the student has taken over the view mid-answer
  * (FollowPill), it is "Back to answer"; otherwise "Back to pN".
  */
-export type Route = { from: number; to: number; label?: string; back: boolean };
+export type Route = { from: number; to: number; label?: string; back: boolean;
+  /** Not travelling yet: the answer paused and this is the next page of its plan ("Next p52"), shown quietly. */
+  upcoming?: boolean };
+
+/**
+ * The page a paused answer is heading to: the plan's page after the one in view, or its first page when
+ * the view is not on the plan; null when that is the page in view (nothing honest to preview).
+ */
+export function upcomingPage(plan: readonly number[], current: number): number | null {
+  const i = plan.indexOf(current);
+  const next = i >= 0 ? plan[i + 1] : plan[0];
+  return next != null && next !== current ? next : null;
+}
 
 type Props = {
   route: Route | null;
@@ -42,13 +54,17 @@ export function RouteChip({ route, backTo, onBack, x }: Props) {
     <>
       <div ref={row} className={`route${visible ? ' is-visible' : ''}`} style={x != null ? { left: x } : undefined} aria-hidden={!visible}>
         {route && (
-          <span className="route-trip" key={`${route.from}-${route.to}`} role="status">
-            <span className="route-pages">
-              p{route.from}
-              <ArrowRight className="route-arrow" size={12} strokeWidth={2} aria-hidden="true" />
-              <span className="sr-only">to</span>
-              p{route.to}
-            </span>
+          <span className={`route-trip${route.upcoming ? ' is-upcoming' : ''}`} key={`${route.from}-${route.to}${route.upcoming ? '-next' : ''}`} role="status">
+            {route.upcoming ? (
+              <span className="route-pages">Next p{route.to}</span>
+            ) : (
+              <span className="route-pages">
+                p{route.from}
+                <ArrowRight className="route-arrow" size={12} strokeWidth={2} aria-hidden="true" />
+                <span className="sr-only">to</span>
+                p{route.to}
+              </span>
+            )}
             {(route.back || route.label) && <span className="route-label">{route.back ? 'where we started' : route.label}</span>}
           </span>
         )}
