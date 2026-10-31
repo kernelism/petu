@@ -18,7 +18,8 @@ import { aboutContext, asideContext, bboxOf, isLoop, pointedLabel, type Pointed 
 import { playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
 import { PacedClock, type NarrationClock } from './playback/clock';
 import { VoiceClock, fetchVoice, warmVoice, webAudioOut } from './playback/voiceClock';
-import { BASE_WPM, getSettings, setSettings, SPEEDS, stepSpeed, useSettings } from './settings/settings';
+import { SwitchClock } from './playback/switchClock';
+import { BASE_WPM, getSettings, setSettings, SPEEDS, stepSpeed, useSettings, type VoiceSetting } from './settings/settings';
 import { DEMOS, DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
 import type { DevStep } from './demo/learner';
@@ -108,13 +109,14 @@ let audioCtx: AudioContext | null = null;
  * With a voice on, the voice's audio sets the timeline (src/playback/voiceClock.ts). Called from the
  * question's Enter (a user gesture), so the audio context may start.
  */
-const narrationClock = (): NarrationClock => {
-  const s = getSettings();
-  if (s.voice === 'off' || typeof AudioContext === 'undefined') return new PacedClock(() => BASE_WPM, undefined, undefined, () => getSettings().speed);
+const narrationClock = (): SwitchClock => new SwitchClock(clockFor(getSettings().voice));
+/** The clock for one voice setting (a SwitchClock hands the timeline over when the student changes it mid-answer). */
+const clockFor = (voice: VoiceSetting) => (): NarrationClock => {
+  if (voice === 'off' || typeof AudioContext === 'undefined') return new PacedClock(() => BASE_WPM, undefined, undefined, () => getSettings().speed);
   audioCtx ??= new AudioContext();
   void audioCtx.resume().catch(() => {});
   warmVoice();
-  return new VoiceClock(fetchVoice(s.voice), webAudioOut(audioCtx), () => BASE_WPM, () => getSettings().speed);
+  return new VoiceClock(fetchVoice(voice), webAudioOut(audioCtx), () => BASE_WPM, () => getSettings().speed);
 };
 /** ← within this many words of a part's start goes to the part before; later, to its own start. */
 const PART_RESTART_WORDS = 8;
@@ -455,6 +457,8 @@ export default function App() {
   /** The session trail: every answer this session, with its recorded script (replayed with no new call). */
   const trailRef = useRef<TrailEntry[]>([]);
   const trailN = useRef(0);
+  /** The clocks of the playing answer and aside, with their sessions (null once over): a voice change reaches them. */
+  const clocks = useRef(new Map<SwitchClock, () => AnswerSession | null>());
   /** The shortcuts card (?). */
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const shortcutsOpenRef = useRef(false);
@@ -890,6 +894,7 @@ export default function App() {
     };
 
     const clock = narrationClock();
+    clocks.current.set(clock, () => (sessionRef.current === session ? session : null));
     /** The script stream has not ended: a pause in it is a gap the student can see. */
     let streamOpen = true;
     let firstChunk = true;
@@ -1174,6 +1179,21 @@ export default function App() {
     sessionRef.current?.respeed();
     asideSession.current?.respeed();
   }, []);
+  /**
+   * A new voice, applied to the playing answer and aside at once: Off stops the audio now and the reading
+   * pace goes on from the current word; a voice takes over from the next sentence (SwitchClock).
+   */
+  const changeVoice = useCallback((v: VoiceSetting) => {
+    if (v === getSettings().voice) return;
+    setSettings({ voice: v });
+    for (const [c, live] of clocks.current) {
+      const s = live();
+      if (!s) { clocks.current.delete(c); continue; }
+      c.switchTo(clockFor(v), s.position(), v === 'off' ? 'now' : 'sentence');
+      // 'now' re-times the next word through the scheduler's hand-off; a sentence switch needs none.
+      if (v === 'off') s.respeed();
+    }
+  }, []);
   const cycleSpeed = useCallback(() => {
     const i = SPEEDS.findIndex((v) => v === getSettings().speed);
     changeSpeed(SPEEDS[(i + 1) % SPEEDS.length]);
@@ -1244,8 +1264,10 @@ export default function App() {
         if (DEV_SCRIPT && docRef.current) asideGrounding.current = await devGrounding(docRef.current, script);
         yield* streamDemo(signal, script);
       };
+    const asideClock = narrationClock();
+    clocks.current.set(asideClock, () => (asideSession.current === sess ? sess : null));
     const sess: AnswerSession = new AnswerSession({
-      clock: narrationClock(),
+      clock: asideClock,
       onParsed: (a) => dir.prefetch(a),
       onAction: (a, at, live) => { if (asideSession.current === sess) dir.run(a, at, live); },
       idle: () => dir.finale(),
@@ -1680,7 +1702,7 @@ export default function App() {
       <OverviewPill />
       <SessionDrawer open={sessionOpen} rows={sessionRows} total={sessionTotal} onPick={pickSession} onClose={() => setSessionOpen(false)} />
       <RouteChip route={route} backTo={backTo} onBack={onBack} x={desk?.lane && desk.page ? desk.page.x + desk.page.w / 2 : dock.x} />
-      <SettingsPopover open={settingsOpen} onClose={closeSettings} onShowShortcuts={openShortcuts} bestAvailable={!!agent.spend?.best} onSpeed={changeSpeed} />
+      <SettingsPopover open={settingsOpen} onClose={closeSettings} onShowShortcuts={openShortcuts} bestAvailable={!!agent.spend?.best} onSpeed={changeSpeed} onVoice={changeVoice} />
       <CanvasToolbar showHint={answered} />
       {inkState.canvasOn && inkState.tool === 'pen' && desk?.board && !desk.stacked && (
         <BoardPen rect={desk.board} color={inkState.color} keep={!!pointed && pointed.kind === 'circle' && pointed.page == null} onLoop={onBoardLoop} onWheel={onBoardWheel} />
