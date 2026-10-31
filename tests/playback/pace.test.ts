@@ -2,15 +2,35 @@
 // timing math (src/playback/pace.ts), the scheduler's rest after a drawn beat and the beat's word
 // times on both clocks (paced and voiced).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { beatWindow, paceParts, splitPart, PART_MIN_MS, PART_MAX_MS, PART_GAP_MS, REST_MS, SPAN_MIN_MS, type BeatWord } from '../../src/playback/pace';
+import { beatWindow, partWords, paceParts, splitPart, PART_MIN_MS, PART_MAX_MS, PART_GAP_MS, REST_MS, SPAN_MIN_MS, type BeatWord } from '../../src/playback/pace';
 import { PacedClock } from '../../src/playback/clock';
-import { Scheduler } from '../../src/playback/scheduler';
+import { Scheduler, namesWord } from '../../src/playback/scheduler';
 import { VoiceClock, SAMPLE_RATE, type AudioOut, type Speak } from '../../src/playback/voiceClock';
 import type { Action, ScriptEvent } from '../../src/script/types';
 
 /** Words `ms` apart, starting now. */
 const beat = (text: string, ms = 300): BeatWord[] => text.split(' ').map((t, i) => ({ text: t, inMs: i * ms, endMs: (i + 1) * ms }));
 const part = (cat = 1, words: string[] = [], naturalMs = 300) => ({ cat, words, naturalMs });
+
+describe('pace: the words a part answers to', () => {
+  it('short ids count as whole words; the group\'s own words are left to the group', () => {
+    expect(partWords('masses-in', 'masses')).toEqual(['in']);
+    expect(partWords('masses-out', 'masses')).toEqual(['out']);
+    expect(partWords('arrowUp')).toEqual(['arrow', 'up']);
+    expect(partWords('label-cap')).toEqual(['cap']);
+    expect(partWords('masses', 'masses')).toEqual(['masses']); // a part named like its group keeps the name
+    expect(namesWord('in,', ['in'])).toBe(true);
+    expect(namesWord('Up', ['up'])).toBe(true);
+    expect(namesWord('ins', ['in'])).toBe(false);
+    expect(namesWord('inside', ['in'])).toBe(false);
+    expect(namesWord('upper', ['up'])).toBe(false);
+  });
+  it('a part named "in" draws on the word "in", not on the group\'s name', () => {
+    const w = beat('two masses held out wide then pull them in close to the axis and watch');
+    const t = paceParts([part(1, partWords('masses-out', 'masses')), part(1, partWords('masses-in', 'masses'))], w)!;
+    expect(t.map((x) => [x.i, x.at])).toEqual([[0, 3 * 300], [1, 8 * 300]]);
+  });
+});
 
 describe('pace: the window a group draws in', () => {
   it('is its beat, first word to the last word\'s end', () => {

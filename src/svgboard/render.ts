@@ -10,7 +10,7 @@
 import { penDown, penLift, penTo } from '../ink/agent/penCursor';
 import { prefersReducedMotion, strokeDurationMs, ease } from '../ink/agent/animate';
 import { sanitizeGroup, type Sanitized } from './sanitize';
-import { beatEnd, paceParts, splitPart, REPLAN_MS, type BeatWord, type Slot } from '../playback/pace';
+import { beatEnd, partWords, paceParts, splitPart, REPLAN_MS, type BeatWord, type Slot } from '../playback/pace';
 import { INK, type Palette } from './style';
 import { isBound, newScope, resolveData, type DataScope } from './data';
 import { prepareText } from './polish';
@@ -223,10 +223,10 @@ function categoryOf(el: Element): number {
   return 1;
 }
 
-/** Words a part answers to in the narration: its id's words, else its text's first words. */
-function wordsOf(el: Element, ns: string): string[] {
+/** Words a part answers to in the narration: its id's words (partWords), else its text's first words. */
+function wordsOf(el: Element, ns: string, groupId?: string): string[] {
   const id = (el.getAttribute('data-name') ?? el.getAttribute('id') ?? '').replace(new RegExp(`^${ns.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-`), '');
-  const fromId = id.split(/[^A-Za-z0-9]+|(?<=[a-z])(?=[A-Z])/).map((w) => w.toLowerCase()).filter((w) => w.length >= 3 && !/^(g|grp|group|lbl|label|txt|text|line|path|\d+)$/.test(w));
+  const fromId = partWords(id, groupId);
   if (fromId.length) return fromId;
   const t = el.nodeName.toLowerCase() === 'text' || el.nodeName.toLowerCase() === 'g' ? (el.textContent ?? '') : '';
   return t.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4).slice(0, 2);
@@ -276,7 +276,7 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   for (const c of Array.from(g.children)) {
     const leaves = (isLeaf(c) ? [c] : Array.from(c.querySelectorAll(`${SHAPES},text`)).filter(isLeaf)) as SVGElement[];
     if (!leaves.length) continue;
-    units.push({ el: c, steps: leaves.map(stepOf), cat: categoryOf(c), words: wordsOf(c, b.ns), at: 0 });
+    units.push({ el: c, steps: leaves.map(stepOf), cat: categoryOf(c), words: wordsOf(c, b.ns, id), at: 0 });
   }
   const steps = units.flatMap((u) => u.steps);
   // Hide everything, then reveal in order.

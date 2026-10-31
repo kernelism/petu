@@ -365,5 +365,6 @@ export function actionLeadMs(a: Action): number {
 export function namesWord(w: string, anchor: readonly string[]): boolean {
   const x = w.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[’']s$/, '').replace(/[^a-z0-9]+/g, '');
   if (!x) return false;
-  return anchor.some((a) => x === a || x === `${a}s` || x === `${a}es` || (a.length >= 4 && x.startsWith(a) && x.length - a.length <= 3) || (x.length >= 4 && a.startsWith(x) && a.length - x.length <= 2));
+  // A two-letter name ("in", "up") only as the whole word.
+  return anchor.some((a) => a.length <= 2 ? x === a : x === a || x === `${a}s` || x === `${a}es` || (a.length >= 4 && x.startsWith(a) && x.length - a.length <= 3) || (x.length >= 4 && a.startsWith(x) && a.length - x.length <= 2));
 }

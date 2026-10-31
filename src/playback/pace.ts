@@ -55,6 +55,22 @@ export function beatWindow(words: readonly BeatWord[], slot?: Slot, start = word
   return { from: start + k * len, to: start + (k + 1) * len };
 }
 
+/** Id words that are structure, not names (a group, a label, a line…). */
+const NOT_NAMES = /^(g|grp|group|lbl|label|txt|text|line|path|\d+)$/;
+/**
+ * The words a part's id answers to in the narration: its id split at hyphens, underscores and
+ * camelCase, lowercased, without structure words and without the words its group's id already has
+ * (`masses-in` in group `masses` answers to "in", not to every "masses"). Two-letter words ("in",
+ * "up") count: namesWord matches them only as whole words.
+ */
+export function partWords(id: string, groupId?: string): string[] {
+  const split = (s: string) => s.split(/[^A-Za-z0-9]+|(?<=[a-z])(?=[A-Z])/).map((w) => w.toLowerCase()).filter((w) => w.length >= 2 && !NOT_NAMES.test(w));
+  const all = split(id);
+  const group = new Set(groupId ? split(groupId) : []);
+  const own = all.filter((w) => !group.has(w));
+  return own.length ? own : all.filter((w) => w.length >= 3);
+}
+
 /** A part to schedule: its pen category (lower draws first), the words that name it, its natural pen time. */
 export type PartIn = { cat: number; words: readonly string[]; naturalMs: number };
 /** When a part starts (ms from now) and how long it draws, by its index in the input. */
