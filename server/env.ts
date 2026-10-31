@@ -18,7 +18,7 @@ import { ANTHROPIC_NO_NONE, isAnthropicModel } from './anthropic';
 import { VARIANT_NAMES } from './prompt/variants/index';
 import { bestConfig } from './quality';
 
-/** The $60 hard stop (prior spike spend included; $40 until 2026-10-28). PETU_TOTAL_CAP_USD may only lower it. */
+/** The $80 hard stop (prior spike spend included; $40 until 2026-10-28, $60 until 2026-10-31). PETU_TOTAL_CAP_USD may only lower it. */
 export const MAX_TOTAL_USD = HARD_STOP_USD;
 /**
  * Per-phase budgets (plan §3; Lessons v3 "Spend" adds the lesson* phases inside the same hard

@@ -317,7 +317,7 @@ mobile layouts.
   never lose each other's entries): it reserves a request's worst case (all input at
   the 12h cache-write rate + full `max_output_tokens`) and refuses before sending if any cap would
   be crossed; recorded cost comes from `usage` at the prices pinned in `server/prices.ts`; an abort
-  or crash books an estimate. Caps: **$60 hard stop** (`PETU_TOTAL_CAP_USD` may
+  or crash books an estimate. Caps: **$80 hard stop** (`PETU_TOTAL_CAP_USD` may
   only lower it), per-phase budgets selected by `PETU_PHASE` (dev 1, bakeoff 6, iterate 7,
   validate 2, founder 21.99, lessondev 1.5, lessonbake 3, lessoniter 3.5, lessonval 2, bench 15; override one run with `PETU_CAP_<PHASE>=…`), and **$3/day** in the
   founder phase (`PETU_DAILY_CAP_USD`). Knobs go on the command line (`PETU_PHASE=iterate npm run
