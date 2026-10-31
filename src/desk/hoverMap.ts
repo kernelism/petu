@@ -200,7 +200,9 @@ export class LaneHover {
     if (el?.closest?.('.lane-item')) {
       const g = groups.find((x) => x.item.contains(el));
       if (!g || !el.closest('.desk-region')) return null;
-      const beat = g.beats.find((b) => b.el.isConnected && b.el.contains(el)) ?? this.beatUnder(g, el.closest('.desk-region')!, x, y);
+      // Geometry first, in every engine (beatUnder: WebKit's hit test can name a big shape of an earlier
+      // group for any point over it); the element under the pointer only when no box holds the point.
+      const beat = this.beatUnder(g, el.closest('.desk-region')!, x, y) ?? g.beats.find((b) => b.el.isConnected && b.el.contains(el)) ?? null;
       return beat ? { g, beat, marks: beat.marks } : null;
     }
     const sheet = this.h.sheet();
