@@ -1,6 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect x="3" y="3" width="26" height="26" rx="7" fill="#1D1D1F"/>
-  <rect x="9" y="8" width="11" height="15" rx="1.5" fill="#FFFFFF"/>
-  <path d="M15 21.5c2.6-1.2 5-3.6 7.2-7.4" fill="none" stroke="#B18AE0" stroke-width="2.2" stroke-linecap="round"/>
-  <circle cx="22.4" cy="13.6" r="1.6" fill="#B18AE0"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- petu mark: a disc split by a two-step staircase seam (seam 9 for 32px). -->
+  <defs>
+    <mask id="petu-mark-32-seam" maskUnits="userSpaceOnUse" x="-60" y="-60" width="220" height="220">
+      <rect x="-60" y="-60" width="220" height="220" fill="#fff"/>
+      <path d="M-150 77L36.5 77L36.5 50L63.5 50L63.5 23L250 23" fill="none" stroke="#000" stroke-width="9" stroke-linejoin="miter"/>
+    </mask>
+  </defs>
+  <circle cx="50" cy="50" r="46" fill="#111111" mask="url(#petu-mark-32-seam)"/>
 </svg>
