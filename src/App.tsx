@@ -1,5 +1,5 @@
 // src/App.tsx
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { overviewHub } from './pdf/overview';
 import './styles/tokens.css';
 import './app.css';
@@ -28,6 +28,10 @@ import type { DeskState } from './desk/types';
 import './desk/desk.css';
 import { StudentInkLayer } from './ink/student/StudentInkLayer';
 import { ink, PEN_COLORS, useInk } from './ink/student/store';
+import { freshMarks, markContext, markLabel, marks, useMarks } from './ink/student/marks';
+import { Marking } from './ink/student/marking';
+import { BoardInk } from './ink/student/BoardInk';
+import { aboutTitle, ASK_PAUSE_MS, boardTarget, EXPLAIN_THIS, figuresOf, GROUND_WAIT_MS, takeMarks, targetAlive } from './ink/student/ask';
 import { EmptyState } from './ui/EmptyState';
 import { TopBar } from './ui/TopBar';
 import { isShortcutsKey, ShortcutsOverlay } from './ui/ShortcutsOverlay';
@@ -36,7 +40,7 @@ import { SettingsPopover } from './ui/SettingsPopover';
 import { CanvasToolbar } from './ui/CanvasToolbar';
 import { BoardPen } from './ui/BoardPen';
 import { Caption, joinWords } from './ui/Caption';
-import { AskBar, type Transcript } from './ui/AskBar';
+import { AskBar, type About, type Transcript } from './ui/AskBar';
 import { heardSentences, sentenceAt, type LiveTranscript } from './ui/transcriptLive';
 import { dictationAvailable } from './agent/dictation';
 import { FollowPill } from './ui/FollowPill';
@@ -670,6 +674,8 @@ export default function App() {
       stopAll();
       resetAnswerUi();
       ink.reset();
+      marks.reset();
+      markingRef.current?.reset();
       viewerRef.current = null;
       setLoadError(undefined);
       setDoc(d);
@@ -762,12 +768,15 @@ export default function App() {
     heardRef.current = 0;
     /** The model's hidden check question (done.check), offered once the answer ends. */
     let offered: string | undefined = run.again?.offered;
-    const moment = { ...(point ? { about: aboutContext(point) } : {}), ...(run.check ? { check: run.check } : {}) };
+    // …and the marks drawn since the last question (src/ink/student/marks.ts): sent as text, then notes.
+    const taken = run.again ? null : takeMarks();
+    const aboutText = [point ? aboutContext(point) : '', taken?.context ?? ''].filter(Boolean).join('\n\n');
+    const moment = { ...(aboutText ? { about: aboutText } : {}), ...(run.check ? { check: run.check } : {}) };
     // The session trail: this answer's header goes above its first section on the board.
     // The header is always what the student typed: after a check question they may answer it or ask
     // something new, and only the model (which sees the open check question) can tell which.
     const kindCheck = run.again ? !!run.again.check : !!run.check;
-    const title = run.again?.title ?? trailTitle('answer', q, point ? pointedLabel(point) : null);
+    const title = run.again?.title ?? trailTitle('answer', q, aboutTitle([point ? pointedLabel(point) : '', ...(taken?.labels ?? [])].filter(Boolean)));
     // A replay is the same entry played again in place: its header and drawings leave the board and come
     // back as it replays (one entry on the trail and in the session list; the numbering never moves).
     const entry: TrailEntry = run.again ?? { num: String(++trailN.current), question: q, title, page: pageRef.current, script: '', head: null as unknown as TrailHead, ...(kindCheck ? { check: run.check } : {}) };
@@ -917,7 +926,7 @@ export default function App() {
       }
       : toAgent
         ? ag.source({
-          question: q, page, ink: () => ink.get().strokes, handlers, onGrounding: (g) => { groundingRef.current = g; },
+          question: q, page, ink: () => taken?.strokes ?? [], handlers, onGrounding: (g) => { groundingRef.current = g; },
           onGrounds: (gs) => { for (const g of gs) pageTexts.set(g.page, g.lines.map((l) => l.text).join('\n')); },
           ...(gate ? { released: () => gate!.releasedText() } : {}),
           moment,
@@ -1267,15 +1276,17 @@ export default function App() {
     asideGrounding.current = undefined;
     const point = pointedRef.current;
     setPointed(null);
+    const taken = takeMarks();
     const next: Aside = { question: q, words: [], state: 'thinking', paused: false };
     asideRef.current = next;
     setAside(next);
     const cur = answerRef.current;
     const said = joinWords(s.script().words.slice(0, s.position()));
     const board = director.registry.entries().map((e) => `${e.kind}${e.id ? ` #${e.id}` : ''}${e.target.region ? ` on ${e.target.region}` : e.target.page ? ` on p${e.target.page}` : ''}`);
-    const moment = { aside: asideContext({ question: cur.question, plan: cur.plan, said, board }), ...(point ? { about: aboutContext(point) } : {}) };
+    const aboutText = [point ? aboutContext(point) : '', taken.context].filter(Boolean).join('\n\n');
+    const moment = { aside: asideContext({ question: cur.question, plan: cur.plan, said, board }), ...(aboutText ? { about: aboutText } : {}) };
     const source: (signal: AbortSignal) => AsyncIterable<string> = cur.toAgent
-      ? agentRef.current.source({ question: q, page: pageRef.current, ink: () => ink.get().strokes, handlers: {}, onGrounding: (g) => { asideGrounding.current = g; }, moment })
+      ? agentRef.current.source({ question: q, page: pageRef.current, ink: () => taken.strokes, handlers: {}, onGrounding: (g) => { asideGrounding.current = g; }, moment })
       : async function* (signal) {
         const script = DEV_SCRIPT?.answers?.[q] ?? asideFallback(q);
         if (DEV_SCRIPT && docRef.current) asideGrounding.current = await devGrounding(docRef.current, script);
@@ -1423,7 +1434,8 @@ export default function App() {
   };
 
   // Point-to-ask: selecting text on a slide (or the board) attaches "about: …" to the bar.
-  const clearPointed = useCallback(() => setPointed(null), []);
+  /** A chip's ×: a selection is dropped; a mark stays on the page as a note and is not sent. */
+  const clearAbout = useCallback((key: string) => { if (key === 'sel') setPointed(null); else marks.drop(Number(key.slice(1))); }, []);
   useEffect(() => {
     if (!hasDoc) return;
     const onUp = () => window.setTimeout(() => {
@@ -1442,41 +1454,61 @@ export default function App() {
     document.addEventListener('keyup', onUp);
     return () => { document.removeEventListener('mouseup', onUp); document.removeEventListener('keyup', onUp); };
   }, [hasDoc]);
-  // …and circling something with the pen on a slide: the region, with the text inside it.
+  // The student's ink (spec "Student ink"): every stroke is kept, pinned to what it is on, and read as
+  // a gesture (circle, underline, arrow, "?", note) with its target; marks since the last question are
+  // the bar's chips. Page targets come from the page's grounding (the ids the model's listing uses).
   const inkState = useInk();
-  // …or circling part of the board: the drawn elements it covers, and the board text inside it.
-  const onBoardWheel = useCallback((e: WheelEvent) => deskRef.current?.wheel(e), []);
-  const onBoardLoop = useCallback((r: { x: number; y: number; w: number; h: number }) => {
-    const d = deskRef.current;
-    const inside = (b: { x: number; y: number; w: number; h: number } | null) => !!b && b.x + b.w / 2 >= r.x && b.x + b.w / 2 <= r.x + r.w && b.y + b.h / 2 >= r.y && b.y + b.h / 2 <= r.y + r.h;
-    const elements = director.registry.entries()
-      .filter((e) => e.target.region != null && inside(d?.onScreen(e.target.region, e.bbox) ?? null))
-      .map((e) => `${e.kind}${e.id ? ` #${e.id}` : ''}`);
-    const text = [...document.querySelectorAll<SVGTextElement>('[data-petu-board] .desk-region:not(.is-collapsed) text')]
-      .filter((t) => { const b = t.getBoundingClientRect(); return inside({ x: b.x, y: b.y, w: b.width, h: b.height }); })
-      .map((t) => t.textContent ?? '').join(' ');
-    setPointed({ kind: 'circle', board: true, elements: elements.slice(0, 12), text });
-  }, [director]);
+  const markList = useMarks();
+  // The pen over the board covers it: its wheel goes where it would have. In the lane the board is part
+  // of the sheet, so the sheet scrolls (and a pinch reaches the viewer's overview zoom).
+  const onBoardWheel = useCallback((e: WheelEvent) => {
+    const sc = deskRef.current?.state().lane ? document.querySelector<HTMLElement>('.pv-scroll') : null;
+    if (!sc) { deskRef.current?.wheel(e); return; }
+    e.preventDefault();
+    if (e.ctrlKey || e.metaKey) sc.dispatchEvent(new WheelEvent('wheel', e));
+    else sc.scrollBy({ top: e.deltaY, left: e.deltaX });
+  }, []);
+  const [focusSeq, setFocusSeq] = useState(0);
+  const askPause = useRef(0);
+  const markingRef = useRef<Marking | null>(null);
+  if (!markingRef.current) {
+    markingRef.current = new Marking({
+      page: async (p) => {
+        const v = viewerRef.current;
+        const spaceH = v?.spaceHeight(p) || 1000;
+        const g = await Promise.race([
+          agentRef.current.grounds(p).then((gs) => gs.find((x) => x.page === p)).catch(() => undefined),
+          new Promise<undefined>((ok) => window.setTimeout(ok, GROUND_WAIT_MS)),
+        ]);
+        if (g) return { lines: g.lines.map((l) => ({ id: l.id, text: l.text, rect: l.rect })), figures: figuresOf(g.marks), spaceH };
+        const runs = v ? await v.textRuns(p).catch(() => []) : [];
+        return { lines: runs.map((r) => ({ text: r.text, rect: r.rect })), figures: [], spaceH };
+      },
+      board: (on, pts, kind, ends) => boardTarget(on, pts, kind, ends, (id) => {
+        const reg = director.registry.entries().filter((e) => e.target.region === id);
+        return reg.map((e) => ({ name: `${e.kind}${e.id ? ` #${e.id}` : ''}`, rect: e.bbox }));
+      }),
+      // A lone "?" and a pause: the bar takes focus with its chip (Enter = "explain this").
+      onMark: (id) => {
+        window.clearTimeout(askPause.current);
+        const m = marks.all().find((x) => x.id === id);
+        if (m?.kind !== 'confused') return;
+        const n = ink.get().strokes.length;
+        askPause.current = window.setTimeout(() => { if (ink.get().strokes.length === n) setFocusSeq((k) => k + 1); }, ASK_PAUSE_MS);
+      },
+    });
+  }
   const lastStroke = useRef(0);
   useEffect(() => {
-    const st = inkState.strokes[inkState.strokes.length - 1];
-    if (!st || st.id <= lastStroke.current) return;
-    lastStroke.current = st.id;
-    const v = viewerRef.current;
-    if (st.tool !== 'pen' || !v) return;
-    const H = v.spaceHeight(st.page) || 1000;
-    const pts = st.points.map(([x, y]) => ({ x, y: (y * 1000) / H }));
-    if (!isLoop(pts)) return;
-    const bbox = bboxOf(pts);
-    const inside = (r: { x: number; y: number; w: number; h: number }) => {
-      const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-      return cx >= bbox.x && cx <= bbox.x + bbox.w && cy >= bbox.y && cy <= bbox.y + bbox.h;
-    };
-    void v.textRuns(st.page).catch(() => []).then((runs) => {
-      const text = runs.filter((r) => inside(r.rect)).map((r) => r.text).join(' ');
-      setPointed({ kind: 'circle', page: st.page, bbox, text });
-    });
+    for (const st of inkState.strokes) {
+      if (st.id <= lastStroke.current) continue;
+      lastStroke.current = st.id;
+      window.clearTimeout(askPause.current);
+      void markingRef.current!.stroke(st);
+    }
   }, [inkState.strokes]);
+  // Re-read whenever the board changes too (a section that left takes its marks' chips with it).
+  const chips = useMemo(() => freshMarks(markList, new Set(inkState.strokes.map((x) => x.id)), inkState.round, targetAlive), [markList, inkState.strokes, inkState.round, desk]);
 
   const onRetry = useCallback(() => {
     setRestore((r) => ({ text: '', seq: (r?.seq ?? 0) + 1 }));
@@ -1674,7 +1706,10 @@ export default function App() {
   const live: LiveTranscript | null = liveSentences?.length && question
     ? { question, sentences: liveSentences, current: sentenceAt(liveSentences, spokenN), onSeek: seekWord }
     : null;
-  const about = pointed ? { label: pointedLabel(pointed), ...(pointed.page != null ? { page: pointed.page } : {}) } : null;
+  const about: About[] = [
+    ...(pointed ? [{ key: 'sel', label: pointedLabel(pointed), ...(pointed.page != null ? { page: pointed.page } : {}) }] : []),
+    ...chips.map((m) => { const c = markContext(m); return { key: `m${m.id}`, label: markLabel(m), title: c[0].toUpperCase() + c.slice(1) }; }),
+  ];
 
   if (!doc) return <EmptyState onFile={openFile} onSample={openSample} error={loadError} />;
 
@@ -1720,9 +1755,10 @@ export default function App() {
       <RouteChip route={route} backTo={backTo} onBack={onBack} x={desk?.lane && desk.page ? desk.page.x + desk.page.w / 2 : dock.x} />
       <SettingsPopover open={settingsOpen} onClose={closeSettings} onShowShortcuts={openShortcuts} bestAvailable={!!agent.spend?.best} onSpeed={changeSpeed} onVoice={changeVoice} />
       <CanvasToolbar showHint={answered} />
-      {inkState.canvasOn && inkState.tool === 'pen' && desk?.board && !desk.stacked && (
-        <BoardPen rect={desk.board} color={inkState.color} keep={!!pointed && pointed.kind === 'circle' && pointed.page == null} onLoop={onBoardLoop} onWheel={onBoardWheel} />
+      {inkState.canvasOn && desk?.board && !desk.stacked && (
+        <BoardPen rect={desk.board} color={inkState.color} tool={inkState.tool} onWheel={onBoardWheel} />
       )}
+      <BoardInk />
       <ShortcutsOverlay open={shortcutsOpen} onClose={closeShortcuts} x={dock.x} bottom={dockBottom} dev={import.meta.env.DEV} voice={dictationOn} />
       {/* left/width are set directly rather than through custom properties, so the dock's glide never
           depends on var() invalidation (suspected in a Safari report of the dock staying left; not
@@ -1746,12 +1782,13 @@ export default function App() {
           mode={mode}
           showStop={busy && !partsView}
           about={about}
-          onClearAbout={clearPointed}
+          onClearAbout={clearAbout}
+          emptyAsk={chips.some((m) => m.kind === 'confused') ? EXPLAIN_THIS : undefined}
           onTyping={onTyping}
           onResume={closeAside}
           onDismissCheck={dismissCheck}
           onTestYourself={offerCheck ? openCheck : undefined}
-          focusSeq={barFocus}
+          focusSeq={barFocus + focusSeq}
           suggestions={(isSample || DEV_SCRIPT) && !captionVisible && !answered ? SUGGESTIONS : undefined}
           restore={restore}
           transcript={transcript}

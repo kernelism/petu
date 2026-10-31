@@ -10,8 +10,14 @@ const isTypingTarget = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 
 export type { Transcript };
-/** Point-to-ask: what the next question is about (a selection or a circled region), shown as a chip. */
-export type About = { label: string; page?: number };
+/**
+ * Point-to-ask: what the next question is about, one chip each: a selection ("about: … · p.N"), or a
+ * mark the student drew since the last question ("your underline · p.88"; `title`: what it is on).
+ */
+export type About = { key: string; label: string; page?: number; title?: string };
+
+/** The placeholder while Enter on the empty bar asks `emptyAsk`. */
+export const EMPTY_ASK_HINT = 'Enter: explain this, or ask…';
 
 /** Typing this many characters counts as intent to ask (prewarm). */
 const INTENT_CHARS = 3;
@@ -25,15 +31,17 @@ export function isSpeakKey(e: Pick<globalThis.KeyboardEvent, 'key' | 'metaKey' |
   return (e.key === 'v' || e.key === 'V') && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target) && !document.querySelector('.popover');
 }
 
-export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', showStop = busy, about, onClearAbout, onTyping, onResume, onDismissCheck, onTestYourself, focusSeq, suggestions = [], restore, transcript, live, blocked, onIntent, dictation = true }: {
+export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', showStop = busy, about = [], onClearAbout, emptyAsk, onTyping, onResume, onDismissCheck, onTestYourself, focusSeq, suggestions = [], restore, transcript, live, blocked, onIntent, dictation = true }: {
   onAsk(q: string): void; onStop(): void; busy: boolean;
   /** What the bar means now (src/ui/barMode.ts): its placeholder says which. */
   mode?: BarMode;
   /** The stop button sits in the bar only until the parts row shows (then it is there). */
   showStop?: boolean;
-  /** Point-to-ask: the chip "about: … · p.N" before the field; × removes it. */
-  about?: About | null;
-  onClearAbout?(): void;
+  /** Point-to-ask: the chips ("about: … · p.N") before the field; × removes one. */
+  about?: About[];
+  onClearAbout?(key: string): void;
+  /** Enter on an empty bar asks this (a "?" drawn: "Explain this."); the placeholder says so. */
+  emptyAsk?: string;
   /** The field went from empty to typed (true) or back to empty (false). */
   onTyping?(typing: boolean): void;
   /** Enter on an empty bar while an aside is open: back to the answer. */
@@ -234,7 +242,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   }, [text, listening, tall]);
 
   const submit = () => {
-    const q = text.trim();
+    const q = text.trim() || (emptyAsk && !listening ? emptyAsk : '');
     if (!q && mode === 'aside') { onResume?.(); release(); return; }
     if (!q || blocked) return;
     dropMic();
@@ -266,10 +274,19 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   const shownLive = busy && mode !== 'aside' ? live ?? null : null;
   const canTranscript = !hasText && (shownLive ? shownLive.sentences.length > 0 : !!transcript && !busy);
 
+  const chipEls = about.map((a, i) => (
+    <span key={a.key} className="askbar-about" title={a.title ?? `About: ${a.label}${a.page ? ` (page ${a.page})` : ''}`}>
+      <span className="askbar-about-text">{i ? '' : 'about: '}{a.label}{a.page ? ` · p.${a.page}` : ''}</span>
+      <button type="button" className="askbar-about-x" onClick={() => { onClearAbout?.(a.key); inputRef.current?.focus(); }} aria-label={`Remove ${a.label} from this question`}>
+        <X size={12} strokeWidth={2.2} aria-hidden="true" />
+      </button>
+    </span>
+  ));
+
   return (
     <form
       ref={formRef}
-      className={`askbar${blocked ? ' is-blocked' : ''}${tall ? ' is-tall' : ''}${hasText ? ' has-draft' : ''}`}
+      className={`askbar${blocked ? ' is-blocked' : ''}${tall ? ' is-tall' : ''}${hasText ? ' has-draft' : ''}${about.length > 1 ? ' has-chips' : ''}`}
       onSubmit={(e) => { e.preventDefault(); submit(); }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); inputRef.current?.focus(); } }}
       onFocus={() => { if (!focused) onIntent?.(); setFocused(true); }}
@@ -294,14 +311,10 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
           ))}
         </div>
       )}
-      {about && (
-        <span className="askbar-about" title={`About: ${about.label}${about.page ? ` (page ${about.page})` : ''}`}>
-          <span className="askbar-about-text">about: {about.label}{about.page ? ` · p.${about.page}` : ''}</span>
-          <button type="button" className="askbar-about-x" onClick={() => { onClearAbout?.(); inputRef.current?.focus(); }} aria-label="Remove what this question is about">
-            <X size={12} strokeWidth={2.2} aria-hidden="true" />
-          </button>
-        </span>
-      )}
+      {about.length > 1
+        // Several marks: their own wrapping row above the field (each chip whole, each removable).
+        ? <div className="askbar-abouts" role="group" aria-label="What this question is about">{chipEls}</div>
+        : chipEls}
       {/* Asking is paused (a spending cap): a status row that wraps, in the field's place, never a clipped placeholder. */}
       {blocked && !busy && <p className="askbar-status" role="status">{blocked}</p>}
       <textarea
@@ -318,7 +331,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
           setTyping(v);
         }}
         onKeyDown={onKeyDown}
-        placeholder={listening ? 'Listening…' : micNote || PLACEHOLDER[mode]}
+        placeholder={listening ? 'Listening…' : micNote || (emptyAsk && !blocked ? EMPTY_ASK_HINT : PLACEHOLDER[mode])}
         readOnly={!!blocked && !busy}
         title={micNote || undefined}
         aria-label={BAR_LABEL[mode]}

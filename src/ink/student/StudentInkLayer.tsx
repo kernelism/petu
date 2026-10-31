@@ -28,10 +28,15 @@ export function getSvgPathFromStroke(points: number[][], closed = true): string 
   return d;
 }
 
-function strokePath(tool: StudentStroke['tool'], points: P3[], last: boolean) {
+/** Pen and highlighter widths on a page (units of its 1000 across). */
+export const PEN_SIZE = PEN.size!, HIGHLIGHTER_SIZE = HIGHLIGHTER.size!;
+
+/** `size`: the pen's width in the stroke's own units (a board section's; a page's by default). */
+export function strokePath(tool: StudentStroke['tool'], points: P3[], last: boolean, size?: number) {
   // Mouse and trackpad report a flat 0.5; simulate pressure from velocity in that case.
   const flat = points.every((p) => p[2] === 0.5);
-  return getSvgPathFromStroke(getStroke(points, { ...(tool === 'pen' ? PEN : HIGHLIGHTER), simulatePressure: flat, last }));
+  const o = tool === 'pen' ? PEN : HIGHLIGHTER;
+  return getSvgPathFromStroke(getStroke(points, { ...o, ...(size ? { size } : {}), simulatePressure: flat, last }));
 }
 
 function distToSeg(px: number, py: number, a: P3, b: P3) {
@@ -42,16 +47,17 @@ function distToSeg(px: number, py: number, a: P3, b: P3) {
   return Math.hypot(px - (a[0] + t * dx), py - (a[1] + t * dy));
 }
 
-/** A stroke is hit if the pointer is within ERASE_R of any point (or the segment between two points). */
-function hits(s: StudentStroke, x: number, y: number) {
+/** A stroke is hit if the pointer is within `r` (ERASE_R) of any point (or the segment between two points). */
+export function hits(s: Pick<StudentStroke, 'points'>, x: number, y: number, r = ERASE_R) {
   const pts = s.points;
-  if (pts.length === 1) return Math.hypot(x - pts[0][0], y - pts[0][1]) <= ERASE_R;
-  for (let i = 1; i < pts.length; i++) if (distToSeg(x, y, pts[i - 1], pts[i]) <= ERASE_R) return true;
+  if (pts.length === 1) return Math.hypot(x - pts[0][0], y - pts[0][1]) <= r;
+  for (let i = 1; i < pts.length; i++) if (distToSeg(x, y, pts[i - 1], pts[i]) <= r) return true;
   return false;
 }
+export { ERASE_R };
 
-const StrokePath = memo(function StrokePath({ s }: { s: StudentStroke }) {
-  const d = useMemo(() => strokePath(s.tool, s.points, true), [s]);
+export const StrokePath = memo(function StrokePath({ s }: { s: StudentStroke }) {
+  const d = useMemo(() => strokePath(s.tool, s.points, true, s.w), [s]);
   return <path d={d} fill={s.color} {...(s.tool === 'highlighter' ? HL_ATTRS : null)} />;
 });
 
@@ -66,6 +72,9 @@ const hlCursor = (color: string) =>
   `url("data:image/svg+xml,${encodeURIComponent(
     `<svg xmlns='http://www.w3.org/2000/svg' width='10' height='22'><rect x='2' y='2' width='6' height='18' rx='1.5' fill='${color}' fill-opacity='.55' stroke='#1D1D1F' stroke-width='1'/></svg>`,
   )}") 5 11, crosshair`;
+
+/** The pen's cursor for a tool (the board's pen uses the page's). */
+export const inkCursor = (tool: 'pen' | 'highlighter' | 'eraser', color: string) => (tool === 'eraser' ? ERASER_CURSOR : tool === 'highlighter' ? hlCursor(color) : dotCursor(color));
 
 export function StudentInkLayer({ page, spaceH }: { page: number; spaceH: number }) {
   const { canvasOn, tool, color, strokes } = useInk();
@@ -131,7 +140,7 @@ export function StudentInkLayer({ page, spaceH }: { page: number; spaceH: number
     mixBlendMode: 'multiply',
     pointerEvents: canvasOn ? 'auto' : 'none',
     touchAction: canvasOn ? 'none' : 'auto',
-    cursor: !canvasOn ? undefined : tool === 'eraser' ? ERASER_CURSOR : tool === 'highlighter' ? hlCursor(color) : dotCursor(color),
+    cursor: !canvasOn ? undefined : inkCursor(tool, color),
   };
 
   const d = drawing.current;
