@@ -42,7 +42,7 @@ import { dictationAvailable } from './agent/dictation';
 import { FollowPill } from './ui/FollowPill';
 import { OverviewPill } from './ui/OverviewPill';
 import { SessionDrawer, type SessionRow } from './ui/SessionDrawer';
-import { dockPlacement, dockReserve, windowColumn } from './ui/layout';
+import { dockColumn, dockPlacement, dockReserve, windowColumn } from './ui/layout';
 import { DOCK_GAP, margin, SAFE_TOP, setSafeBottom } from './desk/layout';
 import { takeSentences } from './ui/text';
 import { pauseCueIn } from './ui/captionWindow';
@@ -1632,7 +1632,7 @@ export default function App() {
   const pillEl = typeof document !== 'undefined' ? document.querySelector('.overview-pill') : null;
   const pillReserve = ovView.z !== 1 ? (pillEl ? Math.max(0, viewportW - pillEl.getBoundingClientRect().left) : 260) + 12 : 0;
   const dock = dockPlacement(viewportW, desk, ovView, pillReserve);
-  const dockCol = desk ? windowColumn(desk.column, viewportW, ovView) : null;
+  const dockCol = desk ? windowColumn(dockColumn(viewportW, desk), viewportW, ovView) : null;
   /** The shortcuts card sits just above the dock (its top edge, from the window's bottom). */
   const dockBottom = dockRef.current ? Math.max(0, window.innerHeight - dockRef.current.getBoundingClientRect().top) : 96;
   // The playback row shows once an answer speaks (the question line holds its place until then).
@@ -1668,8 +1668,8 @@ export default function App() {
         className={`stage${desk?.sketching && desk.following && busy ? ' is-sketching' : ''}`}
         style={{
           '--glide': `${GLIDE_MS}ms`, '--view-top': `${SAFE_TOP}px`, '--view-bottom': `${viewBottom}px`,
-          // Layout C: with the pen on the page, the page column ends its reading band above the dock (app.css).
-          ...(desk?.lane && desk.page && Math.abs(desk.column.x - desk.page.x) < 1 ? { '--dock-col-x': `${dockCol!.x}px`, '--dock-col-w': `${dockCol!.w}px` } : {}),
+          // Layout C: the dock sits under the page column, which ends its reading band above it (app.css).
+          ...(desk?.lane && desk.page ? { '--dock-col-x': `${dockCol!.x}px`, '--dock-col-w': `${dockCol!.w}px` } : {}),
         } as CSSProperties}
       >
         <PdfViewer
