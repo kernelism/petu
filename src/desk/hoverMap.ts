@@ -24,7 +24,7 @@ export type BeatMark = { page: number; r: SRect; past?: boolean; own?: boolean }
 const POINTING = new Set(['highlight', 'underline', 'circle', 'box']);
 /** One beat: the drawn group's element and the page marks spoken with it. */
 /** One beat: the drawn group's element, its box in its section's units (as the director framed it), and the page marks spoken with it. */
-export type Beat = { el: Element; box?: SRect; marks: BeatMark[] };
+export type Beat = { el: Element; id?: string; box?: SRect; marks: BeatMark[] };
 
 /** Attributes page marks to the beat they were spoken in (see the module note). */
 export class BeatLinks {
@@ -37,7 +37,7 @@ export class BeatLinks {
 
   /** An svg group is about to draw: it opens a beat. */
   beat(el: Element, box?: SRect): Beat {
-    const b: Beat = { el, marks: [], ...(box ? { box: { ...box } } : {}) };
+    const b: Beat = { el, marks: [], ...(el.id ? { id: el.id } : {}), ...(box ? { box: { ...box } } : {}) };
     if (this.aside) this.asideNow = b; else this.now = b;
     this.all.push(b);
     return b;
@@ -78,12 +78,23 @@ export class BeatLinks {
 type Box = { x: number; y: number; w: number; h: number };
 
 /**
+ * The beat's group as it is in the document now: a board can put a new element in its place (WebKit
+ * re-renders some groups after they draw), found again by its (board-namespaced, unique) id.
+ */
+export function liveEl(b: Beat): Element | null {
+  if (b.el.isConnected) return b.el;
+  const now = b.id ? document.getElementById(b.id) : null;
+  if (now) b.el = now;
+  return now;
+}
+
+/**
  * A drawn group's box now, in its section's units: its own bbox on the board (getBBox, the board's
  * user units) scaled to the 1000-unit section. The box the director framed was measured hidden before
  * drawing, which WebKit gets wrong; null when it can't be measured (the framed box stands in).
  */
 function drawnBox(b: Beat): Box | null {
-  const g = b.el as SVGGraphicsElement, root = g.ownerSVGElement;
+  const g = (liveEl(b) ?? b.el) as SVGGraphicsElement, root = g.ownerSVGElement;
   if (typeof g.getBBox !== 'function' || !root) return null;
   let bb: DOMRect;
   try { bb = g.getBBox(); } catch { return null; }
@@ -222,7 +233,7 @@ export class LaneHover {
       if (!g || !el.closest('.desk-region')) return null;
       // Geometry first, in every engine (beatUnder: WebKit's hit test can name a big shape of an earlier
       // group for any point over it); the element under the pointer only when no box holds the point.
-      const beat = this.beatUnder(g, el.closest('.desk-region')!, x, y) ?? g.beats.find((b) => b.el.isConnected && b.el.contains(el)) ?? null;
+      const beat = this.beatUnder(g, el.closest('.desk-region')!, x, y) ?? g.beats.find((b) => !!liveEl(b)?.contains(el)) ?? null;
       return beat ? { g, beat, marks: beat.marks } : null;
     }
     const sheet = this.h.sheet();
@@ -249,7 +260,7 @@ export class LaneHover {
    * one are unreliable.
    */
   private beatUnder(g: HoverGroup, sec: Element, x: number, y: number): Beat | null {
-    const beats = g.beats.filter((b) => b.box && b.el.isConnected && sec.contains(b.el));
+    const beats = g.beats.filter((b) => { const e = liveEl(b); return !!e && sec.contains(e); });
     if (!beats.length) return null;
     const ink = sec.querySelector(':scope > svg.desk-region-ink');
     const vb = (ink?.getAttribute('viewBox') ?? '').split(/[\s,]+/).map(Number);
@@ -259,16 +270,16 @@ export class LaneHover {
     const k = Math.min(r.width / vb[2], r.height / vb[3]);
     const ox = r.left + (r.width - vb[2] * k) / 2, oy = r.top + (r.height - vb[3] * k) / 2;
     const ux = vb[0] + (x - ox) / k, uy = vb[1] + (y - oy) / k;
-    const i = boxAt(beats.map((b) => drawnBox(b) ?? b.box!), ux, uy, 4);
+    const i = boxAt(beats.map((b) => drawnBox(b) ?? b.box ?? null), ux, uy, 4);
     return i < 0 ? null : beats[i];
   }
 
   private set(f: Focus | null, hot: HoverGroup | null) {
     const same = f && this.focus && f.g === this.focus.g && f.beat === this.focus.beat && (f.beat || f.marks[0] === this.focus.marks[0]);
     if (!same) {
-      this.focus?.beat?.el.removeAttribute('data-focus');
+      if (this.focus?.beat) { this.focus.beat.el.removeAttribute('data-focus'); liveEl(this.focus.beat)?.removeAttribute('data-focus'); }
       this.focus = f;
-      f?.beat?.el.setAttribute('data-focus', '');
+      if (f?.beat) liveEl(f.beat)?.setAttribute('data-focus', '');
       this.outline(f?.marks ?? []);
     }
     if (hot !== this.hot) {
