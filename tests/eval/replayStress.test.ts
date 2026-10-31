@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { stressScript, plotFate, normReason, summarise, formatSummary, collectEval, collectSmoke, collectScratch, dedupe, type ReplayEnv } from '../../scripts/eval/replayStress';
+import { stressScript, plotFate, normReason, summarise, formatSummary, collectEval, collectSmoke, collectScratch, dedupe, scriptKey, type ReplayEnv } from '../../scripts/eval/replayStress';
 import type { PageGround } from '../../src/agent/context/types';
 import type { TextRun } from '../../src/locate/locateQuote';
 
@@ -107,5 +107,9 @@ describe('replay stress: recordings and report', () => {
     // Live comparison needs the live action count (eval and smoke recordings carry it; scratch files don't).
     expect(s.live).toMatchObject({ recordings: 1, liveSkipped: 1, agreeing: 1 });
     expect(formatSummary(s)).toMatch(/3 distinct scripts/);
+    // Per-script counts, keyed by the script's hash (the gate compares on the baseline's scripts).
+    expect(Object.keys(s.scripts)).toHaveLength(3);
+    expect(s.scripts[scriptKey(recs[0].script)]).toEqual({ label: 'r1/D1', checked: 2, skipped: 1 });
+    expect(Object.values(s.scripts).reduce((n, c) => n + c.skipped, 0)).toBe(s.skipped);
   });
 });

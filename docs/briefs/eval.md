@@ -27,6 +27,7 @@ it. The review artefact is `report.html`, not recordings.
 | `scripts/eval/report.ts`, `summary.ts`, `sheet.ts`, `esc.ts` | `report.html`; `summary.json`; r2 contact sheet; escaping. |
 | `scripts/eval/cdp.ts` | Raw CDP Chrome (`CHROME` env overrides the macOS path). |
 | `scripts/eval/fakeRun.ts`, `sample.ts` | A $0 recorded run from the demo scripts (`npx vite-node …`); seeded page sampler. |
+| `scripts/eval/replayStress.ts` | `npm run replay-stress [-- --json out.json]`: every recorded script through the parser and resolver offline ($0); skip rate by tag, source, prompt; `--json` adds per-script counts (`scripts`, keyed by `scriptKey` = the script's sha1). The gate (`scripts/gate.ts`, `stressCorpusStep`) compares the skip rate on the scripts its baseline (`.petu/gate/replay-stress.json`, written by a passing gate with per-script counts) already has; scripts recorded since are shown with their own rate, not gated. Experiment runs (`EXPERIMENT_RUN`) are left out. |
 | `src/agent/evalHooks.ts` | In-app side: `window.__petu` (`?eval`), records chunks, events, timings, registry. |
 | `tests/eval/*` | Pure tests for all of the above (no browser, no spend). |
 

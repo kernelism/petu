@@ -354,10 +354,13 @@ export function collectScratch(dir: string): Recording[] {
   return out;
 }
 
+/** A script's identity across runs of replay-stress (the gate compares per script on this key). */
+export const scriptKey = (script: string): string => createHash('sha1').update(script).digest('hex');
+
 /** One recording per distinct script (replay runs re-play the same chunks); the first label wins. */
 export function dedupe(rs: Recording[]): Recording[] {
   const seen = new Set<string>();
-  return rs.filter((r) => { const h = createHash('sha1').update(r.script).digest('hex'); if (seen.has(h)) return false; seen.add(h); return true; });
+  return rs.filter((r) => { const h = scriptKey(r.script); if (seen.has(h)) return false; seen.add(h); return true; });
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -372,7 +375,10 @@ export type StressSummary = {
   byTag: TagRow[];
   bySource: Record<string, { recordings: number; actions: number; skipped: number }>;
   live?: { recordings: number; liveActions: number; liveSkipped: number; agreeing: number; liveOnly: Record<string, number>; offlineOnly: Record<string, number> };
+  /** Per distinct script (scriptKey): checked actions (not unverified) and skips. The gate compares on the scripts its baseline has, so new recordings never move the bar. */
+  scripts: Record<string, ScriptCount>;
 };
+export type ScriptCount = { label: string; checked: number; skipped: number };
 
 export function summarise(items: { rec: Recording; rep: ScriptReport; grounded: boolean }[]): StressSummary {
   const tags = new Map<string, TagRow>();
@@ -383,7 +389,9 @@ export function summarise(items: { rec: Recording; rep: ScriptReport; grounded: 
   let actions = 0, skipped = 0, unverified = 0, malformed = 0, unclosed = 0;
   let liveRecs = 0, liveActions = 0, liveSkipped = 0, agreeing = 0;
   const liveOnly: Record<string, number> = {}, offlineOnly: Record<string, number> = {};
+  const scripts: Record<string, ScriptCount> = {};
   for (const { rec, rep } of items) {
+    scripts[scriptKey(rec.script)] ??= { label: rec.label, checked: rep.outcomes.filter((o) => o.status !== 'unverified').length, skipped: rep.outcomes.filter((o) => o.status === 'skip').length };
     const s = (bySource[rec.source] ??= { recordings: 0, actions: 0, skipped: 0 });
     s.recordings++;
     for (const o of rep.outcomes) {
@@ -418,6 +426,7 @@ export function summarise(items: { rec: Recording; rep: ScriptReport; grounded: 
     byTag: [...tags.values()].sort((a, b) => b.skipped - a.skipped || b.n - a.n),
     bySource,
     ...(liveRecs ? { live: { recordings: liveRecs, liveActions, liveSkipped, agreeing, liveOnly, offlineOnly } } : {}),
+    scripts,
   };
 }
 

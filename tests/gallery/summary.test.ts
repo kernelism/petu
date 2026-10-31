@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { galleryStep, parseSkipRate, stressStep, summarize } from '../../scripts/gallery/summary';
+import { galleryStep, parseSkipRate, stressCorpusStep, stressStep, summarize } from '../../scripts/gallery/summary';
 import type { ShotRow } from '../../scripts/gallery/diff';
 
 const rows: ShotRow[] = [
@@ -69,5 +69,29 @@ describe('summarize', () => {
     expect(text).toMatch(/SKIP {2}replay-stress/);
     expect(text).toContain('GATE FAILED');
     expect(summarize([{ name: 'a', ok: true, ms: 1 }]).text).toContain('GATE PASSED');
+  });
+});
+
+describe('replay-stress gate on a stable corpus', () => {
+  const base = { skipRate: 0.021, scripts: { a: { label: 'r1/D1', checked: 50, skipped: 1 }, b: { label: 'r1/D2', checked: 50, skipped: 1 }, gone: { checked: 10, skipped: 0 } } };
+  it('new recordings never fail it, even when they raise the overall rate', () => {
+    const cur = { skipRate: 0.05, scripts: { a: { label: 'r1/D1', checked: 50, skipped: 1 }, b: { label: 'r1/D2', checked: 50, skipped: 1 }, n: { label: 'r9/T1', checked: 20, skipped: 4 } } };
+    const s = stressCorpusStep(cur, base, 1);
+    expect(s.ok).toBe(true);
+    expect(s.detail).toMatch(/skip rate on the 2 baseline scripts 2\.00% \(2\/100\) vs 2\.00% \(2\/100\)/);
+    expect(s.detail).toMatch(/new scripts since the baseline: 1 \(20\.00%, 4\/20: not gated\); gone: 1; all 3: 5\.00%/);
+  });
+  it('fails when the same scripts skip more, naming the scripts that got worse', () => {
+    const cur = { skipRate: 0.03, scripts: { a: { label: 'r1/D1', checked: 50, skipped: 2 }, b: { label: 'r1/D2', checked: 50, skipped: 1 } } };
+    const s = stressCorpusStep(cur, base, 1);
+    expect(s.ok).toBe(false);
+    expect(s.detail).toMatch(/rose; 1 script\(s\) worse, 0 better/);
+    expect(s.detail).toMatch(/r1\/D1: 1 -> 2 skipped/);
+    expect(stressCorpusStep({ skipRate: 0.01, scripts: { a: { checked: 50, skipped: 0 }, b: { checked: 50, skipped: 1 } } }, base, 1).ok).toBe(true);
+  });
+  it('a first run or an old rate-only baseline passes and says why', () => {
+    const cur = { skipRate: 0.03, scripts: { a: { checked: 50, skipped: 3 } } };
+    expect(stressCorpusStep(cur, null, 1)).toMatchObject({ ok: true, detail: expect.stringMatching(/first recorded baseline/) });
+    expect(stressCorpusStep(cur, { skipRate: 0.021 }, 1)).toMatchObject({ ok: true, detail: expect.stringMatching(/no per-script record/) });
   });
 });
