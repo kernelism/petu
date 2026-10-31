@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { compare, format } from '../../scripts/eval/compare';
-import { buildSummary, type QuestionSummary } from '../../scripts/eval/summary';
+import { compare, format, latencyRule } from '../../scripts/eval/compare';
+import { buildSummary, hostLoadOf, type QuestionSummary } from '../../scripts/eval/summary';
 import { computeMetrics } from '../../scripts/eval/metrics';
 import { emptyResult } from '../../src/agent/evalHooks';
 
@@ -31,12 +31,42 @@ describe('compare', () => {
     const better = [4, 4, 4, 4];
     expect(compare(A, S('b', four(better, { skipped: 1 }))).reasons.join()).toMatch(/skipped up by 4/);
     expect(compare(A, S('b', four(better, { malformed: 1 }))).verdict).toBe('REJECT'); // 4 total, +4
-    expect(compare(A, S('b', four(better, { firstWord: 1160 }))).reasons.join()).toMatch(/first word/);
+    // First word rejects only when it is this change's metric (the scout changed) on a quiet machine.
+    const quiet = { cpus: 10, samples: 3, perCpuMean: 0.2, perCpuMax: 0.3 };
+    expect(compare({ ...A, scout: 's1', load: quiet }, { ...S('b', four(better, { firstWord: 1160 })), scout: 's2', load: quiet }).reasons.join()).toMatch(/first word/);
     expect(compare(A, S('b', four(better, { takeaway: false }))).reasons.join()).toMatch(/takeawayFirst/);
   });
   it('allows slack: skipped +2 total and p50 +15% still accept', () => {
     const qs = four([4, 4, 4, 4]); qs[0].metrics.skippedTotal = 2; qs.forEach((x) => { x.metrics.firstWordMs = 1150; });
     expect(compare(A, S('b', qs)).verdict).toBe('ACCEPT');
+  });
+  it('latency: same scout skips first word; high or unrecorded load never auto-rejects', () => {
+    const quiet = { cpus: 10, samples: 3, perCpuMean: 0.2, perCpuMax: 0.3 };
+    const busy = { cpus: 10, samples: 3, perCpuMean: 1.2, perCpuMax: 1.4 };
+    const slowB = S('b', four([4, 4, 4, 4], { firstWord: 1280 })); // +28%, a clear gain otherwise
+    // Same scout: first word is not this change's metric.
+    const same = compare({ ...A, scout: 's2.7', load: quiet }, { ...slowB, scout: 's2.7', load: quiet });
+    expect(same.verdict).toBe('ACCEPT'); expect(same.latency.status).toBe('skipped'); expect(same.warnings).toEqual([]);
+    // Scout changed but the machine was busy: a warning, and an ACCEPT becomes a RERUN, never a REJECT.
+    const loaded = compare({ ...A, scout: 's1', load: quiet }, { ...slowB, scout: 's2', load: busy });
+    expect(loaded.latency.status).toBe('unreliable'); expect(loaded.reasons).toEqual([]); expect(loaded.verdict).toBe('RERUN n=2');
+    expect(loaded.warnings.join()).toMatch(/first word worse by 28%.*unreliable: load per CPU 0.3 -> 1.4/);
+    // Older runs (no load recorded): the same.
+    const old = compare(A, slowB);
+    expect(old.verdict).toBe('RERUN n=2'); expect(old.warnings.join()).toMatch(/load not recorded/);
+    expect(format(A, slowB, old)).toMatch(/warning: p50 first word worse by 28%/);
+    // Scout changed on a quiet machine: a real regression rejects.
+    const real = compare({ ...A, scout: 's1', load: quiet }, { ...slowB, scout: 's2', load: quiet });
+    expect(real.verdict).toBe('REJECT'); expect(real.latency.status).toBe('compared');
+    // No slowdown: nothing to say, whatever the load.
+    expect(latencyRule({ ...A, load: busy }, { ...S('b', four([4, 4, 4, 4])), load: busy })).toMatchObject({ status: 'unreliable' });
+    expect(compare({ ...A, load: busy }, { ...S('b', four([4, 4, 4, 4])), load: busy }).verdict).toBe('ACCEPT');
+  });
+  it('hostLoadOf: per-CPU mean and max of the samples', () => {
+    expect(hostLoadOf([2, 4, 14], 10)).toEqual({ cpus: 10, samples: 3, perCpuMean: 0.67, perCpuMax: 1.4 });
+    expect(hostLoadOf([], 10)).toBeNull();
+    const s = buildSummary({ runId: 'r', config: 'c', qset: 'q', promptVersion: 'p', phase: 'x', scout: 's2.7/m/none', load: hostLoadOf([1], 4), questions: [] });
+    expect(s.scout).toBe('s2.7/m/none'); expect(s.load?.perCpuMax).toBe(0.25);
   });
   it('RERUN n=2: |delta| < 0.25 with mixed signs', () => {
     const c = compare(A, S('b', four([4, 2, 3, 3])));
