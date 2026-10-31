@@ -340,10 +340,10 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   const run = async () => { try {
     for (let ui = 0; ui < order.length; ui++) {
       if (sig.aborted) break;
-      // More of the beat has streamed in since the plan: the parts left spread over what is left of it.
+      // The beat's end moved since the plan (more streamed in, or it closed): the parts left spread over what is left of it.
       if (paced && ui > 0 && o.beat) {
         const nowT = performance.now(), w = o.beat();
-        if (w.length >= 2 && nowT + beatEnd(w) > beatTo + REPLAN_MS) {
+        if (w.length >= 2 && Math.abs(nowT + beatEnd(w) - beatTo) > REPLAN_MS) {
           beatTo = nowT + beatEnd(w);
           const rest = order.slice(ui);
           const re = paceParts(rest.map(partIn), w, o.slot, beatFrom - nowT);

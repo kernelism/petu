@@ -12,7 +12,9 @@
 import { namesWord } from './scheduler';
 
 /** A beat word: how soon it is spoken (ms from now) and, when known, when it ends. */
-export type BeatWord = { text: string; inMs: number; endMs?: number };
+export type BeatWord = { text: string; inMs: number; endMs?: number;
+  /** On the last word: the beat is still streaming (its end isn't known yet). */
+  open?: boolean };
 /** The k-th (0-based) of n groups that share one beat's words. */
 export type Slot = { k: number; n: number };
 
@@ -31,15 +33,24 @@ export const WORD_EST_MS = 300;
 
 /**
  * A group's words may still be streaming when it starts drawing (the group comes before its
- * sentences): when the beat has grown by more than this, the parts not yet drawn are re-planned.
+ * sentences): when the beat's end has moved by more than this, the parts not yet drawn are re-planned.
  */
 export const REPLAN_MS = 400;
+/**
+ * A beat still streaming is assumed to run at least this long from its first word (a sentence or two),
+ * so its first parts don't all draw in the words known so far; the re-plan corrects it either way.
+ */
+export const OPEN_SPAN_MS = 6000;
 
-/** When the beat's narration ends, ms from now: its last word's end (else its start plus a word). */
+/**
+ * When the beat's narration ends, ms from now: its last word's end (else its start plus a word); a
+ * beat still streaming, at least OPEN_SPAN_MS after its first word.
+ */
 export function beatEnd(words: readonly BeatWord[]): number {
   if (!words.length) return 0;
   const last = words[words.length - 1];
-  return Math.max(last.endMs ?? last.inMs + WORD_EST_MS, last.inMs);
+  const end = Math.max(last.endMs ?? last.inMs + WORD_EST_MS, last.inMs);
+  return last.open ? Math.max(end, words[0].inMs + OPEN_SPAN_MS) : end;
 }
 
 /**

@@ -2,7 +2,7 @@
 // timing math (src/playback/pace.ts), the scheduler's rest after a drawn beat and the beat's word
 // times on both clocks (paced and voiced).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { beatWindow, partWords, paceParts, splitPart, PART_MIN_MS, PART_MAX_MS, PART_GAP_MS, REST_MS, SPAN_MIN_MS, type BeatWord } from '../../src/playback/pace';
+import { beatEnd, beatWindow, partWords, OPEN_SPAN_MS, paceParts, splitPart, PART_MIN_MS, PART_MAX_MS, PART_GAP_MS, REST_MS, SPAN_MIN_MS, type BeatWord } from '../../src/playback/pace';
 import { PacedClock } from '../../src/playback/clock';
 import { Scheduler, namesWord } from '../../src/playback/scheduler';
 import { VoiceClock, SAMPLE_RATE, type AudioOut, type Speak } from '../../src/playback/voiceClock';
@@ -44,6 +44,13 @@ describe('pace: the window a group draws in', () => {
     expect(beatWindow(w, { k: 0, n: 3 })).toEqual({ from: 0, to: 1200 });
     expect(beatWindow(w, { k: 1, n: 3 })).toEqual({ from: 1200, to: 2400 });
     expect(beatWindow(w, { k: 2, n: 3 })).toEqual({ from: 2400, to: 3600 });
+  });
+  it('a beat still streaming runs at least OPEN_SPAN_MS; once closed, its real end', () => {
+    const w = beat('picture a simplified skater');
+    expect(beatEnd(w)).toBe(1200);
+    w[w.length - 1].open = true;
+    expect(beatEnd(w)).toBe(OPEN_SPAN_MS);
+    expect(beatWindow(w)).toEqual({ from: 0, to: OPEN_SPAN_MS });
   });
   it('a word with no end time counts a word\'s length', () => {
     expect(beatWindow([{ text: 'a', inMs: 0 }, { text: 'b', inMs: 2000 }]).to).toBe(2300);
@@ -170,6 +177,20 @@ describe('pace: the scheduler', () => {
     // Both see the whole beat, up to the next group.
     expect(fired[0].beat.map((x) => x.text)).toEqual(['The', 'curve', 'falls.']);
     expect(fired[1].beat.map((x) => x.text)).toEqual(['The', 'curve', 'falls.']);
+  });
+
+  it('beatWords marks a beat still streaming open, and closes it once the next group (or the end) comes', () => {
+    vi.setSystemTime(0);
+    const seen: BeatWord[][] = [];
+    const s: Scheduler = new Scheduler(new PacedClock(() => 170, () => Date.now(), () => 100), {
+      onWord: () => {}, onAction: (a) => { if (a.kind === 'svg') seen.push(s.beatWords()); }, onDone: () => {},
+    }, { leadMs: () => 0 });
+    s.push([...words('Look here.'), svg('one'), ...words('The curve falls.')]);
+    vi.advanceTimersByTime(250);
+    expect(seen[0].at(-1)!.open).toBe(true);
+    s.push([svg('two')]);
+    expect(s.beatWords().at(-1)!.open).toBeUndefined();
+    s.stop();
   });
 
   it('beatWords gives each word\'s end on the paced clock', () => {

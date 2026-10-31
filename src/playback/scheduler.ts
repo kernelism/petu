@@ -121,7 +121,8 @@ export class Scheduler {
     const now = this.clock.now();
     let to = this.words.length;
     // The next beat's group (one that came with this group, on its word, shares its beat).
-    for (let i = this.fired; i < this.acts.length; i++) if (this.acts[i].action.kind === 'svg' && this.acts[i].word > this.spoken) { to = Math.min(to, this.acts[i].word); break; }
+    let closed = this.ended;
+    for (let i = this.fired; i < this.acts.length; i++) if (this.acts[i].action.kind === 'svg' && this.acts[i].word > this.spoken) { to = Math.min(to, this.acts[i].word); closed = true; break; }
     const out: BeatWord[] = [];
     let last = now;
     for (let i = this.spoken; i < Math.min(to, this.spoken + max); i++) {
@@ -132,6 +133,8 @@ export class Scheduler {
       out.push({ text: this.words[i], inMs: Math.max(0, t - now), endMs: Math.max(0, t + d - now) });
       last = t + d;
     }
+    // Its end isn't known while the stream may still add words to it.
+    if (out.length && !closed && out.length < max) out[out.length - 1].open = true;
     return out;
   }
 
