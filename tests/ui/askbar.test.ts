@@ -287,3 +287,125 @@ describe('AskBar: the pause countdown, the V shortcut, a field that grows', () =
     expect(b.input.scrollTop).toBe(9 * 22);
   });
 });
+
+// QA M1: after Enter the field kept focus, so Space, < >, D, S, Z, M and ⌘± typed into it (pausing the
+// answer as an aside draft and leaking ">", "/" or "d" into the next question).
+import { playbackKey, draftHeld } from '../../src/ui/playbackKeys';
+import { overviewKey, boardZoomKey } from '../../src/ui/zoomKeys';
+import { keysActive } from '../../src/ui/CanvasToolbar';
+import { isGoToPageKey } from '../../src/ui/pageNav';
+
+describe('AskBar focus after asking (QA M1)', () => {
+  const winKey = (key: string, o: KeyboardEventInit = {}) => {
+    const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...o });
+    act(() => { (document.activeElement ?? document.body).dispatchEvent(e); });
+    return e;
+  };
+  /** The app's playback handler, as App mounts it (capture phase on window). */
+  function playback() {
+    const calls: string[] = [];
+    const h = { togglePause: () => calls.push('pause'), stepPart: () => calls.push('part'), closeAside: () => calls.push('close'), replay: () => calls.push('replay'), skip: () => calls.push('skip'), speed: (d: number) => calls.push(`speed${d}`) };
+    const on = (e: KeyboardEvent) => { if (playbackKey(e, { aside: false, playing: true, parts: 2, popover: false }, h)) { e.preventDefault(); e.stopImmediatePropagation(); } };
+    window.addEventListener('keydown', on, true);
+    return { calls, off: () => window.removeEventListener('keydown', on, true) };
+  }
+  const ask = (b: ReturnType<typeof mount>, q: string) => { act(() => b.input.focus()); b.type(q); b.key(b.input, 'Enter'); };
+
+  it('Enter sends and focus leaves the field: Space and > act on the answer, nothing lands in the field', () => {
+    const p = playback();
+    const onTyping = vi.fn();
+    const b = mount({ onTyping });
+    ask(b, 'I missed this lecture, explain it');
+    onTyping.mockClear();
+    expect(b.props.onAsk).toHaveBeenCalledWith('I missed this lecture, explain it');
+    expect(document.activeElement).not.toBe(b.input);
+    b.rerender({ busy: true });
+    expect(winKey(' ').defaultPrevented).toBe(true);
+    winKey('>');
+    expect(p.calls).toEqual(['pause', 'speed1']);
+    expect(b.input.value).toBe('');
+    expect(onTyping).not.toHaveBeenCalled(); // no aside draft, the answer is not paused by a keystroke
+    p.off();
+  });
+
+  it('after sending, Z, D, S, M and ⌘± are live (not a typing target, no draft)', () => {
+    const b = mount();
+    ask(b, 'why a constant factor');
+    const t = document.activeElement;
+    expect(draftHeld()).toBe(false);
+    expect(keysActive(false)).toBe(true);
+    expect(overviewKey({ key: 'z', metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, defaultPrevented: false, target: t }, { lane: true, mac: true, popover: false })).toBe('toggle');
+    expect(boardZoomKey({ key: '=', metaKey: true, ctrlKey: false, altKey: false, defaultPrevented: false, target: t }, { boardOpen: true, mac: true })).toBe('in');
+  });
+
+  it('/ brings the field back; the next question is typed whole ("/" never lands in it)', () => {
+    const b = mount();
+    ask(b, 'first question');
+    const e = winKey('/');
+    expect(e.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(b.input);
+    expect(b.input.value).toBe('');
+  });
+
+  it('a held draft stands every shortcut down, even with the field blurred', () => {
+    const p = playback();
+    const b = mount({ busy: true });
+    act(() => b.input.focus());
+    b.type('wait, what does sigma');
+    act(() => b.input.blur());
+    expect(draftHeld()).toBe(true);
+    winKey(' ');
+    winKey('>');
+    expect(p.calls).toEqual([]);
+    expect(keysActive(false)).toBe(false);
+    expect(keysActive(true)).toBe(false);
+    expect(overviewKey({ key: 'z', metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, defaultPrevented: false, target: document.body }, { lane: true, mac: true, popover: false })).toBeNull();
+    expect(boardZoomKey({ key: '=', metaKey: true, ctrlKey: false, altKey: false, defaultPrevented: false, target: document.body }, { boardOpen: true, mac: true })).toBeNull();
+    expect(isGoToPageKey({ key: 'g', metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, defaultPrevented: false, target: document.body })).toBe(false);
+    // V is a letter of the draft, never a dictation that would replace it.
+    winKey('v');
+    expect(dict.start).not.toHaveBeenCalled();
+    expect(b.input.value).toBe('wait, what does sigma');
+    p.off();
+  });
+
+  it('a dictated question sent: focus leaves the bar (the mic button), V still starts the next one', () => {
+    const b = mount();
+    act(() => { b.mic()!.focus(); });
+    b.clickMic();
+    b.heard('what is elasticity');
+    b.end({ text: 'what is elasticity', auto: true });
+    expect(b.props.onAsk).toHaveBeenCalledWith('what is elasticity');
+    expect(host!.querySelector('.askbar')!.contains(document.activeElement)).toBe(false);
+    winKey('v');
+    expect(dict.start).toHaveBeenCalledTimes(2);
+  });
+
+  it('V while listening still stops (the heard words are not a typed draft)', () => {
+    const b = mount();
+    winKey('v');
+    winKey('v', { repeat: false });
+    b.heard('what is');
+    act(() => { document.body.dispatchEvent(new KeyboardEvent('keyup', { key: 'v', bubbles: true })); });
+    winKey('v');
+    expect(dict.stop).toHaveBeenCalled();
+  });
+
+  it('the check question: the answer sent, focus leaves the field', () => {
+    const b = mount({ mode: 'check', onDismissCheck: vi.fn(), focusSeq: 1 });
+    expect(document.activeElement).toBe(b.input);
+    b.type('the kernel sums to one');
+    b.key(b.input, 'Enter');
+    expect(b.props.onAsk).toHaveBeenCalledWith('the kernel sums to one');
+    expect(document.activeElement).not.toBe(b.input);
+  });
+
+  it('Enter on an empty bar in an aside: back to the answer, focus leaves the field', () => {
+    const onResume = vi.fn();
+    const b = mount({ busy: true, mode: 'aside', onResume });
+    act(() => b.input.focus());
+    b.key(b.input, 'Enter');
+    expect(onResume).toHaveBeenCalled();
+    expect(document.activeElement).not.toBe(b.input);
+  });
+});

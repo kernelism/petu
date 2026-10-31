@@ -192,4 +192,41 @@ describe('follow inside a tall svg group, and a follow-up that extends the board
     expect(stage.querySelectorAll('.trail-head').length).toBe(1);
     vi.useRealTimers();
   });
+
+  it('QA M2: a follow-up group drawn with no room for its header above it moves down under the header (never overprinted)', async () => {
+    vi.useFakeTimers();
+    const d = new Desk(fakeHost(), stage);
+    const r = await d.addRegion({ id: 'svgb1', page: 2, size: 'l', svg: true, h: 1500 });
+    if (typeof r === 'string') throw new Error(r);
+    await d.reset(0);
+    const head = document.createElement('div');
+    head.className = 'trail-head';
+    d.headNext(head, 40);
+    const r2 = await d.addRegion({ id: 'svgb1', page: 2, size: 'l', svg: true, extend: true, h: 2100 });
+    if (typeof r2 === 'string') throw new Error(r2);
+    d.growRegion('svgb1', 2100);
+    // Its title sits right under the earlier ink (the earlier canvas ends at 1500 here).
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    d.noteInk({ region: 'svgb1' }, { x: 0, y: 1505, w: 800, h: 200 }, g);
+    const s = r2.scale(), sec = stage.querySelector('.desk-region') as HTMLElement;
+    const moved = Number(/translate\(0 ([\d.]+)\)/.exec(g.getAttribute('transform') ?? '')?.[1] ?? 0);
+    expect(moved).toBeGreaterThan(0);
+    // The header ends above the group's (moved) top.
+    expect(parseFloat(head.style.top) + 40).toBeLessThanOrEqual(parseFloat(sec.style.top) + (1505 + moved) * s + 1);
+    // A later group of the same answer moves with it.
+    const g2 = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    d.noteInk({ region: 'svgb1' }, { x: 0, y: 1800, w: 800, h: 100 }, g2);
+    expect(g2.getAttribute('transform')).toBe(g.getAttribute('transform'));
+    vi.useRealTimers();
+  });
+
+  it('QA M6: a board that says "extend" in a section of its own (an aside) shows its canvas from its first drawing', async () => {
+    const d = new Desk(fakeHost(), stage);
+    const r = await d.addRegion({ id: 'svgb7', page: 2, size: 'l', svg: true, extend: true, h: 1320 });
+    if (typeof r === 'string') throw new Error(r);
+    d.noteInk({ region: 'svgb7' }, { x: 40, y: 940, w: 800, h: 300 }, document.createElementNS('http://www.w3.org/2000/svg', 'g'));
+    const vb = (stage.querySelector('.desk-region svg') as SVGSVGElement).getAttribute('viewBox')!.split(' ').map(Number);
+    expect(vb[1]).toBeGreaterThan(900);
+    expect(vb[1]).toBeLessThanOrEqual(940);
+  });
 });

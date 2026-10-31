@@ -197,6 +197,10 @@
   animation: ui-pop-in var(--dur-base) var(--ease-out);
 }
 .askbar-about-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Several marks since the last question: one chip each, whole, in their own wrapping row above the field. */
+.askbar.has-chips { flex-wrap: wrap; row-gap: 10px; }
+.askbar-abouts { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 6px; margin-left: -8px; }
+.askbar-abouts .askbar-about { margin-left: 0; max-width: 100%; }
 .askbar-about-x {
   flex: none;
   width: 20px;
@@ -381,16 +385,9 @@
 .caption-error-msg { min-width: 0; }
 /* Waiting longer than usual: one static line under the question, in the narration's slot. No motion. */
 .caption-hint { font-size: 13px; line-height: calc(var(--cap-size) * 1.45); color: rgba(255,255,255,.66); }
-/* Thinking (Enter → first word): the narration line holds one faint ellipsis that fades in once, after
-   a beat, so a quick answer never flashes it. Static: no loop, no shimmer, no dots that pulse. */
-.caption-think {
-  height: calc(var(--cap-size) * 1.45);
-  color: rgba(255,255,255,.42);
-  animation: caption-think-in 600ms var(--ease-out) 350ms both;
-}
-@keyframes caption-think-in { from { opacity: 0; } to { opacity: 1; } }
-/* Mid-answer pause (the opener ended before the rest was ready): the same ellipsis after the last word. */
-.caption-pause { color: rgba(255,255,255,.42); animation: caption-think-in 400ms var(--ease-out) both; }
+/* Thinking (Enter → first word): the narration line stays empty and keeps its height; the muted
+   question above is the only sign. No ellipsis, no shimmer, no dots. */
+.caption-think { height: calc(var(--cap-size) * 1.45); }
 .caption-retry {
   flex: none;
   height: 26px;
@@ -810,7 +807,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .askbar-btn, .askbar-mic, .askbar-about, .askbar-sending::after, .popover, .caption-word, .askbar-chips, .transcript, .topbar-num.is-tick { animation: none; }
-  .caption-q.is-waiting, .caption-text.is-next, .caption-leaving, .caption-think, .caption-pause { animation: none; }
+  .caption-q.is-waiting, .caption-text.is-next, .caption-leaving { animation: none; }
   .caption-leaving { display: none; }
   .dock, .caption, .caption-viewport, .dropveil, .tb-fold, .tb-tip { transition-duration: 0s; }
   .empty-card, .askbar, .askbar-chip, .keycap, .icon-btn, .btn-primary, .btn-quiet, .tb-btn, .tb-dot, .seg,
@@ -1023,6 +1020,9 @@
 @keyframes route-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 .route-pages { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; color: var(--ink); }
 .route-arrow { flex: none; color: var(--muted); }
+/* The wait cue: where a paused answer is heading, quieter than a journey (no arrow, muted, a slow fade in). */
+.route-trip.is-upcoming { animation-duration: 600ms; }
+.route-trip.is-upcoming .route-pages { color: var(--muted); }
 .route-label { max-width: 280px; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-weight: 400; }
 .route-label::before { content: '·'; margin-right: 8px; color: rgba(0,0,0,.3); }
 .route-back {
@@ -1083,6 +1083,8 @@
 
 /* Point-to-ask on the board: the pen's capture layer over the board while the pen is out. */
 .board-pen { position: fixed; z-index: 15; cursor: crosshair; touch-action: none; }
+/* The student's ink on the board (src/ink/student/BoardInk.tsx): in its section, above the drawing, never in the way. */
+.desk-region > .desk-region-student { pointer-events: none; mix-blend-mode: multiply; }
 
 /* ───────── Overview zoom pill (layout C; mockup f15): bottom right while the surface is not at 100% ───────── */
 .overview-pill {

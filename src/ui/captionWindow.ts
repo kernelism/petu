@@ -6,12 +6,14 @@
  * opens on the tail of the previous sentence. Pure: widths come from an injected measure.
  */
 
+import { endsSentence as spokenEnd } from '../playback/clock';
+
 const CLOSERS = `["'”’)\\]]*$`;
 const SENTENCE = new RegExp(`[.?!]${CLOSERS}`);
 const CLAUSE = new RegExp(`[,;:–—]${CLOSERS}`);
 
 /** Ends a sentence ("far.", "right?”"); "1.5" doesn't. */
-export const endsSentence = (t: string | undefined): boolean => !!t && SENTENCE.test(t);
+export const endsSentence = (t: string | undefined): boolean => !!t && SENTENCE.test(t) && spokenEnd(t.replace(/["'”’)\]]+$/, ''));
 /** Ends a clause: a comma, semicolon, colon or dash ("C,", "line:", a lone "—"). */
 export const endsClause = (t: string | undefined): boolean => !!t && (CLAUSE.test(t) || /^[-–—]$/.test(t));
 
@@ -50,11 +52,12 @@ export function windowStart(tokens: string[], start: number, i: number, width: n
 }
 
 /**
- * The one mid-answer wait cue (a faint "…" after the last word) shows only after a real pause: every
- * word so far spoken (`endsAt`) and nothing new for this long. Shorter gaps (a sentence break, the
- * opener handing over on time) show nothing; before the first word the narration line holds the same
- * ellipsis (the opener wait). No status text.
+ * The one mid-answer wait cue shows only after a real pause: every word so far spoken (`endsAt`) and
+ * nothing new for this long. Shorter gaps (a sentence break, the opener handing over on time) show
+ * nothing. Never an ellipsis or status text (founder, 2026-10-31: "the '…' is super bad UX"): the cue
+ * says where the answer is heading, the next page of its plan previewed in the route row (App,
+ * upcomingPage), and nothing when it stays on this page.
  */
-export const PAUSE_CUE_MS = 1500;
+export const PAUSE_CUE_MS = 1000;
 /** Ms from `now` until the wait cue may show, given when the words queued so far end. */
 export const pauseCueIn = (endsAt: number, now: number): number => Math.max(0, endsAt - now) + PAUSE_CUE_MS;

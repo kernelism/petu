@@ -97,6 +97,25 @@ describe('askStream', () => {
     expect(onCutOff).toHaveBeenCalledOnce();
   });
 
+  it('a connection that drops after done is not a cut-off: the whole answer arrived (QA B1)', async () => {
+    const onCutOff = vi.fn(), onDone = vi.fn();
+    const bytes = new TextEncoder().encode([META, { t: 'text', d: 'All of it.' }, DONE].map((e) => JSON.stringify(e)).join('\n') + '\n');
+    let sent = false;
+    const dropping = new ReadableStream<Uint8Array>({ pull(c) { if (!sent) { sent = true; c.enqueue(bytes); } else c.error(new TypeError('network error')); } });
+    const out = await collect(askStream(REQ, new AbortController().signal, { onCutOff, onDone }, fakeFetch(ok(dropping))));
+    expect(out).toEqual(['All of it.']);
+    expect(onDone).toHaveBeenCalledOnce();
+    expect(onCutOff).not.toHaveBeenCalled();
+  });
+  it('a connection that drops after text but before done is still a cut-off', async () => {
+    const onCutOff = vi.fn();
+    const bytes = new TextEncoder().encode([META, { t: 'text', d: 'half an' }].map((e) => JSON.stringify(e)).join('\n') + '\n');
+    let sent = false;
+    const dropping = new ReadableStream<Uint8Array>({ pull(c) { if (!sent) { sent = true; c.enqueue(bytes); } else c.error(new TypeError('network error')); } });
+    await collect(askStream(REQ, new AbortController().signal, { onCutOff }, fakeFetch(ok(dropping))));
+    expect(onCutOff).toHaveBeenCalledWith('The answer was cut off.');
+  });
+
   it('maps a failed fetch to network and HTTP errors to bad_request / upstream', async () => {
     const net = await collect(askStream(REQ, new AbortController().signal, {}, fakeFetch(() => { throw new TypeError('Failed to fetch'); }))).catch((e) => e);
     expect(net).toMatchObject({ code: 'network', retryable: true });
@@ -159,9 +178,9 @@ describe('copy', () => {
   });
 
   it('capLine names the cap that is used up, in dollars, with the command-line knob', () => {
-    expect(capLine(spend({ totalUsd: 60, capUsd: 60 }))).toBe('Spending cap reached: $60.00 of $60.00 used. This is the $60.00 hard stop.');
-    expect(capLine(spend({ totalUsd: 40, capUsd: 40 }))).toBe('Spending cap reached: $40.00 of $40.00 used. Raise it for this run: PETU_TOTAL_CAP_USD=60 npm run dev.');
-    expect(capLine(spend({ totalUsd: 0.0076, capUsd: 0 }))).toBe('Spending cap reached: $0.0076 of $0.00 used. Raise it for this run: PETU_TOTAL_CAP_USD=60 npm run dev.');
+    expect(capLine(spend({ totalUsd: 80, capUsd: 80 }))).toBe('Spending cap reached: $80.00 of $80.00 used. This is the $80.00 hard stop.');
+    expect(capLine(spend({ totalUsd: 40, capUsd: 40 }))).toBe('Spending cap reached: $40.00 of $40.00 used. Raise it for this run: PETU_TOTAL_CAP_USD=80 npm run dev.');
+    expect(capLine(spend({ totalUsd: 0.0076, capUsd: 0 }))).toBe('Spending cap reached: $0.0076 of $0.00 used. Raise it for this run: PETU_TOTAL_CAP_USD=80 npm run dev.');
     expect(capLine(spend({ totalUsd: 10, todayUsd: 3.01, dailyCapUsd: 3 }))).toBe("Today's spending cap reached: $3.01 of $3.00 used. Raise it for this run: PETU_DAILY_CAP_USD=6 npm run dev.");
     expect(capLine(null)).toBe('Spending cap reached. Raise it for this run on the command line, e.g. PETU_DAILY_CAP_USD=6 npm run dev.');
     // The server refuses for another reason (a phase budget): its line, which names the budget.
@@ -177,7 +196,7 @@ describe('copy', () => {
     const daily = "Today's answer budget is used up. It resets tomorrow.";
     expect(capNotice(spend({ totalUsd: 10, todayUsd: 3.67, dailyCapUsd: 3 }))).toBe(daily);
     expect(capNotice(spend({ totalUsd: 0.01, todayUsd: 0.014, dailyCapUsd: 0.02, blocked: "Spending stopped: $0.014 of today's cap ($0.020) is used." }))).toBe(daily);
-    expect(capNotice(spend({ totalUsd: 60, capUsd: 60 }))).toBe('The answer budget is used up.');
+    expect(capNotice(spend({ totalUsd: 80, capUsd: 80 }))).toBe('The answer budget is used up.');
     expect(capNotice(null, 'Today’s cap… PETU_DAILY_CAP_USD=6')).toBe(daily);
     for (const s of [spend({ totalUsd: 60, capUsd: 60 }), spend({ todayUsd: 3, dailyCapUsd: 3 }), null]) expect(capNotice(s)).not.toMatch(/PETU_|\$|npm/);
     expect(askErrorLine('cap', spend({ todayUsd: 3, dailyCapUsd: 3 })).message).toBe(daily);

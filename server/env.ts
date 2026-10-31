@@ -18,7 +18,7 @@ import { ANTHROPIC_NO_NONE, isAnthropicModel } from './anthropic';
 import { VARIANT_NAMES } from './prompt/variants/index';
 import { bestConfig } from './quality';
 
-/** The $60 hard stop (prior spike spend included; $40 until 2026-10-28). PETU_TOTAL_CAP_USD may only lower it. */
+/** The $80 hard stop (prior spike spend included; $40 until 2026-10-28, $60 until 2026-10-31). PETU_TOTAL_CAP_USD may only lower it. */
 export const MAX_TOTAL_USD = HARD_STOP_USD;
 /**
  * Per-phase budgets (plan §3; Lessons v3 "Spend" adds the lesson* phases inside the same hard
@@ -51,7 +51,7 @@ export const DEFAULT_MODEL = 'gpt-6.1-terra';
  */
 export const DEFAULT_EFFORT: Effort = 'none';
 /** Stage 2's output budget: a script that walks several pages and draws (p3.2 answers used ≤ ~900). */
-export const DEFAULT_MAX_OUTPUT = 3200;
+export const DEFAULT_MAX_OUTPUT = 4800;
 /** With reasoning on, its tokens count against the output budget too. */
 export const DEFAULT_MAX_OUTPUT_REASONING = 6000;
 /** Stage 1 (spec A): the fast model at effort none; its JSON is the opener (one or two sentences), ≤ 6 pages and a plan of ≤ 100 words ending with its beats. */

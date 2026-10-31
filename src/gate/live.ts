@@ -14,6 +14,7 @@ import { isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
 import { GateState } from './engine';
 import { checkBeat, namedScene, withSeverity, type Severity } from './verdict';
 import { textNumbers } from './numbers';
+import { numberFixes, type NumberFix } from './check';
 import type { El, Rect } from './layout';
 import type { Grounding } from '../geometry/resolve';
 import type { RawAction } from '../script/types';
@@ -31,6 +32,8 @@ export const MIN_REPAIR_MS = 2500;
 /** How long past the narration's end the gate may hold the stage for a repair. */
 export const MAX_HOLD_MS = 400;
 export const MAX_REPAIRS = 2;
+/** Dropping this share of an answer's words is logged loudly (console). */
+export const LOUD_LOSS = 0.2;
 
 // ------------------------------------------------------------------------------------------------
 // Preflight: what checks one unit.
@@ -39,7 +42,7 @@ export type UnitKind = 'opener' | 'sentence' | 'beat';
 export type PreflightUnit = { key: string; kind: UnitKind; text: string; fault?: FaultMode; /** The stream's end: no boundary is known after it. */ end?: boolean };
 /** A tag of the checked unit: offsets in the unit's text; `skipped` when the board (or the parser) would not draw it. */
 export type PreflightTag = { start: number; end: number; body: string; action: RawAction | null; skipped?: string };
-export type PreflightResult = { flags: GateFlag[]; notes: string[]; tags: PreflightTag[]; report?: () => Omit<RepairReport, 'later' | 'tail' | 'maxWords'> };
+export type PreflightResult = { flags: GateFlag[]; notes: string[]; tags: PreflightTag[]; /** Spoken numbers the board's computed values contradict (check.ts numberFixes). */ fixes?: NumberFix[]; report?: () => Omit<RepairReport, 'later' | 'tail' | 'maxWords'> };
 
 export interface Preflight {
   /** Checks a unit as if it were released after everything accepted so far. Must not change what is accepted. */
@@ -74,7 +77,7 @@ export type PreflightEnv = {
   severity?: Severity;
   /** Offline: a recorded board's skip reason for a tag (by its body), standing in for the shadow board. */
   recorded?: (body: string) => string | undefined;
-  /** The svg board's smallest text in its units (the renderer raises smaller text to it); default 16. */
+  /** The svg board's smallest text in section units (1000 across; the renderer raises smaller text to it); default 16. */
   svgMinFont?: () => number;
 };
 
@@ -209,6 +212,7 @@ export class GatePreflight implements Preflight {
       consts: [...this.consts, ...unitConsts.map((c) => ({ ...c, beat: k }))],
       lines: this.env.lines, scene: namedScene([...this.beats.flat(), ...kept], pageWords),
     });
+    const fixes = numberFixes(beat.words, state.values);
     const v = withSeverity(v0, this.env.severity ?? 'default');
     if (board?.drift?.length) v.notes.push(...board.drift.splice(0));
     // The svg board: each group parses, its id is new, text clears text and strokes, it stays on the canvas.
@@ -222,7 +226,8 @@ export class GatePreflight implements Preflight {
       }
       if (srcs.length) {
         sb ??= newBoardState();
-        const r = checkGroups(srcs, sb, this.env.svgMinFont?.() ?? 16, state.svg);
+        // svgMinFont is per 1000 section units; a board's own units are its canvas width over the section's.
+        const r = checkGroups(srcs, sb, ((this.env.svgMinFont?.() ?? 16) * sb.w) / 1000, state.svg);
         v.flags.push(...r.flags);
         v.notes.push(...r.notes);
         svg = { board: sb, geos: r.geos, ...(r.grow ? { grow: r.grow } : {}) };
@@ -234,6 +239,7 @@ export class GatePreflight implements Preflight {
       flags: v.flags.map((f) => ({ check: f.check, detail: f.detail })),
       notes: v.notes,
       tags: tags.map((t) => ({ start: t.start, end: t.end, body: t.body, action: t.action, ...(skipped.has(t) ? { skipped: skipped.get(t)! } : {}) })),
+      ...(fixes.length ? { fixes } : {}),
       report: () => ({
         beat: u.text.trim(), problems: v.flags.map((f) => ({ check: f.check, detail: f.detail })),
         board: (scene ?? []).map((s) => ({ section: s.section, count: s.items.length, items: s.items })),
@@ -438,6 +444,11 @@ export class LiveGate {
         // Groups carried for a beat that never came (the stream ended): they play last, or are cut with the rest.
         if (!signal.aborted && this.carry) { const c: PreflightUnit = { key: `${this.nUnit++}`, kind: 'sentence', text: this.carry, end: true }; this.carry = ''; if (this.closing) this.held.push(c); else await this.process(c, out, signal); }
         if (!signal.aborted && this.held.length) for (const u of this.closingBeat()) { if (signal.aborted) break; await this.process(u, out, signal); }
+        // A gate that gutted an answer is a defect to see, not a quiet success: say so loudly.
+        const kept = wordCount(this.released2), lost = this.stats.droppedWords;
+        if (lost > 0 && lost >= LOUD_LOSS * (kept + lost)) {
+          console.warn(`[gate] dropped ${lost} of ${kept + lost} words (${this.stats.drops} units) of answer ${this.reqId ?? ''}: see the gate events`);
+        }
       }
       catch (e) { err ??= e; }
       finally { out.close(); }
@@ -634,18 +645,33 @@ export class LiveGate {
    */
   private drawingsOf(u: PreflightUnit, r: PreflightResult | null): string | null {
     if (!r || !r.flags.length || r.flags.some((f) => f.check === 'svg')) return null;
-    const svg = r.tags.filter((t) => /^\s*svg\b/.test(t.body));
-    if (!svg.length || svg.some((t) => t.skipped)) return null;
+    // The board tag goes with its groups: a group drawn with no board open is skipped (founder lec06,
+    // 2026-10-31: {{svgboard}} rode in the first sentence the gate dropped and all five drawings were lost).
+    const svg = r.tags.filter((t) => /^\s*svg(?:board)?\b/.test(t.body));
+    if (!svg.some((t) => /^\s*svg\b/.test(t.body)) || svg.some((t) => t.skipped)) return null;
     return ` ${svg.map((t) => u.text.slice(t.start, t.end)).join(' ')} `;
   }
 
   private async process(u0: PreflightUnit, out: Out, signal: AbortSignal): Promise<void> {
     const fault = this.d.faults?.get(u0.key);
-    const u: PreflightUnit = fault ? { ...u0, fault } : u0;
+    let u: PreflightUnit = fault ? { ...u0, fault } : u0;
     this.stats.units++;
     const t0 = this.now();
-    const r = await this.d.preflight.check(u);
+    let r = await this.d.preflight.check(u);
     if (signal.aborted) return;
+    // A number said that the board computes differently is said as the board's (the unit is not
+    // released yet, so I1 holds): what is heard matches what is drawn.
+    if (r.fixes?.length && this.setting !== 'shadow') {
+      let text = u.text;
+      for (const f of [...r.fixes].sort((a, b) => b.start - a.start)) text = text.slice(0, f.start) + f.to + text.slice(f.end);
+      const note = `numbers said as the board's: ${r.fixes.map((f) => `${f.from} → ${f.to} (${f.of})`).join(', ')}`;
+      console.warn(`[gate] ${note}`);
+      this.d.preflight.reject(u);
+      u = { ...u, text };
+      const r2 = await this.d.preflight.check(u);
+      if (signal.aborted) return;
+      r = { ...r2, notes: [...r2.notes, note] };
+    }
     const ms = this.now() - t0;
     if (!r.flags.length) { this.emitGate(u, 'pass', 'release', r, ms); this.release(u, u.text, out); return; }
     this.stats.fails++;
@@ -675,7 +701,46 @@ export class LiveGate {
       await this.doRepair(u, r, repair, dry, out, signal);
       return;
     }
-    this.drop(u, r, ms, [], out);
+    await this.dropOrSalvage(u, r, ms, [], out, signal);
+  }
+
+  /**
+   * A unit that failed only on svg groups of its own (a group off the board, overlapping text): the
+   * failing groups leave and the words and the other groups play, if that passes. Its sentences never
+   * named a failing group's id (that would point at nothing). Founder lec06 "explain each filter":
+   * a summary line 65 units too wide took the whole edge-detection beat, scroll and words, with it.
+   */
+  private async salvage(u: PreflightUnit, r: PreflightResult, signal: AbortSignal): Promise<{ u: PreflightUnit; removed: string[] } | null> {
+    if (!r.flags.length || !r.flags.every((f) => f.check === 'svg')) return null;
+    const groups = r.tags.filter((t) => /^\s*svg\b/.test(t.body)).map((t) => ({ t, id: /<g\b[^>]*?\bid\s*=\s*["']([^"']+)["']/i.exec(t.body)?.[1] }));
+    const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const names = (id: string, d: string) => new RegExp(`(^|[\\s(])group ${esc(id)}\\b|\\(${esc(id)}\\)`).test(d);
+    const bad = groups.filter((g) => !!g.id && r.flags.some((f) => names(g.id!, f.detail)));
+    if (!bad.length || bad.length === groups.length && !tokenize(u.text).some((t) => t.kind === 'word')) return null;
+    const words = tokenize(u.text).filter((t): t is Word => t.kind === 'word').map((w) => w.text.toLowerCase().replace(/[^\p{L}\p{N}-]/gu, ''));
+    if (bad.some((g) => namedBy(g.t.body, words))) return null;
+    let text = u.text;
+    for (const g of [...bad].sort((a, b) => b.t.start - a.t.start)) text = text.slice(0, g.t.start) + text.slice(g.t.end);
+    const su: PreflightUnit = { key: u.key, kind: u.kind, text, ...(u.end ? { end: true } : {}) };
+    const r2 = await this.d.preflight.check(su);
+    if (signal.aborted) return null;
+    if (r2.flags.length) { this.d.preflight.reject(su); return null; }
+    return { u: su, removed: bad.map((g) => `group ${g.id}`) };
+  }
+
+  /** Drops `u`, unless its failing svg groups can leave and the rest play (salvage). */
+  private async dropOrSalvage(u: PreflightUnit, r: PreflightResult, ms: number, notes: string[], out: Out, signal: AbortSignal): Promise<void> {
+    this.d.preflight.reject(u);
+    const s = await this.salvage(u, r, signal);
+    if (signal.aborted) return;
+    if (s) {
+      this.stats.strips++;
+      console.warn(`[gate] unit ${u.key}: kept its words without ${s.removed.join(', ')} (${r.flags.map((f) => f.detail).join('; ')})`);
+      this.emitGate(u, 'strip', 'release', r, ms, { stripped: s.removed, text: s.u.text, notes: [...notes, 'svg groups that failed left; the words and other groups play'] });
+      this.release(s.u, s.u.text, out);
+      return;
+    }
+    this.drop(u, r, ms, notes, out);
   }
 
   /** The unit with its strippable failed tags removed, when that is all that failed. */
@@ -734,8 +799,8 @@ export class LiveGate {
     } finally { timer.abort(); signal.removeEventListener('abort', onAbort); }
     if (signal.aborted) return;
     const ms = this.now() - t0;
-    if (res === 'late') { ac.abort(); this.d.onEvent({ t: 'repair', k: u.key, phase: 'late', ms: Math.round(ms) }); this.drop(u, r, ms, ['repair late'], out); return; }
-    if (!res.ok) { this.d.onEvent({ t: 'repair', k: u.key, phase: res.reason, ms: Math.round(ms), ...(res.usd != null ? { usd: res.usd } : {}) }); this.drop(u, r, ms, [`repair ${res.reason}${res.detail ? `: ${res.detail}` : ''}`], out); return; }
+    if (res === 'late') { ac.abort(); this.d.onEvent({ t: 'repair', k: u.key, phase: 'late', ms: Math.round(ms) }); await this.dropOrSalvage(u, r, ms, ['repair late'], out, signal); return; }
+    if (!res.ok) { this.d.onEvent({ t: 'repair', k: u.key, phase: res.reason, ms: Math.round(ms), ...(res.usd != null ? { usd: res.usd } : {}) }); await this.dropOrSalvage(u, r, ms, [`repair ${res.reason}${res.detail ? `: ${res.detail}` : ''}`], out, signal); return; }
     // A repair replaces a beat of the board already open: it never opens a board of its own (a BOARD
     // tag here would open a second section, and the beat's group would land below the first figure,
     // out of the frame its coordinates are in). Only a unit that opened the board keeps its tag.

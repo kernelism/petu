@@ -52,7 +52,9 @@ and draws it. The tag kit above stays for the `tags` prompt variant (`PETU_PROMP
 
 - **Format** (the model's raw output; `server/prompt/system.ts`, examples `server/prompt/svgExamples.ts`):
   (p6.1) one or two sentences with no drawing (page pointing; they play while the plan is written),
-  a compact hidden `<plan>` ending with `BOARD viewBox="0 0 1000 H"` (`BOARD extend …` to draw on into
+  a compact hidden `<plan>` ending with `BOARD viewBox="0 0 560 H"` (p6.4: `BOARD_W` in wire.ts, about the
+  1440 lane in screen px, so the model's 16–20 unit labels are what the student reads; any width maps to the
+  section, old 1000-wide boards replay as they were) (`BOARD extend …` to draw on into
   the last board), regions and groups in teaching order; then beats: the beat's `<g id="…">` first
   (drawn across its sentences; parts with ids draw on the word naming them), then 1–3 sentences. The
   board holds the picture, labels, key numbers and one takeaway, never the narration's derivation.
@@ -82,7 +84,7 @@ and draws it. The tag kit above stays for the `tags` prompt variant (`PETU_PROMP
 - **Gate** (`src/svgboard/check.ts`, called from `GatePreflight`; check `svg`, always fails): parses,
   ids unique, no text on text (> 25% of the smaller box), no stroke through a text's core box, inside
   the canvas (the bottom may grow to 1.6×H). Text boxes are estimated (font ≥ the renderer's minimum,
-  `svgMinFont`), transforms applied, paths flattened. Repairs get `svgRepairNote` (the beat as raw
+  `svgMinFont`, per 1000 section units, scaled to the board's width), transforms applied, paths flattened. Repairs get `svgRepairNote` (the beat as raw
   SVG) and `SVG_REPAIR_MAX_OUTPUT`. A repair never opens a board: the server's filter runs with
   `opened` and the gate drops any `{{svgboard}}` in a repair of a unit that had none (one board = one
   frame; before, a repaired group opened a second section below and was re-checked on an empty board).
@@ -106,6 +108,10 @@ and draws it. The tag kit above stays for the `tags` prompt variant (`PETU_PROMP
   every bound group each frame (`refreshData`, via `KitStore.onConsts`; `KitStore.svgBox` frames it).
   `data-ghost` on a moving element/group leaves a 28% copy of where it started (marks only, no text);
   `data-trace` on a moving point leaves its path (accent, 45%).
+- **Legibility floor** (renderer): no board text under `LEGIBLE_PX` (12) on screen. A label the raise
+  leaves no room is settled, not shrunk (`settle.ts`): a nudge of ≤ ½ em, a two-line wrap at its middle
+  word (a row of labels keeps its places), a nudge of ≤ 2 em; only collisions the raise created count
+  (a label the model put on its own curve stays). Evidence: docs/superpowers/reference/lane-legibility.md.
 - **Polish** (`src/svgboard/polish.ts`, gate and renderer alike): text raised to the board minimum
   reflows: tspan steps scale, a line wider than its card wraps at words, stacked lines are pushed
   down, the card grows; a label crossed by its own group's stroke is nudged off (≤ 1.25 em, never

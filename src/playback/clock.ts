@@ -25,6 +25,12 @@ export interface NarrationClock {
    * `start`). Pause, seek and a journey's arrival beat use it; a clock without it can't pause.
    */
   retime?(from: number, start: number): void;
+  /**
+   * Whether a silence may be inserted before word `i` (a journey's hold) without cutting audio: a clock
+   * with audio can only rest between its pieces, never inside one already playing or mid-piece (the
+   * piece would stop and restart at an estimated offset, mid-word). Absent: always.
+   */
+  holdable?(i: number): boolean;
   /** Silences what is being heard now (a pause; a clock with audio). Resume re-times from the next word. */
   halt?(): void;
   /** The answer is over: release audio and requests. */
@@ -120,6 +126,19 @@ export class PacedClock implements NarrationClock {
   endsAt(): number { return this.end; }
 }
 
-export const endsSentence = (w: string) => /[.!?]["')\]’”]?$/.test(w);
+/**
+ * Abbreviations whose period ends no sentence ("aka.", "e.g.", "Fig."). A word that opens a bracket it
+ * does not close ("(aka.") is inside a parenthesis: no sentence ends there either. Founder lec06,
+ * 2026-10-31: "Linear filtering (aka. Convolutions)…" was cut after "(aka." and the voice, given the
+ * fragment alone, improvised "also known as linear filtering (sometimes abbreviated as L F)".
+ */
+export const ABBREV = /^(a\.?k\.?a|e\.g|i\.e|etc|vs|cf|fig|figs|eq|eqs|dr|mr|ms|mrs|prof|no|approx|resp|ca|st)\.$/i;
+export const endsSentence = (w: string) => {
+  if (!/[.!?]["')\]’”]?$/.test(w)) return false;
+  const core = w.replace(/^["'(\[‘“]+/, '').replace(/["')\]’”]+$/, '');
+  if (ABBREV.test(core)) return false;
+  if (/\(/.test(w) && !/\)/.test(w)) return false;
+  return true;
+};
 /** A clause boundary: the narration can pause after this word without sounding cut off. */
 export const endsClause = (w: string) => /[.!?:,;]["')\]’”]?$/.test(w);

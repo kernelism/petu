@@ -15,6 +15,8 @@ import { INK, type Palette } from './style';
 import { isBound, newScope, resolveData, type DataScope } from './data';
 import { prepareText } from './polish';
 import { applyGrammar, LEGIBLE_PX, MIN_PX, newTypeState, typeScale, type TypeState } from './grammar';
+import { settle } from './settle';
+import { groupGeometry } from './check';
 import type { SRect } from '../geometry/space';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -117,12 +119,20 @@ export function prepareGroup(b: SvgBoard, src: string, minPx: number, pxPerUnit:
   if (b.type) b.type.scale = scale; else b.type = newTypeState(scale);
   // The floor any text is raised to before the grammar sets it (a legibility floor on screen, not the
   // grammar's sizes: those are raised only as far as the drawing has room, grammar.ts roomSizes).
-  const st = b.type, floor = pxPerUnit > 0 ? Math.min(Math.max(8, scale.small), LEGIBLE_PX / pxPerUnit) : Math.max(8, scale.small);
+  const st = b.type, floor = pxPerUnit > 0 ? LEGIBLE_PX / pxPerUnit : Math.max(8, scale.small);
   st.floor = floor;
-  // A text in a row too tight for the floor may go to what the model wrote, never under MIN_PX (grammar.ts).
+  // The hard floor (MIN_PX = LEGIBLE_PX): no text goes under it, not even to clear a tight row (settle moves it).
   const min = pxPerUnit > 0 ? Math.min(floor, MIN_PX / pxPerUnit) : floor;
   st.minFloor = min;
-  const s = sanitizeGroup(src, { ns: b.ns, palette: b.palette, minFont: min, w: b.w, h: b.h, ids: b.ids, prepare: (g) => { resolveData(g, b.scope); prepareText(g, min, applyGrammar(g, st)); } });
+  const s = sanitizeGroup(src, { ns: b.ns, palette: b.palette, minFont: min, w: b.w, h: b.h, ids: b.ids, prepare: (g) => {
+    resolveData(g, b.scope);
+    const raw = g.cloneNode(true) as Element, prior = st.drawn ?? { texts: [], segs: [] };
+    prepareText(g, min, applyGrammar(g, st));
+    // A label the floor leaves no room moves instead of shrinking (settle.ts); then this group's final
+    // geometry is what the next group keeps clear of.
+    settle(g, raw, prior, b.w);
+    try { const geo = groupGeometry(g, 0); st.drawn = { texts: prior.texts.concat(geo.texts.map((t) => ({ ...t, el: undefined }))), segs: prior.segs.concat(geo.segs.filter((x) => !x.tiny)) }; } catch { /* best-effort */ }
+  } });
   // Washes: the board's hatch (an attribute, so a serialised board carries it with its pattern).
   if (typeof s !== 'string') s.el.querySelectorAll('[data-wash]').forEach((e) => e.setAttribute('fill', `url(#${hatchId(b.ns)})`));
   return s;

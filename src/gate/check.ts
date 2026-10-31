@@ -350,3 +350,44 @@ export function checkCounts(words: readonly string[], scene: NamedScene): Flag[]
   }
   return flags;
 }
+
+/** A spoken number to replace with the engine's value: offsets in the beat's text. */
+export type NumberFix = { start: number; end: number; from: string; to: string; of: string };
+
+/**
+ * Spoken numbers the board contradicts (founder lec06, 2026-10-31: "numbers said don't match numbers
+ * drawn": the narration said "about 92.9", the board computed 91.8). A hedged number ("about",
+ * "roughly") that matches no page, question or literal value at its own precision, and lies within 5%
+ * of a value the engine computed (the nearest), is the model's own arithmetic drifting from the
+ * board's: it is said as the board's value, at the precision it was written with. Plain numbers are
+ * never rewritten (they may be a page's own, from a page outside the context).
+ */
+export function numberFixes(words: readonly Word[], known: readonly Value[]): NumberFix[] {
+  const out: NumberFix[] = [];
+  // A number matches when it is the value rounded at its own last significant digit ("about 11300" for 11316).
+  const unit = (m: Mention) => {
+    if (m.dp > 0) return 10 ** -m.dp;
+    const z = /0*$/.exec(String(Math.abs(Math.round(m.value))))![0].length;
+    return 10 ** (Math.round(m.value) === 0 ? 0 : z);
+  };
+  const exact = (m: Mention, v: number) => Math.abs(m.value - v) <= 0.5 * unit(m) + 1e-9;
+  for (const m of mentions(words.map((w) => w.text))) {
+    if (m.ref || m.spelled || m.frac || m.percent || isYear(m)) continue;
+    if (!m.approx) continue; // a plain number may be the page's own (a page outside the context): never rewritten
+    if (known.some((k) => exact(m, k.v))) continue;
+    const comp = known.filter((k) => k.source === 'computed' && Math.abs(k.v - m.value) <= 0.05 * Math.abs(k.v));
+    if (!comp.length) continue;
+    const best = comp.reduce((a, b) => (Math.abs(b.v - m.value) < Math.abs(a.v - m.value) ? b : a));
+    const to = best.v.toFixed(m.dp);
+    if (Number(to) === m.value) continue;
+    // The digits inside the mention's words (punctuation around them stays).
+    for (let w = m.w0; w <= m.w1; w++) {
+      const d = /[−-]?\d+(?:,\d{3})*(?:\.\d+)?/.exec(words[w].text);
+      if (!d) continue;
+      const start = words[w].start + d.index;
+      out.push({ start, end: start + d[0].length, from: d[0], to, of: best.of });
+      break;
+    }
+  }
+  return out;
+}

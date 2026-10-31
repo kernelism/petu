@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeMetrics, aggregate, percentile, segHitsRect, floatingPoints, labelStats } from '../../scripts/eval/metrics';
+import { computeMetrics, aggregate, percentile, segHitsRect, floatingPoints, labelStats, MID_SILENCE_MS } from '../../scripts/eval/metrics';
 import { emptyResult, type EvalResult, type RegistryRow, type SerialTiming } from '../../src/agent/evalHooks';
 
 const tm = (kind: string, fired: number, started: number | null, ended: number | null, extra: Partial<SerialTiming> = {}): SerialTiming =>
@@ -160,6 +160,20 @@ describe('spoken length and the whole answer cost', () => {
     expect(m.handoffGapMs).toBe(1200);
     expect(computeMetrics(base()).stage2Ms).toBe(420); // no opener: stage 2's first chunk
     expect(computeMetrics(base()).handoffGapMs).toBeNull();
+  });
+  it('the true silence: the opener\'s last word ending → stage 2\'s first spoken word, not its first chunk', () => {
+    const r = base();
+    // The opener's words end at 4000; stage 2's first chunk (the board tag) came at 3500, but its first word only at 6200.
+    r.events = [{ t: 'handoff', ms: 3500, openerEndMs: 4000 }];
+    r.words = [{ text: 'Prices', t: 3000 }, { text: 'rise.', t: 3400 }, { text: 'Buyers', t: 6200 }, { text: 'compete', t: 6500 }, { text: 'hard.', t: 9800 }];
+    const m = computeMetrics(r);
+    expect(m.handoffGapMs).toBe(0);
+    expect(m.silenceMs).toBe(2200);
+    expect(m.midSilences).toBe(1); // "compete" → "hard." waits ~2.9 s past the word's own length
+    expect(m.midSilenceMaxMs).toBeGreaterThan(MID_SILENCE_MS);
+    r.words[2].t = 4000; r.words[3].t = 4300; r.words[4].t = 4600;
+    expect(computeMetrics(r).silenceMs).toBe(0); // stage 2 queued in time: no gap
+    expect(computeMetrics(base()).silenceMs).toBeNull(); // no opener
   });
   it('no words: no spoken length', () => {
     const r = base(); r.words = []; r.sentences = [];

@@ -14,12 +14,22 @@ export const dockMax = (W: number) => (W >= LARGE_W ? DOCK_MAX_LARGE : DOCK_MAX)
 export const LANE_DOCK_AIR = 22;
 
 /**
- * Where the dock (caption + ask bar, one unit) sits: centred under the slide column (the page
- * column while reading, the slide column pinned left in a split), as wide as it up to dockMax(W).
+ * The column the dock sits under: the slide column (the page column while reading, the slide column
+ * pinned left in a split). In the lane (layout C) always the page column, never the lane: following
+ * the pen made it jump between the two mid-answer and cover the lane's drawing (QA M4).
+ */
+export function dockColumn(W: number, s: DeskState | null): { x: number; w: number } {
+  if (!s) return { x: 16, w: W - 32 };
+  return s.lane && s.page ? s.page : s.column;
+}
+
+/**
+ * Where the dock (caption + ask bar, one unit) sits: centred under dockColumn, as wide as it up to
+ * dockMax(W).
  */
 export function dockPlacement(W: number, s: DeskState | null, view?: OverviewViewState, reserveRight = 0): { x: number; w: number } {
-  const col = windowColumn(s ? s.column : { x: 16, w: W - 32 }, W, view);
-  // The lane (layout C): centred under the column the pen is in, with air either side (mockups C1, C2).
+  const col = windowColumn(dockColumn(W, s), W, view);
+  // The lane (layout C): centred under the page column, with air either side (mockups C1, C2).
   const inset = s?.lane ? 2 * LANE_DOCK_AIR : 0;
   let w = Math.max(0, Math.min(dockMax(W), col.w - inset));
   // The overview zoom can push the column half off the window: the dock keeps a readable width.

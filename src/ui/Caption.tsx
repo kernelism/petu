@@ -31,11 +31,6 @@ type Props = {
   /** A quiet line while no word has arrived yet (an aside that couldn't be answered). Static text, no motion. */
   hint?: string;
   /**
-   * Mid-answer, every word so far has been spoken and the next has not arrived for a real pause (captionWindow
-   * PAUSE_CUE_MS, 1.5 s): a faint ellipsis after the last word, the one wait cue. It fades in once.
-   */
-  pausing?: boolean;
-  /**
    * A failed or cut-off answer: the message, plus a Retry control when retrying can help (the
    * caption takes pointer events then).
    */
@@ -71,7 +66,7 @@ function makeMeasure(el: HTMLElement): (s: string) => number {
   };
 }
 
-export function Caption({ words, visible, question, waiting = false, hint, pausing = false, error, parts, check, onDismissCheck }: Props) {
+export function Caption({ words, visible, question, waiting = false, hint, error, parts, check, onDismissCheck }: Props) {
   const tokens = groupWords(words);
   const viewRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -159,7 +154,7 @@ export function Caption({ words, visible, question, waiting = false, hint, pausi
       ) : showHint ? (
         <div className="caption-hint">{hint}</div>
       ) : thinking ? (
-        <div className="caption-think" aria-hidden="true">…</div>
+        <div className="caption-think" aria-hidden="true" />
       ) : tokens.length > 0 && (
         <div className={`caption-viewport${tall ? ' is-tall' : ''}`} ref={viewRef}>
           {leaving && (
@@ -171,7 +166,6 @@ export function Caption({ words, visible, question, waiting = false, hint, pausi
             {visibleTokens.map((t, i) => (
               <span key={i} className="caption-word">{t} </span>
             ))}
-            {pausing && <span className="caption-pause" aria-hidden="true">…</span>}
           </div>
         </div>
       )}

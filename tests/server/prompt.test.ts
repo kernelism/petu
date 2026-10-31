@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { systemPrompt, PROMPT_VERSION } from '../../server/prompt/system';
 import { SVG_EXAMPLES } from '../../server/prompt/svgExamples';
+import { BOARD_W } from '../../src/svgboard/wire';
 import { parseTag } from '../../src/script/parseTag';
 import { ScriptParser } from '../../src/script/parser';
 import { ScriptFilter } from '../../server/scriptFilter';
@@ -127,7 +128,9 @@ describe('system prompt (tags)', () => {
 // Founder decision 2026-10-29: the tag-DSL rules above don't apply here; these do.
 
 /** The BOARD height a script's plan declares. */
-const boardH = (script: string) => Number(/BOARD (?:extend )?viewBox="0 0 1000 (\d+)"/.exec(script)?.[1]);
+const boardH = (script: string) => Number(/BOARD (?:extend )?viewBox="0 0 \d+ (\d+)"/.exec(script)?.[1]);
+/** p6.4: the canvas is the lane's width in screen pixels (BOARD_W), so the model's text sizes are real. */
+const boardW = (script: string) => Number(/BOARD (?:extend )?viewBox="0 0 (\d+) \d+"/.exec(script)?.[1]);
 /** A script's beats (p6.1): its top-level <g id> group first, then the narration up to the next group (the group draws across it). */
 function beatsOf(script: string): { narration: string; id: string; svg: string }[] {
   const body = script.slice(script.indexOf('</plan>') + 7);
@@ -157,7 +160,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.3');
+    expect(PROMPT_VERSION).toBe('p6.6');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -200,9 +203,14 @@ describe('system prompt (svg, default)', () => {
     expect(s).toMatch(/Name each part in plain words as it appears, in the sentence it draws across/);
   });
 
+  it('p6.5 (no dead air): the script starts with spoken words, before the plan, after an opening too', () => {
+    expect(s).toMatch(/first characters are spoken words, never the plan or a group/);
+    expect(s).toMatch(/after an opening already spoken, its next sentences/);
+  });
+
   it('states the teacher-at-a-whiteboard brief and the streamed beat format', () => {
     for (const p of [/great teacher at a whiteboard/, /Draw the mechanism, not names/, /ONE concrete case/, /real numbers you compute/, /reads on its own/, /beats are your budget/,
-      /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 1000 H"/, /regions:/, /groups:/, /<g id=/, /drawing first/, /draws across its sentences/, /draws on the word that names it/, /Start speaking at once/, /data-fn=/, /data-val=/, /data-at=/, /data-const=/, /\{\{tween /, /data-ghost/, /data-trace/, /BUDGET line/, /Never write on the board what you say/,
+      /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 560 H"/, /one unit is about one pixel/, /regions:/, /groups:/, /<g id=/, /drawing first/, /draws across its sentences/, /draws on the word that names it/, /Start speaking at once/, /data-fn=/, /data-val=/, /data-at=/, /data-const=/, /\{\{tween /, /data-ghost/, /data-trace/, /BUDGET line/, /Never write on the board what you say/,
       /No scripts, foreignObject/, /font-size 16/, /one accent colour/, /Nothing overlaps/, /inside the viewBox/, /BOARD extend/, /ghost/]) expect(s).toMatch(p);
   });
 
@@ -240,7 +248,8 @@ describe('system prompt (svg, default)', () => {
     });
 
     it('groups: each well-formed, followed by its words; ids unique; every coordinate inside the viewBox; text ≥ 16', () => {
-      const H = boardH(ex.script), bs = beatsOf(ex.script);
+      const H = boardH(ex.script), W = boardW(ex.script), bs = beatsOf(ex.script);
+      expect(W).toBe(BOARD_W);
       expect(bs.length).toBeGreaterThanOrEqual(4);
       expect(new Set(bs.map((b) => b.id)).size).toBe(bs.length);
       for (const b of bs) {
@@ -250,10 +259,10 @@ describe('system prompt (svg, default)', () => {
         expect(doc.querySelector('parsererror'), b.id).toBeNull();
         expect(b.svg).not.toMatch(/<(script|foreignObject|image|animate|a)\b|\bon\w+=|href=/i);
         for (const el of Array.from(doc.querySelectorAll('*'))) {
-          for (const a of ['x', 'cx', 'x1', 'x2']) { const v = el.getAttribute(a); if (v != null) { expect(Number(v), `${b.id} ${a}`).toBeGreaterThanOrEqual(0); expect(Number(v)).toBeLessThanOrEqual(1000); } }
+          for (const a of ['x', 'cx', 'x1', 'x2']) { const v = el.getAttribute(a); if (v != null) { expect(Number(v), `${b.id} ${a}`).toBeGreaterThanOrEqual(0); expect(Number(v)).toBeLessThanOrEqual(W); } }
           for (const a of ['y', 'cy', 'y1', 'y2']) { const v = el.getAttribute(a); if (v != null) { expect(Number(v), `${b.id} ${a}`).toBeGreaterThanOrEqual(0); expect(Number(v)).toBeLessThanOrEqual(H); } }
           const pts = el.getAttribute('points');
-          if (pts) for (const [x, y] of pts.trim().split(/\s+/).map((p) => p.split(',').map(Number))) { expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThanOrEqual(1000); expect(y).toBeGreaterThanOrEqual(0); expect(y).toBeLessThanOrEqual(H); }
+          if (pts) for (const [x, y] of pts.trim().split(/\s+/).map((p) => p.split(',').map(Number))) { expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThanOrEqual(W); expect(y).toBeGreaterThanOrEqual(0); expect(y).toBeLessThanOrEqual(H); }
           const fs = el.getAttribute('font-size');
           if (fs) expect(Number(fs), b.id).toBeGreaterThanOrEqual(16);
         }

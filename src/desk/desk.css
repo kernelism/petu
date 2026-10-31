@@ -304,6 +304,29 @@ svg[data-svgboard] [data-live] circle[fill]:not([fill="none"]):not([fill="#FFFFF
 .lane-group.is-folded .trail-head.is-mid { display: none; }
 /* A walk's slice folded away with its answer's card. */
 .lane-group.is-away { display: none; }
+/* A walking answer is one thread: its head sits over its first slice; each later stretch carries a
+   quiet continuation tag ("3 · cont. 2/4", the head's number chip) that shows the question on hover or
+   focus and goes to the head on a click. */
+.lane-item > .trail-head.is-cont .trail-row {
+  width: auto;
+  max-width: 100%;
+  height: 26px;
+  gap: 8px;
+  padding: 0 8px 0 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.trail-cont-n { flex: none; font-variant-numeric: tabular-nums; }
+.trail-cont-q { display: none; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ink-2); }
+.trail-cont:hover .trail-cont-q, .trail-cont:focus-visible .trail-cont-q { display: block; }
+.desk-board:not(.is-lane) .trail-head.is-cont { display: none; }
+/* A walking answer's folded card says the pages it spans ("p.5–89 · 1:51") in place of its meta. */
+.trail-fmeta { display: none; flex: none; font-size: 12px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+.lane-group.is-folded .trail-head.is-walk .trail-meta { display: none; }
+.lane-group.is-folded .trail-head.is-walk .trail-fmeta { display: inline; }
+.lane-group.is-folded .trail-head.is-walk .trail-row:hover .trail-fmeta,
+.lane-group.is-folded .trail-head.is-walk .trail-row:focus-visible .trail-fmeta { display: none; }
 
 /* Leaders: 1 px accent from a dot on the page edge to the drawing (≤ 120 px, never across text). */
 .lane-leaders { position: absolute; left: 0; top: 0; width: 100%; overflow: visible; pointer-events: none; z-index: 3; }

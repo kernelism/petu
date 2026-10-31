@@ -482,10 +482,31 @@ describe('ask: upstream timeouts', () => {
 
 describe('ask: incomplete streams', () => {
   const head = [sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message' } }), ...textEvents('m1', ['Part one. '])];
-  it('response.incomplete after text: done (with usage), then cut_off', async () => {
-    const { f } = fakeFetch([{ chunks: [...head, sse({ type: 'response.incomplete', response: { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, usage } })] }]);
+  const incomplete = (reason: string) => sse({ type: 'response.incomplete', response: { status: 'incomplete', incomplete_details: { reason }, usage } });
+  it('response.incomplete mid-sentence: done (with usage), then cut_off', async () => {
+    const midway = [sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message' } }), ...textEvents('m1', ['Part one. Then the'])];
+    const { f } = fakeFetch([{ chunks: [...midway, incomplete('max_output_tokens')] }]);
     const out = await run(req(), deps(f));
     expect(out[out.length - 2]).toMatchObject({ t: 'done', estimated: false });
+    expect(out[out.length - 1]).toMatchObject({ t: 'error', code: 'cut_off' });
+  });
+  // QA B1 (answers.jsonl 2026-10-31T03:04:19Z, lec06 "I missed this lecture"): the budget ran out after
+  // the pyramid sentence and one more drawn group; the whole narration had played, yet the dock said
+  // "The answer was cut off. Retry".
+  it('the output budget runs out just after a whole sentence (a drawn group may follow): done, no cut_off', async () => {
+    const tail = ['A Gaussian pyramid repeatedly filters and subsamples, reducing such aliasing before each smaller level.\n', '{{svg <g id="edges"><text x="40" y="620">One row</text></g>}} '];
+    const chunks = [sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message' } }), ...textEvents('m1', tail)];
+    const { f } = fakeFetch([{ chunks: [...chunks, incomplete('max_output_tokens')] }]);
+    const recs: AnswerRecord[] = [];
+    const out = await run(req(), deps(f, { log: (r) => recs.push(r) }));
+    expect(out[out.length - 1]).toMatchObject({ t: 'done', estimated: false });
+    expect(out.some((e) => e.t === 'error')).toBe(false);
+    expect(recs[0]).toMatchObject({ upstream: 'incomplete (max_output_tokens)' });
+    expect(recs[0].error).toBeUndefined();
+  });
+  it('a content filter stop after a whole sentence is still a cut_off (only the budget is forgiven)', async () => {
+    const { f } = fakeFetch([{ chunks: [...head, incomplete('content_filter')] }]);
+    const out = await run(req(), deps(f));
     expect(out[out.length - 1]).toMatchObject({ t: 'error', code: 'cut_off' });
   });
   it('the answer record says why the upstream cut it short', async () => {
@@ -762,9 +783,11 @@ describe('Lessons v3: two stages', () => {
     expect(tail.at(-2).text).toMatch(/^QUESTION/);
     expect(tail.at(-1).text).toBe(openerNote('{{circle p=2 mark=#d1}} It is the best line.'));
     expect(tail.at(-1).text).toMatch(/^ALREADY SPOKEN:.*Do not repeat.*\nOPENING: \{\{circle p=2 mark=#d1\}\} It is the best line\.$/s);
+    // p6.5: speaking comes first even after an opener, so the plan's writing time is covered.
+    expect(tail.at(-1).text).toMatch(/starts with spoken words, before the plan/);
     // it continues from where the opener stopped: never its claim again, a first sentence that adds something
     expect(tail.at(-1).text).toMatch(/never state it again, in any words/);
-    expect(tail.at(-1).text).toMatch(/first sentence must add something the opening did not say: why it holds \(the mechanism\), or the first step of it drawn/);
+    expect(tail.at(-1).text).toMatch(/one or two sentences that need no drawing and add something the opening did not say \(why it holds/);
     // The cached prefix is unchanged by the opener.
     expect(b.input.slice(0, 2)).toEqual((buildRequest(req({ context: multi }), cfg) as any).input.slice(0, 2));
   });
@@ -773,5 +796,42 @@ describe('Lessons v3: two stages', () => {
     const { f, calls } = fakeFetch([{ status: 200, text: JSON.stringify({ usage: { input_tokens: 3000, output_tokens: 0 } }) }]);
     expect(await prewarmScout(sreq, scfg, deps(f))).toMatchObject({ ok: true });
     expect(JSON.parse(String(calls[0].init.body)).input).toHaveLength(2);
+  });
+});
+
+describe('spoken (answers.jsonl svg.firstWordMs)', () => {
+  it('a piece with a word counts; tags and whitespace alone do not', async () => {
+    const { spoken } = await import('../../server/openai');
+    expect(spoken('{{svgboard h=700}}  ')).toBe(false);
+    expect(spoken('{{svg <g id="a"><text x="1" y="2">label</text></g>}} ')).toBe(false);
+    expect(spoken('{{highlight p=2 "x"}} The')).toBe(true);
+  });
+});
+
+describe('quietBeat (stage 2 quiet while a group is written)', () => {
+  it('beats only after the first word, after a quiet stretch, between words', async () => {
+    const { quietBeat } = await import('../../server/openai');
+    expect(quietBeat(NaN, 0, 5000, 'x. ', 1000)).toBe(false); // not spoken yet (the opener covers it)
+    expect(quietBeat(100, 4500, 5000, 'x. ', 1000)).toBe(false); // not quiet long enough
+    expect(quietBeat(100, 3000, 5000, 'contributes.', 1000)).toBe(true);
+    expect(quietBeat(100, 3000, 5000, '{{svgboard h=700}}', 1000)).toBe(true);
+    expect(quietBeat(100, 3000, 5000, 'slower', 1000)).toBe(false); // a word may go on ("slower" + "-changing")
+  });
+});
+
+describe('endsOnSentence / isBudgetStop (QA B1)', () => {
+  it('reads the spoken words only: tags removed, an unclosed tag at the end dropped', async () => {
+    const { endsOnSentence, isBudgetStop } = await import('../../server/openai');
+    expect(endsOnSentence('Each level halves. {{svg <g id="a"><text>x</text></g>}} ')).toBe(true);
+    expect(endsOnSentence('It is “aliasing.”')).toBe(true);
+    expect(endsOnSentence('Each level halves. Then the')).toBe(false);
+    expect(endsOnSentence('Each level halves. {{svg <g id="a"><text>half')).toBe(true);
+    expect(endsOnSentence('Then the {{highlight p=4 "box"}}')).toBe(false);
+    expect(endsOnSentence('Each level halves.\n{{svg {{svgboard h=700}} {{svg <g id="e"><text>row</text></g>}} }} ')).toBe(true);
+    expect(endsOnSentence('')).toBe(false);
+    expect(isBudgetStop('incomplete (max_output_tokens)')).toBe(true);
+    expect(isBudgetStop('max_tokens')).toBe(true);
+    expect(isBudgetStop('incomplete (content_filter)')).toBe(false);
+    expect(isBudgetStop(undefined)).toBe(false);
   });
 });

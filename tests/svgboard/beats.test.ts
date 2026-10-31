@@ -10,7 +10,7 @@ import { newScope } from '../../src/svgboard/data';
 import { checkGroups, groupGeometry, newBoardState, acceptGroups, pathPolys, segHitsBox } from '../../src/svgboard/check';
 import { namesWord } from '../../src/playback/scheduler';
 import { anchorWords } from '../../src/script/parseTag';
-import { completeSvg, rawSvgScript } from '../../src/svgboard/wire';
+import { BOARD_W, completeSvg, rawSvgScript } from '../../src/svgboard/wire';
 import type { RawAction } from '../../src/script/types';
 
 const wire = (raw: string, step: number) => {
@@ -44,8 +44,8 @@ describe('svg beats: the server filter', () => {
       for (const step of [1, 3, 7, 50]) expect(wire(ex.script, step).out).toBe(a);
       const { f } = wire(ex.script, 5);
       // p6.1: the first sentence (page pointing, no drawing) plays before the board opens; no group before it.
-      expect(a.indexOf('{{svgboard h=')).toBeGreaterThan(0);
-      expect(a.indexOf('{{svgboard h=')).toBeLessThan(a.indexOf('{{svg <'));
+      expect(a.indexOf('{{svgboard ')).toBeGreaterThan(0);
+      expect(a.indexOf('{{svgboard ')).toBeLessThan(a.indexOf('{{svg <'));
       expect(a).not.toMatch(/<plan>|BOARD viewBox|```/);
       expect(f.plan).toMatch(/BOARD viewBox/);
       const groups = ex.script.match(/<g id="[^"]+"/g)!.map((g) => g.slice(7, -1));
@@ -55,7 +55,7 @@ describe('svg beats: the server filter', () => {
       // No tag in the wire form has a newline or a brace inside.
       for (const m of a.matchAll(/\{\{svg ([\s\S]*?)\}\}/g)) expect(m[1]).not.toMatch(/[\n{}]/);
       const acts = actions(a);
-      expect(acts.find((x) => x.kind === 'sketch')).toMatchObject({ kind: 'sketch', svgboard: { w: 1000 } });
+      expect(acts.find((x) => x.kind === 'sketch')).toMatchObject({ kind: 'sketch', svgboard: { w: BOARD_W } });
       const svgs = acts.filter((x) => x.kind === 'svg');
       expect(svgs.map((x) => (x as { id?: string }).id)).toEqual(f.groups);
       // Narration survives intact (no SVG leaks into captions).
@@ -219,7 +219,7 @@ describe('follow-ups remember the svg board', () => {
     const { out, f } = wire(ex.script, 1e6);
     const r = recordOf({ question: ex.question, page: ex.page, pages: ex.pages, plan: ex.plan, script: out, answerPlan: f.plan });
     const t = entryText(1, r);
-    expect(t).toMatch(/board layout: BOARD viewBox="0 0 1000 \d+"/);
+    expect(t).toMatch(new RegExp(`board layout: BOARD viewBox="0 0 ${BOARD_W} \\d+"`));
     for (const id of f.groups) expect(t).toContain(`svg group ${id}`);
     expect(r.sections).toEqual([{ id: 'board', kind: 'svgboard' }]);
   });

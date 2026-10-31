@@ -1,6 +1,6 @@
 // tests/ui/layout.test.ts
 import { describe, it, expect } from 'vitest';
-import { dockPlacement, dockReserve, DOCK_MAX } from '../../src/ui/layout';
+import { dockColumn, dockPlacement, dockReserve, DOCK_MAX } from '../../src/ui/layout';
 import { band, inView, frameTop, setSafeBottom, safeBottom, SAFE_BOTTOM, SAFE_TOP } from '../../src/desk/layout';
 import type { DeskState } from '../../src/desk/types';
 
@@ -16,6 +16,16 @@ describe('dockPlacement', () => {
   });
   it('is never wider than its column', () => {
     expect(dockPlacement(1000, c(25, 462)).w).toBe(462);
+  });
+  // QA M4 (1440×900, lec06): the dock followed the pen into the lane mid-answer and covered its drawing.
+  it('in the lane it stays under the page column wherever the pen is, clear of the lane', () => {
+    const page = { x: 48, w: 800 }, laneCol = { x: 848, w: 544 };
+    const onPage: DeskState = { ...c(48, 800), lane: true, page, column: page };
+    const inLane: DeskState = { ...c(848, 544), lane: true, page, column: laneCol };
+    const a = dockPlacement(1440, onPage), b = dockPlacement(1440, inLane);
+    expect(b).toEqual(a);
+    expect(b.x + b.w / 2).toBeLessThanOrEqual(laneCol.x);
+    expect(dockColumn(1440, inLane)).toEqual(page);
   });
 });
 

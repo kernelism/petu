@@ -6,15 +6,15 @@ const fresh = async () => { vi.resetModules(); return import('../../src/settings
 
 describe('settings', () => {
   beforeEach(() => localStorage.clear());
-  it('the ink is the violet preset and the drawing style is live; neither is stored', async () => {
+  it('the ink is the violet preset and the drawing style is hand; neither is stored', async () => {
     let s = await fresh();
-    expect(s.getSettings()).toMatchObject({ inkColor: '#8E4EC6', inkStyle: 'live' });
-    s.setSettings({ inkStyle: 'hand' }); // the dev ?style= aid: this page load only
-    expect(s.getSettings().inkStyle).toBe('hand');
+    expect(s.getSettings()).toMatchObject({ inkColor: '#8E4EC6', inkStyle: 'hand' });
+    s.setSettings({ inkStyle: 'live' }); // the dev ?style= aid: this page load only
+    expect(s.getSettings().inkStyle).toBe('live');
     const stored = JSON.parse(localStorage.getItem(KEY)!);
     expect(stored).toEqual({ highlight: 'violet', speed: 1, voice: 'off', quality: 'standard', v: 3 });
     s = await fresh();
-    expect(s.getSettings().inkStyle).toBe('live');
+    expect(s.getSettings().inkStyle).toBe('hand');
   });
   it('v2 saves migrate: drawing style, ink colour, shortcuts dropped; wpm × speed lands on the nearest step', async () => {
     localStorage.setItem(KEY, JSON.stringify({ inkStyle: 'hand', inkColor: '#0A84FF', wpm: 200, shortcuts: false, speed: 1, voice: 'marin', highlight: 'yellow', v: 2 }));

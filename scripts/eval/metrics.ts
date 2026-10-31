@@ -24,6 +24,16 @@ export type Metrics = {
    */
   stage2Ms: number | null;
   handoffGapMs: number | null;
+  /**
+   * The silence the student actually hears at the seam: from the opener's last word ending to stage 2's
+   * first spoken word starting (ms; 0 when it follows on time). handoffGapMs times stage 2's first chunk,
+   * which in the svg format is the board tag or a group, never a word, so it under-reports. Null without
+   * an opener, or when stage 2 spoke nothing.
+   */
+  silenceMs: number | null;
+  /** After that seam: silences over MID_SILENCE_MS between spoken words (count, and the longest, ms). */
+  midSilences: number;
+  midSilenceMaxMs: number;
   /** Stage 2's cost (the `done` event). */
   usd: number;
   /** The scout's cost (the `scout` event) and the storyboard's, when there was one. */
@@ -58,6 +68,32 @@ export type GateMetrics = {
   holds: number; seamMs: number | null; shadowMs: number[]; liveSkipAfterPass: number; shadowDrift: number; cascades: number;
 };
 export const HOLD_MS = 1000;
+/** A mid-answer silence worth counting (the no-dead-air target: none over 1.5 s). */
+export const MID_SILENCE_MS = 1500;
+
+/**
+ * The true silences of one answer (see Metrics.silenceMs). The seam: the handoff's `openerEndMs` is when
+ * the opener's queued words end; stage 2's first word is the first one starting at or after both that
+ * and the handoff. Gaps after it are word start to next word start minus the word's own paced length.
+ */
+export function silences(r: Pick<EvalResult, 'events' | 'words'>): { silenceMs: number | null; midSilences: number; midSilenceMaxMs: number } {
+  const ho = r.events.find((e) => e.t === 'handoff') as { ms: number; openerEndMs?: number } | undefined;
+  let i = 0, silenceMs: number | null = null;
+  if (ho?.openerEndMs != null) {
+    const from = Math.max(ho.openerEndMs, ho.ms);
+    i = r.words.findIndex((w) => w.t >= from - 1);
+    if (i >= 0) silenceMs = Math.max(0, Math.round(r.words[i].t - ho.openerEndMs));
+  }
+  let midSilences = 0, midSilenceMaxMs = 0;
+  if (i >= 0) {
+    for (let k = Math.max(1, i + 1); k < r.words.length; k++) {
+      const gap = r.words[k].t - r.words[k - 1].t - paced.durationMs(r.words[k - 1].text);
+      if (gap > MID_SILENCE_MS) midSilences++;
+      midSilenceMaxMs = Math.max(midSilenceMaxMs, Math.round(gap));
+    }
+  }
+  return { silenceMs, midSilences, midSilenceMaxMs };
+}
 
 /** The narration's own pacing: a word's spoken length with its clause/sentence pause (the app's default clock). */
 const paced = new PacedClock(() => BASE_WPM);
@@ -229,6 +265,7 @@ export function computeMetrics(r: EvalResult, parsed?: ScriptParse): Metrics {
   const scoutUsd = r.events.reduce((s, e) => s + ((e.t === 'scout' || e.t === 'storyboard') ? (e.usd ?? 0) : 0), 0);
   const handoff = r.events.find((e) => e.t === 'handoff') as Extract<EvalResult['events'][number], { t: 'handoff' }> | undefined;
   const gm = gateMetrics(r);
+  const sil = silences(r);
   const lastSpoken = r.sentences.length ? r.sentences[r.sentences.length - 1].endMs : r.words.length ? r.words[r.words.length - 1].t : null;
 
   return {
@@ -239,6 +276,7 @@ export function computeMetrics(r: EvalResult, parsed?: ScriptParse): Metrics {
     spokenMs: r.words.length && lastSpoken != null ? Math.max(0, lastSpoken - r.words[0].t) : null,
     stage2Ms: handoff?.ms ?? r.chunks[0]?.t ?? null,
     handoffGapMs: handoff?.openerEndMs != null ? Math.max(0, handoff.ms - handoff.openerEndMs) : null,
+    ...sil,
     usd: done?.usd ?? 0,
     scoutUsd,
     answerUsd: (done?.usd ?? 0) + scoutUsd + (gm?.repairUsd ?? 0),
