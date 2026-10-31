@@ -12,7 +12,13 @@ export type AskRequest = {
   context: AskContext;
   /** Eval runs tag their spend; the server also reads PETU_PHASE. */
   phase?: string;
+  /** The answer model as a choice, never a name: the server maps it (server/quality.ts). Absent = 'standard'. */
+  quality?: AnswerQuality;
 };
+
+/** Settings → Answer quality. 'standard' = the server's default model; 'best' = its opt-in best model. */
+export const ANSWER_QUALITIES = ['standard', 'best'] as const;
+export type AnswerQuality = (typeof ANSWER_QUALITIES)[number];
 
 /** Built by src/agent/context/build.ts. Text blocks are already formatted for the model. */
 export type AskContext = {
@@ -115,6 +121,8 @@ export type SpendSummary = {
   /** The server's answer model, and which provider keys it has (never the keys themselves). */
   model?: string;
   keys?: { openai: boolean; anthropic: boolean };
+  /** Whether Answer quality "Best" can run (its model's key is set). A boolean, never the key. */
+  best?: boolean;
   /** Set when the next answer would be refused: the refusal line. */
   blocked?: string;
   /** Which cap `blocked` names. */

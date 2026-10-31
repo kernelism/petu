@@ -7,7 +7,7 @@ import { keysActive } from '../../src/ui/CanvasToolbar';
 import { backControl, RouteChip } from '../../src/ui/RouteChip';
 import { FollowPill } from '../../src/ui/FollowPill';
 import { isGoToPageKey, parsePage } from '../../src/ui/pageNav';
-import { effectiveWpm, radioStep, SettingsPopover } from '../../src/ui/SettingsPopover';
+import { BEST_HINT, BEST_OFF_NOTE, radioStep, SettingsPopover } from '../../src/ui/SettingsPopover';
 import { cardPlace, shortcutRows } from '../../src/ui/ShortcutsOverlay';
 import { tipPlace } from '../../src/ui/Tip';
 import { glideOffset } from '../../src/ui/glide';
@@ -124,33 +124,52 @@ describe('settings', () => {
     expect(radioStep('End', 0, 3)).toBe(2);
     expect(radioStep('a', 0, 3)).toBeNull();
   });
-  it('says what the wpm and the playback speed make together', () => {
-    expect(effectiveWpm(170, 1.25)).toBe(213);
-    expect(effectiveWpm(170, 1)).toBe(170);
-  });
-  it('is a titled dialog; each radio group is one tab stop; colours have distinct names', () => {
-    mount(createElement(SettingsPopover, { open: true, onClose: () => {} }));
+  it('is a titled dialog; each radio group is one tab stop; four controls and the shortcuts link', () => {
+    mount(createElement(SettingsPopover, { open: true, onClose: () => {}, bestAvailable: true }));
     const pop = document.querySelector('.popover')!;
     expect(pop.getAttribute('aria-labelledby')).toBe('pop-title');
     expect(pop.querySelector('#pop-title')!.textContent).toBe('Settings');
     for (const g of pop.querySelectorAll('[role="radiogroup"]')) {
       expect([...g.querySelectorAll('[role="radio"]')].filter((r) => r.getAttribute('tabindex') === '0')).toHaveLength(1);
     }
-    const names = [...pop.querySelectorAll('.swatch')].map((s) => s.getAttribute('aria-label'));
-    expect(new Set(names).size).toBe(names.length);
-    expect(names).toContain('Violet');
+    expect([...pop.querySelectorAll('.pop-label')].map((l) => l.textContent)).toEqual(['Highlight', 'Speed', 'Voice', 'Answer quality']);
+    // No drawing style, no ink colour, no slider, no shortcuts switch.
+    expect(pop.querySelector('.swatch, input[type="range"], [role="switch"]')).toBeNull();
+    const radios = (id: string) => [...pop.querySelectorAll(`[aria-labelledby="${id}"] [role="radio"]`)].map((r) => r.textContent);
     // The highlight is a style (violet wash or yellow marker, layout C), a two-way radio group.
-    const hl = pop.querySelector('[aria-labelledby="pop-highlight"]')!;
-    expect([...hl.querySelectorAll('[role="radio"]')].map((r) => r.textContent)).toEqual(['Violet wash', 'Yellow marker']);
+    expect(radios('pop-highlight')).toEqual(['Violet wash', 'Yellow marker']);
+    expect(radios('pop-speed')).toEqual(['0.75×', '1×', '1.25×', '1.5×']);
+    expect(radios('pop-voice')).toEqual(['Off', 'Marin', 'Cedar']);
+    expect(radios('pop-quality')).toEqual(['Standard', 'Best']);
+    expect(pop.textContent).toContain(BEST_HINT);
+    expect(pop.querySelector('.pop-show-keys')!.textContent).toBe('Keyboard shortcuts ?');
   });
-  it('an arrow key picks the next drawing style and moves focus with it', () => {
+  it('a speed pick goes through onSpeed; an arrow key moves to the next step and focus with it', () => {
+    const picks: number[] = [];
+    mount(createElement(SettingsPopover, { open: true, onClose: () => {}, onSpeed: (v: number) => picks.push(v) }));
+    const group = document.querySelector('[aria-labelledby="pop-speed"]')!;
+    const r = group.querySelectorAll<HTMLElement>('[role="radio"]');
+    expect(r[1].getAttribute('aria-checked')).toBe('true');
+    act(() => { r[3].click(); });
+    act(() => { r[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); });
+    expect(picks).toEqual([1.5, 1.25]);
+    expect(document.activeElement).toBe(r[2]);
+  });
+  it('without the server saying Best can run: Best is disabled, Standard shown, a note; arrows skip it', () => {
     mount(createElement(SettingsPopover, { open: true, onClose: () => {} }));
-    const group = document.querySelector('.segmented')!;
-    const on = () => [...group.querySelectorAll('[role="radio"]')].findIndex((r) => r.getAttribute('aria-checked') === 'true');
-    const before = on();
-    act(() => { group.querySelectorAll<HTMLElement>('[role="radio"]')[before].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); });
-    expect(on()).toBe((before + 1) % 3);
-    expect(document.activeElement).toBe(group.querySelectorAll('[role="radio"]')[on()]);
+    const group = document.querySelector('[aria-labelledby="pop-quality"]')!;
+    const [std, best] = group.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+    expect(best.disabled).toBe(true);
+    expect(std.getAttribute('aria-checked')).toBe('true');
+    expect(document.querySelector('.popover')!.textContent).toContain(BEST_OFF_NOTE);
+    act(() => { std.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); });
+    expect(std.getAttribute('aria-checked')).toBe('true');
+  });
+  it('the shortcuts link closes the popover and opens the sheet', () => {
+    let closed = 0, shown = 0;
+    mount(createElement(SettingsPopover, { open: true, onClose: () => { closed++; }, onShowShortcuts: () => { shown++; } }));
+    act(() => { document.querySelector<HTMLElement>('.pop-show-keys')!.click(); });
+    expect([closed, shown]).toEqual([1, 1]);
   });
 });
 

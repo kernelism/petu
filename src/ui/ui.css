@@ -599,53 +599,9 @@
   letter-spacing: 0.005em;
 }
 .pop-note { margin: -2px 0 0; font-size: 12px; line-height: 16px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.pop-row-inline { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
-/* The switch's row is its hit target: label and switch together, 28px tall. */
-.pop-switch-row {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 28px;
-  cursor: pointer;
-}
-.pop-switch-row .pop-label { color: var(--ink-2); font-size: 13px; }
-.pop-show-keys { display: inline-flex; align-items: center; gap: 6px; flex: none; margin-right: -8px; }
+/* The quiet link to the shortcut sheet: text aligned with the labels above it. */
+.pop-show-keys { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; margin: -4px 0 -4px -8px; }
 .pop-show-keys .keycap { min-width: 20px; height: 20px; padding: 0 5px; font-size: 11.5px; }
-.switch {
-  position: relative;
-  flex: none;
-  width: 34px;
-  height: 20px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: rgba(0,0,0,.14);
-  cursor: pointer;
-  transition: background-color var(--dur-base) var(--ease-out);
-}
-.pop-switch-row:hover .switch:not(.is-on) { background: rgba(0,0,0,.2); }
-.pop-switch-row:hover .switch.is-on { background: #000; }
-.switch:active::after { transform: scale(.92); }
-.switch.is-on:active::after { transform: translateX(14px) scale(.92); }
-.switch::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--surface);
-  box-shadow: 0 1px 2px rgba(0,0,0,.2);
-  transition: transform var(--dur-base) var(--ease-out);
-}
-.switch.is-on { background: var(--ink); }
-.switch.is-on::after { transform: translateX(14px); }
-.pop-label-split { display: flex; justify-content: space-between; align-items: baseline; }
-.pop-value { color: var(--ink); font-variant-numeric: tabular-nums; }
-
 .segmented {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -665,14 +621,16 @@
   cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
-.seg:hover:not(.is-on) { background: rgba(0,0,0,.04); color: var(--ink); }
-.seg:active:not(.is-on) { background: rgba(0,0,0,.08); }
+.seg:hover:not(.is-on):not(:disabled) { background: rgba(0,0,0,.04); color: var(--ink); }
+.seg:active:not(.is-on):not(:disabled) { background: rgba(0,0,0,.08); }
+.seg:disabled { color: var(--muted); opacity: .55; cursor: default; }
 .seg.is-on {
   background: var(--surface);
   color: var(--ink);
   box-shadow: 0 1px 2px rgba(0,0,0,.1), 0 0 0 0.5px rgba(0,0,0,.06);
 }
 .segmented-2 { grid-template-columns: repeat(2, 1fr); }
+.segmented-4 { grid-template-columns: repeat(4, 1fr); font-variant-numeric: tabular-nums; }
 /* A highlight option's chip: its wash on white, as it lands on the page. */
 .seg-wash {
   position: relative;
@@ -687,63 +645,6 @@
   overflow: hidden;
 }
 .seg-wash::before { content: ''; position: absolute; inset: 0; background: var(--wash); opacity: var(--wash-a); }
-
-.swatches { display: flex; gap: 10px; }
-.swatch {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: var(--swatch);
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,.1);
-  cursor: pointer;
-  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
-}
-.swatch:hover { transform: scale(1.1); }
-.swatch:active { transform: scale(.94); }
-/* Selected: an ink ring for every colour (a ring in the swatch's own colour vanishes for yellow). */
-.swatch.is-on { box-shadow: inset 0 0 0 1px rgba(0,0,0,.1), 0 0 0 2px var(--surface), 0 0 0 3.5px var(--ink); }
-.swatch:focus-visible { outline-offset: 5px; }
-
-.range {
-  --fill: 50%;
-  width: 100%;
-  height: 28px;
-  margin: 0;
-  background: transparent;
-  -webkit-appearance: none;
-  appearance: none;
-  cursor: pointer;
-}
-.range::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 2px;
-  background: linear-gradient(to right, var(--ink) var(--fill), rgba(0,0,0,.1) var(--fill));
-}
-.range::-moz-range-track { height: 4px; border-radius: 2px; background: rgba(0,0,0,.1); }
-.range::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--ink); }
-.range::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 18px;
-  height: 18px;
-  margin-top: -7px;
-  border-radius: 50%;
-  background: var(--surface);
-  box-shadow: 0 0 0 0.5px rgba(0,0,0,.12), 0 1px 3px rgba(0,0,0,.2);
-  transition: transform var(--dur-fast) var(--ease-out);
-}
-.range::-moz-range-thumb {
-  width: 18px; height: 18px; border: 0; border-radius: 50%;
-  background: var(--surface);
-  box-shadow: 0 0 0 0.5px rgba(0,0,0,.12), 0 1px 3px rgba(0,0,0,.2);
-  transition: transform var(--dur-fast) var(--ease-out);
-}
-.range:hover::-webkit-slider-thumb { transform: scale(1.08); }
-.range:active::-webkit-slider-thumb { transform: scale(.95); }
-.range:hover::-moz-range-thumb { transform: scale(1.08); }
-.range:active::-moz-range-thumb { transform: scale(.95); }
-.range:focus-visible { outline-offset: 4px; border-radius: 4px; }
 
 /* ───────── Canvas toolbar: top left, mirroring the top bar (the slide column starts under it) ───────── */
 .toolbar {
@@ -844,11 +745,10 @@
   .askbar-btn, .askbar-mic, .askbar-about, .popover, .caption-word, .askbar-chips, .transcript, .topbar-num.is-tick { animation: none; }
   .caption-q.is-waiting, .caption-text.is-next, .caption-leaving, .caption-think, .caption-pause { animation: none; }
   .caption-leaving { display: none; }
-  .dock, .caption, .caption-viewport, .dropveil, .tb-fold, .tb-tip, .switch, .switch::after { transition-duration: 0s; }
-  .empty-card, .askbar, .askbar-chip, .keycap, .icon-btn, .btn-primary, .btn-quiet, .tb-btn, .tb-dot, .seg, .swatch,
+  .dock, .caption, .caption-viewport, .dropveil, .tb-fold, .tb-tip { transition-duration: 0s; }
+  .empty-card, .askbar, .askbar-chip, .keycap, .icon-btn, .btn-primary, .btn-quiet, .tb-btn, .tb-dot, .seg,
   .topbar-num, .pb-btn, .pb-resume, .caption-retry, .askbar-about-x, .askbar-transcript { transition-duration: 0s; }
-  .range::-webkit-slider-thumb, .range::-moz-range-thumb { transition-duration: 0s; }
-  .icon-btn:active, .btn-primary:active, .tb-btn:active, .swatch:hover, .swatch:active, .askbar-btn:active,
+  .icon-btn:active, .btn-primary:active, .tb-btn:active, .askbar-btn:active,
   .askbar-chip:active, .route-back:active { transform: none; }
 }
 

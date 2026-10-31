@@ -19,7 +19,7 @@ import { isSvgMode } from './prompt/system';
 import { rawSvgScript } from '../src/svgboard/wire';
 import { Lint } from './lint';
 import { capHint, endpointOf, estimateFor, newRead, readUpstream, scrub, systemTokensLow, tokens, TIMEOUTS, type AnswerBody, type CacheKey, type Deps, type ModelConfig } from './openai';
-import { toAnthropicRequest } from './anthropic';
+import { ANTHROPIC_NO_NONE, toAnthropicRequest } from './anthropic';
 import { PROMPT_VERSION } from './prompt/system';
 import { repairNote, svgRepairNote, REPAIR_VERSION } from './prompt/repair';
 import { MAX_REPAIRS, REPAIR_MAX_OUTPUT, SVG_REPAIR_MAX_OUTPUT } from './limits';
@@ -89,7 +89,9 @@ export async function repair(w: RepairWire, cfg: ModelConfig | null, d: RepairDe
   if (!entry) return refuse(404, 'not_found', 'Unknown or expired answer (reqId).');
   if (entry.repairs >= MAX_REPAIRS) return refuse(429, 'too_many', `At most ${MAX_REPAIRS} repairs per answer.`);
   const svg = isSvgMode(entry.cfg.promptVariant);
-  const rc: ModelConfig = { ...cfg, model: entry.cfg.model, fast: entry.cfg.fast, maxOutput: svg ? SVG_REPAIR_MAX_OUTPUT : REPAIR_MAX_OUTPUT };
+  // A model that cannot turn thinking off (Opus, Answer quality "Best") repairs at low, its floor.
+  const effort = cfg.effort === 'none' && ANTHROPIC_NO_NONE.has(entry.cfg.model) ? 'low' : cfg.effort;
+  const rc: ModelConfig = { ...cfg, model: entry.cfg.model, effort, fast: entry.cfg.fast, maxOutput: svg ? SVG_REPAIR_MAX_OUTPUT : REPAIR_MAX_OUTPUT };
   const ep = endpointOf(rc.model, d);
   if (!ep.key) return refuse(503, 'no_key', 'No key for the answer model.');
   if (!PRICES[rc.model]) return refuse(400, 'bad_request', `No price for ${rc.model}.`);

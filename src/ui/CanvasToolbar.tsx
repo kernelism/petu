@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Check, Eraser, Highlighter, Pencil, PenLine, Trash2, Undo2 } from 'lucide-react';
 import { ink, PEN_COLORS, useInk, type Tool } from '../ink/student/store';
-import { getSettings, useSettings } from '../settings/settings';
 import { useTips, tipPlace } from './Tip';
 import { isMacPlatform } from './zoomKeys';
 import './ui.css';
@@ -35,7 +34,6 @@ export function keysActive(canvasOn: boolean, active: Element | null = document.
 /** `showHint`: the one-time "Draw D" hint may show (App passes true once the first answer has ended). */
 export function CanvasToolbar({ showHint = false }: { showHint?: boolean } = {}) {
   const { canvasOn, tool, color, strokes, undo } = useInk();
-  const { shortcuts } = useSettings();
   // One-time hint under the pencil after the first answer; fades after HINT_MS or on first use.
   const [hint, setHint] = useState(() => !hintSeen());
   const pencilRef = useRef<HTMLButtonElement>(null);
@@ -64,7 +62,7 @@ export function CanvasToolbar({ showHint = false }: { showHint?: boolean } = {})
       }
       if (mod || e.altKey || e.repeat) return;
       const on = ink.get().canvasOn;
-      const letters = getSettings().shortcuts && keysActive(on);
+      const letters = keysActive(on);
       if (letters && k === 'd') { ink.setCanvas(!on); }
       else if (letters && k === 'p') { ink.setTool('pen'); }
       else if (letters && k === 'h') { ink.setTool('highlighter'); }
@@ -85,7 +83,6 @@ export function CanvasToolbar({ showHint = false }: { showHint?: boolean } = {})
   useEffect(() => tips.hide(), [canvasOn]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => relayout((n) => n + 1), [showHint]); // place the hint once the pencil is laid out
   const pencilRect = pencilRef.current?.isConnected ? pencilRef.current.getBoundingClientRect() : null;
-  const key = (k: string) => (shortcuts ? k : undefined);
 
   const toolBtn = (t: Tool, label: string, k: string, icon: ReactNode) => (
     <button
@@ -93,7 +90,7 @@ export function CanvasToolbar({ showHint = false }: { showHint?: boolean } = {})
       className={`tb-btn${tool === t ? ' is-active' : ''}`}
       aria-pressed={tool === t}
       onClick={() => ink.setTool(t)}
-      {...tips.props(label, key(k))}
+      {...tips.props(label, k)}
     >
       {icon}
     </button>
@@ -107,7 +104,7 @@ export function CanvasToolbar({ showHint = false }: { showHint?: boolean } = {})
         role="toolbar" aria-label="Drawing tools" aria-orientation="horizontal">
         <div className="tb-fold tb-fold-closed" aria-hidden={canvasOn}>
           <div className="tb-fold-inner">
-            <button ref={pencilRef} type="button" className="tb-btn" tabIndex={canvasOn ? -1 : 0} onClick={() => ink.setCanvas(true)} {...tips.props('Draw', key('D'))}>
+            <button ref={pencilRef} type="button" className="tb-btn" tabIndex={canvasOn ? -1 : 0} onClick={() => ink.setCanvas(true)} {...tips.props('Draw', 'D')}>
               <Pencil {...ICON} />
             </button>
           </div>
@@ -150,7 +147,7 @@ export function CanvasToolbar({ showHint = false }: { showHint?: boolean } = {})
         aria-hidden="true"
       >
         Draw
-        {shortcuts && <kbd className="tb-tip-key">D</kbd>}
+        <kbd className="tb-tip-key">D</kbd>
       </div>
       {tips.tip}
     </>

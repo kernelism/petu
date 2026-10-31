@@ -16,7 +16,7 @@ computes every coordinate and every number.
 | `src/script/pointExpr.ts` | Point args: literals, names, `#d3`, `mid/along/meet/foot`, kit parts `g[2,3]`. |
 | `src/geometry/resolve.ts` | `Figures`: `note()` takes `let` names at parse time; `resolve()` turns names, marks, rays, fitted coords into plain `Action`s, or a skip reason string. |
 | `src/geometry/figure.ts` | One figure per target; `fit` sketches freeze their scale at first build: uniform (angles kept), or per axis once the sketch has `{{axes}}` (data); no magnification cap. |
-| `src/playback/clock.ts` | `NarrationClock` interface (TTS-ready); `PacedClock` = syllable-weighted pace from `settings.wpm` (170). |
+| `src/playback/clock.ts` | `NarrationClock` interface (TTS-ready); `PacedClock` = syllable-weighted pace from `BASE_WPM` (170, `settings.ts`) × `settings.speed`. |
 | `src/playback/scheduler.ts` | Words → clock; actions fire with the first word after them. `START_MS` 600, `RESUME_MS` 1000, `FLUSH_MS` 200. `actionLeadMs`: 450ms for everything but `clear`. |
 | `src/playback/session.ts` | `AnswerSession`: stream → parser → scheduler; states idle/loading/playing/done/stopped/error; `done` waits for `idle()` (App passes `director.finale()`: last ink, then the scene overview). |
 | `src/playback/director.ts` | `Director`: serial layout lane (scroll, sketch, clear, reveal, frame) + concurrent ink; `STAGGER_MS` 120, `ACTION_TIMEOUT_MS` 3000, `LAND_MS` 150, `backlog()` speed-up. Owns `registry` and `figures`. |

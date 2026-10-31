@@ -1,24 +1,20 @@
 import { useEffect, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { X } from 'lucide-react';
-import { HIGHLIGHTS, HIGHLIGHT_STYLES, INK_COLORS, VOICE_OPTIONS, setSettings, useSettings, type VoiceSetting } from '../settings/settings';
-import type { InkStyle } from '../ink/agent/marks';
+import { ANSWER_QUALITIES, HIGHLIGHTS, HIGHLIGHT_STYLES, SPEEDS, VOICE_OPTIONS, setSettings, useSettings, type AnswerQuality, type VoiceSetting } from '../settings/settings';
 import { requestShortcuts } from './ShortcutsOverlay';
 import './ui.css';
 
 /** The narration read aloud (OpenAI's Realtime voices), or captions only. */
 const VOICE_LABELS: Record<VoiceSetting, string> = { off: 'Off', marin: 'Marin', cedar: 'Cedar' };
-
-const STYLES: { value: InkStyle; label: string }[] = [
-  { value: 'live', label: 'Live' },
-  { value: 'hand', label: 'Hand' },
-  { value: 'clean', label: 'Clean' },
-];
-const INK_NAMES: Record<string, string> = {
-  '#8E4EC6': 'Violet', '#F2600C': 'Orange', '#E5484D': 'Red', '#0A84FF': 'Blue', '#30A46C': 'Green',
-};
-
-/** The words per minute the narration actually plays at: the setting times the playback speed. */
-export const effectiveWpm = (wpm: number, speed: number) => Math.round(wpm * speed);
+const QUALITY_LABELS: Record<AnswerQuality, string> = { standard: 'Standard', best: 'Best' };
+/**
+ * Best's cost, measured: the 2026-10-30 model sweep (3 questions, SVG board p6.1; spec
+ * 2026-10-30-anchored-lane-design "Model choice evidence") cost Opus-low $0.220 / $0.201 / $0.065 per
+ * answer vs the standard terra-none $0.032 / $0.039 / $0.034 (mean $0.162 vs $0.035, 4.6×); its first
+ * word came about 0.5 s later (p50 2.5 s vs 2.0 s).
+ */
+export const BEST_HINT = 'Best: slower start, about 5× the cost.';
+export const BEST_OFF_NOTE = 'Best needs PETU_ANTHROPIC_KEY in .env.';
 
 /** Where an arrow key moves a radio group's selection (wrapping), or null for any other key. */
 export function radioStep(key: string, i: number, n: number): number | null {
@@ -35,14 +31,19 @@ export function radioStep(key: string, i: number, n: number): number | null {
  */
 function RadioGroup<T>({ label, labelledBy, className, options, value, same = (a, b) => a === b, onPick, render }: {
   label?: string; labelledBy?: string; className: string; options: T[]; value: T; same?(a: T, b: T): boolean;
-  onPick(v: T): void; render(o: T, checked: boolean): { className: string; label?: string; style?: CSSProperties; children?: ReactNode };
+  onPick(v: T): void; render(o: T, checked: boolean): { className: string; label?: string; style?: CSSProperties; children?: ReactNode; disabled?: boolean };
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const at = Math.max(0, options.findIndex((o) => same(o, value)));
+  const off = (i: number) => !!render(options[i], i === at).disabled;
   const onKeyDown = (e: ReactKeyboardEvent) => {
-    const next = radioStep(e.key, at, options.length);
+    let next = radioStep(e.key, at, options.length);
     if (next == null) return;
     e.preventDefault();
+    // Skip a disabled option the way the arrow was going (Home/End land on the nearest enabled one).
+    const dir = e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'End' ? -1 : 1;
+    for (let n = 0; n < options.length && off(next); n++) next = (next + dir + options.length) % options.length;
+    if (off(next)) return;
     onPick(options[next]);
     ref.current?.querySelectorAll<HTMLElement>('[role="radio"]')[next]?.focus();
   };
@@ -59,6 +60,7 @@ function RadioGroup<T>({ label, labelledBy, className, options, value, same = (a
             aria-checked={checked}
             aria-label={r.label}
             tabIndex={checked ? 0 : -1}
+            disabled={r.disabled}
             className={r.className}
             style={r.style}
             onClick={() => onPick(o)}
@@ -71,11 +73,14 @@ function RadioGroup<T>({ label, labelledBy, className, options, value, same = (a
   );
 }
 
-const sameColor = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
-const swatch = (names: Record<string, string>) => (c: string, on: boolean) =>
-  ({ className: `swatch${on ? ' is-on' : ''}`, label: names[c] ?? c, style: { '--swatch': c } as CSSProperties });
-
-export function SettingsPopover({ open, onClose, onShowShortcuts = requestShortcuts }: { open: boolean; onClose(): void; onShowShortcuts?(): void }) {
+/**
+ * `bestAvailable`: whether the server can run Answer quality "Best" (GET /api/spend `best`); without
+ * it Best is shown disabled with a note. `onSpeed`: a speed pick (App re-times the playing answer);
+ * by default it is only stored.
+ */
+export function SettingsPopover({ open, onClose, onShowShortcuts = requestShortcuts, bestAvailable = false, onSpeed = (v) => setSettings({ speed: v }) }: {
+  open: boolean; onClose(): void; onShowShortcuts?(): void; bestAvailable?: boolean; onSpeed?(v: number): void;
+}) {
   const s = useSettings();
   const ref = useRef<HTMLDivElement>(null);
   const close = () => {
@@ -106,7 +111,7 @@ export function SettingsPopover({ open, onClose, onShowShortcuts = requestShortc
   }, [open, onClose]);
 
   if (!open) return null;
-  const actual = effectiveWpm(s.wpm, s.speed);
+  const quality: AnswerQuality = bestAvailable ? s.quality : 'standard';
 
   return (
     <div className="popover" ref={ref} role="dialog" aria-labelledby="pop-title" tabIndex={-1}>
@@ -116,24 +121,6 @@ export function SettingsPopover({ open, onClose, onShowShortcuts = requestShortc
           <X size={16} strokeWidth={2} aria-hidden="true" />
         </button>
       </header>
-
-      <section className="pop-row">
-        <div className="pop-label" id="pop-style">Drawing style</div>
-        <RadioGroup
-          labelledBy="pop-style"
-          className="segmented"
-          options={STYLES.map((o) => o.value)}
-          value={s.inkStyle}
-          onPick={(v) => setSettings({ inkStyle: v })}
-          render={(v, on) => ({ className: `seg${on ? ' is-on' : ''}`, children: STYLES.find((o) => o.value === v)!.label })}
-        />
-      </section>
-
-      <section className="pop-row">
-        <div className="pop-label" id="pop-ink">Ink color</div>
-        <RadioGroup labelledBy="pop-ink" className="swatches" options={INK_COLORS} value={s.inkColor} same={sameColor}
-          onPick={(c) => setSettings({ inkColor: c })} render={swatch(INK_NAMES)} />
-      </section>
 
       <section className="pop-row">
         <div className="pop-label" id="pop-highlight">Highlight</div>
@@ -151,29 +138,15 @@ export function SettingsPopover({ open, onClose, onShowShortcuts = requestShortc
       </section>
 
       <section className="pop-row">
-        <div className="pop-label pop-label-split">
-          <label htmlFor="pop-wpm">Reading speed</label>
-          <span className="pop-value">{s.wpm} wpm</span>
-        </div>
-        <input
-          id="pop-wpm"
-          className="range"
-          type="range"
-          min={130}
-          max={220}
-          step={5}
-          value={s.wpm}
-          aria-valuetext={`${s.wpm} words per minute`}
-          aria-describedby={s.speed !== 1 ? 'pop-wpm-note' : undefined}
-          style={{ '--fill': `${((s.wpm - 130) / 90) * 100}%` } as CSSProperties}
-          onChange={(e) => setSettings({ wpm: Number(e.target.value) })}
+        <div className="pop-label" id="pop-speed">Speed</div>
+        <RadioGroup
+          labelledBy="pop-speed"
+          className="segmented segmented-4"
+          options={[...SPEEDS] as number[]}
+          value={s.speed}
+          onPick={onSpeed}
+          render={(v, on) => ({ className: `seg${on ? ' is-on' : ''}`, children: `${v}×` })}
         />
-        {/* The answer's own speed control (1×, < >) multiplies this; say what they make together. */}
-        {s.speed !== 1 && (
-          <p className="pop-note" id="pop-wpm-note">
-            Playing at {s.speed}× · {actual} wpm
-          </p>
-        )}
       </section>
 
       <section className="pop-row">
@@ -188,22 +161,22 @@ export function SettingsPopover({ open, onClose, onShowShortcuts = requestShortc
         />
       </section>
 
-      <section className="pop-row pop-row-inline">
-        <label className="pop-switch-row" htmlFor="pop-keys">
-          <span className="pop-label">Keyboard shortcuts</span>
-          <button
-            id="pop-keys"
-            type="button"
-            role="switch"
-            aria-checked={s.shortcuts}
-            className={`switch${s.shortcuts ? ' is-on' : ''}`}
-            onClick={() => setSettings({ shortcuts: !s.shortcuts })}
-          />
-        </label>
-        <button type="button" className="btn-quiet pop-show-keys" onClick={() => { onClose(); onShowShortcuts(); }}>
-          Show <kbd className="keycap">?</kbd>
-        </button>
+      <section className="pop-row">
+        <div className="pop-label" id="pop-quality">Answer quality</div>
+        <RadioGroup
+          labelledBy="pop-quality"
+          className="segmented segmented-2"
+          options={[...ANSWER_QUALITIES]}
+          value={quality}
+          onPick={(q) => setSettings({ quality: q })}
+          render={(q, on) => ({ className: `seg${on ? ' is-on' : ''}`, children: QUALITY_LABELS[q], disabled: q === 'best' && !bestAvailable })}
+        />
+        <p className="pop-note">{bestAvailable ? BEST_HINT : BEST_OFF_NOTE}</p>
       </section>
+
+      <button type="button" className="btn-quiet pop-show-keys" onClick={() => { onClose(); onShowShortcuts(); }}>
+        Keyboard shortcuts <kbd className="keycap">?</kbd>
+      </button>
     </div>
   );
 }

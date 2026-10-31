@@ -14,6 +14,7 @@ import { History } from './history';
 import { SessionMemory, recordOf } from './context/memory';
 import type { Storyboard } from './storyboard';
 import { Prewarm } from './prewarm';
+import { getSettings } from '../settings/settings';
 
 /** What App needs from the context builder (Lane G's ContextBuilder, src/agent/context/build.ts). */
 export type ContextSource = {
@@ -115,6 +116,8 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
     const since = () => Math.round(performance.now() - t0);
     try {
       const phase = spendPhase(spendRef.current);
+      // Answer quality: a choice token only, and only when the server says Best can run (the model is the server's to pick).
+      const best = getSettings().quality === 'best' && !!spendRef.current?.best;
       const hist = history.last();
       const prior = hist[hist.length - 1];
       const hash = doc?.fingerprints?.[0] ?? name;
@@ -149,7 +152,7 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
           const scout = r.context.scout && relation ? { scout: { ...r.context.scout, relation } } : {};
           return { ...r, context: { ...r.context, ...scout, ...(mem ? { memory: mem } : {}), ...a.moment } };
         },
-        ask: (context) => askStream({ question: a.question, history: hist, context, ...(phase ? { phase } : {}) }, signal, handlers),
+        ask: (context) => askStream({ question: a.question, history: hist, context, ...(phase ? { phase } : {}), ...(best ? { quality: 'best' as const } : {}) }, signal, handlers),
         onGrounding: (pages) => { a.onGrounding(groundingOf(pages)); a.onGrounds?.(pages); },
       }, signal);
       try {

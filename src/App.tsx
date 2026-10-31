@@ -18,7 +18,7 @@ import { aboutContext, asideContext, bboxOf, isLoop, pointedLabel, type Pointed 
 import { playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
 import { PacedClock, type NarrationClock } from './playback/clock';
 import { VoiceClock, fetchVoice, warmVoice, webAudioOut } from './playback/voiceClock';
-import { getSettings, setSettings, SPEEDS, stepSpeed, useSettings } from './settings/settings';
+import { BASE_WPM, getSettings, setSettings, SPEEDS, stepSpeed, useSettings } from './settings/settings';
 import { DEMOS, DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
 import type { DevStep } from './demo/learner';
@@ -103,17 +103,17 @@ const NO_ANSWER = 'No answer came back.';
 const ROUTE_MS = 4000;
 let audioCtx: AudioContext | null = null;
 /**
- * The narration's clock: the wpm setting, played at the playback speed (both read on every word).
+ * The narration's clock: BASE_WPM, played at the playback speed (read on every word).
  * With a voice on, the voice's audio sets the timeline (src/playback/voiceClock.ts). Called from the
  * question's Enter (a user gesture), so the audio context may start.
  */
 const narrationClock = (): NarrationClock => {
   const s = getSettings();
-  if (s.voice === 'off' || typeof AudioContext === 'undefined') return new PacedClock(() => getSettings().wpm, undefined, undefined, () => getSettings().speed);
+  if (s.voice === 'off' || typeof AudioContext === 'undefined') return new PacedClock(() => BASE_WPM, undefined, undefined, () => getSettings().speed);
   audioCtx ??= new AudioContext();
   void audioCtx.resume().catch(() => {});
   warmVoice();
-  return new VoiceClock(fetchVoice(s.voice), webAudioOut(audioCtx), () => getSettings().wpm, () => getSettings().speed);
+  return new VoiceClock(fetchVoice(s.voice), webAudioOut(audioCtx), () => BASE_WPM, () => getSettings().speed);
 };
 /** ← within this many words of a part's start goes to the part before; later, to its own start. */
 const PART_RESTART_WORDS = 8;
@@ -134,7 +134,7 @@ function fileNameOf(src: string): string {
   try { return decodeURIComponent(raw); } catch { return raw; }
 }
 
-// Dev-only review aid: ?style=live|hand|clean picks the drawing style.
+// Dev-only review aid: ?style=live|hand|clean picks the drawing style for this page load (never stored).
 const styleParam = import.meta.env.DEV ? params.get('style') : null;
 if (styleParam === 'live' || styleParam === 'hand' || styleParam === 'clean') setSettings({ inkStyle: styleParam });
 
@@ -1635,7 +1635,7 @@ export default function App() {
       <OverviewPill />
       <SessionDrawer open={sessionOpen} rows={sessionRows} total={sessionTotal} onPick={pickSession} onClose={() => setSessionOpen(false)} />
       <RouteChip route={route} backTo={backTo} onBack={onBack} x={desk?.lane && desk.page ? desk.page.x + desk.page.w / 2 : dock.x} />
-      <SettingsPopover open={settingsOpen} onClose={closeSettings} onShowShortcuts={openShortcuts} />
+      <SettingsPopover open={settingsOpen} onClose={closeSettings} onShowShortcuts={openShortcuts} bestAvailable={!!agent.spend?.best} onSpeed={changeSpeed} />
       <CanvasToolbar showHint={answered} />
       {inkState.canvasOn && inkState.tool === 'pen' && desk?.board && !desk.stacked && (
         <BoardPen rect={desk.board} color={inkState.color} keep={!!pointed && pointed.kind === 'circle' && pointed.page == null} onLoop={onBoardLoop} onWheel={onBoardWheel} />

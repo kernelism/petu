@@ -6,25 +6,44 @@ const fresh = async () => { vi.resetModules(); return import('../../src/settings
 
 describe('settings', () => {
   beforeEach(() => localStorage.clear());
-  it('the default ink is the violet preset', async () => {
+  it('the ink is the violet preset and the drawing style is live; neither is stored', async () => {
+    let s = await fresh();
+    expect(s.getSettings()).toMatchObject({ inkColor: '#8E4EC6', inkStyle: 'live' });
+    s.setSettings({ inkStyle: 'hand' }); // the dev ?style= aid: this page load only
+    expect(s.getSettings().inkStyle).toBe('hand');
+    const stored = JSON.parse(localStorage.getItem(KEY)!);
+    expect(stored).toEqual({ highlight: 'violet', speed: 1, voice: 'off', quality: 'standard', v: 3 });
+    s = await fresh();
+    expect(s.getSettings().inkStyle).toBe('live');
+  });
+  it('v2 saves migrate: drawing style, ink colour, shortcuts dropped; wpm × speed lands on the nearest step', async () => {
+    localStorage.setItem(KEY, JSON.stringify({ inkStyle: 'hand', inkColor: '#0A84FF', wpm: 200, shortcuts: false, speed: 1, voice: 'marin', highlight: 'yellow', v: 2 }));
+    let s = await fresh();
+    expect(s.getSettings()).toEqual({ ...s.DEFAULTS, speed: 1.25, voice: 'marin', highlight: 'yellow' });
+    for (const [wpm, speed, want] of [[170, 1, 1], [130, 1, 0.75], [220, 1, 1.25], [170, 1.25, 1.25], [190, 1.25, 1.5], [150, 0.75, 0.75], [185, 1, 1]] as const) {
+      localStorage.setItem(KEY, JSON.stringify({ wpm, speed, v: 2 }));
+      s = await fresh();
+      expect(s.getSettings().speed, `${wpm} wpm × ${speed}`).toBe(want);
+    }
+    // A v1 save (no v) of the old orange ink: nothing of it survives but the default.
+    localStorage.setItem(KEY, JSON.stringify({ inkColor: '#F2600C', wpm: 'fast' }));
+    s = await fresh();
+    expect(s.getSettings()).toEqual(s.DEFAULTS);
+  });
+  it('answer quality: standard by default, best remembered, an unknown or model-name value falls back', async () => {
+    let s = await fresh();
+    expect(s.getSettings().quality).toBe('standard');
+    s.setSettings({ quality: 'best' });
+    s = await fresh();
+    expect(s.getSettings().quality).toBe('best');
+    localStorage.setItem(KEY, JSON.stringify({ quality: 'claude-opus-5-5', v: 3 }));
+    s = await fresh();
+    expect(s.getSettings().quality).toBe('standard');
+  });
+  it('the narration base rate is 170 wpm; nearestSpeed snaps to a step', async () => {
     const s = await fresh();
-    expect(s.getSettings().inkColor).toBe('#8E4EC6');
-    expect(s.INK_COLORS[0]).toBe('#8E4EC6');
-  });
-  it('a pre-v2 save of the old orange default moves to the new default; other choices stay', async () => {
-    localStorage.setItem(KEY, JSON.stringify({ inkColor: '#F2600C', wpm: 200 }));
-    let s = await fresh();
-    expect(s.getSettings()).toMatchObject({ inkColor: '#8E4EC6', wpm: 200 });
-    localStorage.setItem(KEY, JSON.stringify({ inkColor: '#0A84FF' }));
-    s = await fresh();
-    expect(s.getSettings().inkColor).toBe('#0A84FF');
-  });
-  it('orange chosen after v2 is kept', async () => {
-    let s = await fresh();
-    s.setSettings({ inkColor: '#F2600C' });
-    s = await fresh();
-    expect(s.getSettings().inkColor).toBe('#F2600C');
-    expect(s.getSettings()).not.toHaveProperty('v');
+    expect(s.BASE_WPM).toBe(170);
+    expect([0.5, 0.88, 1.1, 1.13, 1.4, 3].map(s.nearestSpeed)).toEqual([0.75, 1, 1, 1.25, 1.5, 1.5]);
   });
   it('the page highlight defaults to the violet wash (the accent, light) and yellow keeps the marker look', async () => {
     const s = await fresh();
@@ -36,9 +55,9 @@ describe('settings', () => {
     expect(s.HIGHLIGHTS.yellow).toMatchObject({ color: '#FFD60A', opacity: 0.5 });
   });
   it('a stored legacy highlightColor (the old yellow default or a retired swatch) becomes the violet wash; a choice is kept', async () => {
-    localStorage.setItem(KEY, JSON.stringify({ highlightColor: '#FFD60A', wpm: 190, v: 2 }));
+    localStorage.setItem(KEY, JSON.stringify({ highlightColor: '#FFD60A', wpm: 170, v: 2 }));
     let s = await fresh();
-    expect(s.getSettings()).toMatchObject({ highlight: 'violet', wpm: 190 });
+    expect(s.getSettings()).toMatchObject({ highlight: 'violet', speed: 1 });
     expect(s.getSettings()).not.toHaveProperty('highlightColor');
     localStorage.setItem(KEY, JSON.stringify({ highlightColor: '#7EE787' }));
     s = await fresh();
