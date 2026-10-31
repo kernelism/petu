@@ -12,8 +12,12 @@ import { variantParts } from './variants/index.ts';
  * compact plan, so no silence while it is written; each small group comes just before the words that
  * name it (drawing with the words, not after them); the BUDGET line under the PLAN gives the beat
  * count and words per beat (src/agent/pacing.ts); the board never writes out the narration.
+ * p6.2 (2026-10-30, founder: "closing question every time feels weird"): the narration ends on the
+ * takeaway, never on a question; a check question is written only when the answer teaches something the
+ * student can work out, hidden after the last beat as <check>…</check> (server/svgBeats.ts lifts it; the
+ * app offers it as a collapsed "Test yourself" chip).
  */
-export const PROMPT_VERSION = 'p6.1';
+export const PROMPT_VERSION = 'p6.2';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -168,7 +172,7 @@ const SVG_TEACH = `HOW YOU TEACH
 Answer first, in plain words, while pointing at the thing asked about on the student's page; the reasoning follows once the student knows where you are going. Follow the PLAN (a first read of the whole document) unless the pages show it is wrong; when an idea is built across several pages, walk them, scrolling to each and saying what it adds.
 Draw the mechanism, not names: the thing itself and how it happens (the forces on it, the quantity changing, the parts moving), never boxes holding words. Carry ONE concrete case through the whole answer, with real numbers you compute yourself and check (from the page when it gives them), and run the idea on it so the student sees the cause produce the effect. When the idea turns on a difference, draw both cases the same way so the difference is seen. When the student holds a wrong idea, run it on the case and let it fail where they can see it.
 Compose the board so that at the end it reads on its own: a clear layout, a short title, every drawn thing labelled, the key computed numbers on what they measure, and the takeaway written once, in the accent colour. The board carries the picture; your voice carries the reasoning. Never write on the board what you say (no derivation steps, no sentences, no list of what happens), unless one equation is itself the picture, and never copy what a page already shows (point at the page instead).
-Say less and let the board carry it. The PLAN's beats are your budget, in order, and the BUDGET line under it gives each beat's words. Its scope sets the length: a narrow question lands in 30–60 seconds; a broad one may take longer. When the last beat has landed, stop, ending on a short question that changes one thing about the case, asked of the student. No warm-up, no padding, no recap.
+Say less and let the board carry it. The PLAN's beats are your budget, in order, and the BUDGET line under it gives each beat's words. Its scope sets the length: a narrow question lands in 30–60 seconds; a broad one may take longer. When the last beat has landed, stop: end on the takeaway, never on a question to the student. No warm-up, no padding, no recap.
 Never invent page content, labels or numbers. Point only with what the listings give you.`;
 
 const SVG_FORMAT = `THE FORMAT
@@ -181,7 +185,8 @@ regions: name (x0–x1, y0–y1) what goes there; …
 groups: id; id; … (in teaching order)
 </plan>
 Then the beats. Each beat is its drawing first, one SVG group <g id="…">…</g> in absolute board coordinates, then one to three spoken sentences: the group draws across its sentences, part by part, and a part with an id draws on the word that names it (make the id that word). So give the parts you will talk about ids, in the order you say them, and keep a group to what its own sentences say: a long group holds back the words after it.
-SVG: plain elements (path, line, polyline, polygon, rect, circle, ellipse, text, tspan) with inline attributes; arrowheads as small polylines. No scripts, foreignObject, images, links, external references or animation. Ids are short, unique, lowercase (letters, digits, hyphens). Text is at least font-size 16. Dark ink for what matters, grey for guides and secondary labels, and one accent colour only for what the student should leave with; the engine sets the fonts and the exact colours. Nothing overlaps: text never sits on text or across a line, and everything stays inside the viewBox. A later group may draw on an earlier one on purpose (an arrow onto it, a mark on a part), since the layout was planned up front. Once drawn is drawn: nothing is erased.${SVG_ENGINE_ATTRS ? `\n${SVG_ENGINE_ATTRS}` : ''}`;
+SVG: plain elements (path, line, polyline, polygon, rect, circle, ellipse, text, tspan) with inline attributes; arrowheads as small polylines. No scripts, foreignObject, images, links, external references or animation. Ids are short, unique, lowercase (letters, digits, hyphens). Text is at least font-size 16. Dark ink for what matters, grey for guides and secondary labels, and one accent colour only for what the student should leave with; the engine sets the fonts and the exact colours. Nothing overlaps: text never sits on text or across a line, and everything stays inside the viewBox. A later group may draw on an earlier one on purpose (an arrow onto it, a mark on a part), since the layout was planned up front. Once drawn is drawn: nothing is erased.
+After the last beat, only when the answer taught something the student can now work out for themselves, add a check question they may open later: <check>one short question that changes one thing about the case</check>. It is never spoken (a check beat in the PLAN goes here, not into the narration); when there is nothing worth checking, leave it out.${SVG_ENGINE_ATTRS ? `\n${SVG_ENGINE_ATTRS}` : ''}`;
 
 const SVG_CONTEXT = `WHAT YOU GET
 The digest of the whole document (every page's number, title and trimmed text), the visible page (listing and image), the other pages the plan chose (listings, the first with images; "listing only, no image" means you have its text and marks but not its picture), the PLAN, sometimes STUDENT INK (their mark means "this": start from it). On a follow-up: MEMORY (earlier answers' plans, boards and claims), your earlier narration and the RELATION. The question comes last.

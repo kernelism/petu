@@ -1,4 +1,4 @@
-// server/prompt/svgExamples.ts — the svg answer format's few-shot examples (PROMPT_VERSION p6.1).
+// server/prompt/svgExamples.ts — the svg answer format's few-shot examples (PROMPT_VERSION p6.2).
 /**
  * Two invented documents (a river ferry, proofing dough): one a geometric figure built up beat by
  * beat, one a quantity over time read off its own chart. Each script is exactly what the model
@@ -10,7 +10,8 @@
  * the picture, labels and key numbers, never the narration's derivation. Every number is computed (the ferry's 3-4-5 triangle; the dough's doublings),
  * every group id is a word its beat says, and nothing overlaps (rendered and checked by eye;
  * tests/server/prompt.test.ts checks the form). They set the bar for richness: draw the mechanism,
- * labelled, composed so the finished board reads on its own.
+ * labelled, composed so the finished board reads on its own. p6.2: both end on the takeaway; the ferry,
+ * whose case has a twist the student can now work out, adds the hidden <check>; the dough does not.
  */
 import type { Example } from './examples.ts';
 
@@ -91,14 +92,14 @@ So the ferry takes that aim, and the current bends its path into a straight line
 <text x="800" y="660" font-size="20" text-anchor="middle" fill="#7c3aed" data-val="W/u" data-fmt="0">crossing: {} s, not 120 s</text>
 </g>
 It pays in time: only 2.0 of its 2.5 metres per second carry it across, so the crossing takes 150 seconds instead of 120.
-If the current ran at 3 metres per second, faster than the ferry, could any aim still take it straight to B?`,
+<check>If the current ran at 3 metres per second, faster than the ferry, could any aim still take it straight to B?</check>`,
   },
   {
     title: 'a quantity over time: the cause drawn (cells splitting), the curve it makes, the gains read off it, the equal steps braced',
     question: 'Why does most of the rise come at the end, if the yeast works at the same pace the whole time?',
     page: 3,
     pages: [3],
-    plan: 'The student thinks a steady pace means steady growth. Picture: cells splitting, and the volume over time. Beats: 1 each cell splits every 45 min, 1 → 8; 2 the volume curve, 400 to 3200 ml; 3 the gains: +400, +800, +1600; 4 equal times, equal doublings; check: faster yeast. Scope: narrow.',
+    plan: 'The student thinks a steady pace means steady growth. Picture: cells splitting, and the volume over time. Beats: 1 each cell splits every 45 min, 1 → 8; 2 the volume curve, 400 to 3200 ml; 3 the gains: +400, +800, +1600; 4 equal times, equal doublings. Scope: narrow.',
     listing: String.raw`PAGE 3 (visible; portrait page; image attached)
 t1 80 100–640: Proofing the dough
 t2 140 100–900: The dough doubles every 45 minutes at room temperature: 400 ml becomes 3200 ml
@@ -141,7 +142,6 @@ Now read the steps: the first 45 minutes add 400 millilitres, the next add 800, 
 <path d="M420,604 V614 H580 V604 M580,614 H740 V604 M740,614 H900 V604" fill="none" stroke="#7c3aed" stroke-width="2.5"/>
 <g font-size="17" fill="#7c3aed" text-anchor="middle"><text x="500" y="640">45 min, ×2</text><text x="660" y="640">45 min, ×2</text><text x="820" y="640">45 min, ×2</text></g>
 </g>
-Each step takes the same 45 minutes and makes the same doubling; what grows is the amount being doubled, so the last doubling adds the most.
-If a warm kitchen made the cells split every 30 minutes, how long would 400 millilitres take to reach 3200?`,
+Each step takes the same 45 minutes and makes the same doubling; what grows is the amount being doubled, so the last doubling adds the most.`,
   },
 ];

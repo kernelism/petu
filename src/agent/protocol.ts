@@ -86,7 +86,7 @@ export type AskEvent =
       estimated?: boolean; input?: number; cached?: number; output?: number; reasoning?: number }
   | { t: 'text'; d: string }
   | { t: 'note'; message: string }
-  | { t: 'done'; usage?: Usage; usd: number; estimated?: boolean; spentUsd: number; capUsd: number; ttftMs: number; plan?: string; lint?: string[] }
+  | { t: 'done'; usage?: Usage; usd: number; estimated?: boolean; spentUsd: number; capUsd: number; ttftMs: number; plan?: string; /** The hidden check question (p6.2), offered as "Test yourself" after the answer: never spoken. */ check?: string; lint?: string[] }
   | { t: 'error'; code: AskErrorCode; message: string; retryable: boolean }
   /** Client-side: the live gate's verdicts and repairs (src/gate/live.ts), recorded with the answer. */
   | GateEvent
