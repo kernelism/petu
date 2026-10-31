@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowUp, Square, X } from 'lucide-react';
+import { ArrowUp, Mic, Square, X } from 'lucide-react';
+import { Dictation } from '../agent/dictation';
 import { BAR_LABEL, PLACEHOLDER, type BarMode } from './barMode';
 import './ui.css';
 
@@ -44,8 +45,6 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   const [showTranscript, setShowTranscript] = useState(false);
   useEffect(() => { if (restore) setText(restore.text); }, [restore?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!transcript || busy) setShowTranscript(false); }, [transcript, busy]);
-  // Nothing can be sent while blocked: the field shows the cap line instead of text that can't go anywhere.
-  useEffect(() => { if (blocked) setText(''); }, [blocked]);
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (focusSeq) inputRef.current?.focus(); }, [focusSeq]);
   const typingRef = useRef(false);
@@ -55,6 +54,45 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   };
   const busyRef = useRef(busy);
   busyRef.current = busy;
+
+  // Dictation (src/agent/dictation.ts): the mic fills the field as the student speaks; a pause (or
+  // the mic again) sends it, Esc drops it. A failure shows in place of the placeholder for a while.
+  // Enter or typing takes the field over: the dictation is dropped (unhooked first, so its onEnd
+  // neither sends the question again nor overwrites what was typed).
+  const [listening, setListening] = useState(false);
+  const [micNote, setMicNote] = useState('');
+  const dictRef = useRef<Dictation | null>(null);
+  const onAskRef = useRef(onAsk);
+  onAskRef.current = onAsk;
+  useEffect(() => () => dictRef.current?.cancel(), []);
+  useEffect(() => { if (!micNote) return; const t = setTimeout(() => setMicNote(''), 5000); return () => clearTimeout(t); }, [micNote]);
+  const toggleMic = () => {
+    if (dictRef.current) { dictRef.current.stop(); return; }
+    setMicNote('');
+    onIntent?.();
+    const d = new Dictation({
+      onText: (t) => { if (dictRef.current === d) { setText(t); setTyping(t); } },
+      onEnd: ({ text: t, error }) => {
+        if (dictRef.current !== d) return;
+        dictRef.current = null;
+        setListening(false);
+        // An error is never a send: what was heard goes back in the field (Enter sends it), the note
+        // in the placeholder (empty field) or the field's title.
+        if (error) { setMicNote(error); setText(t); setTyping(t); return; }
+        if (t.trim()) { typingRef.current = false; onAskRef.current(t.trim()); }
+        setText('');
+        setTyping('');
+      },
+    });
+    dictRef.current = d;
+    setListening(true);
+    void d.start();
+  };
+  const dropMic = () => { const d = dictRef.current; dictRef.current = null; setListening(false); d?.cancel(); };
+  const cancelMic = () => { dropMic(); setText(''); setTyping(''); };
+  // Nothing can be sent while blocked: the field shows the cap line instead of text that can't go
+  // anywhere, and a dictation in progress is dropped (the mic button is gone, its end would send).
+  useEffect(() => { if (blocked) { dropMic(); setText(''); } }, [blocked]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -74,6 +112,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
     const q = text.trim();
     if (!q && mode === 'aside') { onResume?.(); return; }
     if (!q || blocked) return;
+    dropMic();
     typingRef.current = false;
     onAsk(q);
     setText('');
@@ -85,7 +124,8 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
       submit();
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      if (showTranscript) setShowTranscript(false);
+      if (listening) cancelMic();
+      else if (showTranscript) setShowTranscript(false);
       else if (text) { setText(''); setTyping(''); }
       else if (mode === 'aside') onResume?.();
       else if (busy) onStop();
@@ -141,15 +181,16 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
         value={text}
         onChange={(e) => {
           const v = e.target.value;
+          if (dictRef.current) dropMic();
           if (v.trim().length >= INTENT_CHARS && text.trim().length < INTENT_CHARS) onIntent?.();
           setText(v);
           setTyping(v);
         }}
         onKeyDown={onKeyDown}
-        placeholder={blocked && !busy ? blocked : PLACEHOLDER[mode]}
+        placeholder={blocked && !busy ? blocked : listening ? 'Listening…' : micNote || PLACEHOLDER[mode]}
         // Blocked: still focusable (the line can be read, Esc and / work), but nothing can be typed or sent.
         readOnly={!!blocked && !busy}
-        title={blocked && !busy ? blocked : undefined}
+        title={blocked && !busy ? blocked : micNote || undefined}
         aria-label={BAR_LABEL[mode]}
         autoComplete="off"
         spellCheck={false}
@@ -164,8 +205,23 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
           {showTranscript ? 'Hide transcript' : 'Transcript'}
         </button>
       )}
+      {!blocked && (
+        <button
+          type="button"
+          className={`askbar-mic${listening ? ' is-listening' : ''}`}
+          onClick={toggleMic}
+          // Clicking moves focus here: Esc drops the dictation (before the window's Esc stops the answer).
+          onKeyDown={(e) => { if (e.key === 'Escape' && listening) { e.preventDefault(); cancelMic(); } }}
+          aria-pressed={listening}
+          aria-label={listening ? 'Stop and send what you said' : 'Ask by voice'}
+          title={listening ? 'Stop and send (Esc drops it)' : 'Ask by voice'}
+        >
+          <Mic size={16} strokeWidth={2} aria-hidden="true" />
+        </button>
+      )}
       <div className="askbar-trail">
-        {hasText && !blocked ? (
+        {/* While listening the mic is the send; the answer's stop stays. */}
+        {hasText && !blocked && !listening ? (
           <button type="submit" className="askbar-btn is-send" aria-label={mode === 'check' ? 'Send your answer' : 'Ask'}>
             <ArrowUp size={18} strokeWidth={2} />
           </button>
@@ -173,7 +229,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
           <button type="button" className="askbar-btn is-stop" onClick={onStop} aria-label="Stop answer">
             <Square size={12} strokeWidth={0} fill="currentColor" />
           </button>
-        ) : (
+        ) : listening ? null : (
           <kbd className="keycap" aria-hidden="true">/</kbd>
         )}
       </div>
