@@ -62,7 +62,7 @@ describe('evalHooks', () => {
   it('installs window.__petu with its calls', () => {
     const w = {} as Window & { __petu?: Record<string, unknown> };
     installEvalHooks(backend(), w);
-    expect(Object.keys(w.__petu!).sort()).toEqual(['addInk', 'ask', 'gate', 'inkAroundLargestMark', 'ready', 'replay', 'result']);
+    expect(Object.keys(w.__petu!).sort()).toEqual(['addInk', 'ask', 'gate', 'goto', 'inkAroundLargestMark', 'ready', 'replay', 'result']);
   });
   it('__petu.gate(): the answer’s gate and repair events, else what the app published (dev scripts)', async () => {
     const w = {} as Window & { __petu?: Record<string, () => unknown> };

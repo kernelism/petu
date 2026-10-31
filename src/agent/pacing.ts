@@ -28,6 +28,15 @@ const DEFAULT_BEATS: Record<Scope, number> = { narrow: 3, standard: 4, broad: 6 
 export const CHECK_WORDS = 18;
 /** A teaching beat never gets fewer words than this (a beat is a claim and what to notice in the drawing). */
 const MIN_BEAT_WORDS = 22;
+/**
+ * Listed beats (the check included) a scope's seconds are meant for (the scout's "two or three beats and
+ * the check" for narrow, "three or four" for standard). A plan with more beats than that has more parts
+ * than its scope holds (founder 2026-10-31: a question or a redo with several parts must cover every part,
+ * never stop after the first): each beat beyond gets BEAT_WORDS more (the scout's own "about thirty-five
+ * words a beat"), and the gate's cap grows in the scope's proportion, so no planned part is cut.
+ */
+export const SCOPE_BEATS: Record<Scope, number> = { narrow: 4, standard: 5, broad: 7 };
+export const BEAT_WORDS = 35;
 
 export type Budget = {
   scope: Scope;
@@ -93,9 +102,11 @@ export function budgetOf(plan: string | undefined, opener = ''): Budget | null {
   const sec = SCOPE_SECONDS[scope];
   const ow = wordsOf(opener);
   const teach = Math.max(1, beats - 1);
-  // A plan longer than its scope keeps its beats whole: the per-beat words shrink to a floor, never the plan.
-  const words = Math.max(Math.round(sec.target * WORDS_PER_SEC) - ow, CHECK_WORDS + teach * MIN_BEAT_WORDS);
-  const capWords = Math.max(Math.round(sec.cap * WORDS_PER_SEC) - ow, words + 12);
+  // A plan with more beats than its scope holds keeps them whole: each beat beyond adds BEAT_WORDS to the
+  // length and, in the scope's cap-to-target proportion, to the cap; never does the plan shrink below a floor a beat.
+  const extra = Math.max(0, beats - SCOPE_BEATS[scope]);
+  const words = Math.max(Math.round(sec.target * WORDS_PER_SEC) - ow + extra * BEAT_WORDS, CHECK_WORDS + teach * MIN_BEAT_WORDS);
+  const capWords = Math.max(Math.round(sec.cap * WORDS_PER_SEC) - ow + Math.round(extra * BEAT_WORDS * (sec.cap / sec.target)), words + 12);
   const wordsPerBeat = Math.max(MIN_BEAT_WORDS, Math.round((words - CHECK_WORDS) / teach / 5) * 5);
   return { scope, stated: !!said, beats, wordsPerBeat, words, capWords, seconds: sec.target };
 }

@@ -36,7 +36,38 @@ export const RESUME_GAP_MS = 250;
 /** Actions skipped over by a forward seek fire this far "behind" their word: the director fades them in quickly. */
 export const SEEK_LAG_MS = 1500;
 
-type PendingAction = { action: Action; word: number };
+/**
+ * The look (founder 2026-10-31, teaching rhythm): after a page mark lands the student needs a moment to
+ * find and read what was marked before the board draws something new. The board waits this long after
+ * the mark's word, longer for a longer quoted phrase, capped; the narration goes on unheld (it may keep
+ * talking about the page), and the next board group draws with the first words spoken once the look is
+ * over. A group whose own first sentence marks the page waits for that mark too (the sentence is about the
+ * page). Page marks, scrolls and words are never held: the first words still come first.
+ */
+export const LOOK_MIN_MS = 1200;
+export const LOOK_MAX_MS = 2000;
+export const LOOK_PER_CHAR_MS = 25;
+
+/** Ink on a page (a highlight, circle, box, underline, arrow…): not a scroll, not the board. */
+export function isPageMark(a: Action): boolean {
+  if (a.kind === 'scroll' || a.kind === 'sketch' || a.kind === 'clear' || a.kind === 'svg') return false;
+  const x = a as { page?: number; region?: string };
+  return x.page != null && x.region == null;
+}
+/** A drawing on the board: an svg group, or ink in a board section. */
+export function drawsBoard(a: Action): boolean {
+  if (a.kind === 'svg') return true;
+  if (a.kind === 'scroll' || a.kind === 'sketch' || a.kind === 'clear') return false;
+  return (a as { region?: string }).region != null;
+}
+/** How long the board waits after this page mark lands: by the quoted words' length, within [LOOK_MIN_MS, LOOK_MAX_MS]. */
+export function lookMs(a: Action): number {
+  const q = (a as { quote?: string }).quote;
+  return Math.min(LOOK_MAX_MS, LOOK_MIN_MS + (typeof q === 'string' ? q.length * LOOK_PER_CHAR_MS : 0));
+}
+
+type PendingAction = { action: Action; word: number;
+  /** A board action held past its words (the look): it fires no earlier than this (clock time). */ until?: number };
 
 /**
  * Plays words on the clock's timeline; actions fire with the first word after them.
@@ -98,6 +129,68 @@ export class Scheduler {
     if (this.drawn && n > 0 && endsSentence(this.words[n - 1])) this.rests.add(n);
     this.drawn = true;
     return n;
+  }
+
+  /** When the board is free to draw again (clock time): the look after the last page mark that landed. */
+  private boardFree = -Infinity;
+
+  /** The index of the last word of the sentence word `i` is in (what has streamed of it). */
+  private sentenceEndFrom(i: number): number {
+    let j = i;
+    while (j < this.words.length - 1 && !endsSentence(this.words[j])) j++;
+    return j;
+  }
+
+  /**
+   * When the board may draw action `j` (clock time): after the look of every page mark already landed and
+   * of every page mark inside the sentence the action opens. -Infinity: nothing holds it. null: a mark in
+   * that sentence isn't timed yet (its word not released) and the narration hasn't run dry: wait.
+   */
+  private boardFreeFor(j: number, now: number): number | null {
+    const a = this.acts[j];
+    let free = this.boardFree;
+    const end = this.sentenceEndFrom(a.word);
+    const dry = this.started && now > this.clock.endsAt() + FLUSH_MS;
+    for (let i = j + 1; i < this.acts.length; i++) {
+      const x = this.acts[i];
+      if (x.word > end) break;
+      if (!isPageMark(x.action)) continue;
+      if (x.word < this.released) { const t = this.clock.wordStart(x.word); if (t == null) return null; free = Math.max(free, t + lookMs(x.action)); }
+      else if (this.ended && x.word >= this.words.length) free = Math.max(free, Math.max(now, this.clock.endsAt()) + lookMs(x.action));
+      else if (!dry) return null;
+    }
+    return free;
+  }
+
+  /**
+   * The look: holds board action `j` (and the groups that came with it) until the board is free, moving
+   * it to the first word spoken from then on and behind every action on earlier words, so page marks
+   * keep firing on their words meanwhile. 'ok': it may fire now (its word is already late enough);
+   * 'moved': it was re-anchored and re-ordered (look at acts[fired] again); null: not known yet.
+   */
+  private lookHold(j: number, now: number): 'ok' | 'moved' | null {
+    const a = this.acts[j];
+    const free = this.boardFreeFor(j, now);
+    if (free == null) return null;
+    if (free === -Infinity) return 'ok';
+    // Groups that came together (one word) move together and keep their slots.
+    let k = j + 1;
+    while (k < this.acts.length && a.action.kind === 'svg' && this.acts[k].action.kind === 'svg' && this.acts[k].word === a.word) k++;
+    const group = this.acts.slice(j, k);
+    let w = a.word;
+    while (w < this.released && (this.clock.wordStart(w) ?? Infinity) < free) w++;
+    // No word to anchor to (the narration ended, or ran dry): the board draws when the look is over.
+    const dry = this.started && now > this.clock.endsAt() + FLUSH_MS;
+    const trailing = w >= this.released && ((this.ended && w >= this.words.length) || dry);
+    if (w >= this.released && !trailing) return null; // the word that ends the look isn't released yet
+    for (const g of group) { g.word = w; if (trailing) g.until = free; else delete g.until; }
+    // Behind every action on an earlier word, and page marks on the same word (they fire first).
+    let at = k;
+    while (at < this.acts.length && (this.acts[at].word < w || (this.acts[at].word === w && !drawsBoard(this.acts[at].action)))) at++;
+    if (at === k) return 'ok';
+    this.acts.splice(j, group.length);
+    this.acts.splice(at - group.length, 0, ...group);
+    return 'moved';
   }
 
   /** The k-th of n svg groups that fire on word `word` (they came together and share its beat). */
@@ -304,13 +397,13 @@ export class Scheduler {
       return at == null ? null : { fireAt: Math.max(this.lastFire, at - lead), at };
     }
     if (a.word >= this.words.length && this.ended) {
-      // Trailing actions: with the end of the narration.
-      const at = Math.max(now, this.clock.endsAt());
+      // Trailing actions: with the end of the narration (a held board action: when its look is over).
+      const at = Math.max(now, this.clock.endsAt(), a.until ?? -Infinity);
       return { fireAt: Math.max(this.lastFire, at - lead), at };
     }
     // Waiting on a word that isn't playable yet: once the narration has run dry, flush.
-    if (this.started && a.word === this.released) {
-      const flushAt = this.clock.endsAt() + FLUSH_MS;
+    if (this.started && a.word >= this.released) {
+      const flushAt = Math.max(this.clock.endsAt() + FLUSH_MS, a.until ?? -Infinity);
       return { fireAt: Math.max(this.lastFire, flushAt), at: Math.max(now, flushAt) };
     }
     return null;
@@ -331,11 +424,18 @@ export class Scheduler {
     // Actions first, so their ink can start in the same frame as the word's caption.
     while (this.fired < this.acts.length) {
       const a = this.acts[this.fired];
+      if (drawsBoard(a.action)) {
+        // The look: a board drawing waits for the page marks the student is still reading.
+        const h = this.lookHold(this.fired, now);
+        if (h == null) { next = Math.min(next, Math.max(now + 50, this.clock.endsAt() + FLUSH_MS)); break; }
+        if (h === 'moved') continue;
+      }
       const t = this.timing(a, now);
       if (!t) break;
       if (t.fireAt > now) { next = Math.min(next, t.fireAt); break; }
       const j = this.fired++;
       this.lastFire = Math.max(this.lastFire, t.fireAt);
+      if (isPageMark(a.action)) this.boardFree = Math.max(this.boardFree, t.at + lookMs(a.action));
       const slot = a.action.kind === 'svg' ? this.slotOf(j) : null;
       this.cb.onAction(slot && slot.n > 1 ? { ...a.action, slot } as Action : a.action, t.at, a.word);
       if (this.stopped) return;

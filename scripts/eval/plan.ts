@@ -26,6 +26,8 @@ export type Args = {
   fakeJudge: boolean;
   /** --ask <deck>:<page>:<question>: one ad-hoc question (id X1, dev), e.g. to reproduce a founder report. */
   ask: { deck: string; page: number; question: string } | null;
+  /** --then [p<page>:]<question> (repeatable, with --ask): follow-up turns in the same session; p<page> scrolls the PDF there first (the student wandered). */
+  then: { page: number | null; question: string }[];
   /** Live gate (design 2026-10-29 §8): `&gate=` for the app; null = the app's default (live for agent answers). */
   gate: GateSetting | null;
   /** `&gatefail=K[:mode],…` injected faults (oN = opener sentence N). */
@@ -38,7 +40,7 @@ const GATES: GateSetting[] = ['off', 'shadow', 'live', 'audit'];
 const REPAIRS: RepairSetting[] = ['live', 'fake', 'recorded', 'off'];
 
 export function parseArgs(argv: string[]): Args {
-  const a: Args = { split: 'dev', config: 'terra-none', only: null, n: 1, replay: null, finish: null, judge: null, webkit: false, parallel: 4, prewarmMs: 0, qset: DEFAULT_QSET, rubric: DEFAULT_RUBRIC, fakeJudge: false, ask: null, gate: null, gatefail: null, repair: null };
+  const a: Args = { split: 'dev', config: 'terra-none', only: null, n: 1, replay: null, finish: null, judge: null, webkit: false, parallel: 4, prewarmMs: 0, qset: DEFAULT_QSET, rubric: DEFAULT_RUBRIC, fakeJudge: false, ask: null, then: [], gate: null, gatefail: null, repair: null };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const val = () => { const v = argv[++i]; if (v == null) throw new Error(`${k} needs a value`); return v; };
@@ -57,6 +59,7 @@ export function parseArgs(argv: string[]): Args {
       case '--qset': { const v = val(); if (!(v in QSETS)) throw new Error(`bad --qset ${v} (have: ${Object.keys(QSETS).join(', ')})`); a.qset = v as QSetName; break; }
       case '--rubric': { const v = val(); if (!(v in RUBRICS)) throw new Error(`bad --rubric ${v} (have: ${Object.keys(RUBRICS).join(', ')})`); a.rubric = v as RubricVersion; break; }
       case '--ask': { const m = /^([\w-]+):(\d+):(.+)$/s.exec(val()); if (!m) throw new Error('--ask needs <deck>:<page>:<question>'); a.ask = { deck: m[1], page: Number(m[2]), question: m[3] }; a.only = ['X1']; break; }
+      case '--then': { const m = /^(?:p(\d+):)?(.+)$/s.exec(val()); if (!m) throw new Error('--then needs [p<page>:]<question>'); a.then.push({ page: m[1] ? Number(m[1]) : null, question: m[2] }); break; }
       case '--gate': { const v = val(); if (!GATES.includes(v as GateSetting)) throw new Error(`bad --gate ${v} (have: ${GATES.join(', ')})`); a.gate = v as GateSetting; break; }
       case '--gatefail': { const v = val(); if (!/^(o?\d+(:(skip|late|bad|ok))?)(,o?\d+(:(skip|late|bad|ok))?)*$/.test(v)) throw new Error(`bad --gatefail ${v} (K[:skip|late|bad|ok],…)`); a.gatefail = v; break; }
       case '--repair': { const v = val(); if (!REPAIRS.includes(v as RepairSetting)) throw new Error(`bad --repair ${v} (have: ${REPAIRS.join(', ')})`); a.repair = v as RepairSetting; break; }
@@ -65,6 +68,7 @@ export function parseArgs(argv: string[]): Args {
     }
   }
   if (a.repair === 'recorded' && !a.replay) throw new Error('--repair recorded needs --replay');
+  if (a.then.length && !a.ask) throw new Error('--then needs --ask');
   if (!CONFIGS[a.config]) throw new Error(`unknown config ${a.config} (have: ${Object.keys(CONFIGS).join(', ')})`);
   return a;
 }

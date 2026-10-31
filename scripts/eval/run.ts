@@ -155,10 +155,13 @@ async function runQuestion(chrome: Chrome, ctx: Ctx, q: Question, rep: number): 
     if (ctx.args.prewarmMs) { await chrome.eval(`document.querySelector('.askbar input, .askbar textarea')?.focus()`); await sleep(ctx.args.prewarmMs); }
     turns.push(await chrome.eval<EvalResult>(`window.__petu.ask(${JSON.stringify(q.question)}).then(() => window.__petu.result())`));
     await Promise.all(shots); await captureEnd(chrome, qdir, '');
-    if (q.followUp) {
-      turn = 1;
-      turns.push(await chrome.eval<EvalResult>(`window.__petu.ask(${JSON.stringify(q.followUp)}).then(() => window.__petu.result())`));
-      await Promise.all(shots); await captureEnd(chrome, qdir, 't2-');
+    // Follow-up turns: the set's scripted one, or --then's (each may scroll the PDF elsewhere first: the student wandered).
+    const follow = q.id === 'X1' && ctx.args.then.length ? ctx.args.then : q.followUp ? [{ page: null, question: q.followUp }] : [];
+    for (const f of follow) {
+      turn = turns.length;
+      if (f.page != null) await chrome.eval(`window.__petu.goto(${f.page})`);
+      turns.push(await chrome.eval<EvalResult>(`window.__petu.ask(${JSON.stringify(f.question)}).then(() => window.__petu.result())`));
+      await Promise.all(shots); await captureEnd(chrome, qdir, `t${turn + 1}-`);
     }
   }
   await Promise.all(shots);
@@ -245,7 +248,7 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const cfg = CONFIGS[args.config];
   const phase = process.env.PETU_PHASE ?? 'dev';
-  const QUESTIONS: Question[] = args.ask ? [...QSETS[args.qset], { id: 'X1', split: 'dev', deck: args.ask.deck, page: args.ask.page, pick: 'hand', type: 'narrow', question: args.ask.question }] : QSETS[args.qset];
+  const QUESTIONS: Question[] = args.ask ? [...QSETS[args.qset], { id: 'X1', split: 'dev', deck: args.ask.deck, page: args.ask.page, pick: 'hand', type: args.then.length ? 'follow-up' : 'narrow', question: args.ask.question, ...(args.then.length ? { followUp: args.then[0].question } : {}) }] : QSETS[args.qset];
   const QSET = qsetId(QSETS[args.qset], args.qset);
   const rubric = RUBRICS[args.rubric];
   const errs = validateSet(QSETS[args.qset], { sharedPages: SHARED_PAGES_OK.has(args.qset) });

@@ -1369,6 +1369,16 @@ export default function App() {
       // &nogen: replays only; a generation request is refused here, before anything is sent.
       ask: (q, rec) => (params.has('nogen') ? Promise.reject(new Error('nogen: generation is off')) : runRef.current(q, { rec })),
       largestMark: (page) => largestLabelled(marks.get(page)),
+      // The student scrolls elsewhere between questions (a follow-up asked from an unrelated page).
+      goto: async (page) => {
+        const v = viewerRef.current;
+        if (!v) return;
+        const p = Math.max(1, Math.min(v.numPages(), Math.round(page)));
+        await v.scrollToPage(p);
+        pageRef.current = p;
+        agentRef.current.pageChanged(p);
+        await new Promise((r) => window.setTimeout(r, 800));
+      },
       replay: (chunks, rec, events) => runRef.current(lastQuestion.current || 'replay', { rec, replay: { chunks, events } }),
       addInk: (page, pts) => {
         const H = viewerRef.current?.spaceHeight(page) ?? 1000;
