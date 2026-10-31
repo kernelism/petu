@@ -7,6 +7,8 @@ import { parseGroup, sanitizeGroup } from '../../src/svgboard/sanitize';
 import { groupGeometry } from '../../src/svgboard/check';
 import { SVG_EXAMPLES } from '../../server/prompt/svgExamples';
 import { prepareText } from '../../src/svgboard/polish';
+import { applyGrammar, newTypeState, typeScale } from '../../src/svgboard/grammar';
+import { newScope, resolveData } from '../../src/svgboard/data';
 
 const parse = (src: string): Element => { const g = parseGroup(src); if (typeof g === 'string') throw new Error(g); return g; };
 /** The script's top-level groups (a nested <g> or a self-closing one never ends the group early). */
@@ -82,5 +84,13 @@ describe('prose on the board', () => {
     expect(s.el.hasAttribute('data-prose-removed')).toBe(false);
     const geo = groupGeometry(OPUS_SMOOTH, 16);
     expect(geo.texts.map((t) => t.text)).toEqual(['average', 'then keep', '0.5 each: true gray']);
+  });
+  it("removes the whole stack on the renderer's path too (data, grammar sizes, then the text pass)", () => {
+    const g = parse(OPUS_SMOOTH);
+    resolveData(g, newScope());
+    const st = newTypeState(typeScale(16, 1, 560));
+    prepareText(g, 16, applyGrammar(g, st));
+    expect(texts(g)).toEqual(['average', 'then keep', '0.5 each: true gray']);
+    expect(g.getAttribute('data-prose-removed')?.split(' | ')).toHaveLength(4);
   });
 });
