@@ -209,6 +209,28 @@ describe('Desk: the board', () => {
     await d.addRegion(spec('next'));
     expect(boardOf(stage).querySelectorAll('.desk-region')).toHaveLength(1);
   });
+  it('hide (× / Esc): the board slides out and is inert, but keeps its trail; the next drawing brings it all back (F02, F06)', async () => {
+    const h = fakeHost();
+    const d = new Desk(h, stage);
+    expect(boardOf(stage).hasAttribute('inert')).toBe(true); // closed while reading: out of the tab order
+    await d.addRegion(spec('side'));
+    expect(boardOf(stage).hasAttribute('inert')).toBe(false);
+    await d.hide();
+    expect(h.setSplit).toHaveBeenLastCalledWith('none', GLIDE_MS);
+    expect(d.state().split).toBe('none');
+    expect(boardOf(stage).classList.contains('is-open')).toBe(false);
+    expect(boardOf(stage).hasAttribute('inert')).toBe(true);
+    await vi.advanceTimersByTimeAsync(GLIDE_MS + 10);
+    expect(boardOf(stage).querySelectorAll('.desk-region')).toHaveLength(1); // closing never erases
+    await d.reset(300);
+    await d.addRegion(spec('next'));
+    expect(d.state().split).toBe('normal');
+    expect(boardOf(stage).querySelectorAll('.desk-region')).toHaveLength(2);
+    await d.hide();
+    await d.show();
+    expect(d.state().split).toBe('normal');
+    expect(boardOf(stage).hasAttribute('inert')).toBe(false);
+  });
   it('the close button calls onClose (the app stops a playing answer, then dismisses)', async () => {
     const onClose = vi.fn();
     const d = new Desk(fakeHost(), stage, { onClose });

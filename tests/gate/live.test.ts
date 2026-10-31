@@ -136,6 +136,20 @@ describe('LiveGate', () => {
     expect(h.repairs().map((e) => e.phase)).toEqual(['sent', 'ok']);
   });
 
+  it('a repaired svg beat draws into the open board: a BOARD tag in the repair is dropped (one frame per board)', async () => {
+    // The founder's yo-yo answer: the repair stream opened `{{svgboard h=700}}` before `<g id="arm">`,
+    // so the arm opened a second section and landed below the second figure.
+    const h = harness({
+      preflight: fakePreflight(), headroomMs: 1000,
+      repair: async () => ({ ok: true, text: '{{svgboard h=700}} {{svg <g id="arm"><line x1="300" y1="450" x2="300" y2="350"/></g>}} The lever arm is this gap.' }),
+    });
+    await h.play([{ handoff: true }, `{{svgboard h=900}} Intro ${LONG} `, { wait: 300 }, `So ${LONG} `, { wait: 300 }, 'Mid FIXME words. ', `More ${LONG} `, 'Last. ']);
+    const text = h.out.join('');
+    expect(text.match(/\{\{svgboard/g)).toHaveLength(1);
+    expect(text).toContain('{{svgboard h=900}}');
+    expect(text).toContain('<g id="arm">');
+  });
+
   it('a late repair is aborted at the deadline and the beat dropped', async () => {
     let aborted = false;
     const h = harness({

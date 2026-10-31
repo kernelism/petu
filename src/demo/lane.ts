@@ -181,9 +181,65 @@ function wordsBefore(script: string, marker: string): number {
 
 const MAIN_WIRE = wire(MAIN);
 
-type LaneScript = { src: string; page: number; question: string; script: string; answers?: Record<string, string>; steps?: DevStep[] };
+/**
+ * The founder's yo-yo answer (2026-10-30), rebuilt: one board, two figures, then a later group (`arm`)
+ * drawn in the FIRST figure's coordinates (P at 250,450 on the floor, the string's line at y = 350).
+ * Asked on the mechanics deck's title page, which the answer never marks: the drawing sits at the top
+ * of the answer with no leader (a leader goes only to a real mark). With `&gate=live&repair=fake` the
+ * arm's beat fails (its label crosses the rim) and comes back from the repair as the old server sent it,
+ * with a BOARD tag of its own (`YOYO_REPAIR`): it must land in the first figure's frame, not in a new
+ * board below (the founder's bug: that BOARD also gave the re-check an empty board, so it passed).
+ */
+/** The arm as the model first wrote it: its label crosses the yo-yo's rim (the gate fails the beat). */
+const YOYO_ARM_FIRST = '<g id="arm"><line x1="300" y1="450" x2="300" y2="350" stroke="#7c3aed" stroke-width="3" stroke-dasharray="8 6"/><text x="316" y="408" font-size="20" fill="#7c3aed">lever arm</text></g>';
+/** The repaired arm: the label clear of the rim, inside the yo-yo. */
+const YOYO_ARM = '<g id="arm"><line x1="300" y1="450" x2="300" y2="350" stroke="#7c3aed" stroke-width="3" stroke-dasharray="8 6"/><text x="290" y="406" text-anchor="end" font-size="20" fill="#7c3aed">lever arm</text></g>';
+const YOYO_ARM_WORDS = 'The lever arm is the gap between P and the string\'s line, so the pull turns the yo-yo about P toward you.';
+const YOYO = `Pull a yo-yo's string low and level and it rolls toward you, because it turns about the point on the floor.
+<plan>
+Yo-yo on the floor, string from under the axle, pulled level; torque about the contact point P; lever arm P to the string's line. Second figure: string over the top, longer arm.
+BOARD viewBox="0 0 1000 900"
+groups: yoyo; pull; top; arm; takeaway
+</plan>
+Picture it from the side.
+<g id="yoyo">
+  <line x1="80" y1="450" x2="760" y2="450" stroke="#222" stroke-width="2"/>
+  <circle cx="250" cy="300" r="150" fill="none" stroke="#222" stroke-width="2.5"/>
+  <circle cx="250" cy="300" r="50" fill="none" stroke="#222" stroke-width="2"/>
+  <circle cx="250" cy="450" r="7" fill="#222"/>
+  <text x="214" y="438" font-size="22" fill="#222">P</text>
+</g>
+Here is the yo-yo on the floor, touching it at P.
+<g id="pull">
+  <line x1="250" y1="350" x2="700" y2="350" stroke="#222" stroke-width="2"/>
+  <polyline points="684,340 700,350 684,360" fill="none" stroke="#222" stroke-width="2"/>
+  <text x="712" y="357" font-size="20" fill="#222">pull F</text>
+</g>
+The string leaves from under the axle and you pull it level.
+<g id="top">
+  <line x1="80" y1="860" x2="760" y2="860" stroke="#222" stroke-width="2"/>
+  <circle cx="250" cy="710" r="150" fill="none" stroke="#6E6E73" stroke-width="2.5"/>
+  <circle cx="250" cy="710" r="50" fill="none" stroke="#6E6E73" stroke-width="2"/>
+  <line x1="250" y1="660" x2="700" y2="660" stroke="#6E6E73" stroke-width="2"/>
+  <circle cx="250" cy="860" r="7" fill="#6E6E73"/>
+  <text x="560" y="640" font-size="18" fill="#6E6E73">string over the top</text>
+</g>
+Over the top, the same pull would act further from the floor.
+${YOYO_ARM_FIRST}
+${YOYO_ARM_WORDS}
+<g id="takeaway"><text x="80" y="528" font-size="22" fill="#7c3aed">The pull's line passes above P: it turns the yo-yo toward you.</text></g>
+So the yo-yo rolls toward the pull.`;
+/**
+ * The gate's unit 4 (the sentence before the arm, with the arm's group) as a repair used to come back
+ * from the server: the same words, the group fixed, and a BOARD tag of its own before the group.
+ */
+const YOYO_REPAIR = `Over the top, the same pull would act further from the floor. {{svgboard h=700}} {{svg ${YOYO_ARM}}}`;
+
+type LaneScript = { src: string; page: number; question: string; script: string; answers?: Record<string, string>; steps?: DevStep[]; repairs?: Record<number, string> };
 
 export const LANE_SCRIPTS: Record<string, LaneScript> = {
+  /** One board, two figures, a later group in the first one's frame; asked on a title page it never marks. */
+  'lane-yoyo': { src: '/fixtures/mechanics.pdf', page: 1, question: 'Why does a yo-yo roll toward me when I pull the string?', script: wire(YOYO), repairs: { 4: YOYO_REPAIR } },
   /** The single answer (C1, C2, C4's board), asked on p.87, journeying to p.88. */
   'lane-econ': { src: SRC, page: 87, question: LANE_Q.main, script: MAIN_WIRE },
   /**

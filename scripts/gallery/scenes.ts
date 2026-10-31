@@ -85,6 +85,9 @@ export const SCENES: Scene[] = [
   // Layout C, the anchored lane (mockups C1–C5, src/demo/lane.ts): the ceiling drawn on the chart (C1), the
   // journey to Figure 3.21 with the shortage braced and noted on the page (C2), the finished board (C4);
   // the session's aside on the circled 15,000 (C3) and the follow-up's ceiling above the market (C5).
+  // One svg board, a later group in its first figure's frame (a repaired beat that once opened a board of
+  // its own); asked on a title page the answer never marks: no leader (src/demo/lane.ts lane-yoyo).
+  { name: 'lane-yoyo', query: 'script=lane-yoyo&gate=live&repair=fake', moments: [mid(12000), END], audit: false },
   { name: 'lane-econ', query: 'script=lane-econ', moments: [{ name: 'c1-rule', after: 'start', ms: 25000 }, { name: 'c2-gap', after: 'start', ms: 41000 }, END], needs: '.petu/corpus/openstax-principles-economics-3e.pdf' },
   { name: 'lane-session', query: 'script=lane-session', moments: [{ name: 'c3-aside', after: 'start', ms: 54000 }, { name: 'c5-follow', after: 'start', ms: 127000 }, { name: 'c5-session', after: 'start', ms: 129000, keys: ['s'] }, { name: 'c5-z', after: 'start', ms: 130000, keys: ['z'] }, { name: 'c5-overview', after: 'start', ms: 132000 }], needs: '.petu/corpus/openstax-principles-economics-3e.pdf' },
 ];

@@ -48,3 +48,13 @@ export function windowStart(tokens: string[], start: number, i: number, width: n
   }
   return i;
 }
+
+/**
+ * The one mid-answer wait cue (a faint "…" after the last word) shows only after a real pause: every
+ * word so far spoken (`endsAt`) and nothing new for this long. Shorter gaps (a sentence break, the
+ * opener handing over on time) show nothing; before the first word the narration line holds the same
+ * ellipsis (the opener wait). No status text.
+ */
+export const PAUSE_CUE_MS = 1500;
+/** Ms from `now` until the wait cue may show, given when the words queued so far end. */
+export const pauseCueIn = (endsAt: number, now: number): number => Math.max(0, endsAt - now) + PAUSE_CUE_MS;

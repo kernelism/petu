@@ -4,6 +4,8 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { playbackKey, type PlaybackContext, type PlaybackHandlers } from '../../src/ui/playbackKeys';
 import { PartsBar, speedLabel, type PartsView } from '../../src/ui/PartsBar';
+import { Caption } from '../../src/ui/Caption';
+import { AskBar } from '../../src/ui/AskBar';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -135,5 +137,44 @@ describe('PartsBar', () => {
     expect(v.onJump).toHaveBeenCalledWith(2);
     expect(host.querySelector('.pb-speed')!.textContent).toBe('1.25×');
     expect(speedLabel(0.75)).toBe('0.75×');
+  });
+});
+
+describe('B1: the dock in its moments', () => {
+  let host: HTMLDivElement, root: Root;
+  beforeEach(() => { host = document.createElement('div'); document.body.append(host); root = createRoot(host); });
+  afterEach(() => { act(() => root.unmount()); host.remove(); });
+
+  it('an aside: "Aside" (sentence case) and "Back to answer" with the return key icon; paused one-part answers say so', () => {
+    const base = { titles: [], label: 'Why?', current: 0, progress: 0, speed: 1, onJump: vi.fn(), onTogglePause: vi.fn(), onReplay: vi.fn(), onSpeed: vi.fn(), onStop: vi.fn() };
+    const onResume = vi.fn();
+    act(() => root.render(createElement(PartsBar, { ...base, paused: true, aside: { title: 'Answer paused', onResume } })));
+    expect(host.querySelector('.pb-aside')!.textContent).toBe('Aside');
+    const back = host.querySelector<HTMLButtonElement>('.pb-resume')!;
+    expect(back.textContent).toBe('Back to answer ');
+    expect(back.querySelector('svg')).not.toBeNull();
+    act(() => back.click());
+    expect(onResume).toHaveBeenCalled();
+    act(() => root.render(createElement(PartsBar, { ...base, paused: true })));
+    expect(host.querySelector('.pb')!.classList.contains('is-paused')).toBe(true);
+    expect(host.querySelector('.pb-title')!.textContent).toBe('Paused');
+  });
+
+  it('F01: the check question stays pinned ("Check yourself: …") once the narration has gone', () => {
+    act(() => root.render(createElement(Caption, { words: [], visible: false, check: 'Would a ceiling of $650 bind?' })));
+    expect(host.querySelector('.caption')!.classList.contains('is-visible')).toBe(true);
+    expect(host.querySelector('.caption-check')!.textContent).toBe('Check yourself:Would a ceiling of $650 bind?');
+  });
+
+  it('F03: the cap is a status row in the bar (wraps), no clipped placeholder; Esc on the pinned check dismisses it', () => {
+    const onDismissCheck = vi.fn();
+    const line = "Today's answer budget is used up. It resets tomorrow.";
+    act(() => root.render(createElement(AskBar, { onAsk: vi.fn(), onStop: vi.fn(), busy: false, blocked: line })));
+    expect(host.querySelector('.askbar-status')!.textContent).toBe(line);
+    expect(host.querySelector<HTMLInputElement>('.askbar-input')!.hidden).toBe(true);
+    act(() => root.render(createElement(AskBar, { onAsk: vi.fn(), onStop: vi.fn(), busy: false, mode: 'check', onDismissCheck })));
+    expect(host.querySelector('.askbar-status')).toBeNull();
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })); });
+    expect(onDismissCheck).toHaveBeenCalledOnce();
   });
 });

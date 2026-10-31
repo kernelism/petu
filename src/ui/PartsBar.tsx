@@ -1,6 +1,6 @@
 // src/ui/PartsBar.tsx
 import { useState } from 'react';
-import { Pause, Play, RotateCcw, Square } from 'lucide-react';
+import { CornerDownLeft, Pause, Play, RotateCcw, Square } from 'lucide-react';
 import './ui.css';
 
 /**
@@ -8,7 +8,7 @@ import './ui.css';
  * line): pause/resume, where the answer is (the current part's title, or the question when it has
  * one part), a rail of part segments (≥ 2 parts: done / current with its progress / upcoming; click
  * or ←/→ to move between them), replay the sentence (R), speed (< >) and stop (Esc).
- * During an aside the row belongs to it: an ASIDE tag, "Answer paused at n/N", and "Resume answer ↵".
+ * During an aside the row belongs to it: an Aside tag, "Answer paused at n/N", and "Back to answer" (Return).
  */
 export type PartsView = {
   /** Part titles. Two or more show the rail; with one, `label` fills the title slot. */
@@ -39,13 +39,13 @@ export function PartsBar({ titles, label, current, progress, paused, speed, onJu
   const [preview, setPreview] = useState<number | null>(null);
   const multi = titles.length > 1 && !aside;
   const shown = multi && preview != null && preview < titles.length ? preview : current;
-  const title = aside ? aside.title : multi ? titles[shown] ?? '' : label ?? (paused ? 'Paused' : '');
+  const title = aside ? aside.title : multi ? titles[shown] ?? '' : paused ? 'Paused' : label ?? '';
   return (
-    <div className={`pb${aside ? ' is-aside' : ''}`} role="toolbar" aria-label={aside ? 'Aside playback' : 'Answer playback'}>
+    <div className={`pb${aside ? ' is-aside' : ''}${paused ? ' is-paused' : ''}`} role="toolbar" aria-label={aside ? 'Aside playback' : 'Answer playback'}>
       <button type="button" className="pb-btn pb-play" onClick={onTogglePause} aria-label={paused ? 'Resume (Space)' : 'Pause (Space)'} title={paused ? 'Resume (Space)' : 'Pause (Space)'}>
         {paused ? <Play size={13} strokeWidth={2.2} aria-hidden="true" /> : <Pause size={13} strokeWidth={2.2} aria-hidden="true" />}
       </button>
-      {aside && <span className="pb-aside">ASIDE</span>}
+      {aside && <span className="pb-aside">Aside</span>}
       <div className={`pb-where${preview != null && preview !== current ? ' is-preview' : ''}`}>
         {multi && <span className="pb-count" aria-hidden="true">{shown + 1}/{titles.length}</span>}
         <span className="pb-title" title={title}>{title}</span>
@@ -78,7 +78,7 @@ export function PartsBar({ titles, label, current, progress, paused, speed, onJu
       )}
       {aside && (
         <button type="button" className="pb-resume" onClick={aside.onResume} title="Back to the answer (Return)">
-          Resume answer <span className="pb-resume-k" aria-hidden="true">↵</span>
+          Back to answer <span className="pb-resume-k" aria-hidden="true"><CornerDownLeft size={12} strokeWidth={2} /></span>
         </button>
       )}
       <button type="button" className="pb-btn" onClick={onReplay} aria-label="Replay this sentence (R)" title="Replay this sentence (R)">

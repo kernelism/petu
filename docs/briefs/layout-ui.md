@@ -7,7 +7,7 @@ dock, follow mode and settings. All geometry derives from the window, never the 
 
 | Path | What it is |
 |---|---|
-| `src/App.tsx` | Wiring (865 lines): URL params, open PDF (drop / `?src=` / sample), `useAgent`, `Director`, `Desk`, `runAnswer` (one `AnswerSession` per answer; caption, errors, cap lines, history push), eval hooks, `DebugPanel` (`?debug`), Esc → `desk.dismiss()` between answers. |
+| `src/App.tsx` | Wiring (865 lines): URL params, open PDF (drop / `?src=` / sample), `useAgent`, `Director`, `Desk`, `runAnswer` (one `AnswerSession` per answer; caption, errors, cap lines, history push), eval hooks, `DebugPanel` (`?debug`; the cap's developer line `capLine`), Esc / × → `desk.hide()` between answers (closing hides, never erases; `show()` or the next sketch brings the trail back). Cap copy for the student: `capNotice` (`client.ts`), a wrapping `.askbar-status` row. A check question stays pinned in the caption (`.caption-check`) until a reply, a new question or Esc. |
 | `src/pdf/PdfViewer.tsx` | Virtualized pages (`PageRenderer`, `KEEP_RADIUS` 3, `MAX_INFLIGHT` 2 renders, dpr ≤ 2), scroll ownership (`ScrollOwner`), split state (`setSplit` re-lays the column with a glide), implements `ViewerApi` and `DeskHost`. Sets `setStackBottom` when stacked. |
 | `src/pdf/PageSlot.tsx` | One page: canvas host + SVG layers `highlight` and `agent` (+ student overlay). |
 | `src/pdf/viewerApi.ts` | `ViewerApi` (page geometry, layers, text runs, scroll/visibility, `deskHost()`). |
@@ -18,13 +18,13 @@ dock, follow mode and settings. All geometry derives from the window, never the 
 | `src/desk/follow.ts` | `Follow` (rule 6: student scroll/zoom stops the engine moving the view; `paused()` → pill), `ScrollOwner`, `isScrollKey`. |
 | `src/ui/layout.ts` | `dockPlacement(W, deskState)`: dock centred under the slide column, ≤ `DOCK_MAX` 560. |
 | `src/ui/AskBar.tsx` + `barMode.ts` | One bar whose meaning follows the moment (`barMode`: before "Ask about this PDF…", during an answer "Ask about this…" (typing pauses it; Enter asks an aside; stop sits in the parts row once it shows), after "Follow up…", after an answer that closed on a question (`closingQuestion`: its last sentence ends in ?) "Your answer…" (the reply goes out with `check`). The "about: … · p.N" chip (point-to-ask) sits before the field. `/` focuses; Esc clears typed text, then closes an aside, then stops; intent → prewarm; suggestions; cap line; transcript. |
-| `src/ui/Caption.tsx`, `captionWindow.ts`, `text.ts` | Sentence-windowed caption (≤ 2 lines, splits at clause marks), waiting / "Still thinking…" (4s) / faint "…" pause, error + Retry; `primes` (x' → x′), `takeSentences`. |
+| `src/ui/Caption.tsx`, `captionWindow.ts`, `text.ts` | Sentence-windowed caption (≤ 2 lines, splits at clause marks), one wait cue: a faint "…" before the first word, and after the last word once a mid-answer pause passes 1.5 s (`PAUSE_CUE_MS` in captionWindow.ts; no status text), error + Retry; `primes` (x' → x′), `takeSentences`. |
 | `src/ui/TopBar.tsx` | File name, page indicator (ticks when the agent moves pages), open file, settings button. |
 | `src/ui/SettingsPopover.tsx` + `src/settings/settings.ts` | Ink style (live/hand/clean), ink + highlight colour, caption speed (wpm, default 170), shortcuts. Persisted in localStorage `pdf-tutor.settings` (v2); `useSettings()`. |
 | `src/ui/CanvasToolbar.tsx` + `src/ink/student/*` | Student drawing (D toggles, pen/highlighter/eraser, undo); strokes in `ink` store, sent as `STUDENT INK`. |
 | `src/ui/FollowPill.tsx`, `EmptyState.tsx` | "Back to answer" (→ `desk.resume()`); drop/open screen with the sample. |
 | `src/ui/RouteChip.tsx` | Journeys: "p9 → p2 · <section>" at the top of the slide column for `ROUTE_MS` (App), then "Back to pN" (`returnTarget`: N = the page in view when the question was asked; shown only once the answer has played past its first part and the view is elsewhere, so an answer that opens by moving to its page never offers it; mid-answer, pressing it is the student taking over: follow pauses). Journeys land with the same split framing as any scroll (`framedTop`: slide top on the board's top). |
-| `src/ui/PartsBar.tsx` | The playing answer's controls: one slim row in the caption once the first word is spoken: pause/resume · `n/N` + part title · segment rail (≥ 2 parts) · replay sentence · speed · stop. During an aside: ASIDE tag (warm grey) · "Answer paused at n/N" · Resume answer ↵. |
+| `src/ui/PartsBar.tsx` | The playing answer's controls: one slim row in the caption once the first word is spoken: pause/resume · `n/N` + part title · segment rail (≥ 2 parts) · replay sentence · speed · stop. During an aside: Aside tag (warm grey) · "Answer paused at n/N" · Back to answer (lucide CornerDownLeft). Paused: `.pb.is-paused`, a one-part answer's title reads "Paused". |
 | `src/ui/playbackKeys.ts` | Pure key map: Space pause/resume, R replay sentence, Shift+←/→ sentences, ←/→ parts (≥ 2), `<` `>` speed; with an aside open Esc (even from the bar) and Return (outside a field) resume the answer, Space/R/speed act on the aside. Never while typing, with ⌘/Ctrl/Alt or a popover open. |
 | Asides (App `askAside`/`closeAside`, `src/ui/trail.ts`, `Desk.setAside`) | A question asked mid-answer: the answer pauses on its word; a second `Director` (the aside's ink lane, on a desk proxy that never aborts the desk) plays the side answer into a warm-grey inset on the board (`has-aside` steps the rest back; the paused answer's sections are cropped to their ink meanwhile); Return / Resume collapses it to a marker (click reopens) and the answer resumes. One level. Agent: `/api/ask` with `context.aside` (`src/agent/moment.ts`: question, plan, words so far, board); dev scripts play `answers[q]`. |
 | Session trail (`src/ui/trail.ts`, `Desk.headNext`) | Each answer's first section gets a question header (number, title, `p.N · m:ss`; a check reply ✓); clicking it replays the recorded script (no call). Not in `?eval`. No persistence. |
@@ -42,7 +42,7 @@ Below 1200 px (or a lane < 440) everything below ("States") still applies: the s
 | Path | What it is |
 |---|---|
 | `src/desk/layout.ts` `laneFrame` | 1440: page 800 + lane 544, margins 48; 2560: page 1100 + lane 1000, centred. `frameFor(…, lane = true)`: the page column is the same reading or drawing (nothing glides). |
-| `src/desk/lane.ts` | Pure maths: `packLane` (anchor top, 24 px stacking, earlier groups never move), `dockTop` (move least, anchor inside), `leaderPath` (≤ 120 px, dot on the page edge), `stickyInsets`. Tests `tests/desk/lane.test.ts`. |
+| `src/desk/lane.ts` | Pure maths: `packLane` (anchor top, 24 px stacking, earlier groups never move), `dockTop` (move least, anchor inside), `leaderPath` (≤ 120 px, dot on the page edge), `leaderFrom` (a leader only to a real page mark: an answer that never marks a page, e.g. asked on a title page, sits at the top of its answer with none), `stickyInsets`. Tests `tests/desk/lane.test.ts`. |
 | `Desk` lane mode | The board element mounts in the viewer's `.pv-lane` (`DeskHost.laneEl`). Each answer is a **group** (`.lane-group` › spacer + `.lane-item`: head + sections in flow) at its anchor (its first page mark; before one, the reading line, re-anchored with a glide at the first mark). The playing group is `position: sticky` (card + "pinned while the answer plays" when its anchor is out of reach), **docks** at `overview()` (answer end) beside its latest in-view page mark (FLIP 300 ms), **folds** to a 36 px card (thumbnail) when the next question starts; a click opens it. Asides append to the paused group, indented 24 px. Region rects come from the DOM (sticky). `DeskState.lane/page/edge`; `column` = the pen's column (the dock follows it). Esc never clears the lane. A live group taller than the band **follows the pen** (svg part by part: `reveal` shifts its sticky top, `stickyInsets(…, pen)`); a `BOARD extend` header rides in the group. **Nothing sits under the top bar** (`clipLane`: the card and label keep to the comfort band via `--lane-clip`, parts above are masked with a fade). The dock's column ends its reading band above the dock (`--dock-col-x/w`, app.css three-layer mask). |
 | `src/ui/SessionDrawer.tsx`, `session.css` | S: the session list (time order, asides under their answer); a pick → `Desk.showHead` (opens the card, scrolls to it). M: past marks (`retireOut` in `ink/agent/marks.ts` keeps the last answer's page marks in a hidden `.petu-past` group). Edge marker "↑ p.N · marked". |
 | `src/pdf/overview.ts`, `src/ui/OverviewPill.tsx` | Overview zoom 50–200 % of the whole sheet: pinch / ⌘+wheel / Safari gestures / Z / ⌘±0; `.pv-zoom` clips only while zoomed (`overflow: clip`, sticky keeps working). B4's page zoom (`.pv-pagezoom`, `src/pdf/column.ts`) and the slide's band fit apply outside the lane only; the board's own pinch zoom stands down in the lane. |
@@ -56,9 +56,10 @@ gallery scenes of the same names (moments c1-rule, c2-gap, end, c3-aside, c5-fol
 - **Reading** (`split: 'none'`): pages centred (`readingColumn`, ≤ 860px). No board.
 - **Split**: first `{{sketch}}` → `Desk.addRegion` → `openBoard(normal|wide)` → `host.setSplit` glides
   the slide column left and the board in; the slide is re-framed with its top on the board's top.
-  `size=l` on any section → wide. Board persists across answers; × or Esc (when idle) → `dismiss()`.
+  `size=l` on any section → wide. Board persists across answers; × or Esc (when idle) → `hide()` (inert while closed; the sections stay).
 - **Stacked**: when the split slide column would be < 440px: slides on top (page fitted to ~45% of
-  the band), board below, dock at the foot.
+  the band), board below, dock at the foot. A section scales down to fit the short board (`fitH` in
+  `boardLayout`, never below half its width fit).
 - **Dock**: caption + ask bar as one unit; App measures it and calls `setSafeBottom` so nothing is
   framed or drawn under it; `--view-top/--view-bottom` CSS vars give the viewer's visible band.
 - **Sketching**: `.stage.is-sketching` dims non-current pages while an answer draws on the board and
@@ -98,7 +99,7 @@ Demo/script/fail paths play canned scripts and make no API call.
   `MIN_SLIDE_COL`, `STACK_SHARE`) + `tests/desk/layout.test.ts`.
 - Dock position/width: `src/ui/layout.ts` + `tests/ui/layout.test.ts`; dock CSS `.dock` in `ui.css`.
 - Caption behaviour: `captionWindow.ts` (pure) + `tests/ui/caption*.test.ts`; timings are constants at
-  the top of `App.tsx` (`CAPTION_LINGER_MS`, `STILL_THINKING_MS`, `PAUSE_GRACE_MS`).
+  the top of `App.tsx` (`CAPTION_LINGER_MS`; the wait cue: `PAUSE_CUE_MS` in `captionWindow.ts`).
 - A new setting: `Settings` + `DEFAULTS` in `settings.ts` (bump `VERSION` only for a migration) →
   `SettingsPopover.tsx` → read via `getSettings()`/`useSettings()`; `tests/settings/settings.test.ts`.
 - Answer lifecycle / error lines: `runAnswer` in `App.tsx`; wording in `src/agent/client.ts` (`askErrorLine`, `capLine`).
@@ -120,5 +121,5 @@ Review real interaction in Chrome and WebKit by hand (no recordings unless asked
 - `safeBottom()` is module state in `desk/layout.ts` (set by App via `setSafeBottom` and PdfViewer via
   `setStackBottom`): it leaks between tests in one file unless reset (see `tests/ui/layout.test.ts`).
 - The dock's `left/width` are set inline on purpose (a Safari var() glide issue); keep it that way.
-- Esc is overloaded: stops an answer (AskBar), closes the canvas tool, closes the board when idle.
+- Esc is overloaded: stops an answer (AskBar), closes the canvas tool, dismisses a pinned check question or an error line, hides the board when idle. It never erases anything.
 - Settings are per browser (localStorage); private mode silently doesn't persist.

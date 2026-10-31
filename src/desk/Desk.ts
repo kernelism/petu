@@ -9,7 +9,7 @@ import { routeGutter, maskBlocker } from './route';
 import { boardLayout, bodyPx, fitZoom, laneFrame, pageAt, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
 import { BOARD_HEAD, boardPad, MIN_TEXT_PX, SECTION_W, TEXT_UNITS } from './layout';
-import { dockTop, FOLDED_H, LANE_PAD, LEADER_MAX, leaderPath, packLane, stickyInsets, wantFor } from './lane';
+import { dockTop, FOLDED_H, LANE_PAD, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, wantFor } from './lane';
 import { camFor, overviewCam, type Cam } from './scene/camera';
 
 export type { DeskHost } from './types';
@@ -49,6 +49,11 @@ type Group = {
   top: number; h: number; live: boolean; folded: boolean; thumb: HTMLElement | null;
   /** Its anchor is the view (the answer had not marked the page yet): its first page mark re-anchors it. */
   provisional?: boolean;
+  /**
+   * Its anchor is a page mark of its answer. Otherwise (an answer asked on a title page that it never
+   * marks; docked with none of its marks in view) it is only where the drawing sits: no leader joins it.
+   */
+  marked?: boolean;
   /** Its heads and sections in order (the lane stacks them in this order). */
   parts?: HTMLElement[];
   /** Taller than the band while it plays: the part being drawn (px from the item's top) and the sticky top that shows it. */
@@ -417,6 +422,7 @@ export class Desk implements DeskApi {
     if (g.provisional) {
       // The answer's first page mark: the drawing moves level with the passage it explains (one glide).
       g.provisional = false;
+      g.marked = true;
       g.anchor = { page: t.page, y: r.y + Math.min(r.h, 40) / 2 };
       const from = g.item.getBoundingClientRect().top;
       this.position();
@@ -645,6 +651,7 @@ export class Desk implements DeskApi {
       await this.host.glideTo(() => Math.max(0, Math.min(this.host.maxScroll(), y - SAFE_TOP - Math.max(16, (H - SAFE_TOP - safeBottom() - h) / 3))), 600);
       return;
     }
+    if (!this.open) await this.show();
     if (!this.open) return;
     const top = parseFloat(el.style.top) || 0;
     await this.glideBoard(() => Math.max(0, top - 8));
@@ -657,7 +664,42 @@ export class Desk implements DeskApi {
     if (l) await this.reveal(l.t, l.r);
   }
 
-  /** The student closes the board (× or Esc between answers): it slides out and the slides glide back to centre. */
+  /**
+   * The student closes the board (× or Esc between answers): it slides out and the slides glide back
+   * to centre. Closing hides, never erases: every section and question header stays, and the board
+   * comes back with the whole trail on the next drawing or a pick in the session list (`show`).
+   */
+  async hide(): Promise<void> {
+    if (!this.open || this.lane()) return;
+    this.epoch++;
+    this.cancel();
+    this.dropWires(GLIDE_MS / 2);
+    this.open = false;
+    this.split = 'none';
+    this.setOpenClass(false);
+    this.gliding = true;
+    this.heading = columnOf(this.frame());
+    this.emit();
+    try { await this.host.setSplit('none', GLIDE_MS); }
+    finally { this.gliding = false; this.heading = null; this.position(); }
+  }
+
+  /** Opens a hidden board again, as it was (its trail, its split). */
+  async show(): Promise<void> {
+    if (this.open || !this.sections.length || this.lane()) return;
+    await this.openBoard(this.sections.some((s) => s.size === 'l') ? 'wide' : 'normal');
+  }
+
+  /**
+   * The board's open state on its element. Closed, it is `inert`: its controls (×, zoom, Fit) leave the
+   * tab order and the accessibility tree while it sits off-screen.
+   */
+  private setOpenClass(on: boolean) {
+    this.board.classList.toggle('is-open', on);
+    if (on) this.board.removeAttribute('inert'); else this.board.setAttribute('inert', '');
+  }
+
+  /** Clears the board: every section and head leaves (a new document; tests). The student's × and Esc `hide`. */
   async dismiss(): Promise<void> {
     if (!this.open) return;
     this.epoch++;
@@ -689,7 +731,7 @@ export class Desk implements DeskApi {
     void wait(GLIDE_MS).then(() => { goneHeads.forEach((e) => e.remove()); goneGroups.forEach((e) => e.remove()); });
     this.open = false;
     this.split = 'none';
-    this.board.classList.remove('is-open');
+    this.setOpenClass(false);
     this.gliding = true;
     this.heading = columnOf(this.frame());
     this.emit();
@@ -876,7 +918,7 @@ export class Desk implements DeskApi {
     if (opening) {
       // Placed off its final spot first (the closed transform), then slid in.
       void this.board.offsetWidth;
-      this.board.classList.add('is-open');
+      this.setOpenClass(true);
     }
     this.heading = columnOf(this.frame());
     this.emit();
@@ -1179,7 +1221,7 @@ export class Desk implements DeskApi {
       const el = div('lane-group'), spacer = div('lane-spacer'), item = div('lane-item');
       el.append(spacer, item);
       const leader = this.leaders.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
-      const ng: Group = { el, spacer, item, leader, secs: [], head: null, provisional: !this.inked.length, anchor: this.anchorNow(page), lift: (head ? this.heads.get(sec)?.h ?? 0 : 0) + 8, top: 0, h: 0, live: true, folded: false, thumb: null };
+      const ng: Group = { el, spacer, item, leader, secs: [], head: null, provisional: !this.inked.length, marked: !!this.inked.length, anchor: this.anchorNow(page), lift: (head ? this.heads.get(sec)?.h ?? 0 : 0) + 8, top: 0, h: 0, live: true, folded: false, thumb: null };
       // A folded card opens in place on a click (before its head's own Replay).
       item.addEventListener('click', (e) => { if (ng.folded) { e.stopPropagation(); e.preventDefault(); this.fold(ng, false); this.position(); } }, true);
       this.content.insertBefore(el, this.leaders);
@@ -1237,6 +1279,7 @@ export class Desk implements DeskApi {
       const r = this.deskRect(k.page, k.r);
       return !!r && r.y + r.h / 2 >= top + SAFE_TOP && r.y + r.h / 2 <= top + H - safeBottom();
     });
+    g.marked = !!seen;
     if (seen) g.anchor = { page: seen.page, y: seen.r.y + Math.min(seen.r.h, 40) / 2 };
     else {
       // None of the answer's marks is in view: the drawing stays where the student is looking (it never
@@ -1258,8 +1301,8 @@ export class Desk implements DeskApi {
     if (laneEl && this.board.parentElement !== laneEl) laneEl.appendChild(this.board);
     if (!laneEl && this.board.parentElement !== this.stage) this.stage.insertBefore(this.board, this.wireLayer);
     this.board.classList.toggle('is-lane', lane);
-    if (lane) this.board.classList.add('is-open');
-    else if (!this.open) this.board.classList.remove('is-open');
+    if (lane) this.setOpenClass(true);
+    else if (!this.open) this.setOpenClass(false);
     for (const g of this.groups) for (const p of g.parts ?? []) {
       const want = lane ? g.item : this.content;
       if (p.parentElement !== want) want.appendChild(p);
@@ -1366,9 +1409,7 @@ export class Desk implements DeskApi {
     let path: { d: string; y1: number } | null = null, y0 = 0;
     if (!g.folded && g.secs.length) {
       const k = g.live ? this.inked[0] : undefined;
-      const ys = [k ? this.anchorY({ page: k.page, y: k.r.y + Math.min(k.r.h, 40) / 2 }) : null, this.anchorY(g.anchor)];
-      for (const y of ys) {
-        if (y == null) continue;
+      for (const y of leaderFrom(k ? this.anchorY({ page: k.page, y: k.r.y + Math.min(k.r.h, 40) / 2 }) : null, this.anchorY(g.anchor), !!g.marked)) {
         path = leaderPath(y, { top: itemTop, h: g.h }, LANE_PAD - 6, head);
         if (path) { y0 = y; break; }
       }
@@ -1394,7 +1435,7 @@ export class Desk implements DeskApi {
     const fill = f.board ? f.board.h - BOARD_HEAD - boardPad(f.board.w) : 0;
     return this.sections.map((s) => {
       const hd = this.heads.get(s);
-      return { body: bodyPx(s.body, f.page.pageW), span: s.y1 - s.y0, ...(s.scene ? { fill: fill - (hd?.h ?? 0) } : {}), ...(hd ? { head: hd.h, hidden: hd.collapsed } : {}) };
+      return { body: bodyPx(s.body, f.page.pageW), span: s.y1 - s.y0, ...(s.scene ? { fill: fill - (hd?.h ?? 0) } : {}), ...(hd ? { head: hd.h, hidden: hd.collapsed } : {}), ...(f.stacked && f.board ? { fitH: f.board.h } : {}) };
     });
   }
 

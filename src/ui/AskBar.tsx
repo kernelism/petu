@@ -14,7 +14,7 @@ export type About = { label: string; page?: number };
 /** Typing this many characters counts as intent to ask (prewarm). */
 const INTENT_CHARS = 3;
 
-export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', showStop = busy, about, onClearAbout, onTyping, onResume, focusSeq, suggestions = [], restore, transcript, blocked, onIntent, dictation = true }: {
+export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', showStop = busy, about, onClearAbout, onTyping, onResume, onDismissCheck, focusSeq, suggestions = [], restore, transcript, blocked, onIntent, dictation = true }: {
   onAsk(q: string): void; onStop(): void; busy: boolean;
   /** What the bar means now (src/ui/barMode.ts): its placeholder says which. */
   mode?: BarMode;
@@ -41,6 +41,8 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   onIntent?(): void;
   /** The mic shows (dictation is set up on the server: GET /api/stt). */
   dictation?: boolean;
+  /** Esc with the check question pinned (mode `check`, nothing typed): the question is put away. */
+  onDismissCheck?(): void;
 }) {
   const [text, setText] = useState('');
   const [focused, setFocused] = useState(false);
@@ -56,6 +58,8 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   };
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  const checkRef = useRef<(() => void) | null>(null);
+  checkRef.current = mode === 'check' && onDismissCheck ? onDismissCheck : null;
 
   // Dictation (src/agent/dictation.ts): the mic fills the field as the student speaks; a pause (or
   // the mic again) sends it, Esc drops it. A failure shows in place of the placeholder for a while.
@@ -104,6 +108,10 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
       } else if (e.key === 'Escape' && busyRef.current && !e.defaultPrevented && !isTypingTarget(e.target)) {
         // Esc anywhere stops the answer (the canvas toolbar claims Esc first while drawing).
         onStop();
+      } else if (e.key === 'Escape' && checkRef.current && !e.defaultPrevented && !isTypingTarget(e.target) && !document.querySelector('.popover')) {
+        // The pinned check question goes first (before Esc reaches the board).
+        e.preventDefault();
+        checkRef.current();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -131,6 +139,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
       else if (text) { setText(''); setTyping(''); }
       else if (mode === 'aside') onResume?.();
       else if (busy) onStop();
+      else if (mode === 'check' && onDismissCheck) onDismissCheck();
       else e.currentTarget.blur();
     }
   };
@@ -177,8 +186,11 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
           </button>
         </span>
       )}
+      {/* Asking is paused (a spending cap): a status row that wraps, in the field's place, never a clipped placeholder. */}
+      {blocked && !busy && <p className="askbar-status" role="status">{blocked}</p>}
       <input
         ref={inputRef}
+        hidden={!!blocked && !busy}
         className="askbar-input"
         value={text}
         onChange={(e) => {
@@ -189,10 +201,9 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
           setTyping(v);
         }}
         onKeyDown={onKeyDown}
-        placeholder={blocked && !busy ? blocked : listening ? 'Listening…' : micNote || PLACEHOLDER[mode]}
-        // Blocked: still focusable (the line can be read, Esc and / work), but nothing can be typed or sent.
+        placeholder={listening ? 'Listening…' : micNote || PLACEHOLDER[mode]}
         readOnly={!!blocked && !busy}
-        title={blocked && !busy ? blocked : micNote || undefined}
+        title={micNote || undefined}
         aria-label={BAR_LABEL[mode]}
         autoComplete="off"
         spellCheck={false}

@@ -93,6 +93,14 @@ describe('boardLayout', () => {
     expect(narrow.w).toBeLessThanOrEqual(400);
     expect(boardLayout(2000, [{ body: 4 }]).boxes[0].s).toBeCloseTo(MIN_TEXT_PX / TEXT_UNITS);
   });
+  it('stacked (fitH): a section scales down to fit the short board, never below half its width fit (F05)', () => {
+    const free = boardLayout(760, [{ body: 40 }]).boxes[0];
+    const { boxes, pad } = boardLayout(760, [{ body: 40, fitH: 420 }]);
+    expect(boxes[0].s).toBeLessThan(free.s);
+    expect(BOARD_HEAD + boxes[0].h + 2 * pad).toBeLessThanOrEqual(420 + 0.5);
+    // Very short: the floor (half the width fit) holds; the rest reveals as it draws.
+    expect(boardLayout(760, [{ body: 40, fitH: 120 }]).boxes[0].s).toBeCloseTo(free.s / 2);
+  });
 });
 
 describe('bodyFraction / bodyPx', () => {

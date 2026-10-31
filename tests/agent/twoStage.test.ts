@@ -117,8 +117,8 @@ describe('twoStage: opener, then stage 2, as one stream', () => {
     await done;
     expect(out).toEqual(['A. ']);
     expect(onCutOff).toHaveBeenCalledOnce();
-    // A refusal that won't go away on retry (a spending cap) says why, not "cut off".
-    expect(onCutOff).toHaveBeenCalledWith('cap');
+    // A refusal that won't go away on retry (a spending cap) says why, not "cut off", in the student's words.
+    expect(onCutOff).toHaveBeenCalledWith('The answer budget is used up.');
   });
 
   it('stage 2 failing with no opener is still an error', async () => {

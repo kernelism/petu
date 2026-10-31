@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { formatUsd } from '../../src/agent/protocol';
-import { AskError, askErrorLine, askStream, capLine, getSpend, spendBlocked } from '../../src/agent/client';
+import { AskError, askErrorLine, askStream, capLine, capNotice, getSpend, spendBlocked } from '../../src/agent/client';
 import type { AskEvent, AskRequest, SpendSummary } from '../../src/agent/protocol';
 
 const REQ = { question: 'q', history: [], context: {} } as unknown as AskRequest;
@@ -173,6 +173,16 @@ describe('copy', () => {
     expect(capLine(null)).not.toMatch(/\.env/);
   });
 
+  it('capNotice is the student\'s line: no dollars, no knobs; the daily cap says when it resets (F03)', () => {
+    const daily = "Today's answer budget is used up. It resets tomorrow.";
+    expect(capNotice(spend({ totalUsd: 10, todayUsd: 3.67, dailyCapUsd: 3 }))).toBe(daily);
+    expect(capNotice(spend({ totalUsd: 0.01, todayUsd: 0.014, dailyCapUsd: 0.02, blocked: "Spending stopped: $0.014 of today's cap ($0.020) is used." }))).toBe(daily);
+    expect(capNotice(spend({ totalUsd: 60, capUsd: 60 }))).toBe('The answer budget is used up.');
+    expect(capNotice(null, 'Today’s cap… PETU_DAILY_CAP_USD=6')).toBe(daily);
+    for (const s of [spend({ totalUsd: 60, capUsd: 60 }), spend({ todayUsd: 3, dailyCapUsd: 3 }), null]) expect(capNotice(s)).not.toMatch(/PETU_|\$|npm/);
+    expect(askErrorLine('cap', spend({ todayUsd: 3, dailyCapUsd: 3 })).message).toBe(daily);
+  });
+
   it('formatUsd keeps two significant digits below $0.10', () => {
     expect([0, 0.014, 0.02, 0.0076, 0.1, 0.105, 3.01, 40, 0.00012].map(formatUsd))
       .toEqual(['$0.00', '$0.014', '$0.020', '$0.0076', '$0.10', '$0.10', '$3.01', '$40.00', '$0.00012']);
@@ -180,7 +190,7 @@ describe('copy', () => {
 
   it('askErrorLine follows the copy table, with Retry only where it helps', () => {
     expect(askErrorLine('no_key', null)).toEqual({ message: 'Add your OpenAI key to .env, then restart the dev server.', retry: false });
-    expect(askErrorLine('cap', spend({ totalUsd: 60, capUsd: 60 }))).toEqual({ message: 'Spending cap reached: $60.00 of $60.00 used. This is the $60.00 hard stop.', retry: false });
+    expect(askErrorLine('cap', spend({ totalUsd: 60, capUsd: 60 }))).toEqual({ message: 'The answer budget is used up.', retry: false });
     expect(askErrorLine('rate_limited', null)).toEqual({ message: 'The tutor is busy. Try again in a moment.', retry: true });
     expect(askErrorLine('network', null)).toEqual({ message: "Couldn't reach the tutor.", retry: true });
     expect(askErrorLine('upstream', null)).toEqual({ message: "Couldn't reach the tutor.", retry: true });

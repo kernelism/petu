@@ -7,7 +7,7 @@
 // the opener verbatim so it continues instead of repeating. The player sees one stream: the opener's
 // text, a separating space, then stage 2's text, never interleaved.
 import type { AskContext, AskEvent } from './protocol';
-import { AskError, type AskHandlers, type ScoutLive } from './client';
+import { AskError, capNotice, type AskHandlers, type ScoutLive } from './client';
 import type { ScoutResult } from './scout';
 import type { PageGround } from './context/types';
 
@@ -77,7 +77,7 @@ export async function* twoStage(o: TwoStage, signal: AbortSignal): AsyncGenerato
     // After the opener has been spoken, a failed stage 2 is a cut-off answer (what played stays),
     // not an error that wipes the caption.
     // A refusal that a retry won't fix (a spending cap) keeps its reason.
-    if (opened && !signal.aborted) { o.handlers.onCutOff?.(e instanceof AskError && !e.retryable ? e.message : 'The answer was cut off.'); return; }
+    if (opened && !signal.aborted) { o.handlers.onCutOff?.(e instanceof AskError && !e.retryable ? (e.code === 'cap' ? capNotice(null, e.message) : e.message) : 'The answer was cut off.'); return; }
     throw e;
   }
 }

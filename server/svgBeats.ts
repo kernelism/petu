@@ -58,7 +58,8 @@ export class SvgBeatFilter extends ScriptFilter {
   /** Timings (ms, the caller's clock) of the first group and the board's opening. */
   firstGroupMs = NaN;
   private now: () => number;
-  constructor(now: () => number = () => performance.now()) { super(); this.now = now; }
+  /** `opened`: the board is already open (a gate repair's stream redraws one beat of it): no BOARD tag is sent. */
+  constructor(now: () => number = () => performance.now(), o: { opened?: boolean } = {}) { super(); this.now = now; this.opened = !!o.opened; }
 
   /** The last character this filter let through (a plan after narration owes that narration a boundary). */
   private lastCh = '';

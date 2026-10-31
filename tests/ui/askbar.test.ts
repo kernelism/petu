@@ -99,7 +99,9 @@ describe('AskBar dictation', () => {
     b.end({ text: 'why', auto: true });
     expect(b.props.onAsk).not.toHaveBeenCalled();
     expect(b.input.value).toBe('');
-    expect(b.input.placeholder).toBe('Spending cap reached');
+    // B1 F03: the cap line shows as a status row in the field's place (the field is hidden).
+    expect(b.input.hidden).toBe(true);
+    expect(b.input.closest('.askbar')!.querySelector('.askbar-status')!.textContent).toBe('Spending cap reached');
   });
 
   it('an error mid-question puts what was heard back in the field with the note: nothing is sent', () => {
