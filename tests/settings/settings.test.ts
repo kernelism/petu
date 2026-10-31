@@ -8,9 +8,9 @@ describe('settings', () => {
   beforeEach(() => localStorage.clear());
   it('the ink is the violet preset and the drawing style is hand; neither is stored', async () => {
     let s = await fresh();
-    expect(s.getSettings()).toMatchObject({ inkColor: '#8E4EC6', inkStyle: 'live' });
-    s.setSettings({ inkStyle: 'hand' }); // the dev ?style= aid: this page load only
-    expect(s.getSettings().inkStyle).toBe('hand');
+    expect(s.getSettings()).toMatchObject({ inkColor: '#8E4EC6', inkStyle: 'hand' });
+    s.setSettings({ inkStyle: 'live' }); // the dev ?style= aid: this page load only
+    expect(s.getSettings().inkStyle).toBe('live');
     const stored = JSON.parse(localStorage.getItem(KEY)!);
     expect(stored).toEqual({ highlight: 'violet', speed: 1, voice: 'off', quality: 'standard', v: 3 });
     s = await fresh();
