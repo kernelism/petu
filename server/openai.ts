@@ -602,6 +602,10 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const bf = cfg.promptVariant === 'boardfirst' ? new BoardFirst() : null;
   const send = (s: string) => { if (bf) { raw += s; s = bf.push(s); } emitText(s); };
   const emitText = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; script += s; if (Number.isNaN(ttft)) ttft = now() - t0; emit({ t: 'text', d: s }); };
+  // Every answer leaves a record, a failed one too (the failures are the ones worth reading).
+  const record = (usd: number) => {
+    try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
+  };
   try {
     let res: Response | null = null;
     let live: AbortController | null = null;
@@ -635,7 +639,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
     if (!res) {
       // An HTTP error reply means nothing was generated: free the reservation. A network failure may
       // have reached OpenAI, so it is booked as an estimate below.
-      if (failed && failed.code !== 'network') { d.ledger.release(reqId); emit(failed); signal.removeEventListener('abort', onAbort); return; }
+      if (failed && failed.code !== 'network') { d.ledger.release(reqId); record(0); emit(failed); signal.removeEventListener('abort', onAbort); return; }
     } else {
       const r = await readUpstream(res, ep, { signal, idleMs: T.idleMs, filter, lint, send, onNote: (m) => emit({ t: 'note', message: m }), stop: () => live?.abort() }, read);
       idle = r.idle; usage = r.usage; terminal = r.terminal; complete = r.complete;
@@ -659,12 +663,12 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   // read from cache at the cached rate, the rest at the 12h write rate, output as generated (the
   // plan and anything held back count too, not only what reached the client).
   const estimated = !usage;
-  if (!sent) { d.ledger.release(reqId); return; }
+  if (!sent) { d.ledger.release(reqId); record(0); return; }
   if (usage) d.cache?.observe(ck, usage, systemTokensLow());
   const u: Usage = usage ?? estimatedUsage(est, cachedGuess, Math.ceil(Math.max(read.rawChars, outChars) / 3.2));
   const usd = costUsd(cfg.model, u, '12h', cfg.fast);
   d.ledger.settle({ id: reqId, phase: d.phase, kind: 'answer', model: cfg.model, usd, estimated, tokens: tokens(u) });
-  try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
+  record(usd);
   if (signal.aborted) return;
   if (failed && failed.code !== 'cut_off' && !outChars) { emit(failed); return; }
   const s = d.ledger.summary();
