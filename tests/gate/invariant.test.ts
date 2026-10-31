@@ -71,9 +71,11 @@ describe('live gate invariants over recorded answers', () => {
       // Unit keys are released in increasing order (no unit overtakes an earlier one).
       const order = relEvents.map((e) => (e.k.startsWith('o') ? -100 + Number(e.k.slice(1)) : Number(e.k)));
       expect([...order].sort((a, b) => a - b)).toEqual(order);
-      // Released text is a subsequence of the stream (strips only remove tags).
+      // Released text is a subsequence of the stream (strips only remove tags; a number the board
+      // contradicts is said as the board's, and the gate logs each such change).
       const stream = rec.script.replace(/\{\{[^}]*\}\}/g, '').replace(/\s+/g, ' ');
-      const rel = releasedText.replace(/\{\{[^}]*\}\}/g, '').replace(/\s+/g, ' ').trim();
+      let rel = releasedText.replace(/\{\{[^}]*\}\}/g, '').replace(/\s+/g, ' ').trim();
+      for (const e of gates) for (const n of e.notes) for (const m of n.matchAll(/(\S+) → (\S+) \(/g)) if (n.startsWith('numbers said as the board')) rel = rel.replace(m[2], m[1]);
       let pos = 0;
       for (const w of rel.split(' ').filter(Boolean)) { const at = stream.indexOf(w, pos); expect(at, `${res.label}: "${w}" not in the stream in order`).toBeGreaterThanOrEqual(0); pos = at + w.length; }
     }

@@ -21,6 +21,8 @@ const SCRIPT = [
   'An even recipe gives 40; the peaked one gives 55. {{scroll p=17}} Page 17 shows a wider recipe. ',
   '{{svg <g id="mid"> <text x="525" y="300">middle pick</text><text x="595" y="340">10</text> </g>}} ',
   '{{scroll p=9}} Picking the middle value instead sorts the three and keeps 10. It is not a blend, so the rules on {{scroll p=9}} {{highlight p=9 "Blends add: r * (s + t) = (r * s) + (r * t)"}} page 9 do not apply. ',
+  '{{svg <g id="mixed" data-const="a=10 b=100 c=10 r=0.1"> <text x="525" y="475">similarity blend</text><text x="525" y="594" data-val="(0.25*r*a+0.5*b+0.25*r*c)/(0.25*r+0.5+0.25*r)" data-fmt="1">blended middle: &#123;&#125;</text> </g>}} ',
+  'A similarity blend leaves about 92.9 after normalising, and a sharpened middle of 160 stays as said. ',
 ].join('');
 
 /** Streams `text` through a real GatePreflight + LiveGate on a fake clock; returns what was released. */
@@ -46,9 +48,18 @@ describe('answer loss (founder lec06, synthetic)', () => {
     expect(r.stats.drops).toBe(0);
   });
 
+  it('a number said that the board computes differently is said as the board\'s (heard = drawn)', async () => {
+    const r = await run(SCRIPT);
+    expect(r.out).toContain('leaves about 91.8 after normalising');
+    expect(r.out).not.toContain('92.9');
+    expect(r.out).toContain('middle of 160 stays');
+    expect(r.out).toContain('gives 40; the peaked one gives 55.');
+    expect(r.events.some((e) => e.notes.some((n) => /92\.9 → 91\.8/.test(n)))).toBe(true);
+  });
+
   it('every drawing reaches the session, and the board that holds them opens first', async () => {
     const r = await run(SCRIPT);
-    for (const id of ['row', 'even', 'mid']) expect(r.out).toContain(`<g id="${id}"`);
+    for (const id of ['row', 'even', 'mid', 'mixed']) expect(r.out).toContain(`<g id="${id}"`);
     expect(r.out.indexOf('{{svgboard')).toBeGreaterThanOrEqual(0);
     expect(r.out.indexOf('{{svgboard')).toBeLessThan(r.out.indexOf('<g id="row"'));
   });
@@ -60,6 +71,6 @@ describe('answer loss (founder lec06, synthetic)', () => {
     expect(r.events.some((e) => e.action === 'drop')).toBe(true);
     expect(r.out).toContain('{{svgboard h=850}}');
     expect(r.out.indexOf('{{svgboard')).toBeLessThan(r.out.indexOf('<g id="row"'));
-    for (const id of ['row', 'even', 'mid']) expect(r.out).toContain(`<g id="${id}"`);
+    for (const id of ['row', 'even', 'mid', 'mixed']) expect(r.out).toContain(`<g id="${id}"`);
   });
 });

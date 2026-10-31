@@ -14,6 +14,7 @@ import { isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
 import { GateState } from './engine';
 import { checkBeat, namedScene, withSeverity, type Severity } from './verdict';
 import { textNumbers } from './numbers';
+import { numberFixes, type NumberFix } from './check';
 import type { El, Rect } from './layout';
 import type { Grounding } from '../geometry/resolve';
 import type { RawAction } from '../script/types';
@@ -39,7 +40,7 @@ export type UnitKind = 'opener' | 'sentence' | 'beat';
 export type PreflightUnit = { key: string; kind: UnitKind; text: string; fault?: FaultMode; /** The stream's end: no boundary is known after it. */ end?: boolean };
 /** A tag of the checked unit: offsets in the unit's text; `skipped` when the board (or the parser) would not draw it. */
 export type PreflightTag = { start: number; end: number; body: string; action: RawAction | null; skipped?: string };
-export type PreflightResult = { flags: GateFlag[]; notes: string[]; tags: PreflightTag[]; report?: () => Omit<RepairReport, 'later' | 'tail' | 'maxWords'> };
+export type PreflightResult = { flags: GateFlag[]; notes: string[]; tags: PreflightTag[]; /** Spoken numbers the board's computed values contradict (check.ts numberFixes). */ fixes?: NumberFix[]; report?: () => Omit<RepairReport, 'later' | 'tail' | 'maxWords'> };
 
 export interface Preflight {
   /** Checks a unit as if it were released after everything accepted so far. Must not change what is accepted. */
@@ -209,6 +210,7 @@ export class GatePreflight implements Preflight {
       consts: [...this.consts, ...unitConsts.map((c) => ({ ...c, beat: k }))],
       lines: this.env.lines, scene: namedScene([...this.beats.flat(), ...kept], pageWords),
     });
+    const fixes = numberFixes(beat.words, state.values);
     const v = withSeverity(v0, this.env.severity ?? 'default');
     if (board?.drift?.length) v.notes.push(...board.drift.splice(0));
     // The svg board: each group parses, its id is new, text clears text and strokes, it stays on the canvas.
@@ -234,6 +236,7 @@ export class GatePreflight implements Preflight {
       flags: v.flags.map((f) => ({ check: f.check, detail: f.detail })),
       notes: v.notes,
       tags: tags.map((t) => ({ start: t.start, end: t.end, body: t.body, action: t.action, ...(skipped.has(t) ? { skipped: skipped.get(t)! } : {}) })),
+      ...(fixes.length ? { fixes } : {}),
       report: () => ({
         beat: u.text.trim(), problems: v.flags.map((f) => ({ check: f.check, detail: f.detail })),
         board: (scene ?? []).map((s) => ({ section: s.section, count: s.items.length, items: s.items })),
@@ -643,11 +646,24 @@ export class LiveGate {
 
   private async process(u0: PreflightUnit, out: Out, signal: AbortSignal): Promise<void> {
     const fault = this.d.faults?.get(u0.key);
-    const u: PreflightUnit = fault ? { ...u0, fault } : u0;
+    let u: PreflightUnit = fault ? { ...u0, fault } : u0;
     this.stats.units++;
     const t0 = this.now();
-    const r = await this.d.preflight.check(u);
+    let r = await this.d.preflight.check(u);
     if (signal.aborted) return;
+    // A number said that the board computes differently is said as the board's (the unit is not
+    // released yet, so I1 holds): what is heard matches what is drawn.
+    if (r.fixes?.length && this.setting !== 'shadow') {
+      let text = u.text;
+      for (const f of [...r.fixes].sort((a, b) => b.start - a.start)) text = text.slice(0, f.start) + f.to + text.slice(f.end);
+      const note = `numbers said as the board's: ${r.fixes.map((f) => `${f.from} → ${f.to} (${f.of})`).join(', ')}`;
+      console.warn(`[gate] ${note}`);
+      this.d.preflight.reject(u);
+      u = { ...u, text };
+      const r2 = await this.d.preflight.check(u);
+      if (signal.aborted) return;
+      r = { ...r2, notes: [...r2.notes, note] };
+    }
     const ms = this.now() - t0;
     if (!r.flags.length) { this.emitGate(u, 'pass', 'release', r, ms); this.release(u, u.text, out); return; }
     this.stats.fails++;
