@@ -103,7 +103,9 @@ export type Pace = { speed: number; fadeMs?: number;
   /** This svg group's share of its beat: several groups that came together split its words in turn. */
   slot?: { k: number; n: number };
   /** Aborts only on a real stop (a new answer, stop), not on the director's step timeout: a paced group draws on past it. */
-  stop?: AbortSignal };
+  stop?: AbortSignal;
+  /** Whether the answer is paused: ink in flight stands still until it resumes (src/playback/inkTime.ts). */
+  paused?: () => boolean };
 export type BeatWord = { text: string; inMs: number; endMs?: number };
 
 /** A resolved element, ready to draw on its word. */

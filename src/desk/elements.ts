@@ -198,7 +198,7 @@ function strokePlan(a: DrawAction, ctx: TargetCtx, env: BuildEnv, ink: Ink, extr
         color: ws.color, width: ws.width, opacity: ws.opacity < 1 ? ws.opacity : undefined, scale: ctx.scale(), signal,
         mode: fade || k.fadeMs != null ? 'fade' : 'trace', fadeMs: k.fadeMs, dash: ink.dash ? ws.dash : undefined,
         minMs: ink.closed ? CLOSED_MIN_MS : undefined,
-        speed: ink.closed ? Math.max(k.speed, CLOSED_FLOOR_MS / CLOSED_MIN_MS) : k.speed,
+        speed: ink.closed ? Math.max(k.speed, CLOSED_FLOOR_MS / CLOSED_MIN_MS) : k.speed, paused: k.paused,
       });
       if (after) await after(g, signal, k, id);
     },
@@ -294,7 +294,7 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
           const g = own(ctx.layers.highlight);
           env.registry.define({ id: a.id, kind: a.kind, target: ctx.target, bbox, boxes: [], anchor: { x: bbox.x + bbox.w, y: bbox.y }, group: g });
           const hl = HIGHLIGHTS[env.settings.highlight] ?? HIGHLIGHTS.violet;
-          await drawHighlight(g, rects, hl.color, hl.opacity, k.speed);
+          await drawHighlight(g, rects, hl.color, hl.opacity, k.speed, k.paused);
         },
       };
     }

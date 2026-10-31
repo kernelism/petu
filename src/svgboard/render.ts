@@ -5,7 +5,8 @@
  * arrive one per beat (src/svgboard/wire.ts), are sanitized and restyled (sanitize.ts), appended, and
  * drawn on like the board's own ink: each stroke traced at pen speed (stroke-dashoffset, the pen
  * cursor riding its tip), its fill and arrowheads landing once it is traced, text fading in, in the
- * group's own order. Aborted (instant mode, a skip, a new answer) → the final state at once.
+ * group's own order. Aborted (instant mode, a skip, a new answer) → the final state at once. While its
+ * answer is paused the drawing stands still mid-stroke (src/playback/inkTime.ts) and goes on at resume.
  */
 import { penDown, penLift, penTo } from '../ink/agent/penCursor';
 import { prefersReducedMotion, strokeDurationMs, ease } from '../ink/agent/animate';
@@ -17,6 +18,7 @@ import { prepareText } from './polish';
 import { applyGrammar, LEGIBLE_PX, MIN_PX, newTypeState, typeScale, type TypeState } from './grammar';
 import { settle } from './settle';
 import { groupGeometry } from './check';
+import { holdFades, InkTime, type Paused } from '../playback/inkTime';
 import type { SRect } from '../geometry/space';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -249,11 +251,14 @@ function wordsOf(el: Element, ns: string, groupId?: string): string[] {
  * (its id, its label's words) starts on that word, and each draws across its share of the words, not
  * at pen speed; `slot`: this group shares the beat with others that came with it. Without a beat they
  * follow one another at pen speed (≤ GROUP_MAX_MS). `speed` ≤ 1 compresses (backlog); `signal`
- * aborted → the final state at once.
+ * aborted → the final state at once; `paused`: while it holds, nothing moves (no stroke, fade or new
+ * part), and every time left in the plan moves later by the pause.
  */
 export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefined, o: { signal: AbortSignal; speed?: number; color: string; beat?: () => BeatWord[];
   /** This group's share of a beat other groups also draw in (they came together, before its words). */
   slot?: Slot; stop?: AbortSignal;
+  /** Whether the answer is paused (its narration stopped): the drawing waits with it. */
+  paused?: Paused;
   /** Each part as it starts drawing (in order): the board follows the pen through a group taller than the view. */
   onStep?: (el: SVGElement) => void }): Promise<void> {
   if (id) {
@@ -312,7 +317,9 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   // times are from now, so the drawing catches up with the words by itself.
   const words = o.beat?.() ?? [];
   const partIn = (u: Unit) => ({ cat: u.cat, words: u.words, naturalMs: u.steps.reduce((a, s) => a + natural(s), 0) });
-  const plannedAt = performance.now();
+  // Every time below is on the ink's own clock: it stands still while the answer is paused.
+  const clock = new InkTime(o.paused, (held) => holdFades(g, held));
+  const plannedAt = clock.now();
   const plan = paceParts(units.map(partIn), words, o.slot);
   /** When the beat began and when it was last known to end (absolute ms): a later end re-plans the parts left. */
   const beatFrom = plannedAt + (words[0]?.inMs ?? 0);
@@ -341,7 +348,9 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
     } else { s.el.style.transition = `opacity ${fadeMs}ms ease-out`; s.el.style.opacity = ''; }
   };
   const pen = {};
-  const t0 = performance.now();
+  /** When the last fade started lands (ink time). */
+  let fadesTo = 0;
+  const t0 = clock.now();
   // Paced over the beat, the drawing outlives the director's step (it resolves once under way): from
   // then on only a stop (a new answer, the student's stop) ends it, landing everything at once.
   const bg = new AbortController();
@@ -354,7 +363,7 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
       if (sig.aborted) break;
       // The beat's end moved since the plan (more streamed in, or it closed): the parts left spread over what is left of it.
       if (paced && ui > 0 && o.beat) {
-        const nowT = performance.now(), w = o.beat();
+        const nowT = clock.now(), w = o.beat();
         if (w.length >= 2 && Math.abs(nowT + beatEnd(w) - beatTo) > REPLAN_MS) {
           beatTo = nowT + beatEnd(w);
           const rest = order.slice(ui);
@@ -363,8 +372,11 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
         }
       }
       const u = order[ui];
-      const wait = t0 + u.at - performance.now();
-      if (wait > 16) { penLift(pen); await sleep(wait); if (sig.aborted) break; }
+      const wait = t0 + u.at - clock.now();
+      if (wait > 16) penLift(pen);
+      // (Also while paused at a part's start: it waits for the resume before the board follows it.)
+      await clock.sleep(wait > 16 ? wait : 0, sig);
+      if (sig.aborted) break;
       penDown(pen);
       setLive(b, u.el);
       // Paced: the part fills its share of the narration (strokes in proportion to their length).
@@ -377,18 +389,19 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
         if (sig.aborted) break;
         o.onStep?.(s.el);
         const d = share[si];
-        if (s.kind === 'fade') { land(s, paced ? Math.max(TEXT_FADE_MS, Math.min(TEXT_FADE_MS * 2.5, d)) : TEXT_FADE_MS); await sleep(d); continue; }
+        if (s.kind === 'fade') { const ms = paced ? Math.max(TEXT_FADE_MS, Math.min(TEXT_FADE_MS * 2.5, d)) : TEXT_FADE_MS; land(s, ms); fadesTo = Math.max(fadesTo, clock.now() + ms); await clock.sleep(d, sig); continue; }
         const geo = s.el as unknown as SVGGeometryElement;
-        const dur = Math.max(60, d), ts = performance.now();
+        const dur = Math.max(60, d), ts = clock.now();
         for (;;) {
-          const t = sig.aborted ? 1 : Math.min(1, (performance.now() - ts) / dur);
+          const t = sig.aborted ? 1 : Math.min(1, (clock.now() - ts) / dur);
           const len = s.len * ease(t);
           s.el.style.strokeDashoffset = String(s.len - len);
           try { const p = geo.getPointAtLength(len); penTo(pen, geo as unknown as SVGGraphicsElement, { x: p.x, y: p.y }, o.color); } catch { /* no geometry */ }
           if (t >= 1) break;
-          await frame();
+          await clock.frame(sig);
         }
         land(s);
+        fadesTo = Math.max(fadesTo, clock.now() + FILL_FADE_MS);
       }
     }
   } finally {
@@ -399,7 +412,9 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
     for (const s of steps) if (s.el.style.opacity === '0' || s.el.style.strokeDashoffset !== '') land(s);
     o.stop?.removeEventListener('abort', onSig);
   }
-  if (!sig.aborted) await sleep(Math.min(FILL_FADE_MS, TEXT_FADE_MS)); };
+  // The last fades run out on the ink's clock (a pause holds them), then a held pause lets go.
+  if (!sig.aborted) await clock.sleep(Math.max(Math.min(FILL_FADE_MS, TEXT_FADE_MS), fadesTo - clock.now()), sig);
+  clock.release(); };
   const done = run();
   if (paced && o.stop) await Promise.race([done, sleep(Math.min(1500, ACTION_STEP_MS))]);
   else await done;

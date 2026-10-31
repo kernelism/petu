@@ -1,4 +1,5 @@
 import type { SPt, SRect } from '../../geometry/space';
+import { holdFades, InkTime, type Paused } from '../../playback/inkTime';
 
 const SVG = 'http://www.w3.org/2000/svg';
 export type InkStyle = 'live' | 'hand' | 'clean';
@@ -41,8 +42,10 @@ export function drawLabel(g: SVGGElement, at: SPt, text: string, style: InkStyle
 /**
  * One rect per line behind the text. Sweeps left to right, line by line (~550ms total).
  * `speed` (0.35–1) compresses the sweep when the ink is behind the narration, like strokes.
+ * `paused`: while the answer is paused the sweep is held where it is (src/playback/inkTime.ts).
  */
-export async function drawHighlight(g: SVGGElement, rects: SRect[], color: string, opacity = 0.5, speed = 1): Promise<void> {
+export async function drawHighlight(g: SVGGElement, rects: SRect[], color: string, opacity = 0.5, speed = 1, paused?: Paused): Promise<void> {
+  const clock = new InkTime(paused, (held) => holdFades(g, held));
   const total = rects.reduce((s, r) => s + r.w, 0) || 1;
   const k = Math.min(1, Math.max(0.35, speed));
   for (const r of rects) {
@@ -58,7 +61,7 @@ export async function drawHighlight(g: SVGGElement, rects: SRect[], color: strin
     g.appendChild(el);
     await new Promise((res) => requestAnimationFrame(res));
     el.style.transform = 'scaleX(1)';
-    await new Promise((res) => setTimeout(res, ms));
+    await clock.sleep(ms);
   }
 }
 
