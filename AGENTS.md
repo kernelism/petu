@@ -176,7 +176,10 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   tags on the visible page only, released clause by clause) plays at once; the moment pages and plan
   are parsed, stage 2 is built and asked with the opener verbatim (`context.opener`, ALREADY SPOKEN)
   and its script follows the opener's last word; the note tells it never to restate the opener's claim and to open on something new (the mechanism, the first drawn step). A failed scout, or no verdict within 8s (`SCOUT_TIMEOUT_MS`), = stage 2 alone on the visible page.
-  The dock shows a faint static "…" while thinking and after the last word if the stream pauses.
+  No ellipsis anywhere (founder, 2026-10-31): before the first word the narration line stays empty under
+  the muted question; a mid-answer pause past 1 s quietly previews the plan's next page in the route row
+  ("Next p52 · section"), and shows nothing when the plan stays on the page in view. Stage 2 speaks before
+  it plans (p6.5); `silenceMs` in the eval is the silence actually heard after the opener.
   `?debug` shows scout verdict, opener, stage-2 first text and the handoff gap.
 - Every answer leaves a local record in `.petu/answers.jsonl` (question, page, the script as sent,
   lint notes). Server lint runs the client parser over each completed tag: a malformed tag is noted
