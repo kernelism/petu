@@ -29,7 +29,7 @@ export class Chrome {
     c.profile = join(o.dir, `prof${port}`);
     mkdirSync(c.profile, { recursive: true });
     c.proc = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--window-size=${o.width ?? 1440},${o.height ?? 900}`,
-      '--force-device-scale-factor=1', `--user-data-dir=${c.profile}`, '--no-first-run', ...(process.env.PETU_EVAL_VOICE ? ['--autoplay-policy=no-user-gesture-required'] : []), 'about:blank'], { stdio: 'ignore' });
+      '--force-device-scale-factor=1', `--user-data-dir=${c.profile}`, '--no-first-run', '--mute-audio', ...(process.env.PETU_EVAL_VOICE ? ['--autoplay-policy=no-user-gesture-required'] : []), 'about:blank'], { stdio: 'ignore' });
     let tabs: { type: string; webSocketDebuggerUrl: string }[] | undefined;
     for (let i = 0; i < 100 && !tabs; i++) { try { tabs = await (await fetch(`http://127.0.0.1:${port}/json`)).json() as typeof tabs; } catch { await sleep(100); } }
     if (!tabs) throw new Error('Chrome did not start');
