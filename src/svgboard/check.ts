@@ -98,10 +98,10 @@ const ellipse = (cx: number, cy: number, rx: number, ry: number): Pt[] => Array.
  * "0.2€weights"). Null without a DOM to measure in (tests, the server): the estimate is used.
  */
 /**
- * Measured at board text's own screen size: the system sans changes optical size with it (SF Text below
+ * Measured at the small end of board text (10 px), where engines run widest: the system sans changes optical size (SF Text below
  * ~20 px runs ~14% wider than SF Display at 100 px), so a large-size measure runs short.
  */
-const MEASURE_PX = 14;
+const MEASURE_PX = 10;
 /** Drawn text inside the scaled board ran up to ~4% wider than the off-screen measure (Firefox, WebKit). */
 const MEASURE_SAFETY = 1.05;
 let measureEl: SVGTextElement | null | undefined;

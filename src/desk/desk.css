@@ -247,7 +247,9 @@
 svg[data-svgboard] text, svg[data-svgboard] :is(path, line, polyline, polygon, circle, ellipse) {
   transition: fill 420ms ease-out, stroke 420ms ease-out;
 }
-svg[data-svgboard] text { font-variant-numeric: tabular-nums lining-nums; }
+/* geometricPrecision: glyph advances scale with the drawing (Gecko otherwise hints small sizes wider, so
+   labels laid out clear ran into each other once the lane or the overview zoom scaled the board). */
+svg[data-svgboard] text { font-variant-numeric: tabular-nums lining-nums; text-rendering: geometricPrecision; }
 /* A figure, drawn: rounded ends and corners (a pen's, not a plotter's). */
 svg[data-svgboard] :is(path, line, polyline, polygon) { stroke-linecap: round; stroke-linejoin: round; }
 /* Shaded regions are hatched, as in a printed figure (sanitize.ts marks them; render.ts fills them with
