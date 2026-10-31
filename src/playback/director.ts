@@ -17,6 +17,7 @@ import type { BuildElement, BuildEnv, DeskApi, ElementPlan, Pace, TargetCtx } fr
 import { bodyFraction } from '../desk/layout';
 import { meaningfulUnit, type Unit } from '../locate/unit';
 import { journeyBeat } from './parts';
+import { InkTime } from './inkTime';
 
 /** Ink actions sharing a word start this far apart, in order. */
 export const STAGGER_MS = 120;
@@ -81,6 +82,8 @@ type Deps = {
   spoken?(at: number): number;
   /** The narration of the current beat with word times (Scheduler.beatWords): an svg group paces its parts to it. */
   beat?(): { text: string; inMs: number; endMs?: number }[];
+  /** Whether the answer is paused (AnswerSession.isPaused): its ink in flight stands still until it resumes. */
+  paused?(): boolean;
   /** Highlights and underlines grow to meaningful units (src/locate/unit.ts). Default on. */
   units?: boolean;
   /**
@@ -131,6 +134,7 @@ export class Director {
     this.figures = new Figures({ mark: (p, id) => g().mark(p, id), aspect: (p) => g().aspect?.(p), obstacles: (p) => g().obstacles?.(p) ?? [] }, () => kitStore(this.registry).consts);
   }
   private desk(): DeskApi | null { return this.d.desk(); }
+  private paused = () => !!this.d.paused?.();
 
   /**
    * Runs `a`, whose word starts at `at` (performance.now() ms; default now). Raw actions (names,
@@ -328,19 +332,26 @@ export class Director {
     w.forEach((r) => r());
   }
 
-  /** Runs `fn` with a child signal that aborts on stop or after ACTION_TIMEOUT_MS. */
+  /**
+   * Runs `fn` with a child signal that aborts on stop or after ACTION_TIMEOUT_MS. Time the answer
+   * spends paused doesn't count: ink standing still for a pause is not stuck (src/playback/inkTime.ts).
+   */
   private async guarded<T>(fn: (signal: AbortSignal) => Promise<T>, parent: AbortSignal): Promise<T | 'timeout'> {
     const ac = new AbortController();
     const onAbort = () => ac.abort();
     parent.addEventListener('abort', onAbort);
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const over = new AbortController();
     try {
       return await Promise.race([
         fn(ac.signal),
-        new Promise<'timeout'>((r) => { timer = setTimeout(() => { ac.abort(); r('timeout'); }, ACTION_TIMEOUT_MS); }),
+        this.d.paused
+          ? new InkTime(this.paused).sleep(ACTION_TIMEOUT_MS, over.signal).then(() => { if (over.signal.aborted) return new Promise<never>(() => {}); ac.abort(); return 'timeout' as const; })
+          : new Promise<'timeout'>((r) => { timer = setTimeout(() => { ac.abort(); r('timeout'); }, ACTION_TIMEOUT_MS); }),
       ]);
     } finally {
       clearTimeout(timer);
+      over.abort();
       parent.removeEventListener('abort', onAbort);
     }
   }
@@ -606,7 +617,7 @@ export class Director {
     const p = plan;
     desk.noteInk?.(p.target, p.bbox, p.el);
     // Ink after a journey's arrival is not behind: the narration held for it.
-    const k: Pace = { ...backlog(now() - Math.max(word, dep?.arrivedAt ?? -Infinity)), ...(a.kind === 'svg' && this.d.beat ? { beat: this.d.beat, stop: signal, ...(a.slot ? { slot: a.slot } : {}) } : {}) };
+    const k: Pace = { ...backlog(now() - Math.max(word, dep?.arrivedAt ?? -Infinity)), ...(a.kind === 'svg' && this.d.beat ? { beat: this.d.beat, stop: signal, ...(a.slot ? { slot: a.slot } : {}) } : {}), ...(this.d.paused && !this.d.instant ? { paused: this.paused } : {}) };
     this.report(t, { startedAt: now() });
     const own = new AbortController();
     if (this.d.instant) own.abort(); // final state at once (an aborted draw completes immediately)

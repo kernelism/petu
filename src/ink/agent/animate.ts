@@ -1,6 +1,7 @@
 import type { SPt } from '../../geometry/space';
 import type { Stroke } from './strokes';
 import { penDown, penLift, penTo } from './penCursor';
+import { InkTime, type Paused } from '../../playback/inkTime';
 
 export const PX_PER_SEC = 700;
 /** No single stroke takes longer than this, however long it is. */
@@ -56,6 +57,8 @@ export type InkOpts = {
   dash?: string;
   /** Stroke opacity. Default 1. */
   opacity?: number;
+  /** Whether the answer is paused: a trace stands still mid-stroke until it resumes (src/playback/inkTime.ts). */
+  paused?: Paused;
 };
 
 const frame = () => new Promise<number>((r) => requestAnimationFrame(r));
@@ -92,6 +95,7 @@ export async function drawStrokes(g: SVGGElement, strokes: Stroke[], o: InkOpts)
   if (o.opacity != null) tip.setAttribute('fill-opacity', String(o.opacity)); // a faint stroke's pen is faint too
   tip.style.transition = 'opacity 160ms ease-out';
   const pen = {};
+  const clock = new InkTime(o.paused);
   penDown(pen);
   try {
     for (let k = 0; k < strokes.length; k++) {
@@ -101,18 +105,18 @@ export async function drawStrokes(g: SVGGElement, strokes: Stroke[], o: InkOpts)
       const p = makePath(g, o);
       g.appendChild(tip);
       tip.style.opacity = '1';
-      const t0 = performance.now();
+      const t0 = clock.now();
       for (;;) {
-        const t = o.signal?.aborted ? 1 : (performance.now() - t0) / dur;
+        const t = o.signal?.aborted ? 1 : (clock.now() - t0) / dur;
         const { points, tip: at } = partial(s, cum, L * ease(t));
         p.setAttribute('d', toD(points));
         tip.setAttribute('cx', String(at.x));
         tip.setAttribute('cy', String(at.y));
         penTo(pen, g, at, o.color);
         if (t >= 1) break;
-        await frame();
+        await clock.frame(o.signal);
       }
-      if (k < strokes.length - 1 && !o.signal?.aborted) await wait(BETWEEN_STROKES_MS * (o.speed ?? 1));
+      if (k < strokes.length - 1 && !o.signal?.aborted) await clock.sleep(BETWEEN_STROKES_MS * (o.speed ?? 1), o.signal);
     }
   } finally { penLift(pen); }
   tip.style.opacity = '0';

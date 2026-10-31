@@ -8,6 +8,7 @@ import type { Action, InkAction, RawAction } from '../../src/script/types';
 import type { Grounding } from '../../src/geometry/resolve';
 import { parseTag } from '../../src/script/parseTag';
 import { kitStore } from '../../src/desk/kit/kit';
+import { InkTime } from '../../src/playback/inkTime';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -206,6 +207,41 @@ describe('Director timing (carried over from the old suite)', () => {
     d.run(line(), 0); // 2s late
     await vi.advanceTimersByTimeAsync(400);
     expect(paces).toEqual([{ speed: 0.35, fadeMs: 120 }]);
+  });
+});
+
+describe('Director: the answer\'s pause reaches its ink', () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it('each draw gets the pause source (ink in flight stands still with the narration)', async () => {
+    let paused = false;
+    const seen: (boolean | undefined)[] = [];
+    const build: BuildElement = async () => ({ target: { page: 1 }, bbox: { x: 0, y: 0, w: 1, h: 1 }, draw: async (_s, k) => { seen.push(k.paused?.()); paused = true; seen.push(k.paused?.()); } });
+    const d = new Director({ viewer: () => fakeViewer(), desk: () => fakeDesk(), settings: () => DEFAULTS, onScrolledTo: () => {}, build, paused: () => paused });
+    d.run(line(), 0);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(seen).toEqual([false, true]);
+  });
+
+  it('time paused doesn\'t count toward the step timeout: ink standing still is not landed as stuck', async () => {
+    let paused = false;
+    const ends: { at: number; aborted: boolean }[] = [];
+    const build: BuildElement = async () => ({ target: { page: 1 }, bbox: { x: 0, y: 0, w: 1, h: 1 }, draw: async (signal, k) => {
+      await new InkTime(k.paused).sleep(2000, signal);
+      ends.push({ at: performance.now(), aborted: signal.aborted });
+    } });
+    const d = new Director({ viewer: () => fakeViewer(), desk: () => fakeDesk(), settings: () => DEFAULTS, onScrolledTo: () => {}, build, paused: () => paused });
+    d.run(line(), 0);
+    await vi.advanceTimersByTimeAsync(500);
+    paused = true;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(ends).toEqual([]);
+    paused = false;
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(ends.length).toBe(1);
+    expect(ends[0].aborted).toBe(false);
+    expect(ends[0].at).toBeGreaterThan(6900); // 2 s of drawing + 5 s paused (within a poll)
   });
 });
 
