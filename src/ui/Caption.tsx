@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import { primes } from './text';
 import { countLines, windowStart } from './captionWindow';
 import { PartsBar, type PartsView } from './PartsBar';
@@ -42,10 +43,12 @@ type Props = {
   /** A playing answer's parts and controls (src/ui/PartsBar.tsx): shown in place of the question line. */
   parts?: PartsView;
   /**
-   * The check question the answer closed on, pinned while the bar asks for the student's answer (and
-   * the narration has gone): "Check yourself: …", wrapping, never cut. Shown in place of everything else.
+   * The answer's check question, opened from the "Test yourself" chip (p6.2) and pinned while the bar asks
+   * for the student's answer (the narration has gone): "Test yourself: …", wrapping, never cut. Shown in
+   * place of everything else; × (or Esc) puts it away.
    */
   check?: string;
+  onDismissCheck?(): void;
 };
 
 /** The cross-fade between reading windows (ui.css .caption-text / .caption-leaving). */
@@ -68,7 +71,7 @@ function makeMeasure(el: HTMLElement): (s: string) => number {
   };
 }
 
-export function Caption({ words, visible, question, waiting = false, hint, pausing = false, error, parts, check }: Props) {
+export function Caption({ words, visible, question, waiting = false, hint, pausing = false, error, parts, check, onDismissCheck }: Props) {
   const tokens = groupWords(words);
   const viewRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -121,8 +124,13 @@ export function Caption({ words, visible, question, waiting = false, hint, pausi
   const shown = (visible && (tokens.length > 0 || !!question || !!error)) || (!!check && !error);
   if (check && !error) {
     return (
-      <div className="caption is-visible" aria-hidden={false}>
-        <p className="caption-check"><span className="caption-check-label">Check yourself:</span>{check}</p>
+      <div className="caption is-visible is-check" aria-hidden={false}>
+        <p className="caption-check"><span className="caption-check-label">Test yourself:</span>{check}</p>
+        {onDismissCheck && (
+          <button type="button" className="caption-check-x" onClick={onDismissCheck} aria-label="Put the question away" title="Put away (Esc)">
+            <X size={14} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+        )}
       </div>
     );
   }

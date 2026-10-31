@@ -253,6 +253,20 @@
 }
 .transcript-q { margin: 0 0 8px; font-size: 13px; line-height: 1.4; color: var(--muted); }
 .transcript-a { margin: 0; font-size: 15px; line-height: 1.55; color: var(--ink); letter-spacing: -0.005em; }
+/* Mid-answer: each heard sentence plays from its start on click; the one being spoken is lit (the
+   page's hover wash, so it reads as "here" without a new colour). */
+.transcript-s {
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+.transcript-s:hover { color: var(--ink); background: var(--hover); }
+.transcript-s:active { background: var(--press); }
+.transcript-s.is-current { color: var(--ink); background: var(--hover); }
+.transcript-s:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
 @keyframes ui-pop-in { from { opacity: 0; transform: scale(.85); } to { opacity: 1; transform: none; } }
 
@@ -285,8 +299,9 @@
 }
 @media (min-width: 1800px) { .caption { --cap-size: 16px; } }
 @media (min-width: 2000px) { .caption { --cap-size: 17px; } }
-/* A check question the answer closed on stays pinned above the bar until the student replies (or Esc):
-   "Check yourself: …" — the lead quiet, the question itself at narration contrast, wrapping, never cut. */
+/* The answer's check question, opened from the "Test yourself" chip, stays pinned above the bar until the
+   student replies (or Esc / ×): "Test yourself: …" — the lead quiet, the question itself at narration
+   contrast, wrapping, never cut. */
 .caption-check {
   margin: 0;
   font-size: calc(var(--cap-size) - 1px);
@@ -295,6 +310,26 @@
   text-wrap: pretty;
 }
 .caption-check-label { margin-right: 6px; color: rgba(255,255,255,.62); font-weight: 500; }
+.caption.is-check { display: flex; align-items: flex-start; gap: 8px; }
+.caption.is-check .caption-check { flex: 1; min-width: 0; }
+.caption-check-x {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: -1px -8px 0 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: rgba(255,255,255,.62);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+.caption-check-x:hover { color: #fff; background: var(--hover-dark); }
+.caption-check-x:active { background: var(--press-dark); }
+.caption-check-x:focus-visible { outline-color: #fff; }
 /* The asked question, one quiet line above the narration. */
 .caption-q {
   margin-bottom: 4px;
@@ -747,7 +782,7 @@
   .caption-leaving { display: none; }
   .dock, .caption, .caption-viewport, .dropveil, .tb-fold, .tb-tip { transition-duration: 0s; }
   .empty-card, .askbar, .askbar-chip, .keycap, .icon-btn, .btn-primary, .btn-quiet, .tb-btn, .tb-dot, .seg,
-  .topbar-num, .pb-btn, .pb-resume, .caption-retry, .askbar-about-x, .askbar-transcript { transition-duration: 0s; }
+  .topbar-num, .pb-btn, .pb-resume, .caption-retry, .askbar-about-x, .askbar-transcript, .caption-check-x, .transcript-s { transition-duration: 0s; }
   .icon-btn:active, .btn-primary:active, .tb-btn:active, .askbar-btn:active,
   .askbar-chip:active, .route-back:active { transform: none; }
 }
