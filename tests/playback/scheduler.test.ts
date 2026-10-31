@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Scheduler, actionLeadMs, FLUSH_MS } from '../../src/playback/scheduler';
+import { Scheduler, actionLeadMs, FLUSH_MS, LOOK_MIN_MS, LOOK_MAX_MS, LOOK_PER_CHAR_MS, lookMs, isPageMark } from '../../src/playback/scheduler';
 import { PacedClock, syllables, type NarrationClock } from '../../src/playback/clock';
 import type { Action, ScriptEvent } from '../../src/script/types';
 
@@ -201,5 +201,85 @@ describe('PacedClock', () => {
     expect(got[0].map((x) => x.inMs)).toEqual([0, 100, 200, 300]);
     expect(got[1].map((x) => x.text)).toEqual(['then', 'it', 'flattens.']);
     vi.useRealTimers();
+  });
+});
+
+describe('Scheduler: the look after a page mark (teaching rhythm)', () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
+  afterEach(() => vi.useRealTimers());
+  const svg = (id: string): ScriptEvent => ({ type: 'action', action: { kind: 'svg', id, svg: `<g id="${id}"/>` } as Action });
+  const mark = (quote?: string): ScriptEvent => ({ type: 'action', action: (quote == null ? { kind: 'circle', page: 1, mark: '#d1' } : { kind: 'highlight', page: 1, quote }) as unknown as Action });
+  const words = (s: string) => s.split(' ').map((t): ScriptEvent => ({ type: 'word', text: t }));
+  function run(events: ScriptEvent[], ms = 20000) {
+    const heard: Record<string, number> = {};
+    const fired: { kind: string; id?: string; at: number; when: number; word?: number }[] = [];
+    const s = new Scheduler(fixedClock(), {
+      onWord: (t, i) => { heard[`${i}:${t}`] = Date.now(); },
+      onAction: (a, at, word) => { fired.push({ kind: a.kind, id: (a as { id?: string }).id, at, when: Date.now(), word }); },
+      onDone: () => {},
+    }, { leadMs: () => 0 });
+    s.push(events);
+    vi.advanceTimersByTime(ms);
+    return { heard, fired, s };
+  }
+
+  it('after a page mark lands, the next board group waits LOOK_MIN_MS; the words go on unheld', () => {
+    const { heard, fired } = run([mark('k'), ...words('See this term. The bar grows as we said.'), svg('bar'), ...words('Then it falls.'), END]);
+    // 100 ms a word: the mark lands on "See" (0); the group's own word "Then" is at 900 — too soon.
+    expect(fired[0]).toMatchObject({ kind: 'highlight', at: 0 });
+    const g = fired.find((f) => f.kind === 'svg')!;
+    expect(g.at).toBeGreaterThanOrEqual(LOOK_MIN_MS + 25);
+    expect(g.when).toBe(g.at);
+    // The words were never delayed (no dead air): the first word at 0, "Then" at 900.
+    expect(heard['0:See']).toBe(0);
+    expect(heard['9:Then']).toBe(900);
+    expect(heard['11:falls.']).toBe(1100);
+  });
+
+  it('the look scales with the quoted words, capped at LOOK_MAX_MS; a mark with no quote gets the minimum', () => {
+    expect(lookMs({ kind: 'highlight', page: 1, quote: 'a'.repeat(80) } as unknown as Action)).toBe(LOOK_MAX_MS);
+    expect(lookMs({ kind: 'circle', page: 1, mark: '#d1' } as unknown as Action)).toBe(LOOK_MIN_MS);
+    expect(lookMs({ kind: 'highlight', page: 1, quote: 'ten chars.' } as unknown as Action)).toBe(LOOK_MIN_MS + 10 * LOOK_PER_CHAR_MS);
+    // Not a page mark: a scroll, a board group, board ink.
+    expect(isPageMark({ kind: 'scroll', page: 3 } as Action)).toBe(false);
+    expect(isPageMark({ kind: 'svg', svg: '<g/>' } as Action)).toBe(false);
+    expect(isPageMark({ kind: 'circle', region: 's', at: { x: 1, y: 1 } } as unknown as Action)).toBe(false);
+    expect(isPageMark({ kind: 'box', page: 2, mark: '#e1' } as unknown as Action)).toBe(true);
+  });
+
+  it('a group re-anchors to the first word spoken once the look is over, so it draws with those words', () => {
+    const many = words('See this term here now. ' + 'w '.repeat(30).trim() + '.');
+    const { fired } = run([mark(), ...many.slice(0, 5), svg('g'), ...many.slice(5), END]);
+    const g = fired.find((f) => f.kind === 'svg')!;
+    // The mark at 0 holds the board LOOK_MIN_MS; the group's word is the first at or after it (word 12 at 1200), not "w" at 500.
+    expect(g.at).toBe(LOOK_MIN_MS);
+    expect(g.word).toBe(12);
+  });
+
+  it('a page mark inside the group\'s own first sentence: the mark fires first, the group waits for the look after it', () => {
+    const { fired } = run([...words('Look here.'), svg('g'), ...words('The'), mark('kernel'), ...words('kernel weights add up. ' + 'w '.repeat(30).trim() + '.'), END]);
+    const kinds = fired.map((f) => f.kind);
+    expect(kinds.indexOf('highlight')).toBeLessThan(kinds.indexOf('svg'));
+    const m = fired.find((f) => f.kind === 'highlight')!, g = fired.find((f) => f.kind === 'svg')!;
+    expect(m.at).toBe(300); // "kernel"
+    expect(g.at).toBeGreaterThanOrEqual(m.at + LOOK_MIN_MS + 6 * LOOK_PER_CHAR_MS);
+  });
+
+  it('groups that came together move together and keep their slots', () => {
+    const { fired } = run([mark(), ...words('See this term here now. ' + 'w '.repeat(30).trim() + '.').slice(0, 5), svg('axes'), svg('curve'), ...words('w '.repeat(30).trim() + '.'), END]);
+    const gs = fired.filter((f) => f.kind === 'svg');
+    expect(gs.map((g) => g.id)).toEqual(['axes', 'curve']);
+    expect(gs[0].at).toBe(gs[1].at);
+    expect(gs[0].at).toBeGreaterThanOrEqual(LOOK_MIN_MS);
+  });
+
+  it('no page mark: groups fire on their word as before', () => {
+    const { fired } = run([...words('Look here.'), svg('one'), ...words('The curve falls.'), END]);
+    expect(fired[0]).toMatchObject({ kind: 'svg', at: 200 });
+  });
+
+  it('a mark after the group\'s sentence does not hold it; the one before does, from the mark\'s word not its fire time', () => {
+    const { fired } = run([...words('Look here.'), svg('one'), ...words('The curve falls.'), mark(), ...words('See it.'), END]);
+    expect(fired.find((f) => f.kind === 'svg')!.at).toBe(200);
   });
 });
