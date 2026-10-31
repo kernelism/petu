@@ -59,6 +59,7 @@ const GLYPHS = `<g id="glyphs">
 const SPARSE = `<g id="sparse"><circle cx="300" cy="300" r="80" fill="none" stroke="#222"/><text x="420" y="300" font-size="16">one label</text></g>`;
 
 // The lane at 1440: ~500 px for 1000 units; slide body 18 px → the grammar's content target 16.2 px = 32.4 units.
+// minFloor 8 px: roomSizes' own last resort, tested alone here (the renderer's floor and settle: settle.test.ts).
 const LANE = (): TypeState => ({ ...newTypeState(typeScale(18, 0.5, 500)), floor: LEGIBLE_PX / 0.5, minFloor: 8 / 0.5 });
 
 describe('text keeps to the room the drawing gives it', () => {
@@ -78,8 +79,8 @@ describe('text keeps to the room the drawing gives it', () => {
   it('a sparse board is raised the whole way the proportion rule allows (room allows it)', () => {
     const st = LANE();
     const g = run(SPARSE, st);
-    // The model's 16 is under the legibility floor (10 px = 20 units): raised to it, then by RAISE_MAX.
-    expect(Number(g.querySelector('text')!.getAttribute('font-size'))).toBeCloseTo(Math.min(st.scale.content, 20 * RAISE_MAX), 1);
+    // The model's 16 is under the legibility floor (LEGIBLE_PX on screen): raised to it, then by RAISE_MAX.
+    expect(Number(g.querySelector('text')!.getAttribute('font-size'))).toBeCloseTo(Math.min(st.scale.content, st.floor! * RAISE_MAX), 1);
   });
 
   it('a later group never sets content larger than an earlier, tighter one', () => {
