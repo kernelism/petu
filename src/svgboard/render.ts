@@ -10,7 +10,7 @@
 import { penDown, penLift, penTo } from '../ink/agent/penCursor';
 import { prefersReducedMotion, strokeDurationMs, ease } from '../ink/agent/animate';
 import { sanitizeGroup, type Sanitized } from './sanitize';
-import { paceParts, splitPart, type BeatWord, type Slot } from '../playback/pace';
+import { beatEnd, paceParts, splitPart, REPLAN_MS, type BeatWord, type Slot } from '../playback/pace';
 import { INK, type Palette } from './style';
 import { isBound, newScope, resolveData, type DataScope } from './data';
 import { prepareText } from './polish';
@@ -299,7 +299,12 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   const natural = (s: Step) => (s.kind === 'trace' ? strokeDurationMs(s.len * s.px, s.len * s.px < 60 ? 120 : 200, speed) : 60 * speed);
   // The schedule: paced to the beat's narration (src/playback/pace.ts), else at pen speed.
   const words = speed >= 0.99 ? (o.beat?.() ?? []) : [];
-  const plan = paceParts(units.map((u) => ({ cat: u.cat, words: u.words, naturalMs: u.steps.reduce((a, s) => a + natural(s), 0) })), words, o.slot);
+  const partIn = (u: Unit) => ({ cat: u.cat, words: u.words, naturalMs: u.steps.reduce((a, s) => a + natural(s), 0) });
+  const plannedAt = performance.now();
+  const plan = paceParts(units.map(partIn), words, o.slot);
+  /** When the beat began and when it was last known to end (absolute ms): a later end re-plans the parts left. */
+  const beatFrom = plannedAt + (words[0]?.inMs ?? 0);
+  let beatTo = plannedAt + beatEnd(words);
   const paced = !!plan;
   let order: Unit[];
   /** Each part's draw time (in `order`); paced, split over its steps in proportion to their pen time. */
@@ -334,8 +339,18 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   const sig = bg.signal;
   const run = async () => { try {
     for (let ui = 0; ui < order.length; ui++) {
-      const u = order[ui];
       if (sig.aborted) break;
+      // More of the beat has streamed in since the plan: the parts left spread over what is left of it.
+      if (paced && ui > 0 && o.beat) {
+        const nowT = performance.now(), w = o.beat();
+        if (w.length >= 2 && nowT + beatEnd(w) > beatTo + REPLAN_MS) {
+          beatTo = nowT + beatEnd(w);
+          const rest = order.slice(ui);
+          const re = paceParts(rest.map(partIn), w, o.slot, beatFrom - nowT);
+          if (re) re.forEach((p, j) => { order[ui + j] = rest[p.i]; rest[p.i].at = nowT - t0 + p.at; budget[ui + j] = p.dur; });
+        }
+      }
+      const u = order[ui];
       const wait = t0 + u.at - performance.now();
       if (wait > 16) { penLift(pen); await sleep(wait); if (sig.aborted) break; }
       penDown(pen);

@@ -29,6 +29,12 @@ export const REST_MS = 400;
 /** Words assumed for a word whose time isn't known yet. */
 export const WORD_EST_MS = 300;
 
+/**
+ * A group's words may still be streaming when it starts drawing (the group comes before its
+ * sentences): when the beat has grown by more than this, the parts not yet drawn are re-planned.
+ */
+export const REPLAN_MS = 400;
+
 /** When the beat's narration ends, ms from now: its last word's end (else its start plus a word). */
 export function beatEnd(words: readonly BeatWord[]): number {
   if (!words.length) return 0;
@@ -38,10 +44,10 @@ export function beatEnd(words: readonly BeatWord[]): number {
 
 /**
  * The window (ms from now) a group draws in: its slot's share of the beat's span, from the first word
- * to the last word's end (at least SPAN_MIN_MS long). One group (no slot): the whole span.
+ * (or `start`: when the beat began, ms from now, ≤ 0 once it has) to the last word's end (at least
+ * SPAN_MIN_MS long). One group (no slot): the whole span.
  */
-export function beatWindow(words: readonly BeatWord[], slot?: Slot): { from: number; to: number } {
-  const start = words.length ? Math.max(0, words[0].inMs) : 0;
+export function beatWindow(words: readonly BeatWord[], slot?: Slot, start = words.length ? Math.max(0, words[0].inMs) : 0): { from: number; to: number } {
   const end = Math.max(start + SPAN_MIN_MS, beatEnd(words));
   const n = slot && slot.n > 1 ? slot.n : 1;
   const k = slot && n > 1 ? Math.max(0, Math.min(n - 1, slot.k)) : 0;
@@ -56,16 +62,20 @@ export type PartTime = { i: number; at: number; dur: number };
 
 /**
  * The schedule of a group's parts over its beat, in drawing order, or null when the beat gives
- * nothing to pace by (fewer than two words: the caller draws at pen speed).
+ * nothing to pace by (fewer than two words: the caller draws at pen speed). `start`: when the beat
+ * began (ms from now; a re-plan once more of the beat has streamed in: the parts left are spread over
+ * what is left of the window).
  *
  * Pen order (category, then the group's own order) spreads the parts evenly over the window; a part
  * whose words the narration says inside the window starts on that word instead. Each part draws over
  * its share, up to the next part's start, less a pen lift, clamped to [min, PART_MAX_MS], where min
  * is PART_MIN_MS unless the window is too short to give every part that much (then an equal share).
  */
-export function paceParts(parts: readonly PartIn[], words: readonly BeatWord[], slot?: Slot): PartTime[] | null {
+export function paceParts(parts: readonly PartIn[], words: readonly BeatWord[], slot?: Slot, start?: number): PartTime[] | null {
   if (words.length < 2 || !parts.length) return null;
-  const { from, to } = beatWindow(words, slot);
+  const win = beatWindow(words, slot, start);
+  // Re-planned mid-beat (`start` in the past): what is left of the window, from now.
+  const from = Math.max(0, win.from), to = Math.max(from + 1, win.to);
   const span = to - from;
   const n = parts.length;
   const order = parts.map((p, i) => ({ p, i })).sort((a, z) => a.p.cat - z.p.cat || a.i - z.i);

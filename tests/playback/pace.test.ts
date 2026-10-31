@@ -87,6 +87,18 @@ describe('pace: each part draws across its share of the words', () => {
     expect(t[0].at).toBe(beatWindow(w, { k: 1, n: 2 }).from);
   });
 
+  it('re-planned mid-beat (more words streamed in): the parts left spread over what is left, from now', () => {
+    // The beat began 3 s ago and now runs 6 s more: two parts left share [0, 6000).
+    const w = beat(Array(20).fill('w').join(' '));
+    const t = paceParts([part(), part()], w, undefined, -3000)!;
+    expect(t.map((x) => x.at)).toEqual([0, 3000]);
+    // A slot is its share of the whole beat (began 3 s ago, 9 s long): the first half has 1.5 s left.
+    const k0 = paceParts([part()], w, { k: 0, n: 2 }, -3000)!;
+    expect(k0[0]).toMatchObject({ at: 0, dur: 1500 - PART_GAP_MS });
+    const k1 = paceParts([part()], w, { k: 1, n: 2 }, -3000)!;
+    expect(k1[0].at).toBe(1500);
+  });
+
   it('splits a part\'s time over its strokes in proportion to their pen time', () => {
     expect(splitPart(1200, [100, 200, 300])).toEqual([200, 400, 600]);
     expect(splitPart(900, [0, 0, 0])).toEqual([300, 300, 300]);
