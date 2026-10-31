@@ -115,5 +115,16 @@ export function pageTarget(kind: MarkKind, page: number, pts: Pt[], lines: Line[
   // "?" and notes: what it sits beside (its centre, then its nearest point).
   const c = { x: cx(b), y: cy(b) };
   const n = near(c, lines, figures, 60) ?? pts.reduce<ReturnType<typeof near>>((acc, p) => acc ?? near(p, lines, figures, 30), null);
-  return { target: n ? { page, ...n, area } : empty };
+  if (n) return { target: { page, ...n, area } };
+  // In the margin: the line level with it (its words nearest the mark), up to a column's width away.
+  const level = lines
+    .filter((l) => l.rect.y <= b.y + b.h + 10 && l.rect.y + l.rect.h >= b.y - 10)
+    .map((l) => ({ l, dx: Math.max(l.rect.x - (b.x + b.w), 0, b.x - (l.rect.x + l.rect.w)) }))
+    .filter((x) => x.dx <= 250)
+    .sort((p, q) => p.dx - q.dx || Math.abs(cy(p.l.rect) - c.y) - Math.abs(cy(q.l.rect) - c.y))[0]?.l;
+  if (level) {
+    const x = Math.max(level.rect.x, Math.min(c.x, level.rect.x + level.rect.w)), span = Math.max(60, 0.3 * level.rect.w);
+    return { target: { page, what: 'phrase', text: phrase(level, x - span, x + span), ...(level.id ? { ref: level.id } : {}), area } };
+  }
+  return { target: empty };
 }

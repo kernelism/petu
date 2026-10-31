@@ -197,11 +197,10 @@
   animation: ui-pop-in var(--dur-base) var(--ease-out);
 }
 .askbar-about-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* Several marks since the last question: one chip each, whole, wrapping onto more rows; the field
-   keeps room to type (it wraps under them when the row is full). */
-.askbar.has-chips { flex-wrap: wrap; row-gap: 8px; }
-.askbar.has-chips .askbar-about { margin-left: -8px; margin-right: -2px; max-width: 100%; }
-.askbar.has-chips .askbar-input { flex: 1 1 180px; }
+/* Several marks since the last question: one chip each, whole, in their own wrapping row above the field. */
+.askbar.has-chips { flex-wrap: wrap; row-gap: 10px; }
+.askbar-abouts { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 6px; margin-left: -8px; }
+.askbar-abouts .askbar-about { margin-left: 0; max-width: 100%; }
 .askbar-about-x {
   flex: none;
   width: 20px;

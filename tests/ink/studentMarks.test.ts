@@ -40,6 +40,12 @@ describe('mark targets', () => {
     expect(q.text).toContain('responsiveness');
   });
 
+  it('a "?" in the margin names the words of the line level with it', () => {
+    const q = pageTarget('confused', 88, ring(760, 238, 8, 12), lines, figures).target;
+    expect(q).toMatchObject({ what: 'phrase', ref: 't8' });
+    expect(q.text).toContain('curve');
+  });
+
   it('an arrow records what its tail and its tip are on', () => {
     const r = pageTarget('arrow', 88, [{ x: 150, y: 210 }, { x: 700, y: 500 }], lines, figures, { from: { x: 150, y: 210 }, to: { x: 700, y: 500 } });
     expect(r.target).toMatchObject({ ref: 't7' });
