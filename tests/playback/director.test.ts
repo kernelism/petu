@@ -209,6 +209,21 @@ describe('Director timing (carried over from the old suite)', () => {
   });
 });
 
+describe('Director: the answer\'s pause reaches its ink', () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it('each draw gets the pause source (ink in flight stands still with the narration)', async () => {
+    let paused = false;
+    const seen: (boolean | undefined)[] = [];
+    const build: BuildElement = async () => ({ target: { page: 1 }, bbox: { x: 0, y: 0, w: 1, h: 1 }, draw: async (_s, k) => { seen.push(k.paused?.()); paused = true; seen.push(k.paused?.()); } });
+    const d = new Director({ viewer: () => fakeViewer(), desk: () => fakeDesk(), settings: () => DEFAULTS, onScrolledTo: () => {}, build, paused: () => paused });
+    d.run(line(), 0);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(seen).toEqual([false, true]);
+  });
+});
+
 describe('Director on the desk', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });

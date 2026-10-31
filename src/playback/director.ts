@@ -81,6 +81,8 @@ type Deps = {
   spoken?(at: number): number;
   /** The narration of the current beat with word times (Scheduler.beatWords): an svg group paces its parts to it. */
   beat?(): { text: string; inMs: number; endMs?: number }[];
+  /** Whether the answer is paused (AnswerSession.isPaused): its ink in flight stands still until it resumes. */
+  paused?(): boolean;
   /** Highlights and underlines grow to meaningful units (src/locate/unit.ts). Default on. */
   units?: boolean;
   /**
@@ -131,6 +133,7 @@ export class Director {
     this.figures = new Figures({ mark: (p, id) => g().mark(p, id), aspect: (p) => g().aspect?.(p), obstacles: (p) => g().obstacles?.(p) ?? [] }, () => kitStore(this.registry).consts);
   }
   private desk(): DeskApi | null { return this.d.desk(); }
+  private paused = () => !!this.d.paused?.();
 
   /**
    * Runs `a`, whose word starts at `at` (performance.now() ms; default now). Raw actions (names,
@@ -600,7 +603,7 @@ export class Director {
     const p = plan;
     desk.noteInk?.(p.target, p.bbox, p.el);
     // Ink after a journey's arrival is not behind: the narration held for it.
-    const k: Pace = { ...backlog(now() - Math.max(word, dep?.arrivedAt ?? -Infinity)), ...(a.kind === 'svg' && this.d.beat ? { beat: this.d.beat, stop: signal, ...(a.slot ? { slot: a.slot } : {}) } : {}) };
+    const k: Pace = { ...backlog(now() - Math.max(word, dep?.arrivedAt ?? -Infinity)), ...(a.kind === 'svg' && this.d.beat ? { beat: this.d.beat, stop: signal, ...(a.slot ? { slot: a.slot } : {}) } : {}), ...(this.d.paused && !this.d.instant ? { paused: this.paused } : {}) };
     this.report(t, { startedAt: now() });
     const own = new AbortController();
     if (this.d.instant) own.abort(); // final state at once (an aborted draw completes immediately)

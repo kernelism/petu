@@ -507,6 +507,7 @@ export default function App() {
       hold: (at, ms) => sessionRef.current?.hold(at, ms),
       spoken: (at) => sessionRef.current?.wordsBefore(at) ?? 0,
       beat: () => sessionRef.current?.beatWords() ?? [],
+      paused: () => sessionRef.current?.isPaused() ?? false,
       onTiming: (t) => {
         logRef.current?.timing(t);
         recRef.current?.timing(t);
@@ -1213,6 +1214,7 @@ export default function App() {
         hold: (at, ms) => asideSession.current?.hold(at, ms),
         spoken: (at) => asideSession.current?.wordsBefore(at) ?? 0,
         beat: () => asideSession.current?.beatWords() ?? [],
+        paused: () => asideSession.current?.isPaused() ?? false,
       });
     }
     return asideDirRef.current;
