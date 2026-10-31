@@ -1,5 +1,6 @@
 // src/App.tsx
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import { overviewHub } from './pdf/overview';
 import './styles/tokens.css';
 import './app.css';
 import { loadPdf, type PdfDoc } from './pdf/loadPdf';
@@ -39,7 +40,7 @@ import { dictationAvailable } from './agent/dictation';
 import { FollowPill } from './ui/FollowPill';
 import { OverviewPill } from './ui/OverviewPill';
 import { SessionDrawer, type SessionRow } from './ui/SessionDrawer';
-import { dockPlacement, dockReserve } from './ui/layout';
+import { dockPlacement, dockReserve, windowColumn } from './ui/layout';
 import { DOCK_GAP, margin, SAFE_TOP, setSafeBottom } from './desk/layout';
 import { takeSentences } from './ui/text';
 import { pauseCueIn } from './ui/captionWindow';
@@ -1566,7 +1567,13 @@ export default function App() {
     };
   }, [director, fileName]);
 
-  const dock = dockPlacement(viewportW, desk);
+  // The overview zoom scales the sheet: the dock and its band follow the column where it shows, and keep
+  // clear of the overview pill (bottom right) while it shows.
+  const ovView = useSyncExternalStore(overviewHub.subscribe, overviewHub.getView, overviewHub.getView);
+  const pillEl = typeof document !== 'undefined' ? document.querySelector('.overview-pill') : null;
+  const pillReserve = ovView.z !== 1 ? (pillEl ? Math.max(0, viewportW - pillEl.getBoundingClientRect().left) : 260) + 12 : 0;
+  const dock = dockPlacement(viewportW, desk, ovView, pillReserve);
+  const dockCol = desk ? windowColumn(desk.column, viewportW, ovView) : null;
   /** The shortcuts card sits just above the dock (its top edge, from the window's bottom). */
   const dockBottom = dockRef.current ? Math.max(0, window.innerHeight - dockRef.current.getBoundingClientRect().top) : 96;
   // The playback row shows once an answer speaks (the question line holds its place until then).
@@ -1597,7 +1604,7 @@ export default function App() {
         style={{
           '--glide': `${GLIDE_MS}ms`, '--view-top': `${SAFE_TOP}px`, '--view-bottom': `${viewBottom}px`,
           // Layout C: with the pen on the page, the page column ends its reading band above the dock (app.css).
-          ...(desk?.lane && desk.page && Math.abs(desk.column.x - desk.page.x) < 1 ? { '--dock-col-x': `${desk.column.x}px`, '--dock-col-w': `${desk.column.w}px` } : {}),
+          ...(desk?.lane && desk.page && Math.abs(desk.column.x - desk.page.x) < 1 ? { '--dock-col-x': `${dockCol!.x}px`, '--dock-col-w': `${dockCol!.w}px` } : {}),
         } as CSSProperties}
       >
         <PdfViewer
@@ -1621,7 +1628,7 @@ export default function App() {
       />
       <FollowPill visible={paused} onResume={resumeFollow} x={dock.x} />
       {desk?.edge && desk.page && (
-        <button type="button" className={`lane-edge is-${desk.edge.dir}`} style={{ left: desk.page.x + 12 }} onClick={() => void deskRef.current?.showEdge()}>
+        <button type="button" className={`lane-edge is-${desk.edge.dir}`} style={{ left: (() => { const c = windowColumn(desk.page!, viewportW, ovView); return Math.min(viewportW - 160, c.x + c.w + 24); })() }} onClick={() => void deskRef.current?.showEdge()}>
           <span aria-hidden="true">{desk.edge.dir === 'up' ? '↑' : '↓'}</span> p.{desk.edge.page} · marked
         </button>
       )}

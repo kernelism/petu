@@ -382,3 +382,18 @@ export function frameInk(r: DeskRect, ctx: DeskRect[], v: { H: number; max: numb
   const pad = Math.min(INK_PAD, (b - u.h) / 2);
   return frameTop({ ...u, y: u.y - pad, h: u.h + 2 * pad }, v);
 }
+
+/** A finished lane drawing's crop pad (units each side) and how far it may be enlarged by cropping. */
+export const CROP_PAD_X = 24;
+export const CROP_MAX_K = 1.4;
+/**
+ * The x span a finished svg board shows in the lane: its drawing's [x, x + w] padded, within the
+ * 1000-unit canvas, never narrower than 1000 / CROP_MAX_K (the drawing grows at most that much: text
+ * stays in proportion with it, and a tiny drawing does not balloon). Null when cropping gains < 5%.
+ */
+export function cropSpanX(x: number, w: number, W = 1000): { x0: number; w: number } | null {
+  let a = Math.max(0, x - CROP_PAD_X), b = Math.min(W, x + w + CROP_PAD_X);
+  const min = W / CROP_MAX_K;
+  if (b - a < min) { const c = (a + b) / 2; a = Math.max(0, Math.min(W - min, c - min / 2)); b = a + min; }
+  return b - a > 0.95 * W ? null : { x0: a, w: b - a };
+}

@@ -1,5 +1,6 @@
 // src/ui/layout.ts
 import type { DeskState } from '../desk/types';
+import { sheetToWindowX, type OverviewViewState } from '../pdf/overview';
 
 /** The dock is this wide at most, and never wider than its column. */
 export const DOCK_MAX = 560;
@@ -16,11 +17,32 @@ export const LANE_DOCK_AIR = 22;
  * Where the dock (caption + ask bar, one unit) sits: centred under the slide column (the page
  * column while reading, the slide column pinned left in a split), as wide as it up to dockMax(W).
  */
-export function dockPlacement(W: number, s: DeskState | null): { x: number; w: number } {
-  const col = s ? s.column : { x: 16, w: W - 32 };
+export function dockPlacement(W: number, s: DeskState | null, view?: OverviewViewState, reserveRight = 0): { x: number; w: number } {
+  const col = windowColumn(s ? s.column : { x: 16, w: W - 32 }, W, view);
   // The lane (layout C): centred under the column the pen is in, with air either side (mockups C1, C2).
   const inset = s?.lane ? 2 * LANE_DOCK_AIR : 0;
-  return { x: col.x + col.w / 2, w: Math.max(0, Math.min(dockMax(W), col.w - inset)) };
+  let w = Math.max(0, Math.min(dockMax(W), col.w - inset));
+  // The overview zoom can push the column half off the window: the dock keeps a readable width.
+  w = Math.max(w, Math.min(DOCK_MIN, W - 2 * DOCK_EDGE));
+  let x = col.x + col.w / 2;
+  // One authority for the bottom band: the dock stays inside the window and clear of the control on its
+  // right (the overview pill, `reserveRight` px from the right edge, when shown), narrowing if it must.
+  const lo = DOCK_EDGE, hi = W - DOCK_EDGE - Math.max(0, reserveRight);
+  if (hi - lo >= DOCK_MIN) w = Math.min(w, hi - lo);
+  const right = hi - lo >= DOCK_MIN ? hi : W - DOCK_EDGE;
+  x = Math.max(lo + w / 2, Math.min(right - w / 2, x));
+  return { x, w };
+}
+
+/** The dock never comes closer to the window's sides than this; nor narrower than DOCK_MIN (room permitting). */
+export const DOCK_EDGE = 16;
+export const DOCK_MIN = 340;
+
+/** A sheet column (layout px) as it shows in the window under the overview zoom, clipped to the window. */
+export function windowColumn(col: { x: number; w: number }, W: number, view?: OverviewViewState): { x: number; w: number } {
+  if (!view || (view.z === 1 && view.panX === 0)) return col;
+  const a = Math.max(0, sheetToWindowX(col.x, W, view)), b = Math.min(W, sheetToWindowX(col.x + col.w, W, view));
+  return b > a ? { x: a, w: b - a } : { x: Math.min(Math.max(a, 0), W), w: 0 };
 }
 
 /** The caption sits right on the ask bar: one unit, no gap (ui.css .caption bottom: 100%). */

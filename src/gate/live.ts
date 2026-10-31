@@ -39,6 +39,8 @@ export type UnitKind = 'opener' | 'sentence' | 'beat';
 export type PreflightUnit = { key: string; kind: UnitKind; text: string; fault?: FaultMode; /** The stream's end: no boundary is known after it. */ end?: boolean };
 /** A tag of the checked unit: offsets in the unit's text; `skipped` when the board (or the parser) would not draw it. */
 export type PreflightTag = { start: number; end: number; body: string; action: RawAction | null; skipped?: string };
+/** Checks about the narration's words only: a unit failing just these keeps its svg groups when dropped. */
+const WORD_CHECKS = new Set(['number', 'unbound', 'deixis']);
 export type PreflightResult = { flags: GateFlag[]; notes: string[]; tags: PreflightTag[]; report?: () => Omit<RepairReport, 'later' | 'tail' | 'maxWords'> };
 
 export interface Preflight {
@@ -604,12 +606,31 @@ export class LiveGate {
     return out;
   }
 
-  private drop(u: PreflightUnit, r: PreflightResult | null, ms: number, notes: string[] = []) {
+  private drop(u: PreflightUnit, r: PreflightResult | null, ms: number, notes: string[] = [], out?: Out) {
     this.d.preflight.reject(u);
+    const kept = out ? this.drawingsOf(u, r) : null;
     this.stats.drops++;
     this.stats.droppedWords += wordCount(u.text);
     if (u.kind === 'beat' && ++this.dropsInRow >= 2 && !this.cascade) { this.cascade = true; notes = [...notes, 'cascade: two drops in a row, no more repairs']; }
-    this.emitGate(u, 'fail', 'drop', r, ms, { notes });
+    this.emitGate(u, 'fail', 'drop', r, ms, { notes: kept ? [...notes, 'its svg groups kept (only its words failed)'] : notes });
+    if (kept && out) {
+      const ku = { ...u, text: kept };
+      this.emitGate(ku, 'strip', 'release', r, 0, { stripped: ['its words'], notes: ['the svg groups of a unit dropped for its words'] });
+      this.release(ku, kept, out);
+    }
+  }
+
+  /**
+   * A unit failed only on its words (a number, an unbound value, deixis): its svg groups were checked
+   * clean with it and are kept — a drawing is never lost with a sentence (founder 2026-10-30, lec06: the
+   * beat's group rode at the end of a sentence the gate dropped, and the answer's last drawing never drew).
+   * The groups alone, as a unit with no words; null when there are none or a tag of the unit failed.
+   */
+  private drawingsOf(u: PreflightUnit, r: PreflightResult | null): string | null {
+    if (!r || !r.flags.length || !r.flags.every((f) => WORD_CHECKS.has(f.check))) return null;
+    if (r.tags.some((t) => t.skipped)) return null;
+    const groups = r.tags.filter((t) => /^\s*svg\b/.test(t.body)).map((t) => u.text.slice(t.start, t.end));
+    return groups.length ? ` ${groups.join(' ')} ` : null;
   }
 
   private async process(u0: PreflightUnit, out: Out, signal: AbortSignal): Promise<void> {
@@ -648,7 +669,7 @@ export class LiveGate {
       await this.doRepair(u, r, repair, dry, out, signal);
       return;
     }
-    this.drop(u, r, ms);
+    this.drop(u, r, ms, [], out);
   }
 
   /** The unit with its strippable failed tags removed, when that is all that failed. */
@@ -707,8 +728,8 @@ export class LiveGate {
     } finally { timer.abort(); signal.removeEventListener('abort', onAbort); }
     if (signal.aborted) return;
     const ms = this.now() - t0;
-    if (res === 'late') { ac.abort(); this.d.onEvent({ t: 'repair', k: u.key, phase: 'late', ms: Math.round(ms) }); this.drop(u, r, ms, ['repair late']); return; }
-    if (!res.ok) { this.d.onEvent({ t: 'repair', k: u.key, phase: res.reason, ms: Math.round(ms), ...(res.usd != null ? { usd: res.usd } : {}) }); this.drop(u, r, ms, [`repair ${res.reason}${res.detail ? `: ${res.detail}` : ''}`]); return; }
+    if (res === 'late') { ac.abort(); this.d.onEvent({ t: 'repair', k: u.key, phase: 'late', ms: Math.round(ms) }); this.drop(u, r, ms, ['repair late'], out); return; }
+    if (!res.ok) { this.d.onEvent({ t: 'repair', k: u.key, phase: res.reason, ms: Math.round(ms), ...(res.usd != null ? { usd: res.usd } : {}) }); this.drop(u, r, ms, [`repair ${res.reason}${res.detail ? `: ${res.detail}` : ''}`], out); return; }
     // A repair replaces a beat of the board already open: it never opens a board of its own (a BOARD
     // tag here would open a second section, and the beat's group would land below the first figure,
     // out of the frame its coordinates are in). Only a unit that opened the board keeps its tag.

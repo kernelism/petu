@@ -13,7 +13,7 @@ import { ink } from '../ink/student/store';
 import { PageSlot, type SlotHandle } from './PageSlot';
 import { computeLayout, dockReserve, frameFor, laneFrame, PAGE_GAP, pageAt, pageFrameTop, SAFE_TOP, safeBottom, setStackBottom, type Frame, type PageLayout, type Split } from '../desk/layout';
 import { ScrollOwner, isScrollKey, wheelTakesOver } from '../desk/follow';
-import { clampOverview, OVERVIEW_FIT, overviewHub, overviewStep, overviewToggle, panLimit, SETTLE_MS, snapOverview, wheelFactor, wheelKind, zoomAbout, type OverviewControl } from './overview';
+import { clampOverview, OVERVIEW_FIT, overviewHub, overviewStep, overviewToggle, panLimit, SETTLE_MS, snapOverview, wheelFactor, wheelKind, zoomAbout, zoomBase, type OverviewControl } from './overview';
 import { clampPageZoom, fitColumn, PAGE_ZOOM_MAX, PAGE_ZOOM_MIN, pageZoomStep, panFor, readingOffset, zoomColumn, type Span } from './column';
 import { boardZoomKey, isMacPlatform, overviewKey } from '../ui/zoomKeys';
 import { isTypingTarget } from '../ui/playbackKeys';
@@ -410,8 +410,11 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     const el = scrollRef.current, sizer = sizerRef.current, box = zoomRef.current;
     if (!el || !sizer || !box) return;
     const { z, panX } = ovRef.current;
+    overviewHub.publishPan(panX);
     if (z === 1 && panX === 0) {
-      if (box.style.height) { sizer.style.transform = ''; sizer.style.transformOrigin = ''; box.style.height = ''; box.style.overflow = ''; }
+      // Restore on what is applied (the transform), not on the wrapper's height: a re-layout can clear
+      // the height mid-glide, and Z / the pill then left the sheet scaled with the zoom state at 100%.
+      if (box.style.height || sizer.style.transform || box.style.overflow) { sizer.style.transform = ''; sizer.style.transformOrigin = ''; box.style.height = ''; box.style.overflow = ''; }
       return;
     }
     sizer.style.transition = 'none';
@@ -429,7 +432,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     layoutRef.current = layout;
     const el = scrollRef.current!;
     // The overview exists only beside the lane: a window narrowed into the split board drops it.
-    if (ovRef.current.z !== 1 && !laneFrame(el.clientWidth)) { ovRef.current = { z: 1, panX: 0 }; overviewHub.publish(1); }
+    if (ovRef.current.z !== 1 && !laneFrame(el.clientWidth)) { ovRef.current.z = 1; ovRef.current.panX = 0; overviewHub.publish(1); } // mutated, never replaced: the zoom handlers hold this object
     else if (ovRef.current.panX) ovRef.current.panX = Math.max(-panLimit(ovRef.current.z, el.clientWidth), Math.min(panLimit(ovRef.current.z, el.clientWidth), ovRef.current.panX));
     applyOverview();
     const a = anchorRef.current;
@@ -852,6 +855,9 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       contentMask: (page) => renderer.mask(clampPage(page)),
       crop: (page, r, pxW) => renderer.crop(clampPage(page), r, pxW),
       laneEl: () => laneRef.current,
+      zoom: () => ovRef.current.z,
+      pan: () => ovRef.current.panX,
+      onZoom: (cb) => overviewHub.subscribe(cb),
     };
 
     // ---- Overview zoom (layout C only; spec §3 rule 6, §5.7, §5.8) ------------------------------
@@ -861,6 +867,8 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     const ov = ovRef.current;
     const laneOn = () => !!laneFrame(el.clientWidth);
     let settleT = 0, zoomAnim = 0, lastSmart = -Infinity;
+    /** Where the running glide is heading (null when none): keys and the pill step from there. */
+    let zoomTarget: number | null = null;
     /** Safari's gesture in progress: its zoom at gesturestart and the pointer (view px). */
     let gesture: { z0: number; px: number; py: number } | null = null;
     const viewPt = (cx: number, cy: number) => { const r = el.getBoundingClientRect(); return { px: cx - r.left, py: cy - r.top }; };
@@ -891,7 +899,17 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       const r = zoomAbout({ W: el.clientWidth, H: el.clientHeight, total: sizer.offsetHeight, z: ov.z, scrollTop: el.scrollTop, panX: ov.panX }, z2, px, py);
       put(z2, r.panX, r.scrollTop);
     };
-    const stopAnim = () => { if (zoomAnim) cancelAnimationFrame(zoomAnim); zoomAnim = 0; };
+    /**
+     * The next glide frame: rAF, with a timer in case rAF stalls (WebKit may stop frames while nothing on
+     * screen changes — a glide whose first frame repaints nothing, Z from 150%, then never ran on).
+     */
+    let frameT = 0;
+    const nextFrame = (f: (now: number) => void) => {
+      const run = () => { cancelAnimationFrame(zoomAnim); window.clearTimeout(frameT); zoomAnim = 0; frameT = 0; f(performance.now()); };
+      zoomAnim = requestAnimationFrame(run);
+      frameT = window.setTimeout(run, 50);
+    };
+    const stopAnim = () => { if (zoomAnim) cancelAnimationFrame(zoomAnim); window.clearTimeout(frameT); zoomAnim = 0; frameT = 0; zoomTarget = null; };
     /** Glides to z2 about a view point (instant under reduced motion). */
     const glideZoom = (z2: number, px: number, py: number) => {
       stopAnim();
@@ -903,10 +921,15 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
         const t = Math.min(1, (now - t0) / OVERVIEW_MS);
         const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
         zoomAt(t < 1 ? z0 * Math.pow(z2 / z0, e) : z2, px, py);
-        zoomAnim = t < 1 ? requestAnimationFrame(tick) : 0;
-        if (t >= 1) settle();
+        // The last frame must land (zoomAt stands down while the page column glides): try again next
+        // frame, for at most a second, rather than end the glide short of its target.
+        const landed = t >= 1 && Math.abs(ov.z - z2) < 1e-4;
+        const more = t < 1 || (!landed && now - t0 < OVERVIEW_MS + 1000);
+        if (more) nextFrame(tick);
+        if (!more) { zoomTarget = null; settle(); }
       };
-      zoomAnim = requestAnimationFrame(tick);
+      zoomTarget = z2;
+      nextFrame(tick);
     };
     /** A zoom the reader asked for (Z, ⌘±, the pill, the API): follow stops, any engine glide too. */
     const userZoom = (z: number | 'fit') => {
@@ -987,9 +1010,10 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       const k = overviewKey(e, { lane: laneOn(), mac, popover: !!document.querySelector('.popover') });
       if (!k) return;
       e.preventDefault();
-      if (k === 'toggle') userZoom(overviewToggle(ov.z));
+      const from = zoomBase(ov.z, zoomTarget);
+      if (k === 'toggle') userZoom(overviewToggle(from));
       else if (k === 'reset') userZoom(1);
-      else userZoom(overviewStep(ov.z, k === 'in' ? 1 : -1));
+      else userZoom(overviewStep(from, k === 'in' ? 1 : -1));
     };
     const onKeyUp = (e: KeyboardEvent) => { if (spaceHeld && (e.key === ' ' || e.key === 'Spacebar')) setSpace(false); };
     const onBlur = () => { if (spaceHeld) setSpace(false); };
@@ -1036,6 +1060,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     return () => {
       stopAnim();
       window.clearTimeout(settleT);
+      stopAnim(); // a glide outliving its handlers fights the next one (Z then ends back at the old target)
       overviewHub.detach(control);
       window.removeEventListener('wheel', onWheelZoom);
       window.removeEventListener('gesturestart', onGestureStart);

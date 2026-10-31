@@ -82,3 +82,36 @@ describe('lane placement', () => {
     expect(d.w).toBe(lane.w - 44);
   });
 });
+
+describe('zoomedInsets (sticky under the overview zoom)', () => {
+  it('a group stuck at 80 px stays at 80 px on screen at any zoom and scroll', async () => {
+    const { zoomedInsets } = await import('../../src/desk/lane');
+    const H = 900;
+    for (const z of [0.5, 0.96, 1, 1.18, 2]) for (const st of [0, 1200, 5400]) {
+      const ins = zoomedInsets({ top: 80, bottom: 120 }, H, st, z);
+      // Stuck at its top: sheet y = st + top'; on screen (sheet scaled about its top) y·z − st.
+      expect((st + ins.top) * z - st).toBeCloseTo(80, 6);
+      // Its bottom limit: sheet bottom ≤ st + H − bottom' → on screen ≤ H − 120.
+      expect((st + H - ins.bottom) * z - st).toBeCloseTo(H - 120, 6);
+    }
+  });
+});
+
+describe('visibleLane (the lane part the window shows under the overview zoom)', () => {
+  it('is the whole lane at 100% and when zoomed out', async () => {
+    const { visibleLane } = await import('../../src/desk/lane');
+    expect(visibleLane({ x: 848, w: 544 }, 1440, 1, 0)).toEqual({ x: 848, w: 544 });
+    const out = visibleLane({ x: 848, w: 544 }, 1440, 0.9, 0);
+    expect(out.w).toBeCloseTo(544);
+  });
+  it('zoomed in, ends at the window edge: what is laid out there shows whole', async () => {
+    const { visibleLane } = await import('../../src/desk/lane');
+    for (const z of [1.1, 1.25, 1.5]) {
+      const v = visibleLane({ x: 848, w: 544 }, 1440, z, 0);
+      const right = 720 + (v.x + v.w - 720) * z;
+      expect(right).toBeLessThanOrEqual(1440 - 12 + 1e-6);
+      expect(v.x).toBeCloseTo(848);
+      expect(v.w).toBeGreaterThanOrEqual(272);
+    }
+  });
+});

@@ -6,10 +6,10 @@ import type { Stroke } from '../ink/agent/strokes';
 import { animateScrollTo } from '../pdf/scroll';
 import { Follow, ScrollOwner, wheelPx, wheelScrolls } from './follow';
 import { routeGutter, maskBlocker } from './route';
-import { boardLayout, bodyPx, fitZoom, laneFrame, pageAt, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
+import { boardLayout, bodyPx, fitZoom, laneFrame, pageAt, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, cropSpanX, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
 import { BOARD_HEAD, boardPad, MIN_TEXT_PX, SECTION_W, TEXT_UNITS } from './layout';
-import { dockTop, FOLDED_H, LANE_PAD, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, wantFor } from './lane';
+import { dockTop, FOLDED_H, LANE_PAD, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, visibleLane, wantFor, zoomedInsets } from './lane';
 import { camFor, overviewCam, type Cam } from './scene/camera';
 
 export type { DeskHost } from './types';
@@ -35,7 +35,9 @@ type GestureLike = Event & { scale?: number; clientX?: number; clientY?: number 
  */
 /** One board section (DOM + state); `createSection` builds it (the gate's shadow board builds the same). */
 export type DeskSection = Section;
-type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; full: number; y0: number; y1: number; dx: number | null; scene?: Scene; /** An svg board: grows as tall as its canvas (no kit cap). */ svg?: boolean; group?: Group };
+type Section = { id: string; page: number; size: RegionSize; body: number | null; el: HTMLDivElement; layers: PageLayers; full: number; y0: number; y1: number; dx: number | null; scene?: Scene; /** An svg board: grows as tall as its canvas (no kit cap). */ svg?: boolean; group?: Group;
+  /** Lane, a finished svg board: the drawn content's span (units) the section shows, widened to the lane (crop). */
+  x0?: number; xw?: number };
 /**
  * Layout C (the anchored lane, src/desk/lane.ts): one answer's head and sections, stacked in the lane
  * level with the passage they explain. `el` spans the lane's whole height (the sticky item's
@@ -58,13 +60,13 @@ type Group = {
   parts?: HTMLElement[];
   /** Taller than the band while it plays: the part being drawn (px from the item's top) and the sticky top that shows it. */
   pen?: { top: number; h: number } | null; stick?: number | null;
+  /** Its sticky insets on screen while it plays (window px; `stick` converts them under the overview zoom). */
+  ins?: { top: number; bottom: number } | null;
 };
 /** The docking glide at an answer's end (spec §5.2 rule 5). */
 const DOCK_MS = 300;
 /** The comfort band's top: the lane's live item sticks this far below the window top (under the chrome row). */
 const LANE_STICK = SAFE_TOP + 16;
-/** The pinned card's top below its item's top (desk.css .lane-item::before), its label above it. */
-const PIN_CARD = 30;
 /** The fade where the lane is masked at the comfort band's top. */
 const LANE_FADE = 16;
 /** A scene section's world: its camera (world units, zoom), its claims, the last thing framed. */
@@ -212,6 +214,7 @@ export class Desk implements DeskApi {
       host.onLayout(() => this.position()),
       host.onUserIntent(user),
       host.onScroll(() => this.onMove()),
+      host.onZoom?.(() => { if (this.lane()) this.position(); this.onMove(); }) ?? (() => {}),
       this.follow.subscribe(() => this.emit()),
     );
     // Layout C: the lane is the sheet's margin, there before any drawing.
@@ -255,7 +258,7 @@ export class Desk implements DeskApi {
     return {
       id, page: sec.page, size: sec.size, layers: sec.layers,
       // The section's own scale: board ink is sized for it, unaffected by the student's zoom.
-      scale: () => (this.lane() ? this.laneScale(sec) : (this.boxOf(sec)?.s ?? 0.5 * this.zoomK) / this.zoomK),
+      scale: () => (this.lane() ? this.laneScale(sec, true) : (this.boxOf(sec)?.s ?? 0.5 * this.zoomK) / this.zoomK),
       body: () => bodyPx(sec.body, this.frame().page.pageW),
       ...(sec.scene ? { scene: sec.scene.space } : {}),
     };
@@ -281,7 +284,7 @@ export class Desk implements DeskApi {
           if (old.group) (old.group.parts ??= []).push(h.el);
           (this.lane() && old.group ? old.group.item : this.content).appendChild(h.el);
         }
-        if (old.y0 !== 0 || old.y1 !== old.full) { old.y0 = 0; old.y1 = old.full; old.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${old.full}`)); this.position(); }
+        if (old.y0 !== 0 || old.y1 !== old.full || old.xw != null) { this.uncrop(old); this.position(); }
         this.pen({ t: { region: spec.id }, r: WHOLE_REGION });
         if (this.lane() && old.group) { this.relive(old.group); this.open = true; this.position(); }
         else if (!this.open) await this.openBoard('normal', before);
@@ -453,8 +456,8 @@ export class Desk implements DeskApi {
         if (sec.group?.live) {
           const g = sec.group, v = this.viewRect(sec, r);
           if (!v) return false;
-          // With air above for the pinned card's top and the band's fade.
-          const air = PIN_CARD + LANE_FADE;
+          // With air above for the band's fade.
+          const air = LANE_FADE;
           g.pen = { top: v.y - g.item.getBoundingClientRect().top - air, h: v.h + air };
           const from = g.item.getBoundingClientRect().top;
           this.position();
@@ -606,13 +609,10 @@ export class Desk implements DeskApi {
       for (const s of this.sections) {
         if (s.scene || s.y0 !== 0 || s.y1 !== s.full) continue;
         this.crop(s);
-        if (s.y0 !== 0 || s.y1 !== s.full) this.held.add(s);
+        if (s.y0 !== 0 || s.y1 !== s.full || s.xw != null) this.held.add(s);
       }
     } else {
-      for (const s of this.held) {
-        s.y0 = 0; s.y1 = s.full;
-        s.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${s.full}`));
-      }
+      for (const s of this.held) this.uncrop(s);
       this.held.clear();
     }
     if (!on) for (const [sec, hd] of this.heads) if (hd.aside && !hd.collapsed) this.collapse(sec, hd, true);
@@ -900,7 +900,26 @@ export class Desk implements DeskApi {
     }
     const { y0, y1 } = cropSpan(ink, sec.full);
     sec.y0 = y0; sec.y1 = y1;
-    sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 ${y0} ${REGION_W} ${y1 - y0}`));
+    // The lane: a finished svg board shows the span its drawing uses, scaled to the lane's width (the
+    // model's canvas is 1000 units; a drawing that used 650 of them read small: founder 2026-10-30).
+    // During the answer the canvas stays whole (a later group may use the rest); the dock is the moment.
+    const span = this.lane() && sec.svg ? this.inkSpanX(sec) : null;
+    if (span) { sec.x0 = span.x0; sec.xw = span.w; }
+    const vx = sec.x0 ?? 0, vw = sec.xw ?? REGION_W;
+    sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `${vx} ${y0} ${vw} ${y1 - y0}`));
+  }
+
+  /** A section back to its whole canvas (a follow-up draws on into it, an aside's crop ends). */
+  private uncrop(sec: Section) {
+    sec.y0 = 0; sec.y1 = sec.full; delete sec.x0; delete sec.xw;
+    sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${sec.full}`));
+  }
+
+  /** The x span (units) a lane svg board's drawing uses, padded; null when it uses nearly all of it. */
+  private inkSpanX(sec: Section): { x0: number; w: number } | null {
+    let b: { x: number; width: number } | null = null;
+    try { const g = sec.layers.agent; b = typeof g.getBBox === 'function' && g.childNodes.length ? g.getBBox() : null; } catch { b = null; }
+    return b && b.width > 0 ? cropSpanX(b.x, b.width) : null;
   }
 
   /** Opens the board (or changes its ratio): one movement, the slide column and the board together. */
@@ -963,7 +982,7 @@ export class Desk implements DeskApi {
     if (this.lane()) {
       const g = sec.group, s = this.laneScale(sec);
       if (!g) return null;
-      const w = sec.el.offsetWidth || REGION_W * s, h = sec.el.offsetHeight || (sec.y1 - sec.y0) * s;
+      const w = sec.el.offsetWidth || (sec.xw ?? REGION_W) * s, h = sec.el.offsetHeight || (sec.y1 - sec.y0) * s;
       return { x: sec.el.offsetLeft, y: g.top + sec.el.offsetTop, w, h, s };
     }
     const i = this.sections.indexOf(sec);
@@ -1012,7 +1031,7 @@ export class Desk implements DeskApi {
       if (!sec.el.isConnected || !sec.group || sec.group.folded) return null;
       const e = sec.el.getBoundingClientRect(), s = this.laneScale(sec);
       if (sec.scene) { const { cam } = sec.scene, k = s * cam.z; return { x: e.left + (r.x - cam.x) * k, y: e.top + (r.y - cam.y) * k, w: r.w * k, h: r.h * k }; }
-      return { x: e.left + (r.x + (sec.dx ?? 0)) * s, y: e.top + (r.y - sec.y0) * s, w: r.w * s, h: r.h * s };
+      return { x: e.left + (r.x + (sec.dx ?? 0) - (sec.x0 ?? 0)) * s, y: e.top + (r.y - sec.y0) * s, w: r.w * s, h: r.h * s };
     }
     const box = this.boxOf(sec), b = this.frame().board;
     if (!box || !b) return null;
@@ -1182,11 +1201,14 @@ export class Desk implements DeskApi {
    * A section's scale in the lane: the lane's width (mockups C1–C4: the drawing spans the margin; its
    * text keeps its own floor, svgMinFont), at least the type cap the split board would give it.
    */
-  private laneScale(sec: Section): number {
+  private laneScale(sec: Section, base = false): number {
     const f = this.frame();
+    // `base`: the lane's own width (what board text is sized for); else the part of it that shows.
+    const lw = f.lane ? (base ? f.lane.w : this.laneVis(f).w) : f.board?.w ?? 0;
     // An aside's inset is indented 24 px under the paused drawing (spec §5.6).
-    const cw = Math.max(1, (f.lane?.w ?? f.board?.w ?? 0) - 2 * LANE_PAD - (sec.el.classList.contains('is-aside') ? 24 : 0));
-    return Math.max(cw / SECTION_W, Math.min(cw / SECTION_W, Math.max(bodyPx(sec.body, f.page.pageW), MIN_TEXT_PX) / TEXT_UNITS));
+    const cw = Math.max(1, lw - 2 * LANE_PAD - (sec.el.classList.contains('is-aside') ? 24 : 0));
+    const w = sec.xw ?? SECTION_W;
+    return Math.max(cw / w, Math.min(cw / w, Math.max(bodyPx(sec.body, f.page.pageW), MIN_TEXT_PX) / TEXT_UNITS));
   }
 
   /** The pen moved: `last` is where the answer is; in the lane the dock follows the pen's column. */
@@ -1321,14 +1343,16 @@ export class Desk implements DeskApi {
   private positionLane(f: Frame) {
     const lane = f.lane!, L = this.host.layout();
     const total = L ? `${L.total}px` : '100%';
-    Object.assign(this.board.style, { left: `${lane.x}px`, top: '0px', width: `${lane.w}px`, height: total });
+    // Zoomed in, the lane lays out in the part of it the window shows (visibleLane): no drawing is cut.
+    const vis = this.laneVis(f);
+    Object.assign(this.board.style, { left: `${vis.x}px`, top: '0px', width: `${vis.w}px`, height: total });
     Object.assign(this.content.style, { height: total, width: '' });
-    const cw = Math.max(1, lane.w - 2 * LANE_PAD);
+    const cw = Math.max(1, vis.w - 2 * LANE_PAD);
     for (const s of this.sections) {
       const k = this.laneScale(s);
       // An aside's inset is indented under the paused drawing (spec §5.6), the width of its head.
       const ind = s.el.classList.contains('is-aside') ? 24 : 0;
-      const w = s.scene ? cw - ind : REGION_W * k, h = s.scene ? Math.round((cw - ind) * 0.62) : (s.y1 - s.y0) * k;
+      const w = s.scene ? cw - ind : (s.xw ?? REGION_W) * k, h = s.scene ? Math.round((cw - ind) * 0.62) : (s.y1 - s.y0) * k;
       Object.assign(s.el.style, { left: '', top: '', width: `${w}px`, height: `${h}px`, marginLeft: `${LANE_PAD + ind + Math.max(0, (cw - ind - w) / 2)}px` });
       const hd = this.heads.get(s);
       if (hd) Object.assign(hd.el.style, { left: '', top: '', width: `${cw - (hd.aside ? 24 : 0)}px`, height: `${hd.h}px`, marginLeft: `${LANE_PAD + (hd.aside ? 24 : 0)}px` });
@@ -1344,8 +1368,9 @@ export class Desk implements DeskApi {
       if (g.live) {
         const ins = stickyInsets(g.h, H, LANE_STICK, safeBottom() + 12, g.pen, g.stick);
         g.stick = g.pen ? ins.top : null;
-        Object.assign(g.item.style, { top: `${ins.top}px`, bottom: `${ins.bottom}px` });
-      } else { g.pen = g.stick = null; Object.assign(g.item.style, { top: '', bottom: '' }); }
+        g.ins = ins;
+        this.stick(g);
+      } else { g.pen = g.stick = g.ins = null; Object.assign(g.item.style, { top: '', bottom: '' }); }
       // A follow-up's header inside an extended svg section: over its first new group (units → px).
       for (const m of this.midHeads) {
         if (m.sec.group !== g) continue;
@@ -1360,10 +1385,11 @@ export class Desk implements DeskApi {
     if (this.liveGroup) this.liveLane();
   }
 
-  /** The live group on scroll: pinned (stuck away from its place: the card look) or in place; its leader follows. */
+  /** The live group on scroll: pinned (stuck away from its place) or in place; its leader follows. */
   private liveLane() {
     const g = this.liveGroup!;
-    const top = g.item.getBoundingClientRect().top - this.content.getBoundingClientRect().top;
+    this.stick(g);
+    const top = (g.item.getBoundingClientRect().top - this.content.getBoundingClientRect().top) / this.zoomZ();
     // Pinned: held in view away from the passage it belongs to (the answer walked on), out of a leader's
     // reach; a nudge to fit the band, with its anchor still beside it, is not.
     g.item.classList.toggle('is-pinned', Math.abs(top - g.top) > LEADER_MAX && !leaderPath(this.anchorY(g.anchor), { top, h: g.h }, LANE_PAD, g.head?.offsetHeight ?? 0));
@@ -1371,18 +1397,41 @@ export class Desk implements DeskApi {
     this.drawLeader(g, top);
   }
 
+  /** The lane as the window shows it under the overview zoom (sheet px). */
+  private laneVis(f: Frame): { x: number; w: number } {
+    const lane = f.lane!;
+    return visibleLane(lane, this.host.viewport().W, this.zoomZ(), this.host.pan?.() ?? 0);
+  }
+
+  /** The overview zoom (1 at reading size): the sheet is scaled by it, so window px are z × sheet px. */
+  private zoomZ(): number { const z = this.host.zoom?.() ?? 1; return z > 0 ? z : 1; }
+
+  /**
+   * Applies a live group's sticky insets. Sticky positioning runs in the sheet's own (unscaled) layout
+   * against the scroller's raw scrollTop, but the overview zoom scales the sheet about its top: at z ≠ 1
+   * the window insets map to sheet insets that depend on the scroll (the group otherwise drifts by
+   * scrollTop·(z − 1) and leaves the window: founder 2026-10-30, the answer vanishing while zooming).
+   */
+  private stick(g: Group) {
+    const ins = g.ins;
+    if (!ins) return;
+    const z = this.zoomZ();
+    const { top, bottom } = zoomedInsets(ins, this.host.viewport().H, this.host.scrollTop() * z, z);
+    Object.assign(g.item.style, { top: `${+top.toFixed(2)}px`, bottom: `${+bottom.toFixed(2)}px` });
+  }
+
   /**
    * Nothing in the lane sits under the chrome row. A group whose top has gone above the comfort band
    * (a docked one scrolled up with the page, or a live one taller than the band) is masked there with a
-   * short fade. The live group's card and its "pinned" label stay in the band (--lane-clip moves them
-   * down): its content is masked down to the card's top, not to the window's.
+   * short fade; the live group's parts are masked down to the band's top, not the window's.
    */
   private clipLane(g: Group) {
     const r = g.item.getBoundingClientRect();
-    const live = g.live && !g.folded, pinned = live && g.item.classList.contains('is-pinned');
+    const live = g.live && !g.folded;
     const band = live ? LANE_STICK : SAFE_TOP;
-    const clip = r.bottom > 0 && r.top < band ? band - r.top : 0;
-    g.item.style.setProperty('--lane-clip', `${Math.round(clip)}px`);
+    const z = this.zoomZ();
+    // Window px → the item's own px (the overview zoom scales the sheet; masks are in its px).
+    const clip = r.bottom > 0 && r.top < band ? (band - r.top) / z : 0;
     g.item.classList.toggle('is-clipped', clip > 0);
     const mask = (el: HTMLElement | SVGElement, cut: number) => {
       const v = cut > 0 ? `linear-gradient(to bottom, transparent ${cut.toFixed(1)}px, #000 ${(cut + LANE_FADE).toFixed(1)}px)` : '';
@@ -1396,8 +1445,8 @@ export class Desk implements DeskApi {
     }
     // The live item itself is never masked (its card and label are its own pseudo-elements): its parts are.
     mask(g.item, 0);
-    const line = band + (pinned ? PIN_CARD : 0);
-    for (const el of [...g.item.children] as HTMLElement[]) mask(el, clip > 0 ? line - el.getBoundingClientRect().top : 0);
+    const line = band;
+    for (const el of [...g.item.children] as HTMLElement[]) mask(el, clip > 0 ? (line - el.getBoundingClientRect().top) / z : 0);
   }
 
   /**

@@ -12,14 +12,23 @@
  * title = 1.25 × body, small = 0.82 × body but never under 11 px on screen.
  */
 import { INK } from './style';
+import { core, groupGeometry, overlapArea, segHitsBox, type Box, type Seg as GSeg, type TextBox } from './check';
 
 export type Role = 'title' | 'content' | 'small';
 export type TypeScale = { title: number; content: number; small: number };
 type Seg = { x1: number; y1: number; x2: number; y2: number };
-/** Per board: its scale, the axis lines and tick marks seen so far, whether a title was given. */
-export type TypeState = { scale: TypeScale; axes: Seg[]; ticks: Seg[]; titled: boolean };
+/**
+ * Per board: its scale, the axis lines and tick marks seen so far, whether a title was given; `room`:
+ * the content size the board's drawing has room for (set by its tightest group so far, never grows);
+ * `drawn`: earlier groups' text boxes and strokes (a later label keeps clear of them too).
+ */
+export type TypeState = { scale: TypeScale; axes: Seg[]; ticks: Seg[]; titled: boolean; room?: number; /** The legibility floor in user units (render.ts): a model's smaller text counts as this. */ floor?: number; /** The hard floor (units) a text may go to on its own, to clear a collision. */ minFloor?: number; drawn?: { texts: TextBox[]; segs: GSeg[] } };
 
 export const SMALL_MIN_PX = 11;
+/** No board text is ever set under this on screen (a model's tiny text is raised to it first). */
+export const LEGIBLE_PX = 10;
+/** A text in a row too tight for LEGIBLE_PX may go this small (and no smaller than the model wrote it). */
+export const MIN_PX = 8;
 export const TITLE_K = 1.25;
 export const SMALL_K = 0.82;
 
@@ -182,16 +191,120 @@ function otherTops(g: Element, except: Element): number[] {
  */
 export function applyGrammar(g: Element, st: TypeState): Map<Element, number> {
   const roles = textRoles(g, st);
-  const sizes = new Map<Element, number>();
+  const sizes = roomSizes(g, roles, st);
   for (const [el, role] of roles) {
     el.setAttribute('data-role', role);
     el.setAttribute('font-weight', role === 'title' ? '600' : '400');
     el.setAttribute('fill', INK.ink);
     for (const k of ['fill-opacity', 'opacity', 'font-style', 'letter-spacing', 'stroke', 'stroke-width']) el.removeAttribute(k);
     for (const s of Array.from(el.querySelectorAll('tspan'))) for (const k of ['font-size', 'font-weight', 'fill', 'fill-opacity', 'opacity', 'font-style']) s.removeAttribute(k);
-    sizes.set(el, st.scale[role]);
   }
   // Groups may carry text styling for their texts: the texts now set their own.
   for (const e of [g, ...Array.from(g.querySelectorAll('g'))]) e.removeAttribute('font-weight');
+  return sizes;
+}
+
+/** Where a text's glyphs actually sit (its estimated box less the empty band above caps and below descenders). */
+export const inkBox = (t: Box): Box => ({ x: t.x, y: t.y + 0.08 * t.h, w: t.w, h: 0.86 * t.h });
+/** The room a text keeps around it (em): its ink box widened by this on every side (also absorbs width estimates). */
+const AIR = 0.12;
+const airBox = (t: TextBox): Box => { const b = inkBox(t), a = AIR * t.fs; return { x: b.x - a, y: b.y - a / 2, w: b.w + 2 * a, h: b.h + a }; };
+/** Text is raised at most this far over the model's own (median) content size: the drawing's proportions hold. */
+export const RAISE_MAX = 1.5;
+
+/**
+ * The size each text is set at. The grammar's sizes are a target, not a floor: the model laid its
+ * drawing out for its own text sizes, so text is raised toward the target only as far as the drawing
+ * has room (founder 2026-10-30: in the 544 px lane the target doubled the model's labels; they sat on
+ * the strokes they label and on each other). One content size for the group (the hierarchy holds):
+ * the largest in [the model's smallest content size, the target] at which no text runs into a text or
+ * stroke (this group's or an earlier group's) it was clear of at the model's own sizes. Title and
+ * small follow it (title 1.25 ×, small 0.82 × but not under the grammar's small or what the model wrote).
+ * The board keeps the tightest group's size, so a later group is never set larger.
+ */
+function roomSizes(g: Element, roles: Map<Element, Role>, st: TypeState): Map<Element, number> {
+  const els = Array.from(roles.keys());
+  const own = new Map<Element, number>(), raw = new Map<Element, number>();
+  for (const el of els) {
+    let fs = 16;
+    for (let e: Element | null = el; e; e = e.parentElement) { const v = e.getAttribute('font-size'); if (v != null) { fs = num(v, 16); break; } }
+    raw.set(el, fs);
+    own.set(el, Math.max(fs, st.floor ?? 0));
+  }
+  const target = st.scale.content;
+  const contentOwn = els.filter((e) => roles.get(e) !== 'small').map((e) => own.get(e)!);
+  const lo = Math.min(target, contentOwn.length ? Math.min(...contentOwn) : target);
+  const med = contentOwn.length ? contentOwn.slice().sort((a, b) => a - b)[Math.floor((contentOwn.length - 1) / 2)] : target;
+  const hi = Math.max(Math.min(lo, st.room ?? Infinity), Math.min(target, st.room ?? Infinity, RAISE_MAX * med));
+  const sizesAt = (c: number) => {
+    const m = new Map<Element, number>();
+    for (const el of els) {
+      const r = roles.get(el)!;
+      m.set(el, r === 'title' ? c * TITLE_K : r === 'content' ? c : Math.min(c, Math.max(c * SMALL_K, Math.min(st.scale.small, own.get(el)!))));
+    }
+    return m;
+  };
+  const prior = st.drawn ?? { texts: [], segs: [] };
+  /** Pairs (text-text, text-stroke) that collide with these sizes, as keys. */
+  const hits = (m: Map<Element, number> | null): Set<string> | null => {
+    try {
+      const c = g.cloneNode(true) as Element;
+      const all: Element[] = Array.from(g.querySelectorAll("text")), cl: Element[] = Array.from(c.querySelectorAll("text"));
+      if (m) all.forEach((el, i) => { const v = m.get(el); if (v != null) { cl[i].setAttribute('font-size', String(v)); for (const s of Array.from(cl[i].querySelectorAll('tspan'))) s.removeAttribute('font-size'); } });
+      const geo = groupGeometry(c, 0);
+      const idx = (t: TextBox) => cl.indexOf(t.el as Element);
+      const out = new Set<string>();
+      const ts = geo.texts, segs = geo.segs.filter((s) => !s.tiny).concat(prior.segs);
+      for (let i = 0; i < ts.length; i++) {
+        const a = airBox(ts[i]), k = core(ts[i]);
+        for (let j = i + 1; j < ts.length; j++) if (ts[j].el !== ts[i].el && overlapArea(a, airBox(ts[j])) > 0) out.add(`t${idx(ts[i])}:${idx(ts[j])}`);
+        prior.texts.forEach((p, j) => { if (overlapArea(a, airBox(p)) > 0) out.add(`p${idx(ts[i])}:${j}`); });
+        segs.forEach((s, j) => { if (segHitsBox(s.a, s.b, k)) out.add(`s${idx(ts[i])}:${j}`); });
+      }
+      return out;
+    } catch { return null; }
+  };
+  let c = hi;
+  if (hi > lo + 0.01) {
+    const base = hits(null);
+    const fits = (v: number) => { const h = hits(sizesAt(v)); return !h || !base || [...h].every((k) => base.has(k)); };
+    if (!fits(hi)) {
+      let a = lo, b = hi;
+      for (let i = 0; i < 8; i++) { const mid = (a + b) / 2; if (fits(mid)) a = mid; else b = mid; }
+      c = a;
+    }
+  } else c = Math.max(Math.min(hi, target), Math.min(lo, hi));
+  if (contentOwn.length) st.room = Math.min(st.room ?? Infinity, c);
+  const sizes = sizesAt(c);
+  // A text that still runs into one it was clear of at the model's size (a row so tight that even the
+  // legibility floor collides) is set smaller on its own, down to what the model wrote (never under
+  // `minFloor`): the rest of the group keeps its size.
+  const base0 = hits(null);
+  for (let i = 0; base0 && i < 12; i++) {
+    const h = hits(sizes);
+    if (!h) break;
+    const bad = [...h].filter((k) => !base0.has(k));
+    if (!bad.length) break;
+    const all = Array.from(g.querySelectorAll('text'));
+    const idx = new Set<number>();
+    for (const k of bad) { const m = /^([tps])(\d+):(\d+)$/.exec(k); if (!m) continue; idx.add(+m[2]); if (m[1] === 't') idx.add(+m[3]); }
+    let moved = false;
+    for (const n of idx) {
+      const el = all[n], v = el && sizes.get(el);
+      if (!el || v == null) continue;
+      const lim = Math.max(raw.get(el) ?? v, st.minFloor ?? 0);
+      const nv = Math.max(lim, v * 0.93);
+      if (nv < v - 1e-3) { sizes.set(el, nv); moved = true; }
+    }
+    if (!moved) break;
+  }
+  // What this group leaves on the board, for the next group's room.
+  try {
+    const cl = g.cloneNode(true) as Element;
+    const all = Array.from(g.querySelectorAll('text')), ct = Array.from(cl.querySelectorAll('text'));
+    all.forEach((el, i) => { const v = sizes.get(el); if (v != null) ct[i].setAttribute('font-size', String(v)); });
+    const geo = groupGeometry(cl, 0);
+    st.drawn = { texts: prior.texts.concat(geo.texts.map((t) => ({ ...t, el: undefined }))), segs: prior.segs.concat(geo.segs.filter((s) => !s.tiny)) };
+  } catch { /* best-effort */ }
   return sizes;
 }

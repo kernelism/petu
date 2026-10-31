@@ -11,6 +11,7 @@
 import { parseGroup } from './sanitize';
 import { newScope, resolveData, type DataScope } from './data';
 import { prepareText } from './polish';
+import { FONT_FIGURE } from './style';
 
 export type Pt = { x: number; y: number };
 export type Box = { x: number; y: number; w: number; h: number };
@@ -90,8 +91,71 @@ export function pathPolys(d: string): Pt[][] {
 const polyOf = (pts: string | null): Pt[] => { const v = (pts ?? '').trim().split(/[\s,]+/).map(Number); const o: Pt[] = []; for (let k = 0; k + 1 < v.length; k += 2) if (Number.isFinite(v[k]) && Number.isFinite(v[k + 1])) o.push({ x: v[k], y: v[k + 1] }); return o; };
 const ellipse = (cx: number, cy: number, rx: number, ry: number): Pt[] => Array.from({ length: 25 }, (_, k) => ({ x: cx + rx * Math.cos((k / 24) * 2 * Math.PI), y: cy + ry * Math.sin((k / 24) * 2 * Math.PI) }));
 
-/** Approximate advance of a string in em (a sans: narrow letters and digits near 0.55). */
+/**
+ * The board font's real advance of a string in em, measured by the engine that draws it (an off-screen
+ * board text, so the board's CSS — tabular numerals — applies; canvas measureText ran ~15% short):
+ * WebKit's and Gecko's system sans run wider than the estimate below (founder WebKit stills:
+ * "0.2€weights"). Null without a DOM to measure in (tests, the server): the estimate is used.
+ */
+/**
+ * Measured at the small end of board text (10 px), where engines run widest (hinting). Board text sets
+ * font-optical-sizing: none (desk.css), so Source Serif 4's widths do not change with its size.
+ */
+const MEASURE_PX = 10;
+/** Drawn text inside the scaled board ran up to ~4% wider than the off-screen measure (Firefox, WebKit). */
+const MEASURE_SAFETY = 1.05;
+let measureEl: SVGTextElement | null | undefined;
+let fontState: 'unknown' | 'loading' | 'ready' = 'unknown';
+/** Whether the board's figure face is loaded; starts its load once, and clears the cache when it lands. */
+function figureFontReady(): boolean {
+  if (fontState === 'ready') return true;
+  const fonts = typeof document !== 'undefined' ? (document as Document & { fonts?: FontFaceSet }).fonts : undefined;
+  if (!fonts) { fontState = 'ready'; return true; }
+  const spec = `${MEASURE_PX}px "Source Serif 4 Variable"`;
+  try { if (fonts.check(spec)) { fontState = 'ready'; measured.clear(); return true; } } catch { /* a FontFaceSet without check */ }
+  if (fontState === 'unknown') {
+    fontState = 'loading';
+    void fonts.load(spec).then(() => { fontState = 'ready'; measured.clear(); }, () => { fontState = 'ready'; });
+  }
+  return false;
+}
+const measured = new Map<string, number>();
+function measureEm(s: string): number | null {
+  if (measureEl === undefined) {
+    measureEl = null;
+    try {
+      if (typeof document !== 'undefined' && document.body && !/jsdom/i.test(typeof navigator !== 'undefined' ? navigator.userAgent : '')) {
+        // An off-screen board text: the board's own CSS applies (tabular numerals), so it measures as drawn.
+        const NS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(NS, 'svg');
+        svg.setAttribute('data-svgboard', 'measure');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.setAttribute('style', 'position:fixed;left:-10000px;top:0;width:10px;height:10px;visibility:hidden;pointer-events:none');
+        const t = document.createElementNS(NS, 'text') as SVGTextElement;
+        t.setAttribute('font-size', String(MEASURE_PX)); t.setAttribute('font-family', FONT_FIGURE); t.setAttribute('x', '0'); t.setAttribute('y', '100');
+        svg.appendChild(t); document.body.appendChild(svg);
+        measureEl = t;
+      }
+    } catch { measureEl = null; }
+  }
+  if (!measureEl) return null;
+  // The bundled serif must be in: a fallback face's widths are never measured, nor cached.
+  if (!figureFontReady()) return null;
+  let v = measured.get(s);
+  if (v == null) {
+    measureEl.textContent = s;
+    v = (measureEl.getComputedTextLength() / MEASURE_PX) * MEASURE_SAFETY;
+    if (!(v > 0)) return null;
+    if (measured.size > 4000) measured.clear();
+    measured.set(s, v);
+  }
+  return v;
+}
+
+/** Advance of a string in em: measured in the browser, else estimated (a sans: narrow letters and digits near 0.55). */
 export function textEm(s: string): number {
+  const m = measureEm(s);
+  if (m != null && Number.isFinite(m) && m > 0) return m;
   let w = 0;
   for (const ch of s) w += /[iljtfI.,:;'!|]/.test(ch) ? 0.3 : /[mwMW]/.test(ch) ? 0.85 : /[A-Z]/.test(ch) ? 0.65 : / /.test(ch) ? 0.28 : /[Ͱ-Ͽ]/.test(ch) ? 0.58 : 0.55;
   return w;

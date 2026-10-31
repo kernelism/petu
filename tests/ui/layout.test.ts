@@ -38,3 +38,30 @@ describe('dockReserve', () => {
     } finally { setSafeBottom(0); }
   });
 });
+
+describe('dockPlacement under the overview zoom and beside the overview pill', () => {
+  const lane = (x: number, w: number): DeskState => ({ ...c(x, w), lane: true } as DeskState);
+  it('follows the column where it shows: scaled about the window centre and slid by the pan', () => {
+    // 1440: page column 48–848; at 125% it shows from 720 + (48 − 720)·1.25 = −120 to 880 (clipped to 0).
+    const d = dockPlacement(1440, lane(48, 800), { z: 1.25, panX: 0 });
+    expect(d.x - d.w / 2).toBeGreaterThanOrEqual(16);
+    expect(d.x + d.w / 2).toBeLessThanOrEqual(880);
+  });
+  it('never leaves the window at any zoom or pan', () => {
+    for (const z of [0.5, 0.9, 1, 1.18, 1.5, 2]) for (const panX of [-700, 0, 700]) for (const W of [1200, 1440, 2560]) {
+      const d = dockPlacement(W, lane(48, 800), { z, panX });
+      expect(d.x - d.w / 2).toBeGreaterThanOrEqual(16 - 1e-9);
+      expect(d.x + d.w / 2).toBeLessThanOrEqual(W - 16 + 1e-9);
+      expect(d.w).toBeGreaterThanOrEqual(340);
+    }
+  });
+  it('keeps clear of the overview pill on the right (the dock under the lane)', () => {
+    // 1440: the lane 848–1392; the pill takes 260 px from the right edge.
+    const d = dockPlacement(1440, lane(848, 544), { z: 1.1, panX: 0 }, 260);
+    expect(d.x + d.w / 2).toBeLessThanOrEqual(1440 - 16 - 260);
+    expect(d.w).toBeGreaterThanOrEqual(340);
+  });
+  it('is unchanged at 100% with no pill', () => {
+    expect(dockPlacement(1440, c(36, 666), { z: 1, panX: 0 }, 0)).toEqual(dockPlacement(1440, c(36, 666)));
+  });
+});
