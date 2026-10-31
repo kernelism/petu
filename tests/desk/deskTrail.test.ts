@@ -225,9 +225,10 @@ describe('Desk.forget: a trail replay plays its answer in place (founder report:
       if (i === 1) { const p2 = d.addRegion(spec('a1b')); await settle(); await p2; }
     }
     const replay = async () => {
-      d.forget(heads[1]);
       await d.reset(0);
       d.headNext(heads[1], 44);
+      // Until the replay draws, its card stays where it was (never gone, never twice).
+      expect(st.contains(heads[1]) || (host as { laneEl?: () => HTMLElement }).laneEl?.().contains(heads[1])).toBe(true);
       const p1 = d.addRegion(spec('a1')); await settle(); await p1;
       const p2 = d.addRegion(spec('a1b')); await settle(); await p2;
     };
@@ -258,6 +259,23 @@ describe('Desk.forget: a trail replay plays its answer in place (founder report:
       }
     });
   }
+
+  it('an aside asked before the replay draws: the replay still replaces its card (one entry)', async () => {
+    const st = document.createElement('div');
+    const { d, heads } = await session(fakeHost(), st);
+    await d.reset(0);
+    d.headNext(heads[1], 44);
+    d.setAside(true);
+    const ah = head(); ah.classList.add('is-aside');
+    d.headNext(ah, 40);
+    const pa = d.addRegion(spec('side')); await settle(); await pa;
+    d.setAside(false);
+    expect(d.awaitsHead(heads[1])).toBe(true);
+    d.headNext(heads[1], 44); // App's endAside puts the answer's head back in line
+    const p1 = d.addRegion(spec('a1')); await settle(); await p1;
+    expect(d.awaitsHead(heads[1])).toBe(false);
+    expect(st.querySelectorAll('.trail-head:not(.is-aside)')).toHaveLength(3);
+  });
 
   it('forgetting a head the desk does not hold is a no-op', async () => {
     const st = document.createElement('div');

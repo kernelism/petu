@@ -285,6 +285,7 @@ export class Desk implements DeskApi {
 
   async addRegion(spec: RegionSpec, before?: BeforeMove): Promise<RegionInfo | string> {
     const ep = this.epoch;
+    this.replaceHead();
     // Board v2: a scene continues by its id. A later answer (a follow-up that continues) or a repeated
     // scene tag naming a scene already on the board draws on into it; a scene tag with a new id (a
     // revision) starts a fresh section below, and the old scene stays above, untouched.
@@ -702,9 +703,27 @@ export class Desk implements DeskApi {
     this.emit();
   }
 
-  /** The next section added gets `el` as its head, `h` px tall (null: none). Consumed by that section. */
+  /**
+   * The next section added gets `el` as its head, `h` px tall (null: none). Consumed by that section.
+   * A head already on the board (the trail replaying its answer) keeps its card until then: the
+   * replay's first section takes its place (`forget`), so the answer is never listed twice nor gone a while.
+   */
   headNext(el: HTMLElement | null, h = 0): void {
     this.nextHead = el ? { el, h, aside: this.asideOpen } : null;
+    // An aside's head (asked before the replay drew) leaves the pending replacement as it is.
+    if (el && (el.isConnected || this.groups.some((g) => g.head === el))) this.replacing = el;
+    else if (!this.asideOpen) this.replacing = null;
+  }
+  private replacing: HTMLElement | null = null;
+  /** `el` is a replaying answer's head still waiting for its first section (it shows its old card meanwhile). */
+  awaitsHead(el: HTMLElement): boolean { return this.replacing === el; }
+  /** The head about to be consumed belongs to an answer on the board: its old drawing leaves first. */
+  private replaceHead() {
+    const h = this.nextHead, el = this.replacing;
+    if (!h || h.el !== el) return;
+    this.replacing = null;
+    this.forget(el);
+    this.nextHead = h;
   }
 
   /**

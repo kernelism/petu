@@ -535,7 +535,7 @@ export default function App() {
     setAside(null);
     // The answer's header waited behind the aside's (no section yet): it goes back in line.
     const h = answerRef.current.head;
-    if (h && !h.el.isConnected) deskRef.current?.headNext(h.el, h.h);
+    if (h && (!h.el.isConnected || deskRef.current?.awaitsHead(h.el))) deskRef.current?.headNext(h.el, h.h);
   };
   const clearHide = () => window.clearTimeout(hideTimer.current);
   const clearPause = () => { window.clearTimeout(pauseTimer.current); setPausing(false); };
@@ -769,8 +769,8 @@ export default function App() {
     // A replay is the same entry played again in place: its header and drawings leave the board and come
     // back as it replays (one entry on the trail and in the session list; the numbering never moves).
     const entry: TrailEntry = run.again ?? { num: String(++trailN.current), question: q, title, page: pageRef.current, script: '', head: null as unknown as TrailHead, ...(kindCheck ? { check: run.check } : {}) };
-    if (run.again) deskRef.current?.forget(entry.head.el);
-    else entry.head = answerHead({ num: entry.num, question: title, check: false, onReplay: () => replayRef.current(entry) });
+    // (Desk.headNext: a head already on the board keeps its card until the replay's first section replaces it.)
+    if (!run.again) entry.head = answerHead({ num: entry.num, question: title, check: false, onReplay: () => replayRef.current(entry) });
     // Eval runs keep the board as the judge has always seen it (no trail headers).
     if (!EVAL) deskRef.current?.headNext(entry.head.el, entry.head.h);
     answerRef.current = { question: q, plan: '', toAgent, head: EVAL ? null : entry.head };
