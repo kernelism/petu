@@ -41,7 +41,7 @@ describe('mark targets', () => {
   });
 
   it('a "?" in the margin names the words of the line level with it', () => {
-    const q = pageTarget('confused', 88, ring(760, 238, 8, 12), lines, figures).target;
+    const q = pageTarget('confused', 88, ring(760, 242, 8, 6), lines, figures).target;
     expect(q).toMatchObject({ what: 'phrase', ref: 't8' });
     expect(q.text).toContain('curve');
   });
