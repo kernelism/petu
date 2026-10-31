@@ -355,5 +355,8 @@ export const MOVE_KINDS = new Set(['contrast', 'limit', 'beforeafter']);
  * and drawn by src/svgboard/render.ts. `anchor`: the words that name it (from its id); the scheduler
  * draws it on the first of them still to be spoken in its beat, else where the tag stands.
  */
-export type SvgAction = { kind: 'svg'; id?: string; svg: string; anchor?: string[]; /** The board section it draws in (set by the director when it fires). */ region?: string; /** never set: a group is never on a page */ page?: undefined };
+export type SvgAction = { kind: 'svg'; id?: string; svg: string; anchor?: string[];
+  /** Set by the scheduler when it fires: this group is the k-th of n that share one beat's words (they came together). */
+  slot?: { k: number; n: number };
+  /** The board section it draws in (set by the director when it fires). */ region?: string; /** never set: a group is never on a page */ page?: undefined };
 export type RawAction = SvgAction | LayoutAction | (DrawAction<PtArg>) | RefAction | RawConnect | LetAction | MarkShape | RayShape | ConstAction | ValAction | FindAction;

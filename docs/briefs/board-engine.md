@@ -16,7 +16,7 @@ computes every coordinate and every number.
 | `src/script/pointExpr.ts` | Point args: literals, names, `#d3`, `mid/along/meet/foot`, kit parts `g[2,3]`. |
 | `src/geometry/resolve.ts` | `Figures`: `note()` takes `let` names at parse time; `resolve()` turns names, marks, rays, fitted coords into plain `Action`s, or a skip reason string. |
 | `src/geometry/figure.ts` | One figure per target; `fit` sketches freeze their scale at first build: uniform (angles kept), or per axis once the sketch has `{{axes}}` (data); no magnification cap. |
-| `src/playback/clock.ts` | `NarrationClock` interface (TTS-ready); `PacedClock` = syllable-weighted pace from `BASE_WPM` (170, `settings.ts`) × `settings.speed`. |
+| `src/playback/clock.ts` | `NarrationClock` interface (TTS-ready); `PacedClock` = syllable-weighted pace from `BASE_WPM` (155 since 2026-10-30, was 170; `settings.ts`) × `settings.speed`; `enqueue(word, restMs)` takes a rest before a word (both clocks; the voice clock puts it between pieces). |
 | `src/playback/scheduler.ts` | Words → clock; actions fire with the first word after them. `START_MS` 600, `RESUME_MS` 1000, `FLUSH_MS` 200. `actionLeadMs`: 450ms for everything but `clear`. |
 | `src/playback/session.ts` | `AnswerSession`: stream → parser → scheduler; states idle/loading/playing/done/stopped/error; `done` waits for `idle()` (App passes `director.finale()`: last ink, then the scene overview). |
 | `src/playback/director.ts` | `Director`: serial layout lane (scroll, sketch, clear, reveal, frame) + concurrent ink; `STAGGER_MS` 120, `ACTION_TIMEOUT_MS` 3000, `LAND_MS` 150, `backlog()` speed-up. Owns `registry` and `figures`. |
@@ -64,7 +64,9 @@ and draws it. The tag kit above stays for the `tags` prompt variant (`PETU_PROMP
   the quote rule, up to `SVG_TAG_MAX` (24k).
 - **Timing** (`src/playback/scheduler.ts` `anchorOf`): a group fires on the first word of its beat
   that names it (its id's words, plurals ok: `namesWord`), else with the next word (right after its
-  sentences). The gate's splitter (`segment.ts`) never makes a sentence wait for its group: a group
+  sentences). After a beat that drew, the first word of the next beat's sentence waits `REST_MS`
+  (400 ms, `src/playback/pace.ts`): a pause after a drawn step. Groups that come together (no words
+  between them) fire with `slot` {k, n} and split their beat in turn. The gate's splitter (`segment.ts`) never makes a sentence wait for its group: a group
   that arrives after its sentences went out is a unit of its own; in beat mode it closes the beat.
 - **Rendering** (`src/svgboard/{render,sanitize,style,element}.ts`): the director opens a section
   `svgb<N>` (`Desk.addRegion` with `svg`, `extend` continues it) holding `<svg data-svgboard
@@ -110,10 +112,13 @@ and draws it. The tag kit above stays for the `tags` prompt variant (`PETU_PROMP
   onto text). Sanitize: text opacity ≥ 0.8 and never lighter than the muted ink; stroke opacity ≥ 0.4;
   large fills (rect sides > 40, areas > 2400 u²) softened to a wash (accent 0.2, grey 0.16); bars
   and dots stay solid.
-- **Paced reveal** (`drawGroup`): a group draws part by part (top-level children) in pen order
-  (frames → lines/curves → points → labels → large fills), spread over its beat's narration
-  (`Pace.beat` = `Scheduler.beatWords()`: the words to the next svg group with their times); a part
-  whose id words or label words the narration says draws on that word. Paced, it hands back to the
+- **Paced reveal** (`drawGroup`, timing in `src/playback/pace.ts` `paceParts`): a group draws part by
+  part (top-level children) in pen order (frames → lines/curves → points → labels → large fills),
+  spread over its beat's narration (`Pace.beat` = `Scheduler.beatWords()`: the words to the next svg
+  group with their start and end times, from the active clock: reading pace or the voice's audio); a
+  part whose id words or label words the narration says starts on that word. Each part draws across
+  its share of the words, not at pen speed: until the next part starts, clamped to 450 ms–2.6 s (less
+  when the beat is too short for every part at 450 ms), its strokes in proportion. Paced, it hands back to the
   director after ≤ 1.5 s and draws on (only `Pace.stop`, a real stop, cuts it short).
 - Demos `?script=svg-ceiling|svg-spin|svg-slope` (the exact-data engine: `src/demo/svg/engine.ts`), `?script=svg-ferry|svg-dough` (the prompt's examples) and `svg-skater|svg-tunnel|svg-rent|svg-sinx`
   (the experiment's recorded answers, `src/svgboard/convert.ts`); tests `tests/svgboard/beats.test.ts`;

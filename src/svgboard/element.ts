@@ -73,7 +73,7 @@ export async function buildSvgGroup(a: SvgAction, env: BuildEnv): Promise<Elemen
         const r = partBox(board, el, PEN_AIR);
         if (r && !env.desk.isVisible(target, r)) void env.desk.reveal(target, r);
       };
-      await drawGroup(board, g, id, { signal, speed: k.speed, color: env.settings.inkColor, onStep, ...(k.beat ? { beat: k.beat } : {}), ...(k.stop ? { stop: k.stop } : {}) });
+      await drawGroup(board, g, id, { signal, speed: k.speed, color: env.settings.inkColor, onStep, ...(k.beat ? { beat: k.beat } : {}), ...(k.slot ? { slot: k.slot } : {}), ...(k.stop ? { stop: k.stop } : {}) });
     },
   };
 }

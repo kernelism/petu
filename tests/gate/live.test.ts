@@ -116,10 +116,55 @@ describe('LiveGate', () => {
     expect(h.gates().find((e) => e.action === 'drop')).toMatchObject({ k: '1', result: 'fail' });
   });
 
-  it('a unit whose own tag failed is still dropped whole, its svg too', async () => {
+  it('no drop path discards a drawn group: a unit dropped for another tag keeps its passing svg groups', async () => {
     const h = harness({ preflight: fakePreflight() });
-    await h.play([{ handoff: true }, 'Good one. ', 'Look {{point BAD}} here. {{svg <g id="g2"></g>}} ', 'Good two. ']);
+    await h.play([{ handoff: true }, 'Good one. ', 'Look {{point BAD}} here. {{svg <g id="g2"><line x1="0" y1="0" x2="9" y2="9"/></g>}} ', 'Good two. ']);
+    const text = h.out.join('');
+    expect(text).not.toContain('BAD');
+    expect(text).toContain('{{svg <g id="g2">');
+    // With no words of its own, the group draws with the next surviving beat.
+    expect(text.indexOf('<g id="g2">')).toBeLessThan(text.indexOf('Good two.'));
+  });
+
+  it('a group that itself failed is dropped with its unit', async () => {
+    const h = harness({ preflight: fakePreflight() });
+    await h.play([{ handoff: true }, 'Good one. ', 'Look here. {{svg <g id="BAD"></g>}} ', 'Good two. ']);
     expect(h.out.join('')).not.toContain('svg');
+  });
+
+  it('rent, 155 wpm (synthetic): a beat dropped for an unbound number between two groups loses only its words; both groups draw', async () => {
+    // The recorded rent answer's structure: a group, then a beat the gate drops (a number the engine
+    // computed, said as a literal, and a page highlight), then the next beat's group riding at its end.
+    const h = harness({ preflight: fakePreflight(), headroomMs: 1000 });
+    await h.play([{ handoff: true },
+      `{{svgboard h=670}} {{svg <g id="rent"><line x1="0" y1="0" x2="9" y2="9"/></g>}} Here ${LONG} `, { wait: 300 },
+      `A ceiling binds ${LONG} `, { wait: 300 },
+      '{{svg <g id="shortage"><line x1="0" y1="9" x2="9" y2="9"/></g>}} ',
+      'Look at {{highlight STRIPME}} the quantities: that leaves FIXME units of unmet demand. ',
+      '{{svg <g id="outcomes"><circle cx="5" cy="5" r="3"/></g>}} ',
+      'A tenant who secures an apartment pays less. ', 'Landlords receive less per apartment. ']);
+    const text = h.out.join('');
+    expect(text).not.toContain('FIXME');
+    for (const id of ['rent', 'shortage', 'outcomes']) expect(text, id).toContain(`<g id="${id}">`);
+    expect(text.indexOf('<g id="outcomes">')).toBeLessThan(text.indexOf('A tenant'));
+  });
+
+  it('a repair that fails its re-check still keeps the original beat\'s passing groups', async () => {
+    const h = harness({ preflight: fakePreflight(), headroomMs: 1000, repair: async () => ({ ok: true, text: 'Still FIXME here.' }) });
+    await h.play([{ handoff: true }, `Intro ${LONG} `, { wait: 300 }, `So ${LONG} `, { wait: 300 }, 'Mid FIXME words. {{svg <g id="kept"><line x1="0" y1="0" x2="9" y2="9"/></g>}} ', 'Last. ']);
+    expect(h.repairs().map((e) => e.phase)).toEqual(['sent', 'ok', 'fail']);
+    const text = h.out.join('');
+    expect(text).not.toContain('FIXME');
+    expect(text).toContain('<g id="kept">');
+  });
+
+  it('a late repair keeps the beat\'s passing groups', async () => {
+    const h = harness({
+      preflight: fakePreflight(), headroomMs: 1000,
+      repair: (_req, signal) => new Promise((r) => { signal.addEventListener('abort', () => r({ ok: false, reason: 'error' })); }),
+    });
+    await h.play([{ handoff: true }, `Intro ${LONG} `, { wait: 300 }, `So ${LONG} `, { wait: 300 }, 'Mid FIXME words. {{svg <g id="kept"><line x1="0" y1="0" x2="9" y2="9"/></g>}} ', 'Last. ']);
+    expect(h.out.join('')).toContain('<g id="kept">');
   });
 
   it('strips a failed page highlight when nothing later names it, and releases the rest', async () => {

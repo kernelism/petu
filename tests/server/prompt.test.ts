@@ -157,7 +157,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.2');
+    expect(PROMPT_VERSION).toBe('p6.3');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -194,6 +194,10 @@ describe('system prompt (svg, default)', () => {
     expect(t).not.toMatch(/\b(point-at|what-if|derive|compare|navigation)\s*[:(]/i);
     expect(t).not.toMatch(/\bat most \d|\bat least \d|\d+\s*[–-]\s*\d+ (words|elements|drawn|groups|beats)|\bexactly one\b|\bmax(imum)? \d/i);
     expect(t).not.toMatch(/\b(quick|lesson) mode\b|\bmode\b/i);
+  });
+
+  it('p6.3 (pace): the narration names each part as it draws', () => {
+    expect(s).toMatch(/Name each part in plain words as it appears, in the sentence it draws across/);
   });
 
   it('states the teacher-at-a-whiteboard brief and the streamed beat format', () => {

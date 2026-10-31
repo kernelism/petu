@@ -9,8 +9,12 @@ export interface NarrationClock {
   now(): number;
   /** Estimated duration of a word including its trailing pause, in ms. Used for buffering decisions. */
   durationMs(word: string): number;
-  /** Queues the next word for speaking. Returns its index (0, 1, 2, … in call order). */
-  enqueue(word: string): number;
+  /**
+   * Queues the next word for speaking. Returns its index (0, 1, 2, … in call order). `restMs`: a
+   * silence before it (at playback rate 1), after the word before it ends: the scheduler's rest after
+   * a drawn beat. It stays through re-timing, except when the word itself is the one re-timed to.
+   */
+  enqueue(word: string, restMs?: number): number;
   /** Absolute start time of word `i`, or null while it isn't known yet. */
   wordStart(i: number): number | null;
   /** When the last queued word finishes (≤ now() once everything has been spoken). */
@@ -55,6 +59,7 @@ export function syllables(word: string): number {
 export class PacedClock implements NarrationClock {
   private starts: number[] = [];
   private words: string[] = [];
+  private rests: number[] = [];
   private end = -Infinity;
   /**
    * `duration` overrides the word-length model (tests). `rate` is the playback speed (1 = the
@@ -84,18 +89,31 @@ export class PacedClock implements NarrationClock {
     return base + pause;
   }
 
-  enqueue(word: string): number {
-    const start = Math.max(this.now(), this.end);
+  enqueue(word: string, restMs = 0): number {
+    const rest = this.atRate(restMs);
+    const start = Math.max(this.now(), this.end + rest);
     this.starts.push(start);
     this.words.push(word);
+    this.rests.push(rest > 0 ? restMs : 0);
     this.end = start + this.durationMs(word);
     return this.starts.length - 1;
   }
 
   retime(from: number, start: number): void {
     let t = start;
-    for (let i = Math.max(0, from); i < this.starts.length; i++) { this.starts[i] = t; t += this.durationMs(this.words[i]); }
+    for (let i = Math.max(0, from); i < this.starts.length; i++) {
+      if (i > from) t += this.atRate(this.rests[i]);
+      this.starts[i] = t;
+      t += this.durationMs(this.words[i]);
+    }
     this.end = t;
+  }
+
+  /** `ms` at the playback rate. */
+  private atRate(ms: number): number {
+    if (!(ms > 0)) return 0;
+    const r = this.rate();
+    return ms / (Number.isFinite(r) && r > 0 ? r : 1);
   }
 
   wordStart(i: number): number | null { return this.starts[i] ?? null; }

@@ -33,8 +33,14 @@ export const VOICE_OPTIONS = ['off', 'marin', 'cedar'] as const;
 export type VoiceSetting = (typeof VOICE_OPTIONS)[number];
 export { ANSWER_QUALITIES, type AnswerQuality };
 
-/** The narration's words per minute at 1× (the clock's base rate; speed multiplies it). */
-export const BASE_WPM = 170;
+/**
+ * The narration's words per minute at 1× (the clock's base rate; speed multiplies it). 155 since
+ * 2026-10-30 (founder: "drawing races, explanation races": a calmer default, with the drawing paced to
+ * the words); was 170.
+ */
+export const BASE_WPM = 155;
+/** The base rate ≤ v2 saves were made against: a stored wpm is read relative to it (170 = the default, 1×). */
+const LEGACY_BASE_WPM = 170;
 /** Playback speeds: the Settings control and the answer's own controls (< and > step through them). */
 export const SPEEDS = [0.75, 1, 1.25, 1.5] as const;
 /** The speed one step slower (dir -1) or faster (+1) than `s`, clamped to SPEEDS. */
@@ -73,9 +79,9 @@ export function migrate(raw: unknown): Stored {
   if (VOICE_OPTIONS.includes(saved.voice as VoiceSetting)) out.voice = saved.voice as VoiceSetting;
   if (ANSWER_QUALITIES.includes(saved.quality as AnswerQuality)) out.quality = saved.quality as AnswerQuality;
   const speed = SPEEDS.some((v) => v === saved.speed) ? (saved.speed as number) : 1;
-  // ≤ v2: the narration played at wpm × speed; keep that rate, on the nearest step.
-  const wpm = typeof saved.wpm === 'number' && Number.isFinite(saved.wpm) && saved.wpm > 0 ? saved.wpm : BASE_WPM;
-  out.speed = nearestSpeed((wpm / BASE_WPM) * speed);
+  // ≤ v2: the narration played at wpm × speed; keep that rate relative to the old default, on the nearest step.
+  const wpm = typeof saved.wpm === 'number' && Number.isFinite(saved.wpm) && saved.wpm > 0 ? saved.wpm : LEGACY_BASE_WPM;
+  out.speed = nearestSpeed((wpm / LEGACY_BASE_WPM) * speed);
   return out;
 }
 

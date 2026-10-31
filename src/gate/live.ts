@@ -39,8 +39,6 @@ export type UnitKind = 'opener' | 'sentence' | 'beat';
 export type PreflightUnit = { key: string; kind: UnitKind; text: string; fault?: FaultMode; /** The stream's end: no boundary is known after it. */ end?: boolean };
 /** A tag of the checked unit: offsets in the unit's text; `skipped` when the board (or the parser) would not draw it. */
 export type PreflightTag = { start: number; end: number; body: string; action: RawAction | null; skipped?: string };
-/** Checks about the narration's words only: a unit failing just these keeps its svg groups when dropped. */
-const WORD_CHECKS = new Set(['number', 'unbound', 'deixis']);
 export type PreflightResult = { flags: GateFlag[]; notes: string[]; tags: PreflightTag[]; report?: () => Omit<RepairReport, 'later' | 'tail' | 'maxWords'> };
 
 export interface Preflight {
@@ -612,7 +610,12 @@ export class LiveGate {
     this.stats.drops++;
     this.stats.droppedWords += wordCount(u.text);
     if (u.kind === 'beat' && ++this.dropsInRow >= 2 && !this.cascade) { this.cascade = true; notes = [...notes, 'cascade: two drops in a row, no more repairs']; }
-    this.emitGate(u, 'fail', 'drop', r, ms, { notes: kept ? [...notes, 'its svg groups kept (only its words failed)'] : notes });
+    this.emitGate(u, 'fail', 'drop', r, ms, { notes: kept ? [...notes, 'its svg groups kept (they passed; the unit failed on something else)'] : notes });
+    this.keepDrawings(u, r, kept, out);
+  }
+
+  /** Releases a dropped unit's surviving svg groups alone: with no words, they draw with the next surviving beat. */
+  private keepDrawings(u: PreflightUnit, r: PreflightResult | null, kept: string | null, out?: Out) {
     if (kept && out) {
       const ku = { ...u, text: kept };
       this.emitGate(ku, 'strip', 'release', r, 0, { stripped: ['its words'], notes: ['the svg groups of a unit dropped for its words'] });
@@ -621,16 +624,19 @@ export class LiveGate {
   }
 
   /**
-   * A unit failed only on its words (a number, an unbound value, deixis): its svg groups were checked
-   * clean with it and are kept — a drawing is never lost with a sentence (founder 2026-10-30, lec06: the
-   * beat's group rode at the end of a sentence the gate dropped, and the answer's last drawing never drew).
-   * The groups alone, as a unit with no words; null when there are none or a tag of the unit failed.
+   * A drawing is never lost with the unit it rode in (founder 2026-10-30, lec06: the beat's group rode at
+   * the end of a sentence the gate dropped, and the answer's last drawing never drew; rent, 155 wpm: the
+   * slower narration put the gate in beat mode, a group rode in a beat dropped for its words, and it
+   * never drew). Whatever the unit failed on (its words, a page tag, a failed or late repair), its svg
+   * groups are kept unless a group itself failed: an svg check flag, or a group the board would skip.
+   * The groups alone, as a unit with no words (they draw with the next surviving beat); null when there
+   * are none or a group failed.
    */
   private drawingsOf(u: PreflightUnit, r: PreflightResult | null): string | null {
-    if (!r || !r.flags.length || !r.flags.every((f) => WORD_CHECKS.has(f.check))) return null;
-    if (r.tags.some((t) => t.skipped)) return null;
-    const groups = r.tags.filter((t) => /^\s*svg\b/.test(t.body)).map((t) => u.text.slice(t.start, t.end));
-    return groups.length ? ` ${groups.join(' ')} ` : null;
+    if (!r || !r.flags.length || r.flags.some((f) => f.check === 'svg')) return null;
+    const svg = r.tags.filter((t) => /^\s*svg\b/.test(t.body));
+    if (!svg.length || svg.some((t) => t.skipped)) return null;
+    return ` ${svg.map((t) => u.text.slice(t.start, t.end)).join(' ')} `;
   }
 
   private async process(u0: PreflightUnit, out: Out, signal: AbortSignal): Promise<void> {
@@ -752,7 +758,10 @@ export class LiveGate {
     this.stats.drops++;
     this.stats.droppedWords += wordCount(u.text);
     if (++this.dropsInRow >= 2 && !this.cascade) this.cascade = true;
-    this.emitGate(ru, 'fail', 'drop', r2, this.now() - t1, { repaired: true, notes: ['the repair failed its re-check'] });
+    // The original beat's groups passed their checks with it: they still draw.
+    const kept = this.drawingsOf(u, r);
+    this.emitGate(ru, 'fail', 'drop', r2, this.now() - t1, { repaired: true, notes: kept ? ['the repair failed its re-check', 'its svg groups kept (they passed; the unit failed on something else)'] : ['the repair failed its re-check'] });
+    this.keepDrawings(u, r, kept, out);
   }
 
   /** Ids the buffered (unreleased) text names that no released tag creates. */

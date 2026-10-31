@@ -40,9 +40,9 @@ describe('settings', () => {
     s = await fresh();
     expect(s.getSettings().quality).toBe('standard');
   });
-  it('the narration base rate is 170 wpm; nearestSpeed snaps to a step', async () => {
+  it('the narration base rate is a calmer 155 wpm (was 170); nearestSpeed snaps to a step', async () => {
     const s = await fresh();
-    expect(s.BASE_WPM).toBe(170);
+    expect(s.BASE_WPM).toBe(155);
     expect([0.5, 0.88, 1.1, 1.13, 1.4, 3].map(s.nearestSpeed)).toEqual([0.75, 1, 1, 1.25, 1.5, 1.5]);
   });
   it('the page highlight defaults to the violet wash (the accent, light) and yellow keeps the marker look', async () => {

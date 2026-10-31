@@ -11,7 +11,7 @@
 
 export type Scope = 'narrow' | 'standard' | 'broad';
 
-/** Spoken words per second, sentence pauses included (measured on recorded answers at the default 170 wpm). */
+/** Spoken words per second, sentence pauses included (measured on recorded answers at the old default 170 wpm; kept at 2.4 under 155 wpm: the words asked for stay the same and answers run ~10% longer). */
 export const WORDS_PER_SEC = 2.4;
 /**
  * Seconds per scope: `target` is what stage 2 is asked to fit (opener included), `cap` is where the
