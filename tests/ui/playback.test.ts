@@ -143,21 +143,52 @@ describe('PartsBar', () => {
 describe('B1: the dock in its moments', () => {
   let host: HTMLDivElement, root: Root;
   beforeEach(() => { host = document.createElement('div'); document.body.append(host); root = createRoot(host); });
+  // jsdom has no ResizeObserver; the caption only needs one to measure its reading window.
+  beforeEach(() => { vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} }); });
+  afterEach(() => { vi.unstubAllGlobals(); });
   afterEach(() => { act(() => root.unmount()); host.remove(); });
 
-  it('an aside: "Aside" (sentence case) and "Back to answer" with the return key icon; paused one-part answers say so', () => {
-    const base = { titles: [], label: 'Why?', current: 0, progress: 0, speed: 1, onJump: vi.fn(), onTogglePause: vi.fn(), onReplay: vi.fn(), onSpeed: vi.fn(), onStop: vi.fn() };
+  it('an aside: a quiet strip, "Side question" and "Back to answer" (return key icon); its controls fold away, no stop', () => {
+    const base = { titles: ['One', 'Two', 'Three', 'Four'], label: 'Why?', current: 3, progress: 0.5, speed: 1.25, onJump: vi.fn(), onTogglePause: vi.fn(), onReplay: vi.fn(), onSpeed: vi.fn(), onStop: vi.fn() };
     const onResume = vi.fn();
-    act(() => root.render(createElement(PartsBar, { ...base, paused: true, aside: { title: 'Answer paused', onResume } })));
-    expect(host.querySelector('.pb-aside')!.textContent).toBe('Aside');
+    act(() => root.render(createElement(PartsBar, { ...base, paused: true, aside: { onResume } })));
+    const pb = host.querySelector('.pb')!;
+    expect(pb.classList.contains('is-aside')).toBe(true);
+    expect(pb.getAttribute('aria-label')).toBe('Side question playback');
+    expect(host.querySelector('.pb-side')!.textContent).toBe('Side question');
+    // Nothing of the paused answer: no tag, no "n/N", no title, no rail, no stop.
+    for (const sel of ['.pb-aside', '.pb-where', '.pb-count', '.pb-rail', '.pb-stop']) expect(host.querySelector(sel)).toBeNull();
+    expect(pb.textContent).not.toMatch(/paused|4\/4|Aside/);
+    // Pause, replay and speed sit in the fold (shown on hover / focus-within), still buttons Tab reaches; Back stays out of it, last.
+    const more = [...host.querySelectorAll<HTMLButtonElement>('.pb-more button')].map((b) => b.getAttribute('aria-label'));
+    expect(more).toEqual(['Resume (Space)', 'Replay this sentence (R)', 'Speed 1.25×; change speed (< >)']);
+    const buttons = [...pb.querySelectorAll('button')];
+    expect(buttons.map((b) => b.getAttribute('tabindex'))).toEqual(['0', '0', '0', '0']); // Safari tabs to them too
     const back = host.querySelector<HTMLButtonElement>('.pb-resume')!;
+    expect(buttons.at(-1)).toBe(back);
+    expect(back.closest('.pb-more')).toBeNull();
     expect(back.textContent).toBe('Back to answer ');
     expect(back.querySelector('svg')).not.toBeNull();
     act(() => back.click());
-    expect(onResume).toHaveBeenCalled();
-    act(() => root.render(createElement(PartsBar, { ...base, paused: true })));
+    act(() => host.querySelector<HTMLButtonElement>('.pb-play')!.click());
+    expect(onResume).toHaveBeenCalledOnce();
+    expect(base.onTogglePause).toHaveBeenCalledOnce();
+    expect(pb.classList.contains('is-paused')).toBe(true);
+    act(() => root.render(createElement(PartsBar, { ...base, titles: [], paused: true })));
     expect(host.querySelector('.pb')!.classList.contains('is-paused')).toBe(true);
     expect(host.querySelector('.pb-title')!.textContent).toBe('Paused');
+  });
+
+  it('an aside never echoes its question in the dock: the caption shows the strip and the narration only', () => {
+    const parts: PartsView = { titles: [], label: 'Why?', current: 0, progress: 0, paused: false, speed: 1, onJump: vi.fn(), onTogglePause: vi.fn(), onReplay: vi.fn(), onSpeed: vi.fn(), onStop: vi.fn(), aside: { onResume: vi.fn() } };
+    const question = 'Get. How you set up the arrows and the gradients. Like I think I need a basic understanding';
+    // Before its first word (the moment the echo used to show) and once it speaks a sentence.
+    for (const words of [[], ['Think', 'of', 'brightness', 'as', 'height.']]) {
+      act(() => root.render(createElement(Caption, { words, visible: true, question, waiting: !words.length, parts })));
+      expect(host.querySelector('.caption-q')).toBeNull();
+      expect(host.querySelector('.caption')!.textContent).not.toContain('arrows');
+      expect(host.querySelector('.pb-side')!.textContent).toBe('Side question');
+    }
   });
 
   it('F01: an opened check question stays pinned ("Test yourself: …") once the narration has gone; × puts it away', () => {

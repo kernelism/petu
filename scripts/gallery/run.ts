@@ -125,8 +125,8 @@ const SILENT = `(() => {
   try { if (window.speechSynthesis) window.speechSynthesis.speak = () => {}; } catch {}
 })();`;
 
-/** [answer playing, worker messages so far, finite CSS transitions/animations still running (real time)]. */
-const STATE = `[!!document.querySelector('.askbar-btn.is-stop, .pb-stop'), window.__galleryMsgs || 0,
+/** [answer playing (an aside's strip has no stop: it counts too), worker messages so far, finite CSS transitions/animations still running (real time)]. */
+const STATE = `[!!document.querySelector('.askbar-btn.is-stop, .pb-stop, .pb.is-aside'), window.__galleryMsgs || 0,
   document.getAnimations().filter((a) => a.playState === 'running' && Number.isFinite(a.effect?.getComputedTiming().endTime)).length,
   (() => { // scroll offsets of the scrollers (smooth scrolling runs on real time); the list is refreshed every 25 calls
     const w = window; w.__galleryN = (w.__galleryN || 0) + 1;
