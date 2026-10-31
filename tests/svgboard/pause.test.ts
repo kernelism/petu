@@ -120,19 +120,6 @@ describe('an svg group follows its answer\'s pause', () => {
     expect(offset(s.two)).toBe('');
     await done;
   });
-
-  it('paused at pen speed (no beat) it hands back to the director, so its step timeout never lands it', async () => {
-    const s = setup(), nar = narration(), stop = new AbortController();
-    let back = false;
-    void drawGroup(s.b, s.g, 'grp', { signal: new AbortController().signal, stop: stop.signal, color: '#000', paused: nar.paused }).then(() => { back = true; });
-    await vi.advanceTimersByTimeAsync(100);
-    nar.pause();
-    const held = offset(s.one);
-    await vi.advanceTimersByTimeAsync(1600);
-    expect(back).toBe(true);
-    expect(offset(s.one)).toBe(held);
-    stop.abort();
-  });
 });
 
 describe('page strokes follow the pause too', () => {

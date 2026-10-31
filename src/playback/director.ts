@@ -17,6 +17,7 @@ import type { BuildElement, BuildEnv, DeskApi, ElementPlan, Pace, TargetCtx } fr
 import { bodyFraction } from '../desk/layout';
 import { meaningfulUnit, type Unit } from '../locate/unit';
 import { journeyBeat } from './parts';
+import { InkTime } from './inkTime';
 
 /** Ink actions sharing a word start this far apart, in order. */
 export const STAGGER_MS = 120;
@@ -325,19 +326,26 @@ export class Director {
     w.forEach((r) => r());
   }
 
-  /** Runs `fn` with a child signal that aborts on stop or after ACTION_TIMEOUT_MS. */
+  /**
+   * Runs `fn` with a child signal that aborts on stop or after ACTION_TIMEOUT_MS. Time the answer
+   * spends paused doesn't count: ink standing still for a pause is not stuck (src/playback/inkTime.ts).
+   */
   private async guarded<T>(fn: (signal: AbortSignal) => Promise<T>, parent: AbortSignal): Promise<T | 'timeout'> {
     const ac = new AbortController();
     const onAbort = () => ac.abort();
     parent.addEventListener('abort', onAbort);
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const over = new AbortController();
     try {
       return await Promise.race([
         fn(ac.signal),
-        new Promise<'timeout'>((r) => { timer = setTimeout(() => { ac.abort(); r('timeout'); }, ACTION_TIMEOUT_MS); }),
+        this.d.paused
+          ? new InkTime(this.paused).sleep(ACTION_TIMEOUT_MS, over.signal).then(() => { if (over.signal.aborted) return new Promise<never>(() => {}); ac.abort(); return 'timeout' as const; })
+          : new Promise<'timeout'>((r) => { timer = setTimeout(() => { ac.abort(); r('timeout'); }, ACTION_TIMEOUT_MS); }),
       ]);
     } finally {
       clearTimeout(timer);
+      over.abort();
       parent.removeEventListener('abort', onAbort);
     }
   }

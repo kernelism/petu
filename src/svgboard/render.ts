@@ -406,8 +406,7 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   if (!sig.aborted) await clock.sleep(Math.max(Math.min(FILL_FADE_MS, TEXT_FADE_MS), fadesTo - clock.now()), sig);
   clock.release(); };
   const done = run();
-  // A group that may stand still for a pause hands back too: the director's step timeout must not land it.
-  if ((paced || o.paused) && o.stop) await Promise.race([done, sleep(Math.min(1500, ACTION_STEP_MS))]);
+  if (paced && o.stop) await Promise.race([done, sleep(Math.min(1500, ACTION_STEP_MS))]);
   else await done;
   o.signal.removeEventListener('abort', onSig);
 }
