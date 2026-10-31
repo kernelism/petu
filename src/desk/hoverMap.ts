@@ -23,7 +23,8 @@ export type BeatMark = { page: number; r: SRect; past?: boolean; own?: boolean }
 /** Marks that point at the page's own text or figure. */
 const POINTING = new Set(['highlight', 'underline', 'circle', 'box']);
 /** One beat: the drawn group's element and the page marks spoken with it. */
-export type Beat = { el: Element; marks: BeatMark[] };
+/** One beat: the drawn group's element, its box in its section's units (as the director framed it), and the page marks spoken with it. */
+export type Beat = { el: Element; box?: SRect; marks: BeatMark[] };
 
 /** Attributes page marks to the beat they were spoken in (see the module note). */
 export class BeatLinks {
@@ -35,8 +36,8 @@ export class BeatLinks {
   private loose: BeatMark[] = [];
 
   /** An svg group is about to draw: it opens a beat. */
-  beat(el: Element): Beat {
-    const b: Beat = { el, marks: [] };
+  beat(el: Element, box?: SRect): Beat {
+    const b: Beat = { el, marks: [], ...(box ? { box: { ...box } } : {}) };
     if (this.aside) this.asideNow = b; else this.now = b;
     this.all.push(b);
     return b;
@@ -126,6 +127,13 @@ export type HoverHost = {
 type Focus = { g: HoverGroup; beat: Beat | null; marks: BeatMark[] };
 
 /**
+ * What is under the pointer: the hit test, not the event's target (WebKit targets a pointer event over
+ * a nested svg drawing at the outer svg, and can target the lane's full-height overlay svgs despite
+ * their pointer-events: none).
+ */
+const under = (e: MouseEvent): EventTarget | null => (typeof document.elementFromPoint === 'function' ? document.elementFromPoint(e.clientX, e.clientY) : null) ?? e.target;
+
+/**
  * Hover (mouse) or tap (touch) on a drawn group or a page mark → the pair takes the focus: the group
  * its "now" accent (`data-focus`, styled like the part being drawn), its page marks a violet outline,
  * the group's leader brightens. The pointer over any part of an open answer brightens its leader.
@@ -149,12 +157,12 @@ export class LaneHover {
       if (e.pointerType !== 'mouse' && e.pointerType !== 'pen') return;
       // At once, not on the next frame: WebKit can hold frames back while the pointer moves (the
       // focus then lagged a group behind). The work is a few rect tests.
-      if (!this.pinned) this.track(e.clientX, e.clientY, e.target);
+      if (!this.pinned) this.track(e.clientX, e.clientY, under(e));
     };
     const down = (e: PointerEvent) => { this.lastType = e.pointerType; };
     const tap = (e: MouseEvent) => {
       if (this.lastType !== 'touch' || !this.h.lane()) return;
-      const f = this.find(e.clientX, e.clientY, e.target);
+      const f = this.find(e.clientX, e.clientY, under(e));
       this.pinned = !!f;
       this.set(f, f?.g ?? null);
     };
@@ -212,17 +220,24 @@ export class LaneHover {
     return { g: c.g, beat: c.beat, marks: c.beat ? c.beat.marks : [c.m] };
   }
 
-  /** On the paper of a section between strokes: the beat whose drawing's box holds the point (smallest first). */
+  /**
+   * The beat whose box holds the point (smallest first), by plain geometry: the section's own box on
+   * screen and its cropped viewBox (section units). DOM hit tests can't be used for this: WebKit
+   * reports the outer svg for any point over a nested svg drawing, and its rects for the groups inside
+   * one are unreliable.
+   */
   private beatUnder(g: HoverGroup, sec: Element, x: number, y: number): Beat | null {
-    const beats = g.beats.filter((b) => b.el.isConnected && sec.contains(b.el));
+    const beats = g.beats.filter((b) => b.box && b.el.isConnected && sec.contains(b.el));
     if (!beats.length) return null;
-    // Window boxes (getBoundingClientRect: every transform on the way, the overview zoom's included; the
-    // same in every engine, where getBBox × getScreenCTM is not for nested svgs in WebKit).
-    const boxes = beats.map((b) => {
-      const r = b.el.getBoundingClientRect();
-      return r.width > 0 || r.height > 0 ? { x: r.left, y: r.top, w: r.width, h: r.height } : null;
-    });
-    const i = boxAt(boxes, x, y, 2);
+    const ink = sec.querySelector(':scope > svg.desk-region-ink');
+    const vb = (ink?.getAttribute('viewBox') ?? '').split(/[\s,]+/).map(Number);
+    const r = sec.getBoundingClientRect();
+    if (vb.length !== 4 || !(vb[2] > 0 && vb[3] > 0) || !(r.width > 0 && r.height > 0)) return null;
+    // The layer keeps its aspect (meet, centred): the scale is the smaller fit.
+    const k = Math.min(r.width / vb[2], r.height / vb[3]);
+    const ox = r.left + (r.width - vb[2] * k) / 2, oy = r.top + (r.height - vb[3] * k) / 2;
+    const ux = vb[0] + (x - ox) / k, uy = vb[1] + (y - oy) / k;
+    const i = boxAt(beats.map((b) => b.box!), ux, uy, 4);
     return i < 0 ? null : beats[i];
   }
 

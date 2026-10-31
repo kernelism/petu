@@ -422,7 +422,7 @@ export class Desk implements DeskApi {
     if (t.region != null) {
       const sec = this.ids.get(t.region);
       // An svg board group opens a beat: the page marks spoken after it, until the next, are its (hoverMap.ts).
-      if (o.el && sec?.svg && sec.group) sec.group.beats.push(this.links.beat(o.el));
+      if (o.el && sec?.svg && sec.group) sec.group.beats.push(this.links.beat(o.el, r));
       const m = sec && this.midHeads.find((x) => x.sec === sec && x.y == null);
       if (m && sec) {
         // The follow-up's first new group: its header lands right above it, in view with it.
