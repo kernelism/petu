@@ -13,6 +13,8 @@ const example = (word: string) => {
   return ex;
 };
 const dough = example('yeast'), ferry = example('river');
+/** The svg examples open their board and draw on the same word; a session's later answers never stack tags. */
+const unstacked = (script: string) => wireOf(script).replace(/\}\}\s*\{\{svg /, '}} Watch. {{svg ');
 
 export const NEWQ_Q = { q1: SESSION_Q.main, follow: SESSION_Q.follow, aside: SESSION_Q.aside, q2: dough.question, again: SESSION_Q.fresh, q3: ferry.question };
 
@@ -24,8 +26,8 @@ export const NEWQ_SCRIPT = {
   answers: {
     [NEWQ_Q.aside]: wireOf(SESSION_RAW.aside),
     [NEWQ_Q.follow]: `{{underline p=4 "only payments that cross it change the total"}} Keep going on the same board. ${wireOf(SESSION_RAW.follow)}`,
-    [NEWQ_Q.q2]: `{{scroll p=7}} {{highlight p=7 "one full turn every 20 seconds"}} A different question. ${wireOf(dough.script)}`,
+    [NEWQ_Q.q2]: `{{scroll p=7}} Here, {{highlight p=7 "one full turn every 20 seconds"}} a different question. ${unstacked(dough.script)}`,
     [NEWQ_Q.again]: wireOf(SESSION_RAW.fresh),
-    [NEWQ_Q.q3]: `{{highlight p=5 "its income is what crosses that line"}} Another one. ${wireOf(ferry.script)}`,
+    [NEWQ_Q.q3]: `{{highlight p=5 "its income is what crosses that line"}} Another one. ${unstacked(ferry.script)}`,
   },
 };
