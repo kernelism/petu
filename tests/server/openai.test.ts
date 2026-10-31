@@ -762,9 +762,11 @@ describe('Lessons v3: two stages', () => {
     expect(tail.at(-2).text).toMatch(/^QUESTION/);
     expect(tail.at(-1).text).toBe(openerNote('{{circle p=2 mark=#d1}} It is the best line.'));
     expect(tail.at(-1).text).toMatch(/^ALREADY SPOKEN:.*Do not repeat.*\nOPENING: \{\{circle p=2 mark=#d1\}\} It is the best line\.$/s);
+    // p6.5: speaking comes first even after an opener, so the plan's writing time is covered.
+    expect(tail.at(-1).text).toMatch(/starts with spoken words, before the plan/);
     // it continues from where the opener stopped: never its claim again, a first sentence that adds something
     expect(tail.at(-1).text).toMatch(/never state it again, in any words/);
-    expect(tail.at(-1).text).toMatch(/first sentence must add something the opening did not say: why it holds \(the mechanism\), or the first step of it drawn/);
+    expect(tail.at(-1).text).toMatch(/one or two sentences that need no drawing and add something the opening did not say \(why it holds/);
     // The cached prefix is unchanged by the opener.
     expect(b.input.slice(0, 2)).toEqual((buildRequest(req({ context: multi }), cfg) as any).input.slice(0, 2));
   });
@@ -773,5 +775,25 @@ describe('Lessons v3: two stages', () => {
     const { f, calls } = fakeFetch([{ status: 200, text: JSON.stringify({ usage: { input_tokens: 3000, output_tokens: 0 } }) }]);
     expect(await prewarmScout(sreq, scfg, deps(f))).toMatchObject({ ok: true });
     expect(JSON.parse(String(calls[0].init.body)).input).toHaveLength(2);
+  });
+});
+
+describe('spoken (answers.jsonl svg.firstWordMs)', () => {
+  it('a piece with a word counts; tags and whitespace alone do not', async () => {
+    const { spoken } = await import('../../server/openai');
+    expect(spoken('{{svgboard h=700}}  ')).toBe(false);
+    expect(spoken('{{svg <g id="a"><text x="1" y="2">label</text></g>}} ')).toBe(false);
+    expect(spoken('{{highlight p=2 "x"}} The')).toBe(true);
+  });
+});
+
+describe('quietBeat (stage 2 quiet while a group is written)', () => {
+  it('beats only after the first word, after a quiet stretch, between words', async () => {
+    const { quietBeat } = await import('../../server/openai');
+    expect(quietBeat(NaN, 0, 5000, 'x. ', 1000)).toBe(false); // not spoken yet (the opener covers it)
+    expect(quietBeat(100, 4500, 5000, 'x. ', 1000)).toBe(false); // not quiet long enough
+    expect(quietBeat(100, 3000, 5000, 'contributes.', 1000)).toBe(true);
+    expect(quietBeat(100, 3000, 5000, '{{svgboard h=700}}', 1000)).toBe(true);
+    expect(quietBeat(100, 3000, 5000, 'slower', 1000)).toBe(false); // a word may go on ("slower" + "-changing")
   });
 });

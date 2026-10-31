@@ -18,8 +18,11 @@ import { variantParts } from './variants/index.ts';
  * app offers it as a collapsed "Test yourself" chip).
  * p6.3 (2026-10-30, pace): the narration names each part as it draws ("this line is …"), so the words
  * and the drawing land together (the drawing is paced to those words: src/playback/pace.ts).
+ * p6.5 (2026-10-31, founder: "the '…' is super bad UX"): the script's first characters are spoken words,
+ * never the plan or a group; after the scout's opening too (openerNote), so stage 2's first word follows
+ * the opening at once instead of after the plan and the first group (p6.4 is lane-legibility's).
  */
-export const PROMPT_VERSION = 'p6.3';
+export const PROMPT_VERSION = 'p6.5';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -178,7 +181,7 @@ Say less and let the board carry it. The PLAN's beats are your budget, in order,
 Never invent page content, labels or numbers. Point only with what the listings give you.`;
 
 const SVG_FORMAT = `THE FORMAT
-Start speaking at once: one or two sentences that need no drawing, the reason in plain words while you point at the page. They play while you write the plan.
+Start speaking at once: the script's first characters are spoken words, never the plan or a group. One or two short sentences that need no drawing: the reason in plain words while you point at the page (after an opening already spoken, its next sentences). They play while you write the plan.
 Then a short hidden plan (never shown or spoken), a few compact lines: the carrying case and its computed numbers, then the board's layout, decided before you draw anything:
 <plan>
 the case, its numbers, the order

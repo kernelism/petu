@@ -67,6 +67,8 @@ export type Deps = {
   /** PETU_ANTHROPIC_KEY (server/env.ts): used only when the answer model is a Claude model (server/anthropic.ts). */
   anthropicKey?: string;
   now?: () => number;
+  /** Stage 2's quiet-stream beat (HEARTBEAT_MS; 0: off). */
+  heartbeatMs?: number;
   /** Retry back-off; tests pass an immediate one. */
   sleep?: (ms: number) => Promise<void>;
   /** What the prompt cache likely holds: abort and crash estimates read it, usage feeds it. */
@@ -91,7 +93,7 @@ export type AnswerRecord = { at: string; phase: string; model: string; effort: s
   /** EXPERIMENT (boardfirst): the model's script before the board-first reveal, and what it declared and revealed. */
   raw?: string; boardFirst?: { declared: number; revealed: number; hidden: string[]; immediate: number; noId: number };
   /** The svg answer mode: the groups sent, the board opened, what the filter dropped, timings (ms from the request). */
-  svg?: { groups: string[]; board: unknown; notes: string[]; check?: string; firstGroupMs: number; ttftMs: number; totalMs: number } };
+  svg?: { groups: string[]; board: unknown; notes: string[]; check?: string; firstGroupMs: number; ttftMs: number; /** Stage 2's first spoken word (ms from the request; NaN → null when it spoke none). */ firstWordMs?: number; totalMs: number } };
 /**
  * `headersMs`: no response headers → the attempt is abandoned (retried once, before any text).
  * `idleMs`: a streamed answer that sends nothing for this long is ended (cut_off after text). Any
@@ -349,7 +351,7 @@ export function momentNotes(c: Pick<AskContext, 'aside' | 'about' | 'check'>): s
  * script picks up at the next sentence, as one continuous explanation.
  */
 export const openerNote = (opener: string) =>
-  `ALREADY SPOKEN: you have already said the opening below aloud, and its tags have been drawn. Your script continues straight on from its last word, as the next sentence of the same explanation. The student has its claim: never state it again, in any words, not even as a lead-in to your next point. Your first sentence must add something the opening did not say: why it holds (the mechanism), or the first step of it drawn. Do not repeat, rephrase or summarise the opening, do not answer the question again, and do not mark again what it marked. If the opening already says everything the question needs, output nothing.\nOPENING: ${opener}`;
+  `ALREADY SPOKEN: you have already said the opening below aloud, and its tags have been drawn. Your script continues straight on from its last word, as the next sentence of the same explanation. The student has its claim: never state it again, in any words, not even as a lead-in to your next point. Your script still starts with spoken words, before the plan: one or two sentences that need no drawing and add something the opening did not say (why it holds, in plain words, pointing at the page when that helps). They play while you write the plan; the drawing starts with the first beat after it. Do not repeat, rephrase or summarise the opening, do not answer the question again, and do not mark again what it marked. If the opening already says everything the question needs, output nothing.\nOPENING: ${opener}`;
 
 /** The scout's cache key: one per scout prompt version, shared by every document. */
 export const scoutCacheKey = () => `petu-scout-${SCOUT_VERSION}`;
@@ -600,15 +602,20 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const svgf = isSvgMode(cfg.promptVariant) ? new SvgBeatFilter(now0) : null;
   const filter = svgf ?? new ScriptFilter(), lint = new Lint();
   const read = newRead();
-  let outChars = 0, ttft = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
+  let outChars = 0, ttft = NaN, firstWord = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
   let sent = false, terminal = false, complete = false, idle = false, script = '', raw = '';
   // EXPERIMENT: a board-first script's declared elements are held until the narration names them.
   const bf = cfg.promptVariant === 'boardfirst' ? new BoardFirst() : null;
   const send = (s: string) => { if (bf) { raw += s; s = bf.push(s); } emitText(s); };
-  const emitText = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; script += s; if (Number.isNaN(ttft)) ttft = now() - t0; emit({ t: 'text', d: s }); };
+  let lastEmit = now();
+  const emitText = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; script += s; lastEmit = now(); if (Number.isNaN(ttft)) ttft = now() - t0; if (Number.isNaN(firstWord) && spoken(s)) firstWord = now() - t0; emit({ t: 'text', d: s }); };
+  // While a group (or the plan) is being written nothing streams; a beat of whitespace lets the client
+  // re-measure the narration it has left and release what it holds (see quietBeat).
+  const hb = d.heartbeatMs ?? HEARTBEAT_MS;
+  const beat = hb > 0 ? setInterval(() => { if (!signal.aborted && quietBeat(firstWord, lastEmit, now(), script, hb)) { lastEmit = now(); emit({ t: 'text', d: ' ' }); } }, Math.min(250, hb)) : null;
   // Every answer leaves a record, a failed one too (the failures are the ones worth reading).
   const record = (usd: number) => {
-    try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
+    try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), firstWordMs: Math.round(firstWord), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
   };
   try {
     let res: Response | null = null;
@@ -661,6 +668,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   } catch (e) {
     if (!signal.aborted) failed = { t: 'error', code: outChars ? 'cut_off' : 'network', message: scrub(String(e), ep.key).slice(0, 200), retryable: true };
   } finally {
+    if (beat) clearInterval(beat);
     signal.removeEventListener('abort', onAbort);
   }
   // Book it: real usage when we have it, else an estimate: the input this (doc, page) most likely
@@ -679,6 +687,25 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   emit({ t: 'done', usage, usd, estimated, spentUsd: s.totalUsd, capUsd: s.capUsd, ttftMs: Math.round(ttft), plan: filter.plan || undefined, ...(svgf?.check ? { check: svgf.check } : {}), lint: lint.notes.length ? lint.notes : undefined });
   if (failed) emit({ ...failed, code: 'cut_off', message: 'The answer was cut off.' });
 }
+
+/**
+ * Whether a piece of the cleaned script holds a spoken word (not only tags or whitespace): stage 2's
+ * first one is what ends the silence after the opener (answers.jsonl `svg.firstWordMs`; ttftMs is often
+ * the board tag or a group).
+ */
+export const spoken = (s: string): boolean => /[\p{L}\p{N}]/u.test(s.replace(/\{\{[\s\S]*?\}\}/g, ' '));
+
+/** Stage 2 quiet this long after it has spoken: one whitespace beat (quietBeat). */
+export const HEARTBEAT_MS = 1000;
+/**
+ * Whether stage 2 should send a whitespace beat now: it has spoken, nothing went out for `ms`, and
+ * what went out ends between words (never inside a word or a tag). The client's live gate holds a beat
+ * of narration until the next sentence starts and re-measures the narration left only when text
+ * arrives (src/gate/live.ts feed): without a beat, a finished sentence before the plan waited the whole
+ * time the first group was written (a 3.3 s silence after the opener, 2026-10-31 voice run).
+ */
+export const quietBeat = (firstWord: number, lastEmit: number, now: number, sent: string, ms: number): boolean =>
+  !Number.isNaN(firstWord) && now - lastEmit >= ms && /(?:[\s.!?;:,]|\}\})$/.test(sent);
 
 /** What reading one upstream stream produced (readUpstream). */
 export type UpstreamRead = { usage?: Usage; terminal: boolean; complete: boolean; idle: boolean; rawChars: number; failed?: string;

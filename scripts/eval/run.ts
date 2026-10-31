@@ -112,6 +112,8 @@ const CTX = process.env.PETU_CTX === 'new' ? '&ctx=new' : process.env.PETU_CTX =
 const URL_EXTRA = process.env.PETU_EVAL_URL_EXTRA ?? '';
 /** What the first word depends on: the scout's prompt version, model and effort, and the app's context options. */
 const SCOUT_ID = `${SCOUT_VERSION}/${process.env.PETU_SCOUT_MODEL?.trim() || SCOUT_MODEL}/${process.env.PETU_SCOUT_EFFORT?.trim() || 'none'}${CTX}${URL_EXTRA}`;
+/** PETU_EVAL_VOICE=marin|cedar: the answer is read aloud by that voice (word times then come from the audio). */
+const VOICE = /^(marin|cedar)$/.test(process.env.PETU_EVAL_VOICE ?? '') ? process.env.PETU_EVAL_VOICE! : '';
 const urlFor = (base: string, open: StoredQuestion['open'], nogen: boolean, gate = '') => `${base}/?src=${encodeURIComponent(open.src)}&page=${open.page}&eval${nogen ? '&nogen' : ''}${CTX}${gate}${URL_EXTRA}`;
 const sha = (b: Buffer | string) => createHash('sha1').update(b).digest('hex');
 
@@ -265,7 +267,7 @@ async function main(): Promise<void> {
   const judge = wantsJudge(args, cfg);
 
   const date = new Date().toISOString().slice(0, 10);
-  const tag = args.config + (args.ask ? '-ask' : '') + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '') + (args.gate ? `-gate${args.gate}` : '') + (args.gatefail ? '-gatefail' : '') + (args.rubric !== 'r3' ? `-${args.rubric}` : '') + (process.env.PETU_EVAL_TAG ? `-${process.env.PETU_EVAL_TAG}` : '');
+  const tag = args.config + (args.ask ? '-ask' : '') + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '') + (args.gate ? `-gate${args.gate}` : '') + (args.gatefail ? '-gatefail' : '') + (args.rubric !== 'r3' ? `-${args.rubric}` : '') + (VOICE ? `-voice` : '') + (process.env.PETU_EVAL_TAG ? `-${process.env.PETU_EVAL_TAG}` : '');
   let runId = args.finish ?? runIdOf(date, tag, PROMPT_VERSION, QSET);
   if (!args.finish) for (let i = 2; existsSync(join(RUNS, runId)); i++) runId = `${runIdOf(date, tag, PROMPT_VERSION, QSET)}-${i}`;
   const dir = join(RUNS, runId);
