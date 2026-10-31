@@ -200,6 +200,11 @@ describe('system prompt (svg, default)', () => {
     expect(s).toMatch(/Name each part in plain words as it appears, in the sentence it draws across/);
   });
 
+  it('p6.5 (no dead air): the script starts with spoken words, before the plan, after an opening too', () => {
+    expect(s).toMatch(/first characters are spoken words, never the plan or a group/);
+    expect(s).toMatch(/after an opening already spoken, its next sentences/);
+  });
+
   it('states the teacher-at-a-whiteboard brief and the streamed beat format', () => {
     for (const p of [/great teacher at a whiteboard/, /Draw the mechanism, not names/, /ONE concrete case/, /real numbers you compute/, /reads on its own/, /beats are your budget/,
       /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 1000 H"/, /regions:/, /groups:/, /<g id=/, /drawing first/, /draws across its sentences/, /draws on the word that names it/, /Start speaking at once/, /data-fn=/, /data-val=/, /data-at=/, /data-const=/, /\{\{tween /, /data-ghost/, /data-trace/, /BUDGET line/, /Never write on the board what you say/,

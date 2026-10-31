@@ -178,7 +178,7 @@ Say less and let the board carry it. The PLAN's beats are your budget, in order,
 Never invent page content, labels or numbers. Point only with what the listings give you.`;
 
 const SVG_FORMAT = `THE FORMAT
-Start speaking at once: one or two sentences that need no drawing, the reason in plain words while you point at the page. They play while you write the plan.
+Start speaking at once: the script's first characters are spoken words, never the plan or a group. One or two short sentences that need no drawing: the reason in plain words while you point at the page (after an opening already spoken, its next sentences). They play while you write the plan.
 Then a short hidden plan (never shown or spoken), a few compact lines: the carrying case and its computed numbers, then the board's layout, decided before you draw anything:
 <plan>
 the case, its numbers, the order

@@ -762,9 +762,11 @@ describe('Lessons v3: two stages', () => {
     expect(tail.at(-2).text).toMatch(/^QUESTION/);
     expect(tail.at(-1).text).toBe(openerNote('{{circle p=2 mark=#d1}} It is the best line.'));
     expect(tail.at(-1).text).toMatch(/^ALREADY SPOKEN:.*Do not repeat.*\nOPENING: \{\{circle p=2 mark=#d1\}\} It is the best line\.$/s);
+    // p6.5: speaking comes first even after an opener, so the plan's writing time is covered.
+    expect(tail.at(-1).text).toMatch(/starts with spoken words, before the plan/);
     // it continues from where the opener stopped: never its claim again, a first sentence that adds something
     expect(tail.at(-1).text).toMatch(/never state it again, in any words/);
-    expect(tail.at(-1).text).toMatch(/first sentence must add something the opening did not say: why it holds \(the mechanism\), or the first step of it drawn/);
+    expect(tail.at(-1).text).toMatch(/one or two sentences that need no drawing and add something the opening did not say \(why it holds/);
     // The cached prefix is unchanged by the opener.
     expect(b.input.slice(0, 2)).toEqual((buildRequest(req({ context: multi }), cfg) as any).input.slice(0, 2));
   });
