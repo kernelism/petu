@@ -82,6 +82,10 @@ type Group = {
   /** A walking answer: the page its live drawing explains (the last stretch). */
   livePage?: number;
 };
+type Head = { el: HTMLElement; h: number; aside: boolean; collapsed: boolean };
+type MidHead = { sec: Section; el: HTMLElement; h: number; from: number; y: number | null; /** Units its answer's groups were moved down to clear it. */ shift?: number };
+/** A board taken off the desk (a saved question): its own nodes and the state that lays them out. Opaque to callers. */
+export type BoardSnapshot = { readonly sections: Section[]; readonly heads: Map<Section, Head>; readonly midHeads: MidHead[]; readonly groups: Group[] };
 /** One svg group of the playing answer, in draw order, and the page point it explains (its first page mark). */
 type WalkStep = { sec: Section; r: SRect; el: Element | null; anchor: Group['anchor'] | null };
 /** Air (section units) above and below a stretch of a walking board. */
@@ -157,14 +161,14 @@ export class Desk implements DeskApi {
    * question header, or an aside's title row whose element also frames the inset). A collapsed aside
    * shows only its head (the marker); its section takes no height until it is reopened.
    */
-  private heads = new Map<Section, { el: HTMLElement; h: number; aside: boolean; collapsed: boolean }>();
+  private heads = new Map<Section, Head>();
   private nextHead: { el: HTMLElement; h: number; aside: boolean } | null = null;
   /**
    * Heads inside a section: a follow-up that draws on into an svg board (`BOARD extend`) gets its
    * question header at the start of its new groups. `from`: the old content's bottom (units), the head
    * never rises above it; `y`: the top of its first new group (units), null until that group is known.
    */
-  private midHeads: { sec: Section; el: HTMLElement; h: number; from: number; y: number | null; /** Units its answer's groups were moved down to clear it. */ shift?: number }[] = [];
+  private midHeads: MidHead[] = [];
   /** An aside is playing: its sections are tinted, the rest of the board steps back, nothing is cropped. */
   private asideOpen = false;
   /** Sections of the paused answer cropped to their ink while an aside plays (restored when it ends). */
@@ -1037,6 +1041,67 @@ export class Desk implements DeskApi {
     void wait(GLIDE_MS).then(() => { gone.forEach((s) => s.el.remove()); if (!this.open) { this.owner.write(this.scroller, 0); this.scroller.scrollLeft = 0; this.zoomK = 1; this.syncZoomControl(); } });
     try { await this.host.setSplit('none', GLIDE_MS); }
     finally { this.gliding = false; this.heading = null; this.position(); }
+  }
+
+  /**
+   * A new question (the ask bar's +, or a saved question picked in the session list): everything on
+   * the board leaves it, kept as it is (its nodes, folded cards, collapsed asides, scene cameras), and
+   * comes back with `putBoard`. A group still playing docks first, as at its answer's end. The board
+   * is then empty: the lane stays (the sheet's margin); the split board slides out, as `hide`, unless
+   * another board is about to come back (`keepOpen`: one glide less). Null when the board holds nothing.
+   */
+  takeBoard(keepOpen = false): BoardSnapshot | null {
+    if (!this.sections.length && !this.groups.length) return null;
+    if (this.liveGroup?.live) this.dock(this.liveGroup, false);
+    this.epoch++;
+    this.cancel();
+    this.dropWires(0);
+    const snap: BoardSnapshot = { sections: this.sections, heads: this.heads, midHeads: this.midHeads, groups: this.groups };
+    for (const g of this.groups) { for (const p of g.parts ?? []) p.remove(); g.el.remove(); g.leader.remove(); }
+    for (const s of this.sections) { s.el.remove(); this.heads.get(s)?.el.remove(); }
+    for (const m of this.midHeads) m.el.remove();
+    this.sections = [];
+    this.heads = new Map();
+    this.midHeads = [];
+    this.groups = [];
+    this.liveGroup = null;
+    this.held.clear();
+    this.ids.clear();
+    this.nextHead = null;
+    this.replacing = null;
+    this.walk = [];
+    this.walkFrom = 0;
+    this.inked = [];
+    this.last = null;
+    this.edge = null;
+    this.penLane = false;
+    if (this.lane()) { this.open = false; this.split = 'none'; this.position(); return snap; }
+    if (this.open && !keepOpen) void this.hide();
+    else this.position();
+    return snap;
+  }
+
+  /**
+   * A saved board comes back as it was left (`takeBoard` the one up first). Its nodes are laid out for
+   * the window as it is now: the lane places each group at its page anchor, the split board opens.
+   */
+  async putBoard(snap: BoardSnapshot): Promise<void> {
+    this.epoch++;
+    this.sections = snap.sections;
+    this.heads = snap.heads;
+    this.midHeads = snap.midHeads;
+    this.groups = snap.groups;
+    // Saved in one layout, it may come back in the other (the window was resized meanwhile): the
+    // inline placement of either is cleared and position() sets this layout's.
+    const clear = (e: HTMLElement) => { for (const k of ['marginLeft', 'left', 'top', 'width', 'height'] as const) e.style[k] = ''; };
+    for (const s of this.sections) clear(s.el);
+    for (const h of this.heads.values()) clear(h.el);
+    for (const g of this.groups) { this.content.insertBefore(g.el, this.leaders); this.leaders.appendChild(g.leader); }
+    if (this.lane()) { this.open = true; this.split = 'normal'; this.position(); return; }
+    // The split board opens (or changes its ratio) for it: wide while a size=l section is on it.
+    const want: Split = this.sections.some((s) => s.size === 'l') ? 'wide' : 'normal';
+    if (!this.open || want !== this.split) await this.openBoard(want);
+    else this.position();
   }
 
   // ---------------------------------------------------------------------------------------------

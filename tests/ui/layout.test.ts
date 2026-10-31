@@ -1,6 +1,6 @@
 // tests/ui/layout.test.ts
 import { describe, it, expect } from 'vitest';
-import { dockColumn, dockPlacement, dockReserve, DOCK_MAX } from '../../src/ui/layout';
+import { dockColumn, dockPlacement, dockReserve, DOCK_MAX, newQuestionReserve } from '../../src/ui/layout';
 import { band, inView, frameTop, setSafeBottom, safeBottom, SAFE_BOTTOM, SAFE_TOP } from '../../src/desk/layout';
 import type { DeskState } from '../../src/desk/types';
 
@@ -26,6 +26,20 @@ describe('dockPlacement', () => {
     expect(b).toEqual(a);
     expect(b.x + b.w / 2).toBeLessThanOrEqual(laneCol.x);
     expect(dockColumn(1440, inLane)).toEqual(page);
+  });
+  it('keeps room on its left for the ask bar\'s + : unchanged where there is room, else it gives up its left side', () => {
+    const R = newQuestionReserve(1440);
+    expect(R).toBe(52);
+    expect(dockPlacement(1440, c(290, 860), undefined, 0, R)).toEqual({ x: 720, w: DOCK_MAX });
+    // A slide column from the window's margin: the dock's right edge stays under it, its left makes room.
+    const d = dockPlacement(1000, c(25, 462), undefined, 0, R);
+    expect(d.x + d.w / 2).toBeCloseTo(25 + 462, 5);
+    expect(d.x - d.w / 2).toBeCloseTo(25 + R, 5);
+    // The lane (layout C), the pen in the lane: the dock stays under the page column (QA M4), and the + keeps its room inside the window.
+    const lane: DeskState = { split: 'normal', stacked: false, following: true, sketching: true, lane: true, column: { x: 848, w: 544 }, page: { x: 48, w: 800 } };
+    const l = dockPlacement(1440, lane, undefined, 0, R);
+    expect(l.x - l.w / 2 - R).toBeGreaterThanOrEqual(16);
+    expect(l.x + l.w / 2).toBeLessThanOrEqual(848);
   });
 });
 
