@@ -70,6 +70,17 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   showRef.current = showTranscript;
   // While an answer plays its caption sits on the bar: the panel opens above the caption, not over it.
   const formRef = useRef<HTMLFormElement>(null);
+  /**
+   * A question sent: focus leaves the bar (to the page), so the answer's shortcuts (Space, R, < >, Z,
+   * M, D, S, ⌘±) act at once and none of their characters lands in the field as the next question.
+   * / or a click brings the field back.
+   */
+  const release = () => {
+    const a = document.activeElement;
+    if (a instanceof HTMLElement && formRef.current?.contains(a)) a.blur();
+  };
+  const releaseRef = useRef(release);
+  releaseRef.current = release;
   const [capH, setCapH] = useState(0);
   useLayoutEffect(() => {
     if (!showTranscript) return;
@@ -121,7 +132,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
         // An error is never a send: what was heard goes back in the field (Enter sends it), the note
         // in the placeholder (empty field) or the field's title.
         if (error) { setMicNote(error); setText(t); setTyping(t); return; }
-        if (t.trim()) { typingRef.current = false; onAskRef.current(t.trim()); }
+        if (t.trim()) { typingRef.current = false; onAskRef.current(t.trim()); releaseRef.current(); }
         setText('');
         setTyping('');
       },
@@ -173,7 +184,8 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
     let pressed: { at: number; started: boolean } | null = null;
     const onDown = (e: globalThis.KeyboardEvent) => {
       if (e.defaultPrevented) return;
-      if (isSpeakKey(e)) {
+      // A typed draft (not a dictation's own words) is never replaced by V: it is a letter of the question.
+      if (isSpeakKey(e) && (dictRef.current || !typingRef.current)) {
         e.preventDefault();
         if (e.repeat || pressed) return;
         if (!dictationRef.current) { if (!blockedRef.current) setMicNote('Voice questions are not set up here.'); return; }
@@ -223,12 +235,13 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
 
   const submit = () => {
     const q = text.trim();
-    if (!q && mode === 'aside') { onResume?.(); return; }
+    if (!q && mode === 'aside') { onResume?.(); release(); return; }
     if (!q || blocked) return;
     dropMic();
     typingRef.current = false;
     onAsk(q);
     setText('');
+    release();
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -256,7 +269,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   return (
     <form
       ref={formRef}
-      className={`askbar${blocked ? ' is-blocked' : ''}${tall ? ' is-tall' : ''}`}
+      className={`askbar${blocked ? ' is-blocked' : ''}${tall ? ' is-tall' : ''}${hasText ? ' has-draft' : ''}`}
       onSubmit={(e) => { e.preventDefault(); submit(); }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); inputRef.current?.focus(); } }}
       onFocus={() => { if (!focused) onIntent?.(); setFocused(true); }}

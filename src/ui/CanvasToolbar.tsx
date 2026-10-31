@@ -22,10 +22,12 @@ const markHintSeen = () => { try { localStorage.setItem(HINT_KEY, '1'); } catch 
 
 /**
  * Single-key shortcuts act while drawing, or while nothing in particular has focus (the body: how the
- * app opens) or the page (stage), the board or this toolbar has it. Never with a popover or card open.
+ * app opens) or the page (stage), the board or this toolbar has it. Never with a popover or card open,
+ * or while the ask bar holds a draft.
  */
 export function keysActive(canvasOn: boolean, active: Element | null = document.activeElement, doc: ParentNode = document): boolean {
-  if (doc.querySelector('.popover, .keys')) return false;
+  // A draft held in the ask bar (`.askbar.has-draft`) keeps its keys too: nothing acts while a question is being written.
+  if (doc.querySelector('.popover, .keys, .askbar.has-draft')) return false;
   if (canvasOn) return true;
   if (!active || active === document.body || active === document.documentElement) return true;
   return !!active.closest('.stage, .desk-stage, .toolbar');

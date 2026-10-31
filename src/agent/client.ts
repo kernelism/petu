@@ -26,7 +26,7 @@ export type AskHandlers = {
  * POST /api/ask → narration chunks for AnswerSession.
  * - An error before any text throws AskError (the session's error state).
  * - An error after text, a `cut_off`, or a stream that drops after text without `done`, ends
- *   normally and calls `onCutOff`: what arrived plays out.
+ *   normally and calls `onCutOff`: what arrived plays out. A drop after `done` is not a cut-off.
  * - Aborting `signal` stops reading and returns quietly.
  */
 export async function* askStream(req: AskRequest, signal: AbortSignal, h: AskHandlers = {}, f: typeof fetch = fetch): AsyncGenerator<string> {
@@ -70,6 +70,8 @@ export async function* askStream(req: AskRequest, signal: AbortSignal, h: AskHan
       let chunk: ReadableStreamReadResult<Uint8Array>;
       try { chunk = await reader.read(); } catch {
         if (signal.aborted) return;
+        // The connection dropping after `done` loses nothing: the whole answer arrived (QA B1).
+        if (done) return;
         if (spoke) { h.onCutOff?.('The answer was cut off.'); return; }
         throw new AskError('network', "Couldn't reach the tutor.", true);
       }

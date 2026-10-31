@@ -15,7 +15,7 @@ import type { PartsView } from './ui/PartsBar';
 import { barMode, closingQuestion } from './ui/barMode';
 import { answerHead, asideHead, clockOf, trailTitle, type TrailHead } from './ui/trail';
 import { aboutContext, asideContext, bboxOf, isLoop, pointedLabel, type Pointed } from './agent/moment';
-import { playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
+import { isTyping, playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
 import { PacedClock, type NarrationClock } from './playback/clock';
 import { VoiceClock, fetchVoice, warmVoice, webAudioOut } from './playback/voiceClock';
 import { SwitchClock } from './playback/switchClock';
@@ -42,7 +42,7 @@ import { dictationAvailable } from './agent/dictation';
 import { FollowPill } from './ui/FollowPill';
 import { OverviewPill } from './ui/OverviewPill';
 import { SessionDrawer, type SessionRow } from './ui/SessionDrawer';
-import { dockPlacement, dockReserve, windowColumn } from './ui/layout';
+import { dockColumn, dockPlacement, dockReserve, windowColumn } from './ui/layout';
 import { DOCK_GAP, margin, SAFE_TOP, setSafeBottom } from './desk/layout';
 import { takeSentences } from './ui/text';
 import { pauseCueIn } from './ui/captionWindow';
@@ -1542,9 +1542,7 @@ export default function App() {
   useEffect(() => { document.documentElement.classList.toggle('petu-past-on', pastOn); }, [pastOn]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      const typing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-      if (typing || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || document.querySelector('.popover')) return;
+      if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || document.querySelector('.popover')) return;
       const k = e.key.toLowerCase();
       if (k === 's') { e.preventDefault(); setSessionOpen((o) => !o); }
       else if (k === 'm' && !e.shiftKey) {
@@ -1651,7 +1649,7 @@ export default function App() {
   const pillEl = typeof document !== 'undefined' ? document.querySelector('.overview-pill') : null;
   const pillReserve = ovView.z !== 1 ? (pillEl ? Math.max(0, viewportW - pillEl.getBoundingClientRect().left) : 260) + 12 : 0;
   const dock = dockPlacement(viewportW, desk, ovView, pillReserve);
-  const dockCol = desk ? windowColumn(desk.column, viewportW, ovView) : null;
+  const dockCol = desk ? windowColumn(dockColumn(viewportW, desk), viewportW, ovView) : null;
   /** The shortcuts card sits just above the dock (its top edge, from the window's bottom). */
   const dockBottom = dockRef.current ? Math.max(0, window.innerHeight - dockRef.current.getBoundingClientRect().top) : 96;
   // The playback row shows once an answer speaks (the question line holds its place until then).
@@ -1687,8 +1685,8 @@ export default function App() {
         className={`stage${desk?.sketching && desk.following && busy ? ' is-sketching' : ''}`}
         style={{
           '--glide': `${GLIDE_MS}ms`, '--view-top': `${SAFE_TOP}px`, '--view-bottom': `${viewBottom}px`,
-          // Layout C: with the pen on the page, the page column ends its reading band above the dock (app.css).
-          ...(desk?.lane && desk.page && Math.abs(desk.column.x - desk.page.x) < 1 ? { '--dock-col-x': `${dockCol!.x}px`, '--dock-col-w': `${dockCol!.w}px` } : {}),
+          // Layout C: the dock sits under the page column, which ends its reading band above it (app.css).
+          ...(desk?.lane && desk.page ? { '--dock-col-x': `${dockCol!.x}px`, '--dock-col-w': `${dockCol!.w}px` } : {}),
         } as CSSProperties}
       >
         <PdfViewer
