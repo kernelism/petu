@@ -25,10 +25,14 @@ type Seg = { x1: number; y1: number; x2: number; y2: number };
 export type TypeState = { scale: TypeScale; axes: Seg[]; ticks: Seg[]; titled: boolean; room?: number; /** The legibility floor in user units (render.ts): a model's smaller text counts as this. */ floor?: number; /** The hard floor (units) a text may go to on its own, to clear a collision. */ minFloor?: number; drawn?: { texts: TextBox[]; segs: GSeg[] } };
 
 export const SMALL_MIN_PX = 11;
-/** No board text is ever set under this on screen (a model's tiny text is raised to it first). */
-export const LEGIBLE_PX = 10;
-/** A text in a row too tight for LEGIBLE_PX may go this small (and no smaller than the model wrote it). */
-export const MIN_PX = 8;
+/**
+ * No board text is ever set under this on screen (a model's smaller text is raised to it first). It was
+ * 10, with tight rows going to 8: dense lane boards read at 8–10 px (founder 2026-10-31). A label the
+ * raise leaves no room moves instead (settle.ts); the model's canvas (p6.4) gives its labels this room.
+ */
+export const LEGIBLE_PX = 12;
+/** The last resort a label with no room anywhere near may go to (settle.ts): the floor itself. */
+export const MIN_PX = 12;
 export const TITLE_K = 1.25;
 export const SMALL_K = 0.82;
 
