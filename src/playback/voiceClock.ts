@@ -26,6 +26,15 @@ const LONG_PIECE = 24;
 const FIRST_PIECE = 5;
 /** A piece placed within this of the previous one's end follows it directly on the audio clock. */
 const SEAM_MS = 40;
+/**
+ * A piece whose audio is not in this long after it was due to start plays silent, at the paced timing:
+ * the captions and the drawing go on and the voice returns with the next piece. Founder 2026-10-31:
+ * the app "just pauses with no context" for up to 10 s; voice.jsonl: first audio p50 2.0 s, p90 5.3 s,
+ * max 8.3 s per piece, each waited for in full.
+ */
+export const LATE_MS = 700;
+/** The first piece of an answer gets longer: nothing plays before it, and the captions already show its words. */
+export const FIRST_LATE_MS = 2500;
 /** PCM from the server: 24 kHz, 16-bit signed little-endian, mono. */
 export const SAMPLE_RATE = 24000;
 
@@ -44,6 +53,8 @@ type Piece = {
   offsets: number[];
   durMs: number;
   placed: boolean;
+  /** When it was requested (clock time): the first piece is due from then. */
+  askedAt: number;
   /** When its audio ends, once placed (a truncate's new end). */
   endAt?: number;
   handle?: { stop(): void };
@@ -56,6 +67,8 @@ export class VoiceClock implements NarrationClock {
   /** First word not yet in a piece. */
   private open = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** Fires when the next piece's audio is late (LATE_MS past its due start): it plays silent. */
+  private lateTimer: ReturnType<typeof setTimeout> | null = null;
   private ctl = new AbortController();
   /** The next piece to place, and when the timeline may resume (a retime's start or the previous piece's end). */
   private nextPiece = 0;
@@ -172,6 +185,8 @@ export class VoiceClock implements NarrationClock {
     this.ctl.abort();
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.lateTimer) clearTimeout(this.lateTimer);
+    this.lateTimer = null;
   }
 
   // -----------------------------------------------------------------------------------------------
@@ -185,7 +200,7 @@ export class VoiceClock implements NarrationClock {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     if (this.open >= this.words.length || this.ctl.signal.aborted) return;
-    const p: Piece = { from: this.open, to: this.words.length, state: 'loading', offsets: [], durMs: 0, placed: false };
+    const p: Piece = { from: this.open, to: this.words.length, state: 'loading', offsets: [], durMs: 0, placed: false, askedAt: this.clockNow() };
     this.open = p.to;
     this.pieces.push(p);
     const text = this.words.slice(p.from, p.to).join(' ');
@@ -197,7 +212,7 @@ export class VoiceClock implements NarrationClock {
   }
 
   private loaded(p: Piece, pcm: Int16Array | null, speed: number) {
-    if (this.ctl.signal.aborted) return;
+    if (this.ctl.signal.aborted || p.placed) return; // placed silent already: its audio came too late
     const ws = this.words.slice(p.from, p.to);
     const est = ws.map((w) => this.paced.durationMs(w));
     const total = est.reduce((a, b) => a + b, 0) || 1;
@@ -217,15 +232,26 @@ export class VoiceClock implements NarrationClock {
   /** Places every piece that can play now: loaded, and all before it placed. */
   private place() {
     if (this.halted) return;
+    if (this.lateTimer) { clearTimeout(this.lateTimer); this.lateTimer = null; }
     while (this.nextPiece < this.pieces.length) {
       const p = this.pieces[this.nextPiece];
-      if (p.state === 'loading') return;
       const startWord = this.resumeWord ?? p.from;
-      const skip = p.offsets[startWord - p.from];
       const restMs = this.retimed || startWord !== p.from ? 0 : this.rests.get(p.from) ?? 0;
       const r = this.rate();
       const rest = restMs > 0 ? restMs / (Number.isFinite(r) && r > 0 ? r : 1) : 0;
-      const at = Math.max(this.clockNow(), this.resumeAt, this.end + rest);
+      const first = this.nextPiece === 0 && !Number.isFinite(this.end) && !Number.isFinite(this.resumeAt);
+      const due = first ? p.askedAt : Math.max(this.resumeAt, this.end + rest, p.askedAt);
+      if (p.state === 'loading') {
+        const late = due + (first ? FIRST_LATE_MS : LATE_MS) - this.clockNow();
+        if (late > 0) { this.lateTimer = setTimeout(() => { this.lateTimer = null; this.place(); }, late); return; }
+        // Late: this piece plays silent at the paced timing; its audio, if it ever comes, is dropped.
+        const ws = this.words.slice(p.from, p.to), est = ws.map((w) => this.paced.durationMs(w));
+        const total = est.reduce((a, b) => a + b, 0) || 1, speed = Number.isFinite(r) && r > 0 ? r : 1;
+        p.state = 'silent'; p.durMs = total / speed;
+        let t = 0; p.offsets = est.map((d) => { const o = t; t += (d / total) * p.durMs; return o; });
+      }
+      const skip = p.offsets[startWord - p.from];
+      const at = Math.max(this.clockNow(), due);
       if (p.pcm) p.handle = this.out.play(p.pcm, at, skip);
       for (let i = startWord; i < p.to; i++) this.starts[i] = at + p.offsets[i - p.from] - skip;
       p.placed = true;
