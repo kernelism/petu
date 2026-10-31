@@ -4,7 +4,7 @@ import type { EvalResult, RegistryRow, SerialTiming } from '../../src/agent/eval
 import type { ScriptParse } from './scriptTags.ts';
 import type { GateEvent, RepairEvent } from '../../src/gate/events.ts';
 import { PacedClock } from '../../src/playback/clock.ts';
-import { DEFAULTS } from '../../src/settings/settings.ts';
+import { BASE_WPM } from '../../src/settings/settings.ts';
 
 type Pt = { x: number; y: number };
 type Rect = { x: number; y: number; w: number; h: number };
@@ -60,7 +60,7 @@ export type GateMetrics = {
 export const HOLD_MS = 1000;
 
 /** The narration's own pacing: a word's spoken length with its clause/sentence pause (the app's default clock). */
-const paced = new PacedClock(() => DEFAULTS.wpm);
+const paced = new PacedClock(() => BASE_WPM);
 /**
  * Silences longer than HOLD_MS between spoken words: the time from a word's start to the next word's,
  * minus the word's own paced length (a five-syllable word before a full stop takes 1.1 s to say; that

@@ -1,11 +1,21 @@
 import { useSyncExternalStore } from 'react';
 import type { InkStyle } from '../ink/agent/marks';
+import { ANSWER_QUALITIES, type AnswerQuality } from '../agent/protocol';
 
 /**
- * shortcuts: single-key drawing shortcuts (D, P, H, E). speed: playback speed, one of SPEEDS (the wpm is unchanged).
- * voice: the narration read aloud by that voice (server/voice.ts), or 'off' (captions only, paced by wpm).
+ * What the engine reads. The student chooses `highlight`, `speed`, `voice` and `quality` (the
+ * Settings popover); those four are stored. `inkStyle` and `inkColor` are fixed for the student
+ * (one drawing style; violet ink, which the visual grammar enforces): they stay on the object only
+ * because the renderers read them, and the dev `?style=` review aid and the gate's shadow pass set
+ * `inkStyle` for one run. Neither is ever stored.
+ * speed: playback speed, one of SPEEDS (the narration's rate is BASE_WPM × speed).
+ * voice: the narration read aloud by that voice (server/voice.ts), or 'off' (captions only).
+ * quality: 'standard' (the server's default model) or 'best' (server/quality.ts maps it; the browser never names a model).
  */
-export type Settings = { inkStyle: InkStyle; inkColor: string; highlight: HighlightStyle; wpm: number; shortcuts: boolean; speed: number; voice: VoiceSetting };
+export type Settings = { inkStyle: InkStyle; inkColor: string; highlight: HighlightStyle; speed: number; voice: VoiceSetting; quality: AnswerQuality };
+/** The student's choices: the stored part of Settings. */
+type Stored = Pick<Settings, 'highlight' | 'speed' | 'voice' | 'quality'>;
+const STORED: (keyof Stored)[] = ['highlight', 'speed', 'voice', 'quality'];
 /** The tutor's page highlight: a light violet wash (default) or the yellow marker. */
 export type HighlightStyle = 'violet' | 'yellow';
 /**
@@ -21,8 +31,11 @@ export const HIGHLIGHT_STYLES = Object.keys(HIGHLIGHTS) as HighlightStyle[];
 /** The voices offered (OpenAI's two recommended ones first); 'off' = silent captions. */
 export const VOICE_OPTIONS = ['off', 'marin', 'cedar'] as const;
 export type VoiceSetting = (typeof VOICE_OPTIONS)[number];
+export { ANSWER_QUALITIES, type AnswerQuality };
 
-/** Playback speeds offered in the answer's controls (< and > step through them). */
+/** The narration's words per minute at 1× (the clock's base rate; speed multiplies it). */
+export const BASE_WPM = 170;
+/** Playback speeds: the Settings control and the answer's own controls (< and > step through them). */
 export const SPEEDS = [0.75, 1, 1.25, 1.5] as const;
 /** The speed one step slower (dir -1) or faster (+1) than `s`, clamped to SPEEDS. */
 export function stepSpeed(s: number, dir: -1 | 1): number {
@@ -30,39 +43,52 @@ export function stepSpeed(s: number, dir: -1 | 1): number {
   if (i < 0) i = SPEEDS.indexOf(1);
   return SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, i + dir))];
 }
+/** The step nearest `x` (ties go to the slower one). */
+export const nearestSpeed = (x: number): number =>
+  SPEEDS.reduce((best, v) => (Math.abs(v - x) < Math.abs(best - x) - 1e-9 ? v : best), SPEEDS[0] as number);
 /**
- * The default ink is violet: lecture slides use red, orange, yellow, green and blue for their own
- * content (titles, boxes, figures), and violet sits in the widest gap of that wheel, so the tutor's
- * ink never reads as part of the slide. 5.2:1 on a white page, 4.2:1 on the desk.
+ * The ink is violet: lecture slides use red, orange, yellow, green and blue for their own content
+ * (titles, boxes, figures), and violet sits in the widest gap of that wheel, so the tutor's ink never
+ * reads as part of the slide. 5.2:1 on a white page, 4.2:1 on the desk.
  */
-export const DEFAULTS: Settings = { inkStyle: 'live', inkColor: '#8E4EC6', highlight: 'violet', wpm: 170, shortcuts: true, speed: 1, voice: 'off' };
-export const INK_COLORS = ['#8E4EC6', '#F2600C', '#E5484D', '#0A84FF', '#30A46C'];
+export const INK_COLOR = '#8E4EC6';
+export const DEFAULTS: Settings = { inkStyle: 'live', inkColor: INK_COLOR, highlight: 'violet', speed: 1, voice: 'off', quality: 'standard' };
 
 const KEY = 'pdf-tutor.settings';
-/** v2: the default ink moved from orange to violet. */
-const VERSION = 2;
-/** Before v2 every save wrote the whole state, so a stored orange is the old default, not a choice. */
-const OLD_DEFAULT_INK = '#F2600C';
+/**
+ * v2: the default ink moved from orange to violet. v3: the drawing style, ink colour, reading-speed
+ * slider (wpm) and shortcuts toggle are gone; a stored wpm folds into the speed step.
+ */
+const VERSION = 3;
 let state: Settings = load();
 const subs = new Set<() => void>();
 
+/** Reads a stored blob (any version) into the student's choices; anything unknown falls back to its default. */
+export function migrate(raw: unknown): Stored {
+  const saved = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const out: Stored = { highlight: DEFAULTS.highlight, speed: DEFAULTS.speed, voice: DEFAULTS.voice, quality: DEFAULTS.quality };
+  // highlightColor (≤ v2) was always written with the whole state, so a stored yellow was the old
+  // default, not a choice: every legacy value lands on the default (only `highlight` is read).
+  if (HIGHLIGHT_STYLES.includes(saved.highlight as HighlightStyle)) out.highlight = saved.highlight as HighlightStyle;
+  if (VOICE_OPTIONS.includes(saved.voice as VoiceSetting)) out.voice = saved.voice as VoiceSetting;
+  if (ANSWER_QUALITIES.includes(saved.quality as AnswerQuality)) out.quality = saved.quality as AnswerQuality;
+  const speed = SPEEDS.some((v) => v === saved.speed) ? (saved.speed as number) : 1;
+  // ≤ v2: the narration played at wpm × speed; keep that rate, on the nearest step.
+  const wpm = typeof saved.wpm === 'number' && Number.isFinite(saved.wpm) && saved.wpm > 0 ? saved.wpm : BASE_WPM;
+  out.speed = nearestSpeed((wpm / BASE_WPM) * speed);
+  return out;
+}
+
 function load(): Settings {
   try {
-    // highlightColor (≤ v2) was always written with the whole state, so a stored yellow is the old
-    // default, not a choice; the other old swatches are gone. Every legacy value lands on the default.
-    const { v, highlightColor: _legacy, ...saved } = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings> & { v?: number; highlightColor?: string };
-    if ((v ?? 1) < 2 && saved.inkColor?.toUpperCase() === OLD_DEFAULT_INK) delete saved.inkColor;
-    const out = { ...DEFAULTS, ...saved };
-    if (!SPEEDS.some((v) => v === out.speed)) out.speed = 1;
-    if (!HIGHLIGHT_STYLES.includes(out.highlight)) out.highlight = DEFAULTS.highlight;
-    if (!VOICE_OPTIONS.includes(out.voice)) out.voice = DEFAULTS.voice;
-    return out;
+    return { ...DEFAULTS, ...migrate(JSON.parse(localStorage.getItem(KEY) ?? '{}')) };
   } catch { return DEFAULTS; }
 }
 export const getSettings = () => state;
 export function setSettings(patch: Partial<Settings>) {
   state = { ...state, ...patch };
-  try { localStorage.setItem(KEY, JSON.stringify({ ...state, v: VERSION })); } catch { /* private mode */ }
+  const stored = Object.fromEntries(STORED.map((k) => [k, state[k]]));
+  try { localStorage.setItem(KEY, JSON.stringify({ ...stored, v: VERSION })); } catch { /* private mode */ }
   subs.forEach((f) => f());
 }
 export const useSettings = () => useSyncExternalStore((f) => (subs.add(f), () => subs.delete(f)), getSettings);

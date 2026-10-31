@@ -20,7 +20,7 @@ dock, follow mode and settings. All geometry derives from the window, never the 
 | `src/ui/AskBar.tsx` + `barMode.ts` | One bar whose meaning follows the moment (`barMode`: before "Ask about this PDF…", during an answer "Ask about this…" (typing pauses it; Enter asks an aside; stop sits in the parts row once it shows), after "Follow up…", after an answer that closed on a question (`closingQuestion`: its last sentence ends in ?) "Your answer…" (the reply goes out with `check`). The "about: … · p.N" chip (point-to-ask) sits before the field. `/` focuses; Esc clears typed text, then closes an aside, then stops; intent → prewarm; suggestions; cap line; transcript. |
 | `src/ui/Caption.tsx`, `captionWindow.ts`, `text.ts` | Sentence-windowed caption (≤ 2 lines, splits at clause marks), one wait cue: a faint "…" before the first word, and after the last word once a mid-answer pause passes 1.5 s (`PAUSE_CUE_MS` in captionWindow.ts; no status text), error + Retry; `primes` (x' → x′), `takeSentences`. |
 | `src/ui/TopBar.tsx` | File name, page indicator (ticks when the agent moves pages), open file, settings button. |
-| `src/ui/SettingsPopover.tsx` + `src/settings/settings.ts` | Ink style (live/hand/clean), ink + highlight colour, caption speed (wpm, default 170), shortcuts. Persisted in localStorage `pdf-tutor.settings` (v2); `useSettings()`. |
+| `src/ui/SettingsPopover.tsx` + `src/settings/settings.ts` | Highlight (violet wash / yellow marker), Speed (0.75 · 1 · 1.25 · 1.5×; the clock is `BASE_WPM` 170 × speed), Voice (Off/Marin/Cedar), Answer quality (Standard / Best: a token the server maps, `server/quality.ts`; Best disabled unless `/api/spend` says `best`), a quiet "Keyboard shortcuts ?" link. Shortcuts are always on; the drawing style (live) and the ink (violet) are fixed and never stored (`?style=` is a dev aid for one load). Persisted in localStorage `pdf-tutor.settings` (v3: a v2 wpm × speed folds into the nearest step); `useSettings()`. |
 | `src/ui/CanvasToolbar.tsx` + `src/ink/student/*` | Student drawing (D toggles, pen/highlighter/eraser, undo); strokes in `ink` store, sent as `STUDENT INK`. |
 | `src/ui/FollowPill.tsx`, `EmptyState.tsx` | "Back to answer" (→ `desk.resume()`); drop/open screen with the sample. |
 | `src/ui/RouteChip.tsx` | Journeys: "p9 → p2 · <section>" at the top of the slide column for `ROUTE_MS` (App), then "Back to pN" (`returnTarget`: N = the page in view when the question was asked; shown only once the answer has played past its first part and the view is elsewhere, so an answer that opens by moving to its page never offers it; mid-answer, pressing it is the student taking over: follow pauses). Journeys land with the same split framing as any scroll (`framedTop`: slide top on the board's top). |
@@ -80,7 +80,7 @@ Demo/script/fail paths play canned scripts and make no API call.
   `JOURNEY_HOLD_MS` 500 + `ARRIVAL_MS` 200 (director.ts). Dev: `?script=flow` (econ.pdf, asked on p9);
   gallery `flow-controls` shows the row paused at 1.25×.
 - **Speed**: `settings.speed` (localStorage with the other settings) is the `PacedClock` rate (every
-  word and pause ÷ speed; the wpm setting is unchanged); a change calls `session.respeed()` (words
+  word and pause ÷ speed, at `BASE_WPM`); a change calls `session.respeed()` (words
   after the next re-time). Ink waits on its word's *live* start (`onAction(a, at, live)` →
   `director.run(a, at, live)`; null while paused), so pause, speed and seek-back keep ink on its word.
 
