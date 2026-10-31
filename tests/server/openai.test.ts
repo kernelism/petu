@@ -477,6 +477,12 @@ describe('ask: incomplete streams', () => {
     expect(out[out.length - 2]).toMatchObject({ t: 'done', estimated: false });
     expect(out[out.length - 1]).toMatchObject({ t: 'error', code: 'cut_off' });
   });
+  it('the answer record says why the upstream cut it short', async () => {
+    const { f } = fakeFetch([{ chunks: [...head, sse({ type: 'response.incomplete', response: { status: 'incomplete', incomplete_details: { reason: 'content_filter' }, usage } })] }]);
+    const recs: AnswerRecord[] = [];
+    await run(req(), deps(f, { log: (r) => recs.push(r) }));
+    expect(recs[0]).toMatchObject({ error: 'cut_off', upstream: 'incomplete (content_filter)' });
+  });
   it('a body that ends without a terminal event: done, then cut_off', async () => {
     const { f } = fakeFetch([{ chunks: head }]);
     const out = await run(req(), deps(f));

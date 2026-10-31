@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { Chrome } from './cdp.ts';
 import { CONFIGS, configEnv } from './configs.ts';
-import { deckUrlPath, pathOfSrc, pdfDirs } from './decks.ts';
+import { deckPath, deckUrlPath, pathOfSrc, pdfDirs } from './decks.ts';
 import { computeMetrics, type Metrics } from './metrics.ts';
 import { parseAnswer } from './scriptTags.ts';
 import { buildJudgeRequest, buildJudgeRequestR3, estimateJudgeTokens, fakeJudgeFetch, judgeAnswer, JUDGE_MODEL, renderTranscript, RUBRICS, type JudgeFrame, type JudgeRequest, type JudgeResult } from './judge.ts';
@@ -219,6 +219,15 @@ async function webkitStills(base: string, items: { id: string; stored: StoredQue
   } finally { await browser.close(); }
 }
 
+/** The selected questions whose deck PDF is not found (fixtures always are), one line per deck. */
+export function missingDecks(qs: Pick<Question, 'id' | 'deck'>[], find: (deck: string) => string = (d) => deckPath(d)): string[] {
+  const byDeck = new Map<string, string[]>();
+  for (const q of qs) byDeck.set(q.deck, [...(byDeck.get(q.deck) ?? []), q.id]);
+  const out: string[] = [];
+  for (const [deck, ids] of byDeck) { try { find(deck); } catch (e) { out.push(`${(e as Error).message} (${ids.join(',')})`); } }
+  return out;
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const cfg = CONFIGS[args.config];
@@ -236,6 +245,12 @@ async function main(): Promise<void> {
   if (args.finish) qs = qs.filter((q) => existsSync(join(RUNS, args.finish!, q.id, 'result.json')));
   if (!qs.length) throw new Error('no questions selected');
   if (!args.finish) assertSplitAllowed(qs.map((q) => q.id), phase, testUsesOf(allTestUses(), args.qset), QUESTIONS);
+  // A deck that is not on this machine would only show "Couldn't open that PDF" in the headless page,
+  // and the run would wait on it forever: name the missing decks before anything starts.
+  if (!args.finish) {
+    const missing = missingDecks(qs);
+    if (missing.length) throw new Error(`${missing.join('\n')}\n(set PETU_PDF_DIRS, or pick questions on present decks with --only)`);
+  }
   const judge = wantsJudge(args, cfg);
 
   const date = new Date().toISOString().slice(0, 10);

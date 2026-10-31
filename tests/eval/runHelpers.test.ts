@@ -1,9 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { testUsesOf, jpegDims } from '../../scripts/eval/run';
+import { testUsesOf, jpegDims, missingDecks } from '../../scripts/eval/run';
 import { pathOfSrc, deckUrlPath, deckIdOfFile, deckPath } from '../../scripts/eval/decks';
 import { existsSync, readFileSync } from 'node:fs';
 
 describe('runner helpers', () => {
+  it('names each missing deck once with its questions, so a run fails fast instead of waiting on a page that never opens', () => {
+    const find = (d: string) => { if (d === 'econ') return '/x/econ.pdf'; throw new Error(`deck ${d} (${d}.pdf) not found in /a`); };
+    expect(missingDecks([{ id: 'D1', deck: 'lec06' }, { id: 'D2', deck: 'econ' }, { id: 'D3', deck: 'lec06' }], find)).toEqual(['deck lec06 (lec06.pdf) not found in /a (D1,D3)']);
+    expect(missingDecks([{ id: 'D2', deck: 'econ' }], find)).toEqual([]);
+  });
   it('test-split uses are counted per question set (old entries are q1)', () => {
     const uses = [{ runId: 'a', at: '' }, { runId: 'b', at: '', qset: 'q1' }, { runId: 'c', at: '', qset: 'q2' }];
     expect(testUsesOf(uses, 'q1')).toBe(2);
