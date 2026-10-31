@@ -762,12 +762,17 @@ export default function App() {
     // something new, and only the model (which sees the open check question) can tell which.
     const kindCheck = run.again ? !!run.again.check : !!run.check;
     const title = run.again?.title ?? trailTitle('answer', q, point ? pointedLabel(point) : null);
-    const entry: TrailEntry = { num: run.again?.num ?? String(++trailN.current), question: q, title, page: pageRef.current, script: '', head: null as unknown as TrailHead, ...(kindCheck ? { check: run.again?.check ?? run.check } : {}) };
-    entry.head = answerHead({ num: entry.num, question: title, check: false, onReplay: () => replayRef.current(entry) });
+    // A replay is the same entry played again in place: its header and drawings leave the board and come
+    // back as it replays (one entry on the trail and in the session list; the numbering never moves).
+    const entry: TrailEntry = run.again ?? { num: String(++trailN.current), question: q, title, page: pageRef.current, script: '', head: null as unknown as TrailHead, ...(kindCheck ? { check: run.check } : {}) };
+    if (run.again) deskRef.current?.forget(entry.head.el);
+    else entry.head = answerHead({ num: entry.num, question: title, check: false, onReplay: () => replayRef.current(entry) });
     // Eval runs keep the board as the judge has always seen it (no trail headers).
     if (!EVAL) deskRef.current?.headNext(entry.head.el, entry.head.h);
     answerRef.current = { question: q, plan: '', toAgent, head: EVAL ? null : entry.head };
-    if (!run.rec && !run.replay) trailRef.current.push(entry);
+    if (!run.rec && !run.replay && !run.again) trailRef.current.push(entry);
+    /** What a replay plays: the recorded script as it was (a replay stopped halfway keeps it whole). */
+    const again = run.again ? { script: run.again.script, grounding: run.again.grounding } : null;
     originRef.current = pageRef.current;
     window.clearTimeout(routeTimer.current);
     setRoute(null);
@@ -912,8 +917,8 @@ export default function App() {
           ? async function* (signal) {
             // The trail: the recorded script again, resolved against the grounding it had.
             gate?.handoff();
-            groundingRef.current = run.again!.grounding;
-            yield* streamDemo(signal, run.again!.script);
+            groundingRef.current = again!.grounding;
+            yield* streamDemo(signal, again!.script);
           }
           : async function* (signal) {
           gate?.handoff(); // dev scripts have no opener
@@ -931,7 +936,7 @@ export default function App() {
             // As the agent's client does: nothing arrived yet is an error; past that, a cut-off (what played stays).
             const head = FAIL_AT != null ? c.slice(0, Math.max(0, FAIL_AT - sent)) : '';
             if (!sent && !head) throw new Error('dev: ?fail');
-            if (head) { log.chunk(head); entry.script += head; yield head; }
+            if (head) { log.chunk(head); if (!again) entry.script += head; yield head; }
             handlers.onCutOff?.('The answer was cut off.');
             return;
           }
@@ -940,7 +945,7 @@ export default function App() {
           if (firstChunk && DEBUG) { firstChunk = false; const t = performance.now(); setDebug((d) => ({ ...d, chunk: t })); }
           run.rec?.chunk(c);
           log.chunk(c);
-          entry.script += c;
+          if (!again) entry.script += c;
           yield c;
         }
       } catch (e) {
@@ -1008,8 +1013,8 @@ export default function App() {
         sessionRef.current = null;
         // The trail: where it was asked and how long it played; what replays it resolves as it did.
         entry.ms = performance.now() - t0;
-        entry.head.setMeta(`p.${page} · ${clockOf(entry.ms)}`);
-        entry.grounding = groundingRef.current;
+        entry.head.setMeta(`p.${entry.page} · ${clockOf(entry.ms)}`);
+        if (!again) entry.grounding = groundingRef.current;
         if (spoken.length) setAnswered(true);
         if (st === 'done') {
           // A check question to offer ("Test yourself", collapsed): the model's hidden one (p6.2), else

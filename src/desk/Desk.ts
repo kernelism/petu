@@ -708,6 +708,42 @@ export class Desk implements DeskApi {
   }
 
   /**
+   * The trail replays an answer in place: everything drawn under its head `el` (its group: its sections,
+   * its asides' insets) leaves the board, and `el` leaves with it until `headNext(el)` puts it over the
+   * replay's first section. The lane places that group at the replay's anchor, where the answer was.
+   * A follow-up's head inside an earlier answer's board (`BOARD extend`) only lifts out.
+   */
+  forget(el: HTMLElement): void {
+    const g = this.groups.find((x) => x.head === el);
+    const mid = this.midHeads.find((m) => m.el === el);
+    if (!g && !mid && !el.isConnected) return;
+    if (this.nextHead?.el === el) this.nextHead = null;
+    el.remove();
+    el.classList.remove('is-mid');
+    if (!g) {
+      this.midHeads = this.midHeads.filter((m) => m !== mid);
+      for (const x of this.groups) if (x.parts) x.parts = x.parts.filter((p) => p !== el);
+      this.position();
+      return;
+    }
+    const gone = new Set(g.secs);
+    for (const s of gone) { s.el.remove(); this.heads.get(s)?.el.remove(); this.heads.delete(s); this.held.delete(s); }
+    for (const m of this.midHeads) if (gone.has(m.sec)) m.el.remove();
+    this.midHeads = this.midHeads.filter((m) => !gone.has(m.sec));
+    for (const [id, s] of this.ids) if (gone.has(s)) this.ids.delete(id);
+    this.sections = this.sections.filter((s) => !gone.has(s));
+    g.thumb?.remove();
+    g.el.remove();
+    g.leader.remove();
+    this.groups = this.groups.filter((x) => x !== g);
+    if (this.liveGroup === g) { this.liveGroup = null; this.penLane = false; }
+    const lt = this.last?.t;
+    if (lt && 'region' in lt && lt.region != null && !this.ids.has(lt.region)) this.last = null;
+    this.position();
+    this.emit();
+  }
+
+  /**
    * An aside opens (true) or ends (false). Open: sections added are its inset; the board around it
    * steps back. Ended: every open aside collapses to its marker (its head), and the board re-lays.
    */

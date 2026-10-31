@@ -209,3 +209,60 @@ describe('Desk: pointer input never moves a drawing', () => {
     expect(d.following()).toBe(true);
   });
 });
+
+describe('Desk.forget: a trail replay plays its answer in place (founder report: replay listed answer 2 twice)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  /** Three answers on the board, each a head and its section(s); then answer 2 is replayed (twice). */
+  async function session(host: DeskHost, st: HTMLDivElement) {
+    const d = new Desk(host, st);
+    const heads = [head(), head(), head()];
+    for (const [i, h] of heads.entries()) {
+      await d.reset(0);
+      d.headNext(h, 44);
+      const p1 = d.addRegion(spec(`a${i}`)); await settle(); await p1;
+      if (i === 1) { const p2 = d.addRegion(spec('a1b')); await settle(); await p2; }
+    }
+    const replay = async () => {
+      d.forget(heads[1]);
+      await d.reset(0);
+      d.headNext(heads[1], 44);
+      const p1 = d.addRegion(spec('a1')); await settle(); await p1;
+      const p2 = d.addRegion(spec('a1b')); await settle(); await p2;
+    };
+    return { d, heads, replay };
+  }
+
+  for (const lane of [false, true]) {
+    it(`replaying twice keeps one head and one copy of its drawing (${lane ? 'lane' : 'split board'})`, async () => {
+      const st = document.createElement('div');
+      const laneEl = document.createElement('div');
+      const host = fakeHost();
+      if (lane) (host as { laneEl?: () => HTMLElement }).laneEl = () => laneEl;
+      const root = lane ? laneEl : st;
+      const { heads, replay } = await session(host, st);
+      expect(root.querySelectorAll('.desk-region')).toHaveLength(4);
+      await replay();
+      await replay();
+      // One copy: four sections as before, each head on the board once, answer 2's head over its first section.
+      expect(root.querySelectorAll('.desk-region')).toHaveLength(4);
+      expect(root.querySelectorAll('.trail-head')).toHaveLength(3);
+      for (const h of heads) expect(root.contains(h)).toBe(true);
+      if (lane) {
+        expect(root.querySelectorAll('.lane-group')).toHaveLength(3);
+        // Its group holds its head and both its sections, once each.
+        const g = heads[1].closest('.lane-item')!;
+        expect(g.querySelectorAll('.desk-region')).toHaveLength(2);
+        expect(g.querySelectorAll('.lane-thumb').length).toBeLessThanOrEqual(1);
+      }
+    });
+  }
+
+  it('forgetting a head the desk does not hold is a no-op', async () => {
+    const st = document.createElement('div');
+    const { d } = await session(fakeHost(), st);
+    d.forget(head());
+    expect(st.querySelectorAll('.desk-region')).toHaveLength(4);
+  });
+});
