@@ -786,3 +786,14 @@ describe('spoken (answers.jsonl svg.firstWordMs)', () => {
     expect(spoken('{{highlight p=2 "x"}} The')).toBe(true);
   });
 });
+
+describe('quietBeat (stage 2 quiet while a group is written)', () => {
+  it('beats only after the first word, after a quiet stretch, between words', async () => {
+    const { quietBeat } = await import('../../server/openai');
+    expect(quietBeat(NaN, 0, 5000, 'x. ', 1000)).toBe(false); // not spoken yet (the opener covers it)
+    expect(quietBeat(100, 4500, 5000, 'x. ', 1000)).toBe(false); // not quiet long enough
+    expect(quietBeat(100, 3000, 5000, 'contributes.', 1000)).toBe(true);
+    expect(quietBeat(100, 3000, 5000, '{{svgboard h=700}}', 1000)).toBe(true);
+    expect(quietBeat(100, 3000, 5000, 'slower', 1000)).toBe(false); // a word may go on ("slower" + "-changing")
+  });
+});
