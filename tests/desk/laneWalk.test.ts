@@ -126,3 +126,15 @@ describe('Desk lane: an answer that explains several pages keeps one whole board
     expect(Math.abs(top() - p2)).toBeLessThan(300);
   });
 });
+
+describe('clearOfDocked (the live group never sits over a docked card)', async () => {
+  const { clearOfDocked } = await import('../../src/desk/lane');
+  it('clears a card under its top, chaining past a stack, and stops at the band', () => {
+    expect(clearOfDocked(80, 300, [], 600)).toBe(80);
+    expect(clearOfDocked(80, 300, [{ top: 70, h: 36 }], 600)).toBe(114);
+    expect(clearOfDocked(80, 300, [{ top: 70, h: 36 }, { top: 118, h: 36 }], 600)).toBe(162);
+    expect(clearOfDocked(80, 300, [{ top: 400, h: 36 }], 600)).toBe(80); // below the band: not in the way
+    expect(clearOfDocked(80, 300, [{ top: 70, h: 36 }], 100)).toBe(100);
+    expect(clearOfDocked(80, 300, [{ top: 300, h: 36 }], 600)).toBe(344); // crossing its lower part: still cleared
+  });
+});

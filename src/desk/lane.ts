@@ -141,3 +141,22 @@ export function walkSplit(pages: readonly (number | null)[], from: number, page:
   for (const i of done) { const last = runs[runs.length - 1]; if (last && pages[last[0]] === pages[i]) last.push(i); else runs.push([i]); }
   return { placed, runs, at };
 }
+
+/**
+ * The live group's sticky top (window px), moved down below any docked card that would sit under it:
+ * a docked answer and the playing one anchored at the same passage otherwise overprint (founder
+ * 2026-10-31: answer 11's head drawn over answer 10's folded card). `blockers` are the docked items'
+ * window spans; the group clears each one it would cross, by `gap`, as far down as the band allows
+ * (never past `maxTop`, where its newest part would leave the window).
+ */
+export function clearOfDocked(top: number, h: number, blockers: readonly Span[], maxTop: number, gap = 8): number {
+  let t = top;
+  for (let i = 0; i < 8; i++) {
+    const hit = blockers.filter((b) => b.top < t + h && b.top + b.h > t);
+    if (!hit.length) break;
+    const next = Math.max(...hit.map((b) => b.top + b.h)) + gap;
+    if (next > maxTop) return Math.max(top, maxTop);
+    t = next;
+  }
+  return t;
+}
