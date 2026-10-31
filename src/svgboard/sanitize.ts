@@ -84,6 +84,9 @@ export function sanitizeGroup(src: string, o: SanitizeOpts): Sanitized | string 
   const notes: string[] = [];
   let count = 0;
   o.prepare?.(parsed);
+  // Sentences the model wrote on the board (prose.ts, via prepareText): removed; noted for the debug panel.
+  const prose = parsed.getAttribute('data-prose-removed');
+  if (prose != null) { parsed.removeAttribute('data-prose-removed'); for (const p of prose.split(' | ')) notes.push(`prose removed: "${p.slice(0, 60)}"`); }
   const modelId = parsed.getAttribute('id') ?? undefined;
   // Ids defined in the group join the board's map before any reference is rewritten.
   parsed.querySelectorAll('[id]').forEach((e) => { const id = e.getAttribute('id')!; o.ids.set(id, `${o.ns}-${id}`); });
