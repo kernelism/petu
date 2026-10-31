@@ -120,6 +120,19 @@ export class PacedClock implements NarrationClock {
   endsAt(): number { return this.end; }
 }
 
-export const endsSentence = (w: string) => /[.!?]["')\]’”]?$/.test(w);
+/**
+ * Abbreviations whose period ends no sentence ("aka.", "e.g.", "Fig."). A word that opens a bracket it
+ * does not close ("(aka.") is inside a parenthesis: no sentence ends there either. Founder lec06,
+ * 2026-10-31: "Linear filtering (aka. Convolutions)…" was cut after "(aka." and the voice, given the
+ * fragment alone, improvised "also known as linear filtering (sometimes abbreviated as L F)".
+ */
+export const ABBREV = /^(a\.?k\.?a|e\.g|i\.e|etc|vs|cf|fig|figs|eq|eqs|dr|mr|ms|mrs|prof|no|approx|resp|ca|st)\.$/i;
+export const endsSentence = (w: string) => {
+  if (!/[.!?]["')\]’”]?$/.test(w)) return false;
+  const core = w.replace(/^["'(\[‘“]+/, '').replace(/["')\]’”]+$/, '');
+  if (ABBREV.test(core)) return false;
+  if (/\(/.test(w) && !/\)/.test(w)) return false;
+  return true;
+};
 /** A clause boundary: the narration can pause after this word without sounding cut off. */
 export const endsClause = (w: string) => /[.!?:,;]["')\]’”]?$/.test(w);

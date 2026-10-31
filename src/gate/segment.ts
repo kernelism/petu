@@ -6,6 +6,7 @@
 //
 // The tag scanner mirrors ScriptParser's rules (src/script/parser.ts): a tag closes at `}}` outside
 // quotes; a newline, a second `{{` or MAX_TAG_CHARS fails it and its text is narration.
+import { ABBREV, endsSentence as endsSpoken } from '../playback/clock';
 import { MAX_TAG_CHARS } from '../script/parser';
 import { cutTagBody, isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
 import { parseTag } from '../script/parseTag';
@@ -74,8 +75,7 @@ export function tokenize(script: string, opts: { end?: boolean } = {}): Tok[] {
 /** One sentence and the tags that fire within it. */
 export type Unit = { words: Word[]; tags: Tag[]; start: number; end: number; text: string; paraBefore: boolean };
 
-const ABBREV = /^(e\.g|i\.e|etc|vs|Fig|fig|Eq|eq|Dr|Mr|Ms|No|approx|cf)\.$/;
-const endsSentence = (w: string) => /[.!?]["”’)\]]*$/.test(w) && !ABBREV.test(w.replace(/["”’)\]]+$/, ''));
+const endsSentence = (w: string) => /[.!?]["”’)\]]*$/.test(w) && endsSpoken(w.replace(/["”’)\]]+$/, '')) && !ABBREV.test(w.replace(/^["'(\[‘“]+/, '').replace(/["”’)\]]+$/, ''));
 
 /** Sentences: a word ending in . ! ? (not an abbreviation) or a blank line ends one. */
 export function units(script: string, toks = tokenize(script)): Unit[] {
