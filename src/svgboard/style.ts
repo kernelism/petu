@@ -8,6 +8,16 @@
  */
 export const INK = { ink: '#1D1D1F', ink2: '#3A3A3C', muted: '#6E6E73', faint: '#8E8E93', line: '#D9D6CF', sheet: '#F7F6F2', paper: '#FFFFFE' } as const;
 export const FONT_SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif';
+/**
+ * The board's text face: a figure in a textbook, not app chrome. Source Serif 4 (bundled, src/main.tsx)
+ * sits with the KaTeX math italic of the symbols and has tabular lining figures for values. It does not
+ * set narrower than the gate's sans estimates (check.ts textEm) across the board: measured from the
+ * bundled font, capitals run ~5-11% wider at opsz 20 (HOMO 3.10em vs 2.80 estimated) and, at the
+ * 12-16px optical sizes board labels get, lowercase runs wider too (Demand +7-11%); only digits and
+ * spaced lowercase at opsz 20 come in under. The estimates were not retuned for it: the gate's box
+ * inset (core()) absorbs most of it, and a capitalised label may run a little past what it cleared.
+ */
+export const FONT_FIGURE = '"Source Serif 4 Variable", "Source Serif 4", Georgia, serif';
 export const FONT_MATH = 'KaTeX_Math, KaTeX_Main, "Times New Roman", serif';
 
 export type Rgb = { r: number; g: number; b: number; a: number };
@@ -100,11 +110,11 @@ export function mapColor(v: string | null | undefined, role: 'stroke' | 'fill' |
   return { color: role === 'fill' ? INK.ink2 : INK.ink, alpha: a };
 }
 
-/** The board's font for a model font-family: math-ish faces → the math font, everything else the sans. */
+/** The board's font for a model font-family: math-ish faces → the math font, everything else the figure face. */
 export function mapFont(family: string | null | undefined): string {
   const f = (family ?? '').toLowerCase();
   if (/katex|math|cambria|times|georgia|(^|[\s,"'])serif/.test(f) && !/sans-serif/.test(f)) return FONT_MATH;
-  return FONT_SANS;
+  return FONT_FIGURE;
 }
 
 /** A model stroke width (user units, default 1) → the board's tiers in CSS px (non-scaling strokes). */

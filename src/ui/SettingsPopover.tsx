@@ -1,9 +1,12 @@
 import { useEffect, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { X } from 'lucide-react';
-import { HIGHLIGHTS, HIGHLIGHT_STYLES, INK_COLORS, setSettings, useSettings } from '../settings/settings';
+import { HIGHLIGHTS, HIGHLIGHT_STYLES, INK_COLORS, VOICE_OPTIONS, setSettings, useSettings, type VoiceSetting } from '../settings/settings';
 import type { InkStyle } from '../ink/agent/marks';
 import { requestShortcuts } from './ShortcutsOverlay';
 import './ui.css';
+
+/** The narration read aloud (OpenAI's Realtime voices), or captions only. */
+const VOICE_LABELS: Record<VoiceSetting, string> = { off: 'Off', marin: 'Marin', cedar: 'Cedar' };
 
 const STYLES: { value: InkStyle; label: string }[] = [
   { value: 'live', label: 'Live' },
@@ -171,6 +174,18 @@ export function SettingsPopover({ open, onClose, onShowShortcuts = requestShortc
             Playing at {s.speed}× · {actual} wpm
           </p>
         )}
+      </section>
+
+      <section className="pop-row">
+        <div className="pop-label" id="pop-voice">Voice</div>
+        <RadioGroup
+          labelledBy="pop-voice"
+          className="segmented"
+          options={[...VOICE_OPTIONS]}
+          value={s.voice}
+          onPick={(v) => setSettings({ voice: v })}
+          render={(v, on) => ({ className: `seg${on ? ' is-on' : ''}`, children: VOICE_LABELS[v] })}
+        />
       </section>
 
       <section className="pop-row pop-row-inline">

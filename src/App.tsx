@@ -15,7 +15,8 @@ import { barMode, closingQuestion } from './ui/barMode';
 import { answerHead, asideHead, clockOf, trailTitle, type TrailHead } from './ui/trail';
 import { aboutContext, asideContext, bboxOf, isLoop, pointedLabel, type Pointed } from './agent/moment';
 import { playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
-import { PacedClock } from './playback/clock';
+import { PacedClock, type NarrationClock } from './playback/clock';
+import { VoiceClock, fetchVoice, warmVoice, webAudioOut } from './playback/voiceClock';
 import { getSettings, setSettings, SPEEDS, stepSpeed, useSettings } from './settings/settings';
 import { DEMOS, DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
@@ -34,6 +35,7 @@ import { CanvasToolbar } from './ui/CanvasToolbar';
 import { BoardPen } from './ui/BoardPen';
 import { Caption, joinWords } from './ui/Caption';
 import { AskBar, type Transcript } from './ui/AskBar';
+import { dictationAvailable } from './agent/dictation';
 import { FollowPill } from './ui/FollowPill';
 import { OverviewPill } from './ui/OverviewPill';
 import { SessionDrawer, type SessionRow } from './ui/SessionDrawer';
@@ -99,8 +101,20 @@ const STILL_THINKING = 'Still thinking…';
 const PAUSE_GRACE_MS = 350;
 /** A journey's route stays up this long after it starts (the travel, the arrival beat, a read). */
 const ROUTE_MS = 4000;
-/** The narration's clock: the wpm setting, played at the playback speed (both read on every word). */
-const narrationClock = () => new PacedClock(() => getSettings().wpm, undefined, undefined, () => getSettings().speed);
+let audioCtx: AudioContext | null = null;
+/**
+ * The narration's clock: the wpm setting, played at the playback speed (both read on every word).
+ * With a voice on, the voice's audio sets the timeline (src/playback/voiceClock.ts). Called from the
+ * question's Enter (a user gesture), so the audio context may start.
+ */
+const narrationClock = (): NarrationClock => {
+  const s = getSettings();
+  if (s.voice === 'off' || typeof AudioContext === 'undefined') return new PacedClock(() => getSettings().wpm, undefined, undefined, () => getSettings().speed);
+  audioCtx ??= new AudioContext();
+  void audioCtx.resume().catch(() => {});
+  warmVoice();
+  return new VoiceClock(fetchVoice(s.voice), webAudioOut(audioCtx), () => getSettings().wpm, () => getSettings().speed);
+};
 /** ← within this many words of a part's start goes to the part before; later, to its own start. */
 const PART_RESTART_WORDS = 8;
 /** Demos and dev scripts send no page marks: every `mark=` is skipped. */
@@ -190,7 +204,7 @@ function describe(a: RawAction): string {
 
 function describeAction(a: Action): string {
   if (a.kind === 'clear') return a.kind;
-  if (a.kind === 'sketch') return `sketch ${a.id} p${a.page}${a.size === 'l' ? ' l' : ''}`;
+  if (a.kind === 'sketch') return `sketch ${a.id}${a.page != null ? ` p${a.page}` : ''}${a.size === 'l' ? ' l' : ''}`;
   if (a.kind === 'connect') return 'connect';
   if ('ref' in a) return `${a.kind} #${a.ref}`;
   const cut = (t: string) => ` "${t.length > 18 ? `${t.slice(0, 17)}…` : t}"`;
@@ -403,6 +417,9 @@ export default function App() {
   /** Words spoken so far (the current part's progress). */
   const [spokenN, setSpokenN] = useState(0);
   const { speed } = useSettings();
+  // The ask bar's mic shows only when the server has a Speechmatics key (GET /api/stt).
+  const [dictationOn, setDictationOn] = useState(false);
+  useEffect(() => { let live = true; void dictationAvailable().then((on) => { if (live) setDictationOn(on); }); return () => { live = false; }; }, []);
   /** The aside (one level): a question asked mid-answer, with its own session and ink lane; the answer waits paused. */
   const [aside, setAside] = useState<Aside | null>(null);
   const asideRef = useRef<Aside | null>(null);
@@ -1632,6 +1649,7 @@ export default function App() {
           transcript={captionVisible ? null : transcript}
           blocked={DEMO_PATH ? undefined : agent.blocked}
           onIntent={onIntent}
+          dictation={dictationOn}
         />
       </div>
       <div className="sr-only" role="status" aria-live="polite">{liveText}</div>

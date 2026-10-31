@@ -1,0 +1,384 @@
+import { EventEmitter } from 'node:events';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { VoiceLine, normWords, routeVoice, validateVoice, voiceUsd, voiceWorstUsd, type SpeakResult, type VoiceSocket } from '../../server/voice';
+import type { Ledger } from '../../server/ledger';
+
+/** A fake Realtime socket: records what is sent; `emit` plays server events. */
+function fakeSocket() {
+  const sent: any[] = [];
+  const s: VoiceSocket & { emit(e: object): void } = {
+    readyState: 1, onopen: null, onmessage: null, onclose: null, onerror: null,
+    send: (d) => sent.push(JSON.parse(d)),
+    close: () => {},
+    emit: (e) => s.onmessage?.({ data: JSON.stringify(e) }),
+  };
+  return { s, sent };
+}
+
+/** The server starts the last response asked for: its id, as its events carry it. */
+function created(s: ReturnType<typeof fakeSocket>['s'], sent: any[]): string {
+  const job = sent.filter((m) => m.type === 'response.create').at(-1).response.metadata.job;
+  const id = `resp_${job}`;
+  s.emit({ type: 'response.created', response: { id, status: 'in_progress', metadata: { job } } });
+  return id;
+}
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const pcm = (n: number) => Buffer.alloc(n).toString('base64');
+
+describe('VoiceLine', () => {
+  function line() {
+    const { s, sent } = fakeSocket();
+    let opened = 0;
+    const l = new VoiceLine('k', (url, key) => { opened++; expect(url).toContain('gpt-realtime-2.1-mini'); expect(key).toBe('k'); setTimeout(() => s.onopen?.(), 0); return s; });
+    return { l, s, sent, opened: () => opened };
+  }
+  const job = (text: string, out: { audio: number; done?: SpeakResult }) => ({
+    id: text, text, voice: 'marin' as const, speed: 1,
+    onAudio: (b: Buffer) => { out.audio += b.length; },
+    done: (r: SpeakResult) => { out.done = r; },
+  });
+
+  it('reads each text as an out-of-band response and streams its audio', async () => {
+    const { l, s, sent } = line();
+    const out = { audio: 0 } as { audio: number; done?: SpeakResult };
+    l.speak(job('Supply rises.', out));
+    await tick();
+    expect(sent[0]).toMatchObject({ type: 'session.update', session: { audio: { output: { voice: 'marin', speed: 1, format: { type: 'audio/pcm', rate: 24000 } } } } });
+    expect(sent[1]).toMatchObject({ type: 'response.create', response: { conversation: 'none', output_modalities: ['audio'] } });
+    expect(sent[1].response.input[0].content[0].text).toBe('Supply rises.');
+    const r = created(s, sent);
+    s.emit({ type: 'response.output_audio.delta', response_id: r, delta: pcm(480) });
+    s.emit({ type: 'response.output_audio_transcript.delta', response_id: r, delta: 'Supply rises.' });
+    s.emit({ type: 'response.done', response: { id: r, status: 'completed', usage: { input_tokens: 80, output_tokens: 120, output_token_details: { audio_tokens: 100 } } } });
+    expect(out.audio).toBe(480);
+    expect(out.done).toMatchObject({ ok: true, transcript: 'Supply rises.' });
+  });
+
+  it('runs responses one at a time, updating the session only when voice or speed change', async () => {
+    const { l, s, sent, opened } = line();
+    const a = { audio: 0 }, b = { audio: 0 }, c = { audio: 0 };
+    l.speak(job('One.', a));
+    l.speak(job('Two.', b));
+    l.speak({ ...job('Three.', c), speed: 1.5 });
+    await tick();
+    expect(sent.map((m) => m.type)).toEqual(['session.update', 'response.create']);
+    s.emit({ type: 'response.done', response: { id: created(s, sent), status: 'completed', usage: {} } });
+    await tick();
+    expect(sent.map((m) => m.type)).toEqual(['session.update', 'response.create', 'response.create']);
+    s.emit({ type: 'response.done', response: { id: created(s, sent), status: 'completed', usage: {} } });
+    await tick();
+    expect(sent.slice(3).map((m) => m.type)).toEqual(['session.update', 'response.create']);
+    expect(sent[3].session.audio.output.speed).toBe(1.5);
+    expect(opened()).toBe(1);
+  });
+
+  it('cancels a queued job without sending it, and the running one with response.cancel', async () => {
+    const { l, s, sent } = line();
+    const a = { audio: 0 } as { audio: number; done?: SpeakResult }, b = { audio: 0 } as { audio: number; done?: SpeakResult };
+    const ha = l.speak(job('One.', a));
+    const hb = l.speak(job('Two.', b));
+    await tick();
+    const r = created(s, sent);
+    hb.cancel();
+    ha.cancel();
+    expect(sent.at(-1)).toEqual({ type: 'response.cancel' });
+    s.emit({ type: 'response.done', response: { id: r, status: 'cancelled', usage: { output_tokens: 10 } } });
+    await tick();
+    expect(a.done).toMatchObject({ ok: false, error: 'cancelled', usage: { output_tokens: 10 } });
+    expect(b.done).toEqual({ ok: false, error: 'cancelled' });
+    expect(sent.filter((m) => m.type === 'response.create')).toHaveLength(1);
+  });
+
+  it('fails the job in flight on an error event or a closed socket', async () => {
+    const { l, s } = line();
+    const a = { audio: 0 } as { audio: number; done?: SpeakResult }, b = { audio: 0 } as { audio: number; done?: SpeakResult };
+    l.speak(job('One.', a));
+    await tick();
+    s.emit({ type: 'error', error: { message: 'bad' } });
+    expect(a.done).toMatchObject({ ok: false, error: 'bad' });
+    l.speak(job('Two.', b));
+    await tick();
+    s.onclose?.({ code: 1006, reason: '' });
+    expect(b.done).toMatchObject({ ok: false });
+  });
+});
+
+/** A fake response: records status, bytes and how it ended; `close` is the browser hanging up. */
+function fakeRes() {
+  const r = Object.assign(new EventEmitter(), {
+    statusCode: 0, writableEnded: false, destroyed: false, bytes: 0, ended: '' as '' | 'end' | 'destroy', body: '',
+    setHeader: () => {}, flushHeaders: () => {},
+    write(b: Buffer) { r.bytes += b.length; return true; },
+    end(s?: string) { r.body = s ?? ''; r.writableEnded = true; r.ended = 'end'; r.emit('close'); },
+    destroy() { r.destroyed = true; r.ended = 'destroy'; r.emit('close'); },
+  });
+  return r;
+}
+
+/** A fake ledger: records every reserve, settle and release. */
+function fakeLedger(refuse = false) {
+  const calls: { op: string; id: string; usd?: number; estimated?: boolean }[] = [];
+  const ledger = {
+    reserve: (id: string, _p: string, usd: number) => { calls.push({ op: 'reserve', id, usd }); return refuse ? { code: 'total', message: 'cap reached', spentUsd: 1, capUsd: 1 } : null; },
+    settle: (e: { id: string; usd: number; estimated?: boolean }) => { calls.push({ op: 'settle', id: e.id, usd: e.usd, estimated: e.estimated }); },
+    release: (id: string) => { calls.push({ op: 'release', id }); },
+  };
+  /** The settle or release calls for `id`: exactly one once its request is over. */
+  const closed = (id: string) => calls.filter((c) => c.id === id && c.op !== 'reserve');
+  return { ledger: ledger as unknown as Ledger, calls, closed };
+}
+
+describe('routeVoice', () => {
+  afterEach(() => { vi.useRealTimers(); });
+  function setup(refuse = false) {
+    const { s, sent } = fakeSocket();
+    const l = new VoiceLine('k', () => { setTimeout(() => s.onopen?.(), 0); return s; });
+    const led = fakeLedger(refuse);
+    let n = 0;
+    const logs: any[] = [];
+    const call = (text: string) => {
+      const res = fakeRes();
+      const id = `v${++n}`;
+      const p = routeVoice({} as IncomingMessage, res as unknown as ServerResponse, { text }, { line: l, ledger: led.ledger, phase: 'dev', id: () => id, log: (r) => logs.push(r) });
+      let over = false;
+      void p.then(() => { over = true; });
+      return { res, id, over: () => over };
+    };
+    return { s, sent, l, call, logs, ...led };
+  }
+
+  const usage = { input_tokens: 90, output_tokens: 130, output_token_details: { audio_tokens: 110 } };
+
+  it('refuses with 402 when the ledger does, sending nothing', async () => {
+    const { call, calls, sent } = setup(true);
+    const a = call('One.');
+    await tick();
+    expect(a.over()).toBe(true);
+    expect(a.res.statusCode).toBe(402);
+    expect(JSON.parse(a.res.body)).toEqual({ error: 'cap reached' });
+    expect(calls.map((c) => c.op)).toEqual(['reserve']);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('streams the audio, settles from usage and logs a verbatim read', async () => {
+    const { s, sent, call, calls, closed, logs } = setup();
+    const a = call('Supply rises.');
+    await tick();
+    expect(calls[0]).toMatchObject({ op: 'reserve', id: a.id, usd: voiceWorstUsd('Supply rises.'.length) });
+    const r = created(s, sent);
+    s.emit({ type: 'response.output_audio.delta', response_id: r, delta: pcm(960) });
+    s.emit({ type: 'response.output_audio_transcript.delta', response_id: r, delta: 'Supply rises.' });
+    s.emit({ type: 'response.done', response: { id: r, status: 'completed', usage } });
+    await tick();
+    expect(a.over()).toBe(true);
+    expect(a.res).toMatchObject({ statusCode: 200, bytes: 960, ended: 'end' });
+    expect(closed(a.id)).toEqual([{ op: 'settle', id: a.id, usd: voiceUsd(usage), estimated: undefined }]);
+    expect(logs[0]).toMatchObject({ kind: 'voice', ok: true, verbatim: true, chars: 13 });
+    expect(logs[0].text).toBeUndefined();
+  });
+
+  it('logs the text and what was said when the read is not verbatim', async () => {
+    const { s, sent, call, logs } = setup();
+    call('Supply rises.');
+    await tick();
+    const r = created(s, sent);
+    s.emit({ type: 'response.output_audio.delta', response_id: r, delta: pcm(960) });
+    s.emit({ type: 'response.output_audio_transcript.delta', response_id: r, delta: 'Supply goes up.' });
+    s.emit({ type: 'response.done', response: { id: r, status: 'completed', usage } });
+    await tick();
+    expect(logs[0]).toMatchObject({ ok: true, verbatim: false, text: 'Supply rises.', said: 'Supply goes up.' });
+  });
+
+  it('a request closed mid-response cancels it and settles what it used', async () => {
+    const { s, sent, call, closed } = setup();
+    const a = call('Supply rises.');
+    await tick();
+    const r = created(s, sent);
+    s.emit({ type: 'response.output_audio.delta', response_id: r, delta: pcm(480) });
+    a.res.emit('close');
+    expect(sent.at(-1)).toEqual({ type: 'response.cancel' });
+    s.emit({ type: 'response.done', response: { id: r, status: 'cancelled', usage } });
+    await tick();
+    expect(a.over()).toBe(true);
+    expect(closed(a.id)).toEqual([{ op: 'settle', id: a.id, usd: voiceUsd(usage), estimated: undefined }]);
+  });
+
+  it('a response that fails before any audio releases its reservation and destroys the stream', async () => {
+    const { s, sent, call, closed, logs } = setup();
+    const a = call('Supply rises.');
+    await tick();
+    created(s, sent);
+    s.emit({ type: 'error', error: { message: 'server error' } });
+    await tick();
+    expect(a.over()).toBe(true);
+    expect(a.res.ended).toBe('destroy');
+    expect(closed(a.id)).toEqual([{ op: 'release', id: a.id }]);
+    expect(logs[0]).toMatchObject({ ok: false, error: 'server error', firstAudioMs: null });
+  });
+
+  it('a response that stalls after some audio settles its worst case and ends the stream', async () => {
+    vi.useFakeTimers();
+    const { s, sent, call, closed } = setup();
+    const a = call('Supply rises.');
+    await vi.advanceTimersByTimeAsync(0);
+    const r = created(s, sent);
+    s.emit({ type: 'response.output_audio.delta', response_id: r, delta: pcm(480) });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(a.over()).toBe(true);
+    expect(a.res).toMatchObject({ bytes: 480, ended: 'end' });
+    expect(closed(a.id)).toEqual([{ op: 'settle', id: a.id, usd: voiceWorstUsd('Supply rises.'.length), estimated: true }]);
+    // Its usage, reported late, is not booked twice.
+    s.emit({ type: 'response.done', response: { id: r, status: 'cancelled', usage } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(closed(a.id)).toHaveLength(1);
+  });
+
+  it('a request closed while queued ends, and its reservation is released', async () => {
+    const { s, call, closed, sent } = setup();
+    const a = call('One.');
+    const b = call('Two.');
+    await tick();
+    const r = created(s, sent);
+    b.res.emit('close');
+    await tick();
+    expect(b.over()).toBe(true);
+    expect(closed(b.id)).toEqual([{ op: 'release', id: b.id }]);
+    s.emit({ type: 'response.done', response: { id: r, status: 'completed', usage: { output_tokens: 50, output_token_details: { audio_tokens: 40 } } } });
+    await tick();
+    expect(a.over()).toBe(true);
+    expect(sent.filter((m) => m.type === 'response.create')).toHaveLength(1);
+  });
+});
+
+describe('VoiceLine, reconnecting', () => {
+  const job = (text: string, out: { audio: number; done?: SpeakResult }) => ({
+    id: text, text, voice: 'marin' as const, speed: 1,
+    onAudio: (b: Buffer) => { out.audio += b.length; },
+    done: (r: SpeakResult) => { out.done = r; },
+  });
+
+  it('a socket closed before it opens fails its job only; the next runs on a new socket', async () => {
+    const socks: ReturnType<typeof fakeSocket>[] = [];
+    const l = new VoiceLine('k', () => { const f = fakeSocket(); socks.push(f); return f.s; });
+    const a = { audio: 0 } as { audio: number; done?: SpeakResult }, b = { audio: 0 } as { audio: number; done?: SpeakResult };
+    l.speak(job('One.', a));
+    l.speak(job('Two.', b));
+    await tick();
+    socks[0].s.onclose?.({ code: 1006, reason: '' });
+    await tick();
+    expect(a.done).toMatchObject({ ok: false });
+    expect(b.done).toBeUndefined();
+    expect(socks).toHaveLength(2);
+    socks[1].s.onopen?.();
+    await tick();
+    const r = created(socks[1].s, socks[1].sent);
+    socks[1].s.emit({ type: 'response.done', response: { id: r, status: 'completed', usage: {} } });
+    expect(b.done).toMatchObject({ ok: true });
+  });
+
+  it('reconnects for a response asked after the session\'s 55 minutes, not before', async () => {
+    const socks: ReturnType<typeof fakeSocket>[] = [];
+    let now = 0;
+    let closedOld = 0;
+    const l = new VoiceLine('k', () => {
+      const f = fakeSocket();
+      f.s.close = () => { closedOld++; };
+      socks.push(f);
+      setTimeout(() => f.s.onopen?.(), 0);
+      return f.s;
+    }, () => now);
+    const run = async (text: string) => {
+      const o = { audio: 0 } as { audio: number; done?: SpeakResult };
+      l.speak(job(text, o));
+      await tick();
+      const f = socks.at(-1)!;
+      f.s.emit({ type: 'response.done', response: { id: created(f.s, f.sent), status: 'completed', usage: {} } });
+      await tick();
+      return o;
+    };
+    await run('One.');
+    now = 54 * 60_000;
+    await run('Two.');
+    expect(socks).toHaveLength(1);
+    now = 56 * 60_000;
+    const c = await run('Three.');
+    expect(socks).toHaveLength(2);
+    expect(closedOld).toBe(1);
+    expect(c.done).toMatchObject({ ok: true });
+    expect(socks[1].sent[0].type).toBe('session.update'); // a new session is set up again
+  });
+
+  it('a socket that closes mid-queue fails the response in flight and reconnects for the rest', async () => {
+    const socks: ReturnType<typeof fakeSocket>[] = [];
+    const l = new VoiceLine('k', () => { const f = fakeSocket(); socks.push(f); setTimeout(() => f.s.onopen?.(), 0); return f.s; });
+    const out = [0, 1, 2].map(() => ({ audio: 0 }) as { audio: number; done?: SpeakResult });
+    out.forEach((o, i) => l.speak(job(`S${i}.`, o)));
+    await tick();
+    created(socks[0].s, socks[0].sent);
+    socks[0].s.onclose?.({ code: 1001, reason: 'going away' });
+    expect(out[0].done).toMatchObject({ ok: false, error: 'connection closed (1001)' });
+    await tick();
+    for (const i of [1, 2]) {
+      const r = created(socks[1].s, socks[1].sent);
+      socks[1].s.emit({ type: 'response.done', response: { id: r, status: 'completed', usage: {} } });
+      await tick();
+      expect(out[i].done).toMatchObject({ ok: true });
+    }
+    expect(socks).toHaveLength(2);
+  });
+});
+
+describe('VoiceLine, timed', () => {
+  afterEach(() => { vi.useRealTimers(); });
+  const job = (text: string, out: { audio: number; done?: SpeakResult }) => ({
+    id: text, text, voice: 'marin' as const, speed: 1,
+    onAudio: (b: Buffer) => { out.audio += b.length; },
+    done: (r: SpeakResult) => { out.done = r; },
+  });
+
+  it('a stalled response\'s late events never reach the next job', async () => {
+    vi.useFakeTimers();
+    const { s, sent } = fakeSocket();
+    const l = new VoiceLine('k', () => { setTimeout(() => s.onopen?.(), 0); return s; });
+    const a = { audio: 0 } as { audio: number; done?: SpeakResult }, b = { audio: 0 } as { audio: number; done?: SpeakResult };
+    l.speak(job('One.', a));
+    l.speak(job('Two.', b));
+    await vi.advanceTimersByTimeAsync(0);
+    const ra = created(s, sent);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(a.done).toMatchObject({ ok: false, error: 'stalled' });
+    expect(sent.filter((m) => m.type === 'response.create')).toHaveLength(2);
+    // A's response, cancelled late, still reports; B's has not started yet.
+    s.emit({ type: 'response.output_audio.delta', response_id: ra, delta: pcm(480) });
+    s.emit({ type: 'response.done', response: { id: ra, status: 'cancelled', metadata: { job: 'One.' }, usage: { output_tokens: 30 } } });
+    expect(b.done).toBeUndefined();
+    expect(b.audio).toBe(0);
+    const rb = created(s, sent);
+    s.emit({ type: 'response.output_audio.delta', response_id: rb, delta: pcm(240) });
+    s.emit({ type: 'response.done', response: { id: rb, status: 'completed', metadata: { job: 'Two.' }, usage: { output_tokens: 20 } } });
+    expect(b.audio).toBe(240);
+    expect(b.done).toMatchObject({ ok: true });
+  });
+});
+
+describe('voice helpers', () => {
+  it('prices audio output at the audio rate and the rest as text', () => {
+    // 103 text in at $0.60, 39 text out at $2.40, 99 audio out at $20 (per 1M)
+    expect(voiceUsd({ input_tokens: 103, output_tokens: 138, output_token_details: { audio_tokens: 99 } })).toBeCloseTo((103 * 0.6 + 39 * 2.4 + 99 * 20) / 1e6, 9);
+    expect(voiceUsd({ input_tokens: 100, output_tokens: 0, input_token_details: { cached_tokens: 64 } })).toBeCloseTo((36 * 0.6 + 64 * 0.06) / 1e6, 9);
+    expect(voiceWorstUsd(120)).toBeGreaterThan(voiceUsd({ input_tokens: 103, output_tokens: 300, output_token_details: { audio_tokens: 250 } }));
+  });
+  it('compares transcripts by words only', () => {
+    expect(normWords('Supply, rises!')).toBe(normWords('supply rises'));
+    expect(normWords('P* = 7')).toBe('p 7');
+  });
+  it('validates the request', () => {
+    expect(validateVoice({ text: 'Hi.' })).toBeNull();
+    expect(validateVoice({ text: '' })).toMatch(/text/);
+    expect(validateVoice({ text: 'x'.repeat(1201) })).toMatch(/1200/);
+    expect(validateVoice({ text: 'Hi.', voice: 'robot' })).toMatch(/voice/);
+    expect(validateVoice({ text: 'Hi.', speed: 3 })).toMatch(/speed/);
+  });
+});

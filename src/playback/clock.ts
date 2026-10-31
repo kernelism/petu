@@ -1,8 +1,8 @@
 /**
  * The narration timeline. The scheduler hands words over in order (`enqueue`) and reads back when
  * each one starts (`wordStart`), on the clock's own `now()` timebase. PacedClock is a synthetic
- * timeline; a TTS clock will implement the same interface from audio word timings (returning null
- * from `wordStart` until the audio for that word is scheduled).
+ * timeline; VoiceClock (voiceClock.ts) implements the same interface from the voice's audio (returning
+ * null from `wordStart` until the audio for that word is scheduled).
  */
 export interface NarrationClock {
   /** Current time, in the same timebase as `wordStart` (performance.now() ms for the real clocks). */
@@ -21,6 +21,10 @@ export interface NarrationClock {
    * `start`). Pause, seek and a journey's arrival beat use it; a clock without it can't pause.
    */
   retime?(from: number, start: number): void;
+  /** Silences what is being heard now (a pause; a clock with audio). Resume re-times from the next word. */
+  halt?(): void;
+  /** The answer is over: release audio and requests. */
+  dispose?(): void;
 }
 
 const SENTENCE_END = /[.!?:]["')\]’”]?$/;

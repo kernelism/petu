@@ -125,6 +125,27 @@
 .askbar-btn.is-stop:active { background: rgba(0,0,0,.15); }
 .askbar-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
+/* Dictation: the mic before the send button; red and breathing while it listens. */
+.askbar-mic {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-right: 2px;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--ink-3, rgba(0,0,0,.45));
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.askbar-mic:hover { background: rgba(0,0,0,.06); color: var(--ink); }
+.askbar-mic:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.askbar-mic.is-listening { background: #E5484D; color: #fff; animation: mic-breathe 1.4s ease-in-out infinite; }
+@keyframes mic-breathe { 0%, 100% { box-shadow: 0 0 0 0 rgba(229,72,77,.35); } 50% { box-shadow: 0 0 0 6px rgba(229,72,77,0); } }
+
 /* Point-to-ask: "about: … · p.N" before the field, in the student's blue (their ink, their pointing). */
 .askbar-about {
   flex: none;
@@ -820,7 +841,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .askbar-btn, .askbar-about, .popover, .caption-word, .askbar-chips, .transcript, .topbar-num.is-tick { animation: none; }
+  .askbar-btn, .askbar-mic, .askbar-about, .popover, .caption-word, .askbar-chips, .transcript, .topbar-num.is-tick { animation: none; }
   .caption-q.is-waiting, .caption-text.is-next, .caption-leaving, .caption-think, .caption-pause { animation: none; }
   .caption-leaving { display: none; }
   .dock, .caption, .caption-viewport, .dropveil, .tb-fold, .tb-tip, .switch, .switch::after { transition-duration: 0s; }

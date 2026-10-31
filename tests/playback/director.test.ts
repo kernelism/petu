@@ -7,6 +7,7 @@ import { DEFAULTS } from '../../src/settings/settings';
 import type { Action, InkAction, RawAction } from '../../src/script/types';
 import type { Grounding } from '../../src/geometry/resolve';
 import { parseTag } from '../../src/script/parseTag';
+import { kitStore } from '../../src/desk/kit/kit';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -327,6 +328,16 @@ describe('Director on the desk', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(fb.builtAt.get(e as InkAction)).toBeGreaterThanOrEqual(500);
     expect(ended.get(e)?.skipped).toBe('unknown id');
+  });
+  it('{{clear}} keeps the answer\'s constants, even ones parsed after it; begin() drops them', async () => {
+    const { d } = make();
+    const clear = parseTag('clear')!, c = parseTag('const v=20 g=9.8')!;
+    d.prefetch(clear); d.prefetch(c); // parsing runs ahead of playback
+    d.run(clear, 0); d.run(c, 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(kitStore(d.registry).consts).toEqual({ v: 20, g: 9.8 });
+    void d.begin(300);
+    expect(kitStore(d.registry).consts).toEqual({});
   });
   it('begin clears the registry but leaves the desk until the new answer first acts (rule 8)', async () => {
     const { d, desk } = make();

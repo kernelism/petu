@@ -14,6 +14,11 @@
 //                              an answer's failed unit, server/repair.ts); 404 unknown reqId, 429 past
 //                              MAX_REPAIRS, 400 bad body or phase, 402 cap, 503 repairs off
 //   POST /api/report           { report, png? } → saved under .petu/reports/ (server/report.ts)
+//   POST /api/voice            { text, voice?, speed? } → raw PCM 24 kHz s16le mono, streamed (server/voice.ts);
+//                              402 cap, 503 no key; { warm: true } → 204 once the voice session is open
+//   GET  /api/stt              → { on }: whether SPEECHMATICS_API_KEY is set (the ask bar hides its mic when not)
+//   POST /api/stt              {} → { jwt, url }: a 60 s Speechmatics realtime key for the mic (server/stt.ts);
+//                              503 without SPEECHMATICS_API_KEY, 502 when Speechmatics refuses
 //   GET  /api/dev-pdf/<n>.pdf  <n>.pdf from the first PETU_PDF_DIRS directory that has it
 //
 // Every /api/* request must come from the app itself (`guard`): a loopback Host (no rebound DNS
@@ -37,6 +42,8 @@ import { worstCaseUsd } from './prices';
 import { loadPetuEnv, type PetuEnv } from './env';
 import { routeReport } from './report';
 import { RepairCache, repair } from './repair';
+import { VoiceLine, routeVoice, validateVoice } from './voice';
+import { mintSttToken } from './stt';
 import type { RepairWire, RepairWireEvent } from '../src/agent/protocol';
 import { isRelation } from '../src/agent/context/memory';
 
@@ -77,6 +84,8 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   const repairs = new RepairCache(o.now);
   const deps: Deps = { key: env.key, ...(env.anthropicKey ? { anthropicKey: env.anthropicKey } : {}), ledger, phase: env.phase, fetch: o.fetch ?? fetch, cache, log, ...(o.timeouts ? { timeouts: o.timeouts } : {}),
     ...(env.repair ? { onBody: (id, oa, cfg, ck, images) => repairs.put(id, oa, cfg, ck, images) } : {}) };
+  // The narration's voice: one warm Realtime session, opened on the first question (server/voice.ts).
+  const voice = env.key ? new VoiceLine(env.key) : null;
   let systemWarming: Promise<unknown> | null = null;
   const now = o.now ?? Date.now;
   const prewarmed = new Map<string, number>();
@@ -107,9 +116,11 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
       if (path === '/api/judge') return await routeJudge(req, res);
       if (path === '/api/repair') return await routeRepair(req, res);
       if (path === '/api/report') return await routeReport(req, res, o.root, env.key);
+      if (path === '/api/voice') return await routeVoiceReq(req, res);
+      if (path === '/api/stt') return await routeStt(req, res);
       if (path.startsWith('/api/dev-pdf/')) return routePdf(req, res, path.slice('/api/dev-pdf/'.length));
     } catch (e) {
-      const msg = [env.key, env.anthropicKey].filter(Boolean).reduce((m, k) => m.split(k).join('***'), String(e));
+      const msg = [env.key, env.anthropicKey, env.speechmaticsKey].filter(Boolean).reduce((m, k) => m.split(k).join('***'), String(e));
       console.error(`petu: ${path} failed: ${msg}`.slice(0, 300));
       if (!res.headersSent && !res.writableEnded) return json(res, 500, { error: 'internal error' });
       if (!res.writableEnded) res.end();
@@ -139,6 +150,29 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     } finally {
       res.off('close', onClose);
       if (!res.writableEnded && !res.destroyed) res.end();
+    }
+  }
+
+  async function routeVoiceReq(req: IncomingMessage, res: ServerResponse) {
+    if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
+    const body = await readJson(req, res);
+    if (body === undefined) return;
+    if (!voice) return json(res, 503, { error: 'no OPENAI_API_KEY' });
+    if (body?.warm === true) { await voice.warm(); res.statusCode = 204; res.end(); return; }
+    const bad = validateVoice(body);
+    if (bad) return json(res, 400, { error: bad });
+    await routeVoice(req, res, body, { line: voice, ledger, phase: env.phase, id: () => `voice-${randomBytes(6).toString('hex')}`,
+      log: (rec) => appendFileSync(join(dir, 'voice.jsonl'), `${JSON.stringify(rec)}\n`) });
+  }
+
+  async function routeStt(req: IncomingMessage, res: ServerResponse) {
+    // GET: whether dictation is set up (the ask bar shows its mic only then). A boolean, never the key.
+    if (req.method === 'GET') return json(res, 200, { on: !!env.speechmaticsKey });
+    if (req.method !== 'POST') return json(res, 405, { error: 'GET or POST only' });
+    if (!env.speechmaticsKey) return json(res, 503, { error: 'Add SPEECHMATICS_API_KEY to .env and restart npm run dev.' });
+    try { return json(res, 200, await mintSttToken(env.speechmaticsKey, o.fetch ?? fetch)); } catch (e) {
+      console.error(`petu: /api/stt: ${String(e).split(env.speechmaticsKey).join('***')}`.slice(0, 300));
+      return json(res, 502, { error: 'Dictation is unavailable right now.' });
     }
   }
 
