@@ -18,7 +18,7 @@ it. The review artefact is `report.html`, not recordings.
 | `scripts/eval/q2.ts` | q2 rows (34 course + 6 on synthetic `econ`/`mechanics` decks), written by an agent that saw only the PDFs; split computed. |
 | `scripts/eval/split.ts` | `stratifiedSplit` by deck then scope, seed 670 → 20 dev / 20 test. |
 | `scripts/eval/decks.ts` | Deck id → file; course PDFs read in place from `PETU_PDF_DIRS` (default `~/Documents/670/contents`, `public/dev`), never copied; fixtures from `public/fixtures/`. |
-| `scripts/eval/judge.ts` | Rubrics: **r3** (default) criteria `understanding, illustration, deck, craft, economy` (1–5), `DEFECTS_R3` (e.g. `board_copies_page`, `board_repeats_narration`, `single_slide`, `drawing_appears_at_once`), `FATALS`; r2 kept for comparison. Builds requests; POSTs to `/api/judge` (never calls OpenAI itself). Judge = `gpt-6.1-sol`, effort low. |
+| `scripts/eval/judge.ts` | Rubrics: **r3** (default) criteria `understanding, illustration, deck, craft, economy` (1–5), `DEFECTS_R3` (e.g. `board_copies_page`, `board_repeats_narration`, `single_slide`, `drawing_appears_at_once`), `FATALS`; r2 kept for comparison. A hidden check question (p6.2 `<check>`, `done.check`, the UI's "Test yourself") reaches the r3 judge after the transcript as an optional practice question (`checkOf`); the rubric treats it like a spoken one (p6.1) and neither rewards nor punishes it. Builds requests; POSTs to `/api/judge` (never calls OpenAI itself). Judge = `gpt-6.1-sol`, effort low. |
 | `scripts/eval/frames.ts` | r3 timeline: a sentence-end still every ~35 spoken words, ≤ 6, plus final state and the whole board (stitched from `[data-petu-board]`); deck digest for the judge. |
 | `scripts/eval/scriptTags.ts` | The app parser's view of a recorded answer (`parseAnswer`): per tag the kind it became (`{{scene}}` → sketch, `{{contrast}}` → its copy), a val's `said` text, a find's sources, or rejected; `malformed` = parser rejections + unclosed. Feeds `renderTranscript` (only real failures read `✗ not parsed`) and `computeMetrics` (malformed, skip dependents). Imports `src/`, so `npm run eval` runs with the tsResolve loader. |
 | `scripts/eval/metrics.ts` | Pure metrics from `__petu.result()`: first word/mark ms, `spokenMs` (first word → end of the last sentence, apart from the wait and from `totalMs`), cost (`usd` stage 2, `answerUsd` with the scout), cache share, tags, malformed (from the parser, via scriptTags.ts), skipped, elements, leaks, takeaway-first… |
@@ -84,7 +84,9 @@ Run dir: `.petu/eval/runs/<date>-<config>-<promptVersion>-<qset>[-N]/` (gitignor
 
 - New config: `CONFIGS` in `configs.ts` (model must be priced in `server/prices.ts`).
 - Rubric wording/criteria: `judge.ts` (`RUBRIC_R3`, `CRITERIA_R3`, `DEFECTS_R3`, schema) → re-judge
-  with `--finish`, re-calibrate; comparisons across rubrics are refused.
+  with `--finish` (the judgement key hashes the request, so changed wording re-judges and an unchanged
+  answer reuses its judgement; `--finish` overwrites `judge.json`: copy the run dir first to keep the
+  old scores; it keeps the run's own prompt version), re-calibrate; comparisons across rubrics are refused.
 - Frame selection: `FRAME_OPTS` in `frames.ts`. Metrics: `metrics.ts` (+ `tests/eval/metrics.test.ts`).
 - New question set: a new rows file + `QSETS` in `questions.ts` + pin its hash in the test.
 

@@ -379,7 +379,9 @@ async function main(): Promise<void> {
     if (args.webkit) {
       await webkitStills(server.base, done.map((d) => ({ id: d.q.id, stored: d.stored, qdir: d.qdir })), gateQuery({ ...args, repair: args.repair ?? 'recorded', replay: args.replay ?? 'webkit' }));
     }
-    const summary = buildSummary({ runId, config: args.config, qset: QSET, promptVersion: PROMPT_VERSION, phase, rubric: rubric.version, questions: summaries });
+    // --finish re-judges an earlier run: it keeps the prompt version that run generated with (not this checkout's).
+    const priorSummary = args.finish && existsSync(join(dir, 'summary.json')) ? readJson<{ promptVersion?: string }>(join(dir, 'summary.json')) : null;
+    const summary = buildSummary({ runId, config: args.config, qset: QSET, promptVersion: priorSummary?.promptVersion ?? PROMPT_VERSION, phase, rubric: rubric.version, questions: summaries });
     if (args.fakeJudge) summary.fakeJudge = true;
     writeJson(join(dir, 'summary.json'), summary);
     writeJson(join(dir, 'run.json'), { args, config: cfg, phase, replayOf: args.replay, ...(args.finish ? { finishedAt: new Date().toISOString() } : {}) });

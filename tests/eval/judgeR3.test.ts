@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseJudge, buildJudgeRequestR3, judgeAnswer, R2, R3, RUBRIC_R3, JUDGE_SCHEMA_R3, CRITERIA_R3, DEFECTS_R3, rubricOf, criteriaOf, meanScore, estimateJudgeTokens, fakeJudgement, fakeJudgeFetch, agreement, DEFAULT_RUBRIC, FOLLOW_UP_RUBRIC } from '../../scripts/eval/judge';
+import { parseJudge, buildJudgeRequestR3, judgeAnswer, R2, R3, RUBRIC_R3, JUDGE_SCHEMA_R3, CRITERIA_R3, DEFECTS_R3, rubricOf, criteriaOf, meanScore, estimateJudgeTokens, fakeJudgement, fakeJudgeFetch, agreement, DEFAULT_RUBRIC, FOLLOW_UP_RUBRIC, checkOf } from '../../scripts/eval/judge';
 
 const good = { scores: { understanding: 4, illustration: 2, deck: 3, craft: 3, economy: 5 }, defects: ['board_copies_page', 'single_slide'], fatal: [], notes: 'Draw a window over a corner.' };
 const img = { b64: 'AAAA', w: 1152, h: 720 };
@@ -60,6 +60,32 @@ describe('rubric r3', () => {
     expect(texts[0]).toContain('PREVIOUS ANSWER. The student first asked: First?');
     expect(texts.findIndex((t) => t.includes('Previous transcript:\nBefore.'))).toBeLessThan(texts.findIndex((t) => t.startsWith('Follow-up question: simpler')));
     expect(r.content.filter((c) => c.type === 'input_image' && c.detail === 'low')).toHaveLength(2); // previous frame + this page
+  });
+  it('gives the judge the hidden check question (done.check), labelled optional and never spoken; a spoken one stays in the transcript', () => {
+    const done = (check?: string) => ({ t: 'done', usd: 0, spentUsd: 0, capUsd: 1, ttftMs: 0, ...(check ? { check } : {}) }) as never;
+    const hidden = { chunks: [{ t: 0, d: 'The normal force is bigger on the bank.' }], timings: [], events: [done('What if the mass doubles?')] };
+    expect(checkOf(hidden)).toBe('What if the mass doubles?');
+    const r = buildJudgeRequestR3({ phase: 'x', question: 'Q', result: hidden, page: img, digest: '', frames: [{ ...img, caption: 'c' }] });
+    const texts = r.content.flatMap((c) => (c.type === 'input_text' ? [c.text] : []));
+    expect(texts.at(-3)).toMatch(/^Transcript:/);
+    expect(texts.at(-2)).toBe('Practice question (optional, never spoken: offered after the answer as a "Test yourself" button the student can open): What if the mass doubles?');
+    expect(texts.at(-1)).toMatch(/^Engine:/);
+    // p6.1: the question is the last spoken sentence; no done.check, so no extra line.
+    const spoken = { chunks: [{ t: 0, d: 'Bigger on the bank. What if the mass doubles?' }], timings: [], events: [done()] };
+    expect(checkOf(spoken)).toBeUndefined();
+    const s = buildJudgeRequestR3({ phase: 'x', question: 'Q', result: spoken, page: img, digest: '', frames: [{ ...img, caption: 'c' }] });
+    expect(JSON.stringify(s.content)).not.toContain('Practice question');
+    // The rubric treats both forms alike and neither rewards nor punishes one.
+    expect(RUBRIC_R3).toContain('Treat both forms alike');
+    expect(RUBRIC_R3).toContain('neither raises nor lowers any score');
+    expect(RUBRIC_R3).toContain('never padding');
+  });
+  it('a follow-up shows the previous answer\'s hidden check question with its transcript', () => {
+    const prev = { question: 'First?', frames: [{ ...img, caption: 'p1' }], result: { chunks: [{ t: 0, d: 'Before.' }], timings: [], events: [{ t: 'done', usd: 0, spentUsd: 0, capUsd: 1, ttftMs: 0, check: 'Try 2?' } as never] } };
+    const r = buildJudgeRequestR3({ phase: 'x', question: 'simpler', result: { chunks: [{ t: 0, d: 'After.' }], timings: [] }, page: img, digest: '', frames: [{ ...img, caption: 'c' }], previous: prev });
+    const t = r.content.flatMap((c) => (c.type === 'input_text' ? [c.text] : [])).find((x) => x.startsWith('Previous transcript:'));
+    expect(t).toContain('Practice question (optional, never spoken');
+    expect(t).toContain('Try 2?');
   });
   it('estimates tokens like the server (images by 32-px patches)', () => {
     const r = buildJudgeRequestR3({ phase: 'x', question: 'Q', result: { chunks: [], timings: [] }, page: img, digest: '', frames: [{ ...img, caption: 'c' }] });
