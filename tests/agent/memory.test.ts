@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SessionMemory, recordOf, boardOf, claimsOf, narrationOf, readTag, FULL_TURNS, REVISIONS, isRelation } from '../../src/agent/context/memory';
+import { SessionMemory, recordOf, boardOf, claimsOf, narrationOf, readTag, entryText, FULL_TURNS, REVISIONS, isRelation } from '../../src/agent/context/memory';
 
 const SCRIPT = `The rate drops because the blocker takes seats. {{scroll p=4}} {{highlight p=4 "Km rises"}}
 
@@ -63,6 +63,27 @@ describe('MEMORY block', () => {
     m.add(recordOf({ question: 'simpler', page: 4, pages: [4], plan: 'A queue.', script: 'Think of chairs.', relation: 'simplify' }));
     expect(m.text()).toContain('A2 (on p4; simplify of A1) "simpler"');
     expect(m.last()?.question).toBe('simpler');
+  });
+
+  it('a thread keeps its question: a complaint about a derailed follow-up is still on the first question; the parts line carries what was covered and left', () => {
+    const m = new SessionMemory();
+    m.add(recordOf({ question: 'explain every filter here', page: 1, pages: [4, 22, 33], plan: 'Five filters.', script: 'Box, then median.',
+      answerPlan: 'the case: a row of pixels\nparts: box, Gaussian, median, sharpening, derivative; covered here: box, Gaussian, median; left: sharpening, derivative\nBOARD viewBox="0 0 1000 700"\ngroups: row; box' }));
+    m.add(recordOf({ question: 'not good enough', page: 613, pages: [613], plan: 'Strips.', script: 'Paper strips.', relation: 'simplify' }));
+    m.add(recordOf({ question: 'that is not complete, right?', page: 13, pages: [13], plan: 'More.', script: 'The ball.', relation: 'continue' }));
+    const t = m.text();
+    expect(t).toContain('  parts: box, Gaussian, median, sharpening, derivative; covered here: box, Gaussian, median; left: sharpening, derivative');
+    expect(t).toContain('A2 (on p613; simplify of A1) "not good enough"');
+    expect(t).toContain("A3 (on p13; continue of A2; still on A1's question) \"that is not complete, right?\"");
+    expect(t).toMatch(/which question its thread is still on/);
+    // A new topic opens a new thread; its follow-up names no older root.
+    m.add(recordOf({ question: 'what is a homography?', page: 50, pages: [50], plan: '', script: 'A map.', relation: 'new-topic' }));
+    m.add(recordOf({ question: 'simpler', page: 50, pages: [50], plan: '', script: 'A sheet.', relation: 'simplify' }));
+    expect(m.text()).toContain('A5 (on p50; simplify of A4) "simpler"');
+    expect(m.text()).not.toContain("A5 (on p50; simplify of A4; still on");
+    // A question longer than the old clip is kept whole (the scout must read the whole thread question).
+    const long = 'can you explain different filtering techniques mentioned. I think some aren\'t here too. can you go in depth on multiple different such filtering / convolution techniques';
+    expect(entryText(1, recordOf({ question: long, page: 1, pages: [1], plan: '', script: 'x.' }))).toContain(`"${long}"`);
   });
 
   it('is append-only, and past FULL_TURNS rolls the oldest half into one line each', () => {
