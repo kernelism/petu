@@ -41,7 +41,7 @@ describe('parseEnv', () => {
       expect(e.phase).toBe(p);
       expect(e.caps.dailyUsd).toBeUndefined();
       expect(e.caps.phaseUsd?.[p]).toBe(cap);
-      expect(e.caps.totalUsd).toBe(60);
+      expect(e.caps.totalUsd).toBe(80);
     }
     expect(parseEnv(from({ PETU_PHASE: 'lessondev', PETU_CAP_LESSONDEV: '0.5' }), opts).caps.phaseUsd?.lessondev).toBe(0.5);
     // The founder reserve and daily cap are unchanged.
@@ -55,7 +55,7 @@ describe('parseEnv', () => {
     expect(() => parseEnv(from({ PETU_SCOUT_MODEL: 'gpt-9' }), opts)).toThrow(/PETU_SCOUT_MODEL/);
     expect(() => parseEnv(from({ PETU_SCOUT_MODEL: 'gpt-6.1-sol' }), opts)).toThrow(/none/);
   });
-  it('the total can be lowered but never raised past $60', () => {
+  it('the total can be lowered but never raised past $80', () => {
     expect(parseEnv(from({ PETU_TOTAL_CAP_USD: '0' }), opts).caps.totalUsd).toBe(0);
     expect(parseEnv(from({ PETU_TOTAL_CAP_USD: '100' }), opts).caps.totalUsd).toBe(MAX_TOTAL_USD);
   });
@@ -146,7 +146,7 @@ describe('createApi', () => {
     const api = createApi({ env: env(), root, fetch: upstream([]).f });
     expect(JSON.parse(readFileSync(join(root, '.petu/spend.json'), 'utf8')).priorUsd).toBe(0.0076);
     expect(readFileSync(join(root, '.petu/eval-token'), 'utf8')).toBe(api.token);
-    expect(api.statusLine()).toBe('petu: model gpt-6.1-terra/none · spent $0.01 of $60 · phase founder');
+    expect(api.statusLine()).toBe('petu: model gpt-6.1-terra/none · spent $0.01 of $80 · phase founder');
     expect(api.statusLine()).not.toContain(KEY);
   });
 
@@ -247,7 +247,7 @@ describe('createApi', () => {
     const res = fakeRes();
     await api.handle(fakeReq('GET', '/api/spend'), res, () => {});
     const s = JSON.parse(res.body());
-    expect(s).toMatchObject({ totalUsd: 0.0076, capUsd: 60, todayUsd: 0, dailyCapUsd: 3, phase: 'founder', phaseCapUsd: 21.99 });
+    expect(s).toMatchObject({ totalUsd: 0.0076, capUsd: 80, todayUsd: 0, dailyCapUsd: 3, phase: 'founder', phaseCapUsd: 21.99 });
     expect(s.blocked).toBeUndefined();
   });
 
