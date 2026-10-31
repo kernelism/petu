@@ -37,6 +37,45 @@ export function stressStep(rate: number | null, last: number | null, ms: number)
 
 const fmtRate = (r: number) => `${(r * 100).toFixed(2)}%`;
 
+/** Per-script counts as replay-stress writes them (`--json`: `scripts`, keyed by the script's hash). */
+export type StressScripts = Record<string, { label?: string; checked: number; skipped: number }>;
+/** The gate's replay-stress baseline (<gallery root>/../gate/replay-stress.json). Older files have only skipRate. */
+export type StressBaseline = { skipRate: number; at?: string; recordings?: number; scripts?: StressScripts };
+
+/**
+ * The replay-stress step, corpus-stable: the skip rate over the scripts the baseline recorded must not
+ * rise (current counts vs the baseline's, same scripts). Scripts recorded since then are reported with
+ * their own rate but never fail the gate (the next passing gate adds them to the baseline); scripts
+ * gone since are left out. A baseline without per-script counts (older gates) cannot be compared on the
+ * same set: the step passes and says so, and this gate's per-script record becomes the baseline.
+ */
+export function stressCorpusStep(cur: { skipRate: number; scripts: StressScripts }, base: StressBaseline | null, ms: number): StepResult {
+  const name = 'replay-stress';
+  const n = Object.keys(cur.scripts).length;
+  if (!base) return { name, ok: true, ms, detail: `skip rate ${fmtRate(cur.skipRate)} over ${n} scripts (first recorded baseline)` };
+  if (!base.scripts) return { name, ok: true, ms, detail: `skip rate ${fmtRate(cur.skipRate)} over ${n} scripts; the last baseline (${fmtRate(base.skipRate)}) has no per-script record, so no same-corpus comparison: this run becomes the baseline` };
+  const rate = (k: number, c: number) => (c ? k / c : 0);
+  let ck = 0, cc = 0, bk = 0, bc = 0, nk = 0, nc = 0, fresh = 0;
+  const worse: { label: string; d: number; from: number; to: number }[] = [];
+  let better = 0;
+  for (const [key, c] of Object.entries(cur.scripts)) {
+    const b = base.scripts[key];
+    if (!b) { fresh++; nk += c.skipped; nc += c.checked; continue; }
+    ck += c.skipped; cc += c.checked; bk += b.skipped; bc += b.checked;
+    if (c.skipped > b.skipped) worse.push({ label: c.label ?? b.label ?? key.slice(0, 8), d: c.skipped - b.skipped, from: b.skipped, to: c.skipped });
+    else if (c.skipped < b.skipped) better++;
+  }
+  const common = n - fresh, gone = Object.keys(base.scripts).length - common;
+  const now = rate(ck, cc), was = rate(bk, bc);
+  const ok = now <= was + 1e-9;
+  const lines = [
+    `skip rate on the ${common} baseline scripts ${fmtRate(now)} (${ck}/${cc}) vs ${fmtRate(was)} (${bk}/${bc})${ok ? '' : ' — rose'}; ${worse.length} script(s) worse, ${better} better`,
+    `new scripts since the baseline: ${fresh}${fresh ? ` (${fmtRate(rate(nk, nc))}, ${nk}/${nc}: not gated)` : ''}${gone ? `; gone: ${gone}` : ''}; all ${n}: ${fmtRate(cur.skipRate)}`,
+  ];
+  if (!ok) for (const w of worse.sort((x, y) => y.d - x.d).slice(0, 5)) lines.push(`  ${w.label}: ${w.from} -> ${w.to} skipped`);
+  return { name, ok, ms, detail: lines.join('\n') };
+}
+
 /** Reads a skip rate from replay-stress output as a fraction: the last `skip rate: 3.2%` / `skipRate: 0.032` / `"skipRate": 0.032`. */
 export function parseSkipRate(out: string): number | null {
   const m = [...out.matchAll(/"?skip[ _-]?rate"?\s*[:=]?\s*([\d.]+)\s*(%?)/gi)].pop();

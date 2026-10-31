@@ -16,13 +16,37 @@ export type Comparison = {
   takeawayFirstRate: { a: number; b: number };
   /** The live gate (absent on both sides when neither run was gated; an ungated run counts as 0). */
   gate?: { drops: { a: number; b: number }; holds: { a: number; b: number }; liveSkipAfterPass: { a: number; b: number }; repairUsd: { a: number; b: number } };
+  /** How first word was compared: 'compared' (scout changed, quiet machine), 'skipped' (same scout: not this change's metric), 'unreliable' (load high or not recorded). */
+  latency: { status: 'compared' | 'skipped' | 'unreliable'; note?: string };
   verdict: Verdict;
   reasons: string[];
+  /** Findings that do not decide the verdict by themselves (an unreliable latency regression turns an ACCEPT into a RERUN). */
+  warnings: string[];
 };
 
 export const THRESHOLDS = { acceptDelta: 0.15, rerunBand: 0.25, skippedSlack: 2, malformedSlack: 1, firstWordSlack: 0.15,
   /** Live gate: more dropped units or > 1 s holds than this over A rejects; any live skip after a pass rejects. */
-  dropSlack: 1, holdSlack: 2 };
+  dropSlack: 1, holdSlack: 2,
+  /** A run whose 1-min load average per CPU peaked above this measured latency on a busy machine. */
+  highLoadPerCpu: 0.75 };
+
+/**
+ * First word is the scout's metric (it speaks first): compared only when the scout changed between the
+ * runs, and trusted only when both runs recorded a quiet machine. A slowdown with the same scout is not
+ * this change's; one measured under high or unrecorded load is noise until a rerun on a quiet machine.
+ */
+export function latencyRule(A: Pick<Summary, 'scout' | 'load' | 'run'>, B: Pick<Summary, 'scout' | 'load' | 'run'>): { status: Comparison['latency']['status']; note?: string; reason?: string; warning?: string } {
+  const a = A.run.firstWordMs.p50, b = B.run.firstWordMs.p50;
+  const slower = a != null && b != null && b > a * (1 + THRESHOLDS.firstWordSlack);
+  const by = slower ? `p50 first word worse by ${(((b! - a!) / a!) * 100).toFixed(0)}% (> ${Math.round(THRESHOLDS.firstWordSlack * 100)}%)` : '';
+  if (A.scout && B.scout && A.scout === B.scout) return { status: 'skipped', note: `first word not compared: same scout (${A.scout})${slower ? `; ${by}, ignored` : ''}` };
+  const loads = [A.load, B.load];
+  if (loads.some((l) => !l)) return slower ? { status: 'unreliable', note: 'machine load not recorded', warning: `${by}, unreliable: machine load not recorded (rerun on a quiet machine)` } : { status: 'unreliable', note: 'machine load not recorded' };
+  const busy = loads.some((l) => l!.perCpuMax > THRESHOLDS.highLoadPerCpu);
+  const lp = `load per CPU ${A.load!.perCpuMax} -> ${B.load!.perCpuMax}`;
+  if (busy) return slower ? { status: 'unreliable', note: lp, warning: `${by}, unreliable: ${lp} (> ${THRESHOLDS.highLoadPerCpu}; rerun on a quiet machine)` } : { status: 'unreliable', note: lp };
+  return slower ? { status: 'compared', note: lp, reason: by } : { status: 'compared', note: lp };
+}
 
 /** The gate comparison and its reject reasons (pure; used by compare). */
 export function gateRules(A: Pick<Summary, 'run'>, B: Pick<Summary, 'run'>): { gate?: Comparison['gate']; reasons: string[] } {
@@ -81,7 +105,9 @@ export function compare(A: Summary, B: Summary): Comparison {
   if (fatal.b > fatal.a) reasons.push(`fatal up (${fatal.a} -> ${fatal.b})`);
   if (skipped.b - skipped.a > T.skippedSlack) reasons.push(`skipped up by ${skipped.b - skipped.a} (> ${T.skippedSlack})`);
   if (malformed.b - malformed.a > T.malformedSlack) reasons.push(`malformed up by ${malformed.b - malformed.a} (> ${T.malformedSlack})`);
-  if (fw.a != null && fw.b != null && fw.b > fw.a * (1 + T.firstWordSlack)) reasons.push(`p50 first word worse by ${(((fw.b - fw.a) / fw.a) * 100).toFixed(0)}% (> 15%)`);
+  const lat = latencyRule(A, B);
+  const warnings: string[] = lat.warning ? [lat.warning] : [];
+  if (lat.reason) reasons.push(lat.reason);
   // The takeaway-first gate belongs to the r2 answer shape; Lessons v3 dropped that rule (r3 runs skip it).
   const g = gateRules(A, B);
   reasons.push(...g.reasons);
@@ -91,10 +117,10 @@ export function compare(A: Summary, B: Summary): Comparison {
   const d = meanJudgeDelta;
   const mixed = signs.up > 0 && signs.down > 0;
   if (reasons.length) verdict = 'REJECT';
-  else if (d != null && d >= T.acceptDelta && (d >= T.rerunBand || !mixed)) verdict = 'ACCEPT';
+  else if (d != null && d >= T.acceptDelta && (d >= T.rerunBand || !mixed)) verdict = warnings.length ? 'RERUN n=2' : 'ACCEPT';
   else if (d != null && Math.abs(d) < T.rerunBand && mixed) verdict = 'RERUN n=2';
   else { verdict = 'REJECT'; reasons.push(d == null ? 'no judged questions in common' : `mean judge delta ${d.toFixed(2)} < +${T.acceptDelta}`); }
-  return { rows, meanJudgeDelta, signs, fatal, skipped, malformed, firstWordP50: fw, takeawayFirstRate: tk, ...(g.gate ? { gate: g.gate } : {}), verdict, reasons };
+  return { rows, meanJudgeDelta, signs, fatal, skipped, malformed, firstWordP50: fw, takeawayFirstRate: tk, ...(g.gate ? { gate: g.gate } : {}), latency: { status: lat.status, ...(lat.note ? { note: lat.note } : {}) }, verdict, reasons, warnings };
 }
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -110,8 +136,9 @@ export function format(A: Summary, B: Summary, c: Comparison): string {
   }
   L.push('', `mean judge delta ${f2(c.meanJudgeDelta)}  (up ${c.signs.up}, down ${c.signs.down})`,
     `fatal ${c.fatal.a} -> ${c.fatal.b}   skipped ${c.skipped.a} -> ${c.skipped.b}   malformed ${c.malformed.a} -> ${c.malformed.b}`,
-    `p50 first word ${c.firstWordP50.a ?? '-'} -> ${c.firstWordP50.b ?? '-'} ms   takeawayFirst ${pct(c.takeawayFirstRate.a)} -> ${pct(c.takeawayFirstRate.b)}`,
+    `p50 first word ${c.firstWordP50.a ?? '-'} -> ${c.firstWordP50.b ?? '-'} ms (${c.latency.status}${c.latency.note ? `: ${c.latency.note}` : ''})   takeawayFirst ${pct(c.takeawayFirstRate.a)} -> ${pct(c.takeawayFirstRate.b)}`,
     ...(c.gate ? [`gate drops ${c.gate.drops.a} -> ${c.gate.drops.b}   holds>1s ${c.gate.holds.a} -> ${c.gate.holds.b}   live skips after pass ${c.gate.liveSkipAfterPass.a} -> ${c.gate.liveSkipAfterPass.b}   repair $${c.gate.repairUsd.a.toFixed(3)} -> $${c.gate.repairUsd.b.toFixed(3)}`] : []),
+    ...c.warnings.map((w) => `warning: ${w}`),
     `VERDICT: ${c.verdict}${c.reasons.length ? ` (${c.reasons.join('; ')})` : ''}`);
   return L.join('\n');
 }
