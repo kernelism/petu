@@ -32,6 +32,8 @@ export const MIN_REPAIR_MS = 2500;
 /** How long past the narration's end the gate may hold the stage for a repair. */
 export const MAX_HOLD_MS = 400;
 export const MAX_REPAIRS = 2;
+/** Dropping this share of an answer's words is logged loudly (console). */
+export const LOUD_LOSS = 0.2;
 
 // ------------------------------------------------------------------------------------------------
 // Preflight: what checks one unit.
@@ -441,6 +443,11 @@ export class LiveGate {
         // Groups carried for a beat that never came (the stream ended): they play last, or are cut with the rest.
         if (!signal.aborted && this.carry) { const c: PreflightUnit = { key: `${this.nUnit++}`, kind: 'sentence', text: this.carry, end: true }; this.carry = ''; if (this.closing) this.held.push(c); else await this.process(c, out, signal); }
         if (!signal.aborted && this.held.length) for (const u of this.closingBeat()) { if (signal.aborted) break; await this.process(u, out, signal); }
+        // A gate that gutted an answer is a defect to see, not a quiet success: say so loudly.
+        const kept = wordCount(this.released2), lost = this.stats.droppedWords;
+        if (lost > 0 && lost >= LOUD_LOSS * (kept + lost)) {
+          console.warn(`[gate] dropped ${lost} of ${kept + lost} words (${this.stats.drops} units) of answer ${this.reqId ?? ''}: see the gate events`);
+        }
       }
       catch (e) { err ??= e; }
       finally { out.close(); }
