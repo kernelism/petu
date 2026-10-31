@@ -1,4 +1,5 @@
-// tests/desk/laneWalk.test.ts — a walking answer reads as one thread in the lane (founder 2026-10-31:
+// tests/desk/laneWalk.test.ts — an answer whose board explains several pages stays one board in the lane
+// (the walk's per-page slicing is off for display, founder 2026-10-31). Earlier: (founder 2026-10-31:
 // "why is only the last slide's drawings under 3? … when i scroll up, they are isolated and i don't
 // know what question they correspond to"; "why is 2 right above 3?").
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -62,77 +63,36 @@ async function walking(num = '3') {
   return { d, host, lane, head: head.el, step };
 }
 
-describe('Desk lane: a walking answer reads as one thread', () => {
+describe('Desk lane: an answer that explains several pages keeps one whole board', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.stubGlobal('matchMedia', () => ({ matches: true })); });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 
-  it('the head stays over the first stretch; each later stretch carries "cont. i", then "i/n" once it ends', async () => {
+  // Founder 2026-10-31: the left half of a board vanished as the narration moved to the next page (the
+  // walk's slicing). The board stays one composition: nothing is left behind, nothing is hidden.
+  it('marks on new pages never slice the board: one group, its head on top, every svg group shown, no tags', async () => {
     const { d, lane, head, step } = await walking();
     step(0, 2);
     step(200, 4);
     step(400, 5);
-    const items = [...lane.querySelectorAll<HTMLElement>('.lane-item')];
-    expect(items).toHaveLength(3);
-    // The first stretch (p.2) holds the head, above its drawing.
-    expect(items[0].firstElementChild).toBe(head);
-    expect(items[0].querySelector('.desk-region')).not.toBeNull();
-    // The later ones a tag in the head's style: the number chip and "cont. i" (the total once it ends).
-    const tag = (i: number) => items[i].querySelector(':scope > .trail-head.is-cont');
-    expect(tag(1)?.querySelector('.trail-num')?.textContent).toBe('3');
-    expect(tag(1)?.querySelector('.trail-cont-n')?.textContent).toBe('cont. 2');
-    expect(tag(2)?.querySelector('.trail-cont-n')?.textContent).toBe('cont. 3');
-    expect(tag(2)?.querySelector('.trail-cont-q')?.textContent).toBe('explain each filter one by one');
-    expect(items[2].contains(head)).toBe(false);
+    const check = () => {
+      const items = [...lane.querySelectorAll<HTMLElement>('.lane-item')];
+      expect(items).toHaveLength(1);
+      expect(items[0].firstElementChild).toBe(head);
+      expect(lane.querySelectorAll('.desk-region')).toHaveLength(1);
+      expect(lane.querySelectorAll('.is-slice, .trail-head.is-cont')).toHaveLength(0);
+      const gs = [...lane.querySelectorAll<SVGGElement>('svg[data-svgboard] > g')];
+      expect(gs).toHaveLength(3);
+      expect(gs.every((g) => g.style.visibility !== 'hidden')).toBe(true);
+    };
+    check();
+    // The whole canvas shows while it plays (never only the newest stretch).
+    expect(lane.querySelector('.desk-region svg:not([data-svgboard])')?.getAttribute('viewBox')?.split(' ')[1]).toBe('0');
     await d.overview();
     await settle();
-    expect(tag(1)?.querySelector('.trail-cont-n')?.textContent).toBe('cont. 2/3');
-    expect(tag(2)?.querySelector('.trail-cont-n')?.textContent).toBe('cont. 3/3');
-    expect(d.spanOf(head)).toBe('p.2–5');
+    check();
   });
 
-  it('a tag goes to the head (where the answer began)', async () => {
-    const { d, host, head, lane, step } = await walking();
-    step(0, 2);
-    step(200, 4);
-    await d.overview();
-    await settle();
-    host.glideTo.mockClear();
-    lane.querySelector<HTMLButtonElement>('.trail-head.is-cont .trail-row')!.click();
-    await settle();
-    expect(host.glideTo).toHaveBeenCalled();
-    expect(head.isConnected).toBe(true);
-  });
-
-  it('folds to one card at its first page that says the pages it spans; a click opens the whole thread', async () => {
-    const { d, lane, head, step } = await walking();
-    step(0, 2);
-    step(200, 4);
-    step(400, 5);
-    await d.overview();
-    await settle();
-    await d.reset(0);
-    const groups = [...lane.querySelectorAll<HTMLElement>('.lane-group')];
-    const shown = groups.filter((g) => !g.classList.contains('is-away'));
-    expect(shown).toHaveLength(1);
-    expect(shown[0].classList.contains('is-folded')).toBe(true);
-    expect(shown[0].contains(head)).toBe(true);
-    expect(head.querySelector('.trail-fmeta')?.textContent).toBe('p.2–5 · 1:51');
-    shown[0].querySelector<HTMLElement>('.lane-item')!.click();
-    expect(groups.filter((g) => g.classList.contains('is-away') || g.classList.contains('is-folded'))).toHaveLength(0);
-  });
-
-  it('replaying it (the trail forgets its head) takes every stretch with it', async () => {
-    const { d, lane, head, step } = await walking();
-    step(0, 2);
-    step(200, 4);
-    await d.overview();
-    await settle();
-    d.forget(head);
-    expect(lane.querySelectorAll('.lane-group')).toHaveLength(0);
-    expect(lane.querySelectorAll('.trail-head')).toHaveLength(0);
-  });
-
-  it('a follow-up that extends a folded walk undoes it: one drawing again, its head on top, no tags', async () => {
+  it('a follow-up that extends it draws on into the same one board', async () => {
     const { d, lane, head, step } = await walking();
     step(0, 2);
     step(200, 4);
@@ -144,10 +104,8 @@ describe('Desk lane: a walking answer reads as one thread', () => {
     const p = d.addRegion({ id: 'b', page: 4, size: 'l', svg: true, extend: true, h: 1400 });
     await settle();
     expect(typeof (await p)).not.toBe('string');
-    const groups = [...lane.querySelectorAll<HTMLElement>('.lane-group')];
-    expect(groups).toHaveLength(1);
-    expect(groups[0].classList.contains('is-away')).toBe(false);
-    expect(groups[0].querySelector('.lane-item')!.firstElementChild).toBe(head);
+    expect(lane.querySelectorAll('.lane-group')).toHaveLength(1);
+    expect(lane.querySelector('.lane-item')!.firstElementChild).toBe(head);
     expect(lane.querySelectorAll('.trail-head.is-cont')).toHaveLength(0);
   });
 

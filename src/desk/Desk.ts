@@ -435,7 +435,8 @@ export class Desk implements DeskApi {
   noteInk(t: Target, r: SRect, el?: Element): void {
     if (t.region != null) {
       const sec = this.ids.get(t.region);
-      if (sec?.svg && sec.group?.live && sec.group === this.liveGroup && !this.asideOpen && this.lane()) this.walkStep(sec, r, el ?? null);
+      // The board is one composition in the lane (founder 2026-10-31: a drawing must never vanish as the
+      // narration moves to the next page): the walk's per-page slicing is off for display.
       const m = sec && this.midHeads.find((x) => x.sec === sec && x.y == null);
       if (m && sec) {
         // The follow-up's first new group: its header lands right above it, in view with it.
@@ -457,7 +458,6 @@ export class Desk implements DeskApi {
     const g = this.liveGroup;
     if (!g || !this.lane()) return;
     g.first ??= { page: t.page, y: r.y + Math.min(r.h, 40) / 2 };
-    if (this.walkOn(g, { page: t.page, y: r.y + Math.min(r.h, 40) / 2 })) return;
     if (g.provisional) {
       // The answer's first page mark: the drawing moves level with the passage it explains (one glide).
       g.provisional = false;
