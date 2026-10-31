@@ -59,8 +59,9 @@ describe('board grammar', () => {
     const st = newTypeState(SCALE);
     st.titled = true;
     const ts = run(CARD, st);
-    // One size, raised toward the target (28.8) only as far as the proportion rule allows: RAISE_MAX × the model's median (20).
-    expect(new Set(ts.map(size))).toEqual(new Set([Math.min(28.8, RAISE_MAX * 20)]));
+    // The model's sizes (20, 22, 22, 18), scaled by one factor: the target (28.8) over the median (20), capped at RAISE_MAX.
+    const k = Math.min(RAISE_MAX, 28.8 / 20);
+    expect(ts.map(size)).toEqual([20, 22, 22, 18].map((v) => expect.closeTo(v * k, 5)));
     for (const t of ts) {
       expect(t.getAttribute('fill')).toBe(INK.ink);
       expect(t.getAttribute('font-weight')).toBe('400');
@@ -68,7 +69,7 @@ describe('board grammar', () => {
     }
     const ys = ts.map((t) => Number(t.getAttribute('y')));
     const steps = ys.slice(1).map((y, i) => y - ys[i]);
-    for (const s of steps) expect(s).toBeCloseTo(1.7 * Math.min(28.8, RAISE_MAX * 20), 1);
+    for (const s of steps) expect(s).toBeCloseTo(1.7 * 22 * k, 1);
     expect(ys[0] - 70).toBeGreaterThan(32);
     const rect = ts[0].ownerDocument.querySelector('rect') ?? ts[0].parentElement!.querySelector('rect')!;
     expect(70 + Number(rect.getAttribute('height'))).toBeGreaterThan(ys[ys.length - 1] + 20);
@@ -91,7 +92,11 @@ describe('board grammar', () => {
     const title = by(ts, 'Dough rises in steps');
     expect(title.getAttribute('data-role')).toBe('title');
     expect(title.getAttribute('font-weight')).toBe('600');
-    expect(size(title)).toBeCloseTo(TITLE_K * Math.min(SCALE.content, RAISE_MAX * 18)); // title = 1.25 × content; content raised ≤ 1.3 × the model's median (18)
+    // The model's 26 scaled like the rest (k = RAISE_MAX here: the target 28.8 over the median 18 is more), and never under 1.25 × the content median.
+    const k = Math.min(RAISE_MAX, SCALE.content / 18);
+    expect(size(title)).toBeCloseTo(Math.max(26 * k, TITLE_K * 18 * k));
+    expect(size(title)).toBeGreaterThan(size(by(ts, 'dough volume (ml)')));
+    expect(size(by(ts, '+120'))).toBeCloseTo(18 * k, 3);
     expect(by(ts, 'dough volume (ml)').getAttribute('font-weight')).toBe('400');
   });
 

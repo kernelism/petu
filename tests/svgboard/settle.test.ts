@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { mountBoard, prepareGroup, type SvgBoard } from '../../src/svgboard/render';
 import { core, groupGeometry, overlapArea, segHitsBox, type TextBox } from '../../src/svgboard/check';
-import { inkBox, LEGIBLE_PX } from '../../src/svgboard/grammar';
+import { inkBox, LEGIBLE_PX, RAISE_MAX } from '../../src/svgboard/grammar';
 import { BOARD_W } from '../../src/svgboard/wire';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -61,9 +61,12 @@ describe('the legibility floor and its safety net', () => {
     expect(b.root.querySelector('text')!.getAttribute('x')).toBe('240');
   });
 
-  it(`on the p6.4 canvas (${BOARD_W} wide) the model's 16–20 unit labels read at their own size, not raised`, () => {
+  it(`on the p6.4 canvas (${BOARD_W} wide) the model's 16–20 unit labels keep their ratio, raised by one factor of at most RAISE_MAX`, () => {
     const b = board(BOARD_W, 300);
     const { ppu, texts } = draw(b, ['<g id="p"><text x="20" y="40" font-size="18">demand</text><text x="300" y="40" font-size="16">supply 120</text><line x1="20" y1="60" x2="540" y2="60" stroke="#222"/></g>']);
-    for (const t of texts) { expect(t.fs * ppu).toBeGreaterThanOrEqual(LEGIBLE_PX); expect(t.fs * ppu).toBeLessThanOrEqual(18 * ppu * 1.02); }
+    const d = texts.find((t) => t.text === 'demand')!, s = texts.find((t) => t.text === 'supply 120')!;
+    for (const t of texts) expect(t.fs * ppu).toBeGreaterThanOrEqual(LEGIBLE_PX);
+    expect(d.fs / s.fs).toBeCloseTo(18 / 16, 3);
+    expect(s.fs).toBeGreaterThanOrEqual(16); expect(s.fs).toBeLessThanOrEqual(16 * RAISE_MAX + 1e-6);
   });
 });

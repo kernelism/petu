@@ -7,8 +7,8 @@
  * founder 2026-10-31), so a label keeps its size and moves instead:
  *  1. nudge: the smallest offset (up to half an em, eight directions) where it is clear;
  *  2. wrap: a label of several words breaks into two lines at its middle word (a row keeps its places);
- *  3. a longer nudge (up to 2 em);
- *  4. last resort: a little smaller (7% steps) but never under `hardMin`, nudging at each size.
+ *  3. a longer nudge (up to 2 em).
+ * A text is never set smaller: its size is its tier in the board's hierarchy (grammar.ts).
  * Only collisions the raise created count (pairs that were clear at the model's own sizes and places),
  * so a model's deliberate composition (a label on its curve, behind the paper halo) is left alone.
  * Pure over the parsed XML; geometry is the gate's (check.ts groupGeometry: measured widths in a
@@ -44,10 +44,10 @@ type Hits = Set<string>;
 
 /**
  * Settles a prepared group's texts: `raw` is the group as the model wrote it (data resolved, its own
- * sizes), `prior` what earlier groups left on the board, `w` the canvas width; `hardMin` the smallest
- * size (units) a text may go to as a last resort. Returns how many texts still collide (for metrics).
+ * sizes), `prior` what earlier groups left on the board, `w` the canvas width. Returns how many texts
+ * still collide (for metrics).
  */
-export function settle(g: Element, raw: Element, prior: Drawn, w: number, hardMin: number): number {
+export function settle(g: Element, raw: Element, prior: Drawn, w: number): number {
   const els = Array.from(g.querySelectorAll('text'));
   if (!els.length) return 0;
   const rawEls = Array.from(raw.querySelectorAll('text'));
@@ -126,12 +126,7 @@ export function settle(g: Element, raw: Element, prior: Drawn, w: number, hardMi
       restore(el, snapshot);
     }
     if (tryHere(2)) return true;
-    // Last resort: a little smaller, never under hardMin.
-    const fs0 = num(el.getAttribute('font-size'), 16);
-    for (let fs = fs0 * 0.93; fs >= hardMin - 1e-6; fs *= 0.93) {
-      el.setAttribute('font-size', r2(fs));
-      if (tryHere(2)) return true;
-    }
+    // Never smaller: a text's size is its tier (grammar.ts). What is left keeps the paper halo.
     restore(el, snapshot);
     return false;
   }
