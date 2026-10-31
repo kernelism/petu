@@ -3,15 +3,25 @@
 //
 // POST /api/stt gives a 60 s key (server/stt.ts); the browser opens the realtime WebSocket with it
 // and sends raw float32 PCM at the audio context's rate, ~100 ms per frame. Partials show at once
-// and are replaced by finals; the question ends at a pause (Speechmatics' EndOfUtterance after
-// END_SILENCE_S of silence, once something was said) or when the student stops it. Stopping sends
-// EndOfStream and waits (briefly) for the last finals before handing back the text.
+// and are replaced by finals. The question ends when the student stops it, or on its own after a pause:
+// Speechmatics' EndOfUtterance (END_SILENCE_S of silence) starts a short visible countdown
+// (SEND_AFTER_MS, `onCountdown`), which new speech or a key (`hold`) cancels; an empty or one-word
+// fragment never ends on its own. Stopping sends EndOfStream and waits (briefly) for the last finals
+// before handing back the text.
 //
 // The mic is opened with the browser's echo cancellation on, so a voice answer playing on the same
 // page is not transcribed back as the student's.
 
-/** Silence that ends the question. */
-export const END_SILENCE_S = 0.8;
+/**
+ * Silence that ends the question: Speechmatics' maximum (end_of_utterance_silence_trigger, "Allowed
+ * between 0 and 2 seconds", docs.speechmatics.com/speech-to-text/realtime/turn-detection). A student
+ * thinking mid-question pauses longer than the 0.8 s this used to be.
+ */
+export const END_SILENCE_S = 2;
+/** After that silence, the question goes this long later unless the student speaks or presses a key. */
+export const SEND_AFTER_MS = 1000;
+/** Fewer words than this never end on their own (a false start, "um"). */
+const MIN_AUTO_WORDS = 2;
 /** How long a stop waits for the last finals. */
 const DRAIN_MS = 1500;
 /** Samples per frame sent (~100 ms at 16 kHz; the context may run at another rate). */
@@ -22,6 +32,8 @@ export type DictationEvents = {
   onText(text: string): void;
   /** Ended: by a pause (`auto`), a stop, or an error (`error` set; `text` is what was heard). */
   onEnd(r: { text: string; auto: boolean; error?: string }): void;
+  /** A pause: the question goes in `ms` (a countdown to show); null: the countdown was cancelled. */
+  onCountdown?(ms: number | null): void;
 };
 
 /** What dictation needs from the platform (tests pass fakes). */
@@ -54,6 +66,9 @@ export class Dictation {
   private ended = false;
   private stopping = false;
   private drain: ReturnType<typeof setTimeout> | null = null;
+  private countdown: ReturnType<typeof setTimeout> | null = null;
+  /** The end came from the pause's countdown. */
+  private auto = false;
 
   constructor(private ev: DictationEvents, private d: DictationDeps = browserDeps()) {}
 
@@ -90,15 +105,32 @@ export class Dictation {
   }
 
   /** Ends the question now: the last words are recognised (briefly waited for), then onEnd. */
-  stop(): void {
+  stop(): void { this.end(false); }
+
+  /** A key was pressed: the pause's countdown is cancelled (listening goes on). */
+  hold(): void { this.uncount(); }
+
+  private end(auto: boolean) {
+    this.uncount();
     if (this.ended || this.stopping) return;
     this.stopping = true;
+    this.auto = auto;
     this.mic?.close();
     if (this.sock && this.sock.readyState === 1 && this.started) {
       this.sock.send(JSON.stringify({ message: 'EndOfStream', last_seq_no: this.seq }));
-      this.drain = setTimeout(() => this.finish(false), DRAIN_MS);
-    } else this.finish(false);
+      this.drain = setTimeout(() => this.finish(auto), DRAIN_MS);
+    } else this.finish(auto);
   }
+
+  private uncount() {
+    if (!this.countdown) return;
+    clearTimeout(this.countdown);
+    this.countdown = null;
+    this.ev.onCountdown?.(null);
+  }
+
+  /** New words were heard: the student had not finished. */
+  private spoke(t: string) { if (/[\p{L}\p{N}]/u.test(t)) this.uncount(); }
 
   /** Drops the question: nothing is handed back. */
   cancel(): void {
@@ -115,16 +147,22 @@ export class Dictation {
         this.started = true;
         for (const b of this.early.splice(0)) { this.sock?.send(b); this.seq++; }
         break;
-      case 'AddPartialTranscript': this.partial = (m.metadata?.transcript ?? '').trim(); this.ev.onText(this.text()); break;
+      case 'AddPartialTranscript': this.partial = (m.metadata?.transcript ?? '').trim(); this.spoke(this.partial); this.ev.onText(this.text()); break;
       case 'AddTranscript': {
         const t = (m.metadata?.transcript ?? '').trim();
+        this.spoke(t);
         if (t) this.finals = joinWords(this.finals, t);
         this.partial = '';
         this.ev.onText(this.text());
         break;
       }
-      case 'EndOfUtterance': if (this.finals && !this.stopping) { this.stopping = true; this.mic?.close(); this.sock?.send(JSON.stringify({ message: 'EndOfStream', last_seq_no: this.seq })); this.finish(true); } break;
-      case 'EndOfTranscript': this.finish(false); break;
+      case 'EndOfUtterance':
+        if (!this.stopping && !this.countdown && wordCount(this.text()) >= MIN_AUTO_WORDS) {
+          this.countdown = setTimeout(() => { this.countdown = null; this.end(true); }, SEND_AFTER_MS);
+          this.ev.onCountdown?.(SEND_AFTER_MS);
+        }
+        break;
+      case 'EndOfTranscript': this.finish(this.auto); break;
       case 'Error': this.finish(false, m.type === 'quota_exceeded' ? 'Dictation is over its quota.' : `Dictation error: ${m.reason ?? m.type ?? 'unknown'}`); break;
     }
   }
@@ -133,6 +171,7 @@ export class Dictation {
     if (this.ended) return;
     this.ended = true;
     if (this.drain) clearTimeout(this.drain);
+    if (this.countdown) { clearTimeout(this.countdown); this.countdown = null; }
     this.mic?.close();
     const s = this.sock;
     this.sock = null;
@@ -140,6 +179,9 @@ export class Dictation {
     this.ev.onEnd({ text: this.text(), auto, ...(error ? { error } : {}) });
   }
 }
+
+/** Words with a letter or digit in them ("why?" is one). */
+export const wordCount = (t: string) => t.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
 
 /** Joins finals: Speechmatics sends punctuation as its own result ("seven" then "."), without a leading space. */
 export function joinWords(a: string, b: string): string {

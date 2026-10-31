@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { browserDeps, Dictation, joinWords, type DictationDeps, type DictationSocket } from '../../src/agent/dictation';
+import { browserDeps, Dictation, END_SILENCE_S, joinWords, SEND_AFTER_MS, type DictationDeps, type DictationSocket } from '../../src/agent/dictation';
 import { mintSttToken, STT_MINT_URL } from '../../server/stt';
 
 function fakes() {
@@ -19,8 +19,9 @@ function fakes() {
   };
   const texts: string[] = [];
   const ends: { text: string; auto: boolean; error?: string }[] = [];
-  const d = new Dictation({ onText: (t) => texts.push(t), onEnd: (r) => ends.push(r) }, deps);
-  return { d, sock, sent, texts, ends, url: () => url, frame: (n = 1600) => frame!(new Float32Array(n)), micClosed: () => micClosed };
+  const counts: (number | null)[] = [];
+  const d = new Dictation({ onText: (t) => texts.push(t), onEnd: (r) => ends.push(r), onCountdown: (ms) => counts.push(ms) }, deps);
+  return { d, sock, sent, texts, ends, counts, url: () => url, frame: (n = 1600) => frame!(new Float32Array(n)), micClosed: () => micClosed };
 }
 const json = (sent: (string | ArrayBufferLike)[]) => sent.filter((x): x is string => typeof x === 'string').map((x) => JSON.parse(x));
 
@@ -28,13 +29,13 @@ describe('Dictation', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('starts recognition with the mic rate, holds early frames, shows partials then finals, and sends on a pause', async () => {
+  it('starts recognition with the mic rate, holds early frames, shows partials then finals, and sends after a pause and a countdown', async () => {
     const f = fakes();
     await f.d.start();
     expect(f.url()).toBe('wss://x/v2?jwt=j%20w');
     f.sock.onopen?.();
     expect(json(f.sent)[0]).toMatchObject({ message: 'StartRecognition', audio_format: { type: 'raw', encoding: 'pcm_f32le', sample_rate: 16000 },
-      transcription_config: { language: 'en', enable_partials: true, conversation_config: { end_of_utterance_silence_trigger: 0.8 } } });
+      transcription_config: { language: 'en', enable_partials: true, conversation_config: { end_of_utterance_silence_trigger: 2 } } });
     f.frame();
     expect(f.sent).toHaveLength(1); // held until RecognitionStarted
     f.sock.emit({ message: 'RecognitionStarted' });
@@ -45,9 +46,71 @@ describe('Dictation', () => {
     f.sock.emit({ message: 'AddTranscript', metadata: { transcript: '?' } });
     expect(f.texts).toEqual(['why is', 'why is P star seven', 'why is P star seven?']);
     f.sock.emit({ message: 'EndOfUtterance' });
-    expect(f.ends).toEqual([{ text: 'why is P star seven?', auto: true }]);
+    // The pause starts a visible countdown; the question goes when it runs out.
+    expect(f.counts).toEqual([SEND_AFTER_MS]);
+    expect(f.ends).toEqual([]);
+    vi.advanceTimersByTime(SEND_AFTER_MS);
     expect(json(f.sent).at(-1)).toEqual({ message: 'EndOfStream', last_seq_no: 2 });
     expect(f.micClosed()).toBe(true);
+    f.sock.emit({ message: 'EndOfTranscript' });
+    expect(f.ends).toEqual([{ text: 'why is P star seven?', auto: true }]);
+  });
+
+  it('the end-of-speech silence is Speechmatics\' maximum (2 s), a forgiving pause', () => {
+    expect(END_SILENCE_S).toBe(2);
+    expect(SEND_AFTER_MS).toBeGreaterThanOrEqual(800);
+    expect(SEND_AFTER_MS).toBeLessThanOrEqual(1200);
+  });
+
+  it('speech during the countdown cancels it (the student had not finished); the next pause starts it again', async () => {
+    const f = fakes();
+    await f.d.start();
+    f.sock.emit({ message: 'RecognitionStarted' });
+    f.sock.emit({ message: 'AddTranscript', metadata: { transcript: 'why does the curve' } });
+    f.sock.emit({ message: 'EndOfUtterance' });
+    vi.advanceTimersByTime(SEND_AFTER_MS - 100);
+    f.sock.emit({ message: 'AddPartialTranscript', metadata: { transcript: '' } }); // no words: not speech
+    f.sock.emit({ message: 'AddPartialTranscript', metadata: { transcript: 'bend' } });
+    expect(f.counts).toEqual([SEND_AFTER_MS, null]);
+    vi.advanceTimersByTime(5000);
+    expect(json(f.sent).some((m) => m.message === 'EndOfStream')).toBe(false);
+    f.sock.emit({ message: 'AddTranscript', metadata: { transcript: 'bend down' } });
+    f.sock.emit({ message: 'AddTranscript', metadata: { transcript: '?' } }); // punctuation after the pause is not speech
+    f.sock.emit({ message: 'EndOfUtterance' });
+    f.sock.emit({ message: 'AddTranscript', metadata: { transcript: '.' } });
+    expect(f.counts).toEqual([SEND_AFTER_MS, null, SEND_AFTER_MS]);
+    vi.advanceTimersByTime(SEND_AFTER_MS);
+    f.sock.emit({ message: 'EndOfTranscript' });
+    expect(f.ends).toEqual([{ text: 'why does the curve bend down?.', auto: true }]);
+  });
+
+  it('hold (a key pressed) cancels the countdown and keeps listening', async () => {
+    const f = fakes();
+    await f.d.start();
+    f.sock.emit({ message: 'RecognitionStarted' });
+    f.sock.emit({ message: 'AddTranscript', metadata: { transcript: 'what is elasticity' } });
+    f.sock.emit({ message: 'EndOfUtterance' });
+    f.d.hold();
+    expect(f.counts).toEqual([SEND_AFTER_MS, null]);
+    vi.advanceTimersByTime(5000);
+    expect(f.ends).toEqual([]);
+    expect(f.micClosed()).toBe(false);
+  });
+
+  it('never sends an empty or one-word fragment on its own', async () => {
+    const f = fakes();
+    await f.d.start();
+    f.sock.emit({ message: 'RecognitionStarted' });
+    f.sock.emit({ message: 'AddTranscript', metadata: { transcript: 'why' } });
+    f.sock.emit({ message: 'AddTranscript', metadata: { transcript: '?' } });
+    f.sock.emit({ message: 'EndOfUtterance' });
+    vi.advanceTimersByTime(5000);
+    expect(f.counts).toEqual([]);
+    expect(f.ends).toEqual([]);
+    // The student can still send it themselves.
+    f.d.stop();
+    f.sock.emit({ message: 'EndOfTranscript' });
+    expect(f.ends).toEqual([{ text: 'why?', auto: false }]);
   });
 
   it('ignores a pause before anything was said', async () => {
