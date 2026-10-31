@@ -9,7 +9,7 @@
 //  - Prompt caching: `cache_control: {type:'ephemeral'}` (5 minutes) or `{…, ttl:'1h'}` on a block; ≤ 4
 //    breakpoints; longer TTLs must come before shorter ones. petu's breakpoints map one to one onto the
 //    same blocks: the system prompt's 12h → 1h, every 30m (digest, page image, MEMORY) → 5m.
-//  - Thinking/effort: `thinking: {type:'adaptive'}` + `output_config: {effort}`. Claude Opus 5.5 cannot
+//  - Thinking/effort: `thinking: {type:'adaptive', display:'summarized'}` + `output_config: {effort}`. Claude Opus 5.5 cannot
 //    turn thinking off (400 at every effort), so petu effort `none` is refused for it (server/env.ts).
 //    Claude Sonnet 5.5 turns it off with `thinking: {type:'between_tools'}`; Claude Haiku 5.5 with
 //    `{type:'disabled'}` (both only at effort high or below: the default is left alone).
@@ -45,7 +45,10 @@ export function thinkingFor(model: string, effort: Effort): Record<string, unkno
     if (ANTHROPIC_NO_NONE.has(model)) throw new Error(`${model} cannot run with thinking off; use effort low`);
     return { thinking: { type: model.startsWith('claude-sonnet') ? 'between_tools' : 'disabled' } };
   }
-  return { thinking: { type: 'adaptive' }, output_config: { effort } };
+  // `display: 'summarized'` streams the thinking as `thinking_delta`s. Recent models default to
+  // `omitted` (no deltas until the text starts): a long think was then silence, ended by the idle
+  // timer after the thinking had been billed. The summary is never spoken (AnthropicEvents drops it).
+  return { thinking: { type: 'adaptive', display: 'summarized' }, output_config: { effort } };
 }
 
 type OaPart = { type: string; text?: string; image_url?: string; prompt_cache_breakpoint?: { ttl: string } };
