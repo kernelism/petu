@@ -2,6 +2,7 @@ import type { RawAction, ScriptEvent, ValAction } from './types';
 import { parseTag } from './parseTag';
 import { GateState, UNBOUND_TEXT } from '../gate/engine';
 import { cutTagBody, isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
+import { clauseAfter, endsSentence, lookahead, markQuote, needsWords, quoteSpoken, sentenceTail } from './quoteWords';
 
 const words = (s: string): ScriptEvent[] =>
   s.split(/\s+/).filter(Boolean).map((text) => ({ type: 'word', text }));
@@ -57,6 +58,14 @@ export class ScriptParser {
   private buf = '';
   /** A val's word, waiting to see whether text touches it on the right. */
   private held: string | null = null;
+  /**
+   * A page mark whose quote may be a word of the sentence (src/script/quoteWords.ts), waiting for the
+   * text after it: its words, when the sentence needs them, are spoken right after it (the mark lands
+   * as they are said). `before`: the sentence's words before the tag.
+   */
+  private quote: { text: string; before: string[] } | null = null;
+  /** The current sentence's words emitted so far (before this drain's). */
+  private tail: string[] = [];
   readonly values: GateState;
   private n = 0;
 
@@ -110,6 +119,30 @@ export class ScriptParser {
     this.values.note(a);
     try { this.values.apply(a, k); } catch (e) { console.warn('[script] value model:', e); }
     out.push({ type: 'action', action: a });
+    const q = markQuote(a);
+    if (q && this.held == null) {
+      const said = out.flatMap((e) => (e.type === 'word' ? [e.text] : []));
+      this.quote = { text: q, before: sentenceTail([...this.tail, ...said]) };
+    }
+  }
+
+  /**
+   * Speaks a waiting mark's quote when the sentence needs it (glued to punctuation touching the tag on
+   * its right: "kernel,"). False: the text after the tag has not come in far enough to tell.
+   */
+  private sayQuote(out: ScriptEvent[], final: boolean): boolean {
+    const q = this.quote;
+    if (!q) return true;
+    const clause = clauseAfter(this.buf, final, lookahead(q.text));
+    if (clause == null) return false;
+    this.quote = null;
+    if (!needsWords(q.before, q.text, clause)) return true;
+    const ws = quoteSpoken(q.text, q.before.length === 0).split(' ').filter(Boolean);
+    // Punctuation touching the tag ("}}, which") or standing alone after it ("}} , so") ends the last word.
+    const m = /^\s*[,.;:!?…]+["'”’)\]]*(?=\s|$)/.exec(this.buf);
+    if (m && ws.length) { ws[ws.length - 1] += m[0].trim(); this.buf = this.buf.slice(m[0].length); }
+    for (const text of ws) out.push({ type: 'word', text });
+    return true;
   }
 
   /** A plot drawn onto another plot's axes without its own domain= takes the host's (its x axis). */
@@ -132,9 +165,21 @@ export class ScriptParser {
   }
 
   private drain(final: boolean): ScriptEvent[] {
+    const out = this.drainAll(final);
+    // The sentence so far, for the next quote (only its tail matters).
+    for (const e of out) {
+      if (e.type !== 'word') continue;
+      if (endsSentence(e.text)) this.tail = [];
+      else this.tail.push(e.text);
+    }
+    return out;
+  }
+
+  private drainAll(final: boolean): ScriptEvent[] {
     const out: ScriptEvent[] = [];
     for (;;) {
       if (!this.release(out, final)) return out;
+      if (!this.sayQuote(out, final)) return out;
       const open = this.buf.indexOf('{{');
       if (open === -1) {
         // Hold back a trailing partial word (it may also be a lone '{' starting a tag).

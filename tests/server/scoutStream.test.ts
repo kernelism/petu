@@ -91,6 +91,15 @@ describe('OpenerGate (opener → spoken script)', () => {
     expect(g.end()).toBe('and {{highlight p=3 "a, b"}} both shift');
   });
 
+  it('a dropped mark the sentence used as a word keeps its words; a dropped pointer says nothing', () => {
+    // Synthetic: the opener quotes another page (dropped), but the sentence needs its words.
+    expect(run(['{{highlight p=7 "osmosis"}} moves water across the membrane. ']).g.said).toBe('Osmosis moves water across the membrane. ');
+    expect(run(['The {{highlight p=7 "cell membrane"}} lets water through, so cells swell. ']).g.said).toBe('The cell membrane lets water through, so cells swell. ');
+    expect(run(['Water crosses the {{underline p=7 "membrane"}}. ']).g.said).toBe('Water crosses the membrane. ');
+    expect(run(['The {{highlight p=7 "membrane"}} membrane lets water through. ']).g.said.replace(/\s+/g, ' ')).toBe('The membrane lets water through. ');
+    expect(run(['{{highlight p=7 "Osmosis"}} This page explains it. ']).g.said.trim()).toBe('This page explains it.');
+  });
+
   it('drops an unclosed tag at the end', () => {
     expect(run(['Look here {{highlight p=3 "unfinish']).g.said).toBe('Look here ');
   });

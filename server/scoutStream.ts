@@ -11,6 +11,8 @@
 // plays as soon as it is complete), tags restricted to pointing at the visible page, narration cleaned
 // of markdown and TeX like the answer's.
 import { clean } from './scriptFilter';
+import { parseTag } from '../src/script/parseTag';
+import { clauseAfter, lookahead, markQuote, needsWords, quoteSpoken, sentenceTail } from '../src/script/quoteWords';
 
 type State = 'start' | 'key' | 'colon' | 'value' | 'string' | 'raw' | 'after' | 'done';
 
@@ -185,11 +187,25 @@ export class OpenerGate {
       if (b < 0) { break; } // an unclosed tag at the very end: drop it
       const tag = sentence.slice(a, b + 2);
       if (this.allowed(tag)) out += tag;
-      else this.notes.push(`opener: dropped ${JSON.stringify(tag.slice(0, 40))}`);
+      else {
+        this.notes.push(`opener: dropped ${JSON.stringify(tag.slice(0, 40))}`);
+        // A dropped mark the sentence used as a word ("The {{highlight p=4 "kernel"}} slides…"): its words stay.
+        const w = this.quoteWords(tag, out, sentence.slice(b + 2));
+        if (w) out += (out && !/\s$/.test(out) ? ' ' : '') + w;
+      }
       i = b + 2;
     }
     this.said += out;
     return out;
+  }
+
+  /** The words a dropped quote tag stood for in its sentence (src/script/quoteWords.ts), or ''. */
+  private quoteWords(tag: string, out: string, rest: string): string {
+    const q = markQuote(parseTag(tag.slice(2, -2)));
+    if (!q) return '';
+    const before = sentenceTail((this.said + out).replace(/\{\{[^}]*\}\}/g, ' ').split(/\s+/).filter(Boolean));
+    const clause = clauseAfter(rest, true, lookahead(q)) ?? rest;
+    return needsWords(before, q, clause) ? quoteSpoken(q, before.length === 0) : '';
   }
 
   private allowed(tag: string): boolean {
