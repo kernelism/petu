@@ -1,15 +1,18 @@
 // src/svgboard/grammar.ts — the board's visual grammar for text, enforced on every model SVG (pure: no layout).
 /**
- * Size, weight and colour carry meaning on the board, so the model's own values are discarded:
- *  - SIZE encodes structure only. Three sizes exist: `title` (the board's top-most heading, once per
+ * Weight and colour carry meaning on the board, so the model's own values are discarded; size keeps
+ * the model's own hierarchy (its sizes scaled by one factor per board: roomSizes), with roles for
+ * weight and the floor:
+ *  - SIZE encodes structure. Three roles exist: `title` (the board's top-most heading, once per
  *    board: the top-most text of the board's first group, words written larger than the rest of
  *    it, standing clear above it, not an axis's title), `small` (axis ticks and units: short numeric text next to a tick mark or along an axis
  *    line, or the engine's own ticks) and `content` (everything else: labels, values, card lines).
  *  - WEIGHT encodes importance only: semibold for the title, regular for everything else.
  *  - COLOUR encodes time only: every text is ink at rest. The part being drawn is the accent while it
  *    draws (render.ts `data-live`, styled in board CSS); superseded parts (ghosts) are grey.
- * Sizes are in the board's user units, from the slide's measured body size: content = the body,
- * title = 1.25 × body, small = 0.82 × body but never under 11 px on screen.
+ * The grammar's sizes (user units, from the slide's measured body size: content = the body, title =
+ * 1.25 × body, small = 0.82 × body but never under 11 px on screen) are the ceiling the model's sizes
+ * are raised toward; the legibility floor (LEGIBLE_PX) is what its smallest text is raised to.
  */
 import { INK } from './style';
 import { core, groupGeometry, overlapArea, segHitsBox, type Box, type Seg as GSeg, type TextBox } from './check';
@@ -22,13 +25,17 @@ type Seg = { x1: number; y1: number; x2: number; y2: number };
  * the content size the board's drawing has room for (set by its tightest group so far, never grows);
  * `drawn`: earlier groups' text boxes and strokes (a later label keeps clear of them too).
  */
-export type TypeState = { scale: TypeScale; axes: Seg[]; ticks: Seg[]; titled: boolean; room?: number; /** The legibility floor in user units (render.ts): a model's smaller text counts as this. */ floor?: number; /** The hard floor (units) a text may go to on its own, to clear a collision. */ minFloor?: number; drawn?: { texts: TextBox[]; segs: GSeg[] } };
+export type TypeState = { scale: TypeScale; axes: Seg[]; ticks: Seg[]; titled: boolean; /** The scale factor over the model's sizes the board's tightest group settled on (a later group is never scaled more). */ roomK?: number; /** The legibility floor in user units (render.ts): a model's smaller text counts as this. */ floor?: number; /** The hard floor (units) a text may go to on its own, to clear a collision. */ minFloor?: number; drawn?: { texts: TextBox[]; segs: GSeg[] } };
 
 export const SMALL_MIN_PX = 11;
-/** No board text is ever set under this on screen (a model's tiny text is raised to it first). */
-export const LEGIBLE_PX = 10;
-/** A text in a row too tight for LEGIBLE_PX may go this small (and no smaller than the model wrote it). */
-export const MIN_PX = 8;
+/**
+ * No board text is ever set under this on screen (a model's smaller text is raised to it first). It was
+ * 10, with tight rows going to 8: dense lane boards read at 8–10 px (founder 2026-10-31). A label the
+ * raise leaves no room moves instead (settle.ts); the model's canvas (p6.4) gives its labels this room.
+ */
+export const LEGIBLE_PX = 12;
+/** The last resort a label with no room anywhere near may go to (settle.ts): the floor itself. */
+export const MIN_PX = 12;
 export const TITLE_K = 1.25;
 export const SMALL_K = 0.82;
 
@@ -185,8 +192,8 @@ function otherTops(g: Element, except: Element): number[] {
 }
 
 /**
- * Applies the grammar to a group's texts: each gets its role's size (returned for the text fitter,
- * which owns font-size), weight and ink; the model's sizes, weights and colours on tspans are dropped.
+ * Applies the grammar to a group's texts: each gets its size (the model's, scaled: roomSizes; returned
+ * for the text fitter, which owns font-size), weight and ink; the model's sizes, weights and colours on tspans are dropped.
  * Returns the size each text is set at.
  */
 export function applyGrammar(g: Element, st: TypeState): Map<Element, number> {
@@ -209,39 +216,40 @@ export const inkBox = (t: Box): Box => ({ x: t.x, y: t.y + 0.08 * t.h, w: t.w, h
 /** The room a text keeps around it (em): its ink box widened by this on every side (also absorbs width estimates). */
 const AIR = 0.12;
 const airBox = (t: TextBox): Box => { const b = inkBox(t), a = AIR * t.fs; return { x: b.x - a, y: b.y - a / 2, w: b.w + 2 * a, h: b.h + a }; };
-/** Text is raised at most this far over the model's own (median) content size: the drawing's proportions hold. */
+/** Text is raised at most this far over the model's own sizes (uniformly): the drawing's proportions hold. */
 export const RAISE_MAX = 1.5;
 
 /**
- * The size each text is set at. The grammar's sizes are a target, not a floor: the model laid its
- * drawing out for its own text sizes, so text is raised toward the target only as far as the drawing
- * has room (founder 2026-10-30: in the 544 px lane the target doubled the model's labels; they sat on
- * the strokes they label and on each other). One content size for the group (the hierarchy holds):
- * the largest in [the model's smallest content size, the target] at which no text runs into a text or
- * stroke (this group's or an earlier group's) it was clear of at the model's own sizes. Title and
- * small follow it (title 1.25 ×, small 0.82 × but not under the grammar's small or what the model wrote).
- * The board keeps the tightest group's size, so a later group is never set larger.
+ * The size each text is set at: the model's own sizes, scaled by ONE factor k for the whole board, so
+ * the hierarchy the model wrote (title > label > annotation) is kept as it wrote it (founder 2026-10-31:
+ * "text hierarchy doesn't exist" when every content text was set to one size). k is at least what
+ * brings the smallest text of the group to the legibility floor (`st.floor`, 12 px on screen), and at
+ * most the grammar's content target over the model's median content size (so the board's text reads at
+ * the slide's body size, whatever the canvas), RAISE_MAX, and the k an earlier, tighter group settled
+ * on; in that range, the largest k at which no text runs into a text or stroke it was clear of at the
+ * model's own sizes. A title is never under TITLE_K × the content median.
+ * Collisions that remain are moved apart by settle.ts (nudge, wrap), never by shrinking a tier.
  */
 function roomSizes(g: Element, roles: Map<Element, Role>, st: TypeState): Map<Element, number> {
   const els = Array.from(roles.keys());
-  const own = new Map<Element, number>(), raw = new Map<Element, number>();
+  const own = new Map<Element, number>();
   for (const el of els) {
     let fs = 16;
     for (let e: Element | null = el; e; e = e.parentElement) { const v = e.getAttribute('font-size'); if (v != null) { fs = num(v, 16); break; } }
-    raw.set(el, fs);
-    own.set(el, Math.max(fs, st.floor ?? 0));
+    own.set(el, Math.max(1, fs));
+    el.setAttribute('data-own', String(Math.round(fs * 10) / 10));
   }
-  const target = st.scale.content;
+  if (!els.length) return new Map();
+  const ownMin = Math.min(...own.values());
   const contentOwn = els.filter((e) => roles.get(e) !== 'small').map((e) => own.get(e)!);
-  const lo = Math.min(target, contentOwn.length ? Math.min(...contentOwn) : target);
-  const med = contentOwn.length ? contentOwn.slice().sort((a, b) => a - b)[Math.floor((contentOwn.length - 1) / 2)] : target;
-  const hi = Math.max(Math.min(lo, st.room ?? Infinity), Math.min(target, st.room ?? Infinity, RAISE_MAX * med));
-  const sizesAt = (c: number) => {
+  const med = contentOwn.length ? contentOwn.slice().sort((a, b) => a - b)[Math.floor((contentOwn.length - 1) / 2)] : ownMin;
+  // k may be under 1: a model that wrote its text larger than the slide's body (a 560 canvas on the 2560
+  // lane is 1.6 px a unit) is brought to the grammar's target, never under the floor.
+  const kMin = (st.floor ?? 0) / ownMin;
+  const kMax = Math.max(kMin, Math.min(st.roomK ?? Infinity, RAISE_MAX, st.scale.content / med));
+  const sizesAt = (k: number) => {
     const m = new Map<Element, number>();
-    for (const el of els) {
-      const r = roles.get(el)!;
-      m.set(el, r === 'title' ? c * TITLE_K : r === 'content' ? c : Math.min(c, Math.max(c * SMALL_K, Math.min(st.scale.small, own.get(el)!))));
-    }
+    for (const el of els) m.set(el, roles.get(el) === 'title' ? Math.max(k * own.get(el)!, TITLE_K * k * med) : k * own.get(el)!);
     return m;
   };
   const prior = st.drawn ?? { texts: [], segs: [] };
@@ -264,40 +272,18 @@ function roomSizes(g: Element, roles: Map<Element, Role>, st: TypeState): Map<El
       return out;
     } catch { return null; }
   };
-  let c = hi;
-  if (hi > lo + 0.01) {
+  let k = kMax;
+  if (kMax > kMin + 1e-3) {
     const base = hits(null);
-    const fits = (v: number) => { const h = hits(sizesAt(v)); return !h || !base || [...h].every((k) => base.has(k)); };
-    if (!fits(hi)) {
-      let a = lo, b = hi;
+    const fits = (v: number) => { const h = hits(sizesAt(v)); return !h || !base || [...h].every((x) => base.has(x)); };
+    if (!fits(kMax)) {
+      let a = kMin, b = kMax;
       for (let i = 0; i < 8; i++) { const mid = (a + b) / 2; if (fits(mid)) a = mid; else b = mid; }
-      c = a;
+      k = a;
     }
-  } else c = Math.max(Math.min(hi, target), Math.min(lo, hi));
-  if (contentOwn.length) st.room = Math.min(st.room ?? Infinity, c);
-  const sizes = sizesAt(c);
-  // A text that still runs into one it was clear of at the model's size (a row so tight that even the
-  // legibility floor collides) is set smaller on its own, down to what the model wrote (never under
-  // `minFloor`): the rest of the group keeps its size.
-  const base0 = hits(null);
-  for (let i = 0; base0 && i < 12; i++) {
-    const h = hits(sizes);
-    if (!h) break;
-    const bad = [...h].filter((k) => !base0.has(k));
-    if (!bad.length) break;
-    const all = Array.from(g.querySelectorAll('text'));
-    const idx = new Set<number>();
-    for (const k of bad) { const m = /^([tps])(\d+):(\d+)$/.exec(k); if (!m) continue; idx.add(+m[2]); if (m[1] === 't') idx.add(+m[3]); }
-    let moved = false;
-    for (const n of idx) {
-      const el = all[n], v = el && sizes.get(el);
-      if (!el || v == null) continue;
-      const lim = Math.max(raw.get(el) ?? v, st.minFloor ?? 0);
-      const nv = Math.max(lim, v * 0.93);
-      if (nv < v - 1e-3) { sizes.set(el, nv); moved = true; }
-    }
-    if (!moved) break;
   }
+  if (contentOwn.length) st.roomK = Math.min(st.roomK ?? Infinity, k);
+  const sizes = sizesAt(k);
   // What this group leaves on the board, for the next group's room.
   try {
     const cl = g.cloneNode(true) as Element;

@@ -10,6 +10,14 @@
  */
 export const SVG_TAG_MAX = 24000;
 
+/**
+ * The canvas width the prompt gives the model (p6.4): about the lane's width in screen pixels at 1440
+ * (the 544 px lane), so the model's own text sizes are close to what the student reads. Before p6.4 the
+ * canvas was 1000 wide and its 16–20 unit labels rendered at 8–10 px in the lane (docs/superpowers/
+ * reference/lane-legibility.md). Any width still works: the board maps its canvas to the section.
+ */
+export const BOARD_W = 560;
+
 /** Whether the text right after `{{` opens an svg group tag (`{{svg <…`). */
 export const isSvgTagBody = (s: string): boolean => /^svg\s*</.test(s);
 

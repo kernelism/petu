@@ -10,10 +10,11 @@ import { resolveData, newScope } from '../../src/svgboard/data';
 import { applyGrammar, LEGIBLE_PX, newTypeState, RAISE_MAX, typeScale, type TypeState } from '../../src/svgboard/grammar';
 import { core, groupGeometry, overlapArea, segHitsBox } from '../../src/svgboard/check';
 import { inkBox } from '../../src/svgboard/grammar';
+import { settle } from '../../src/svgboard/settle';
 
-const run = (src: string, st: TypeState) => {
+const run = (src: string, st: TypeState, withSettle = false) => {
   const r = sanitizeGroup(src, { ns: 'b', palette: { accent: '#7c3aed', hue: null }, minFont: st.minFloor ?? 0, w: 1000, h: 720, ids: new Map(), doc: document,
-    prepare: (g) => { resolveData(g, newScope()); prepareText(g, st.minFloor ?? 0, applyGrammar(g, st)); } });
+    prepare: (g) => { resolveData(g, newScope()); const raw = g.cloneNode(true) as Element; prepareText(g, st.minFloor ?? 0, applyGrammar(g, st)); if (withSettle) settle(g, raw, { texts: [], segs: [] }, 1000); } });
   if (typeof r === 'string') throw new Error(r);
   return r.el;
 };
@@ -59,6 +60,7 @@ const GLYPHS = `<g id="glyphs">
 const SPARSE = `<g id="sparse"><circle cx="300" cy="300" r="80" fill="none" stroke="#222"/><text x="420" y="300" font-size="16">one label</text></g>`;
 
 // The lane at 1440: ~500 px for 1000 units; slide body 18 px → the grammar's content target 16.2 px = 32.4 units.
+// minFloor 8 px: roomSizes' own last resort, tested alone here (the renderer's floor and settle: settle.test.ts).
 const LANE = (): TypeState => ({ ...newTypeState(typeScale(18, 0.5, 500)), floor: LEGIBLE_PX / 0.5, minFloor: 8 / 0.5 });
 
 describe('text keeps to the room the drawing gives it', () => {
@@ -78,8 +80,19 @@ describe('text keeps to the room the drawing gives it', () => {
   it('a sparse board is raised the whole way the proportion rule allows (room allows it)', () => {
     const st = LANE();
     const g = run(SPARSE, st);
-    // The model's 16 is under the legibility floor (10 px = 20 units): raised to it, then by RAISE_MAX.
-    expect(Number(g.querySelector('text')!.getAttribute('font-size'))).toBeCloseTo(Math.min(st.scale.content, 20 * RAISE_MAX), 1);
+    // The model's 16 is scaled by RAISE_MAX (the target 32.4 over 16 would be more); that clears the floor (20).
+    expect(Number(g.querySelector('text')!.getAttribute('font-size'))).toBeCloseTo(Math.min(st.scale.content, 16 * RAISE_MAX), 1);
+  });
+
+  it('the hierarchy the model wrote is kept: three tiers stay three tiers, in the same ratios, the smallest at the floor or above', () => {
+    const st = LANE();
+    const g = run(DENSE, st);
+    const own = (t: Element) => Number(t.getAttribute('data-own')), size = (t: Element) => Number(t.getAttribute('font-size'));
+    const ts = Array.from(g.querySelectorAll('text'));
+    const ks = ts.filter((t) => t.getAttribute('data-role') !== 'title').map((t) => size(t) / own(t));
+    expect(Math.max(...ks) - Math.min(...ks)).toBeLessThan(1e-2); // one factor for the group (sizes are written to 0.01)
+    expect(new Set(ts.map(size)).size).toBeGreaterThanOrEqual(4); // 24 / 21 / 19 / 18 / 17 written → distinct sizes kept
+    expect(Math.min(...ts.map(size))).toBeGreaterThanOrEqual(st.floor! - 1e-6);
   });
 
   it('a later group never sets content larger than an earlier, tighter one', () => {
@@ -90,13 +103,15 @@ describe('text keeps to the room the drawing gives it', () => {
     expect(Number(b.querySelector('text')!.getAttribute('font-size'))).toBeLessThanOrEqual(fa + 1e-6);
   });
 
-  it('a row too tight even for the legibility floor: only its texts go smaller (to what the model wrote), clear of each other', () => {
+  it('a row too tight even for the legibility floor: its texts keep their tier (never smaller) and are wrapped clear of each other', () => {
     const row = `<g id="tight"><text x="40" y="40" font-size="18">a heading with room</text><g font-size="17" text-anchor="middle">
       <text x="100" y="120">factors 0.25, 0.25</text><text x="260" y="120">factors 0.25, 0.25</text><text x="420" y="120">factors 0.25, 0.25</text></g></g>`;
-    const g = run(row, LANE());
+    const st = LANE();
+    const g = run(row, st, true);
     expect(collisions(g)).toBe(0);
-    const sz = (s: string) => Number(Array.from(g.querySelectorAll('text')).find((t) => t.textContent === s)!.getAttribute('font-size'));
-    expect(sz('factors 0.25, 0.25')).toBeGreaterThanOrEqual(16);
+    const sz = (s: string) => Number(Array.from(g.querySelectorAll('text')).find((t) => (t.textContent ?? '').replace(/\s+/g, ' ').trim() === s)!.getAttribute('font-size'));
+    expect(sz('factors 0.25, 0.25')).toBeGreaterThanOrEqual(st.floor! - 1e-6);
     expect(sz('a heading with room')).toBeGreaterThan(sz('factors 0.25, 0.25'));
+    expect(g.querySelectorAll('tspan').length).toBeGreaterThan(0);
   });
 });
