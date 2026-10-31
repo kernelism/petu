@@ -77,7 +77,7 @@ export type PreflightEnv = {
   severity?: Severity;
   /** Offline: a recorded board's skip reason for a tag (by its body), standing in for the shadow board. */
   recorded?: (body: string) => string | undefined;
-  /** The svg board's smallest text in its units (the renderer raises smaller text to it); default 16. */
+  /** The svg board's smallest text in section units (1000 across; the renderer raises smaller text to it); default 16. */
   svgMinFont?: () => number;
 };
 
@@ -226,7 +226,8 @@ export class GatePreflight implements Preflight {
       }
       if (srcs.length) {
         sb ??= newBoardState();
-        const r = checkGroups(srcs, sb, this.env.svgMinFont?.() ?? 16, state.svg);
+        // svgMinFont is per 1000 section units; a board's own units are its canvas width over the section's.
+        const r = checkGroups(srcs, sb, ((this.env.svgMinFont?.() ?? 16) * sb.w) / 1000, state.svg);
         v.flags.push(...r.flags);
         v.notes.push(...r.notes);
         svg = { board: sb, geos: r.geos, ...(r.grow ? { grow: r.grow } : {}) };
