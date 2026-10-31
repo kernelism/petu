@@ -11,6 +11,7 @@
  * Only texts and cards whose transforms are translations are moved (rotated text is left as written).
  */
 import { core, groupGeometry, I, mul, overlapArea, parseTransform, segHitsBox, textEm, type Box, type M } from './check';
+import { stripProse } from './prose';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const num = (v: string | null | undefined, d = 0): number => { const n = v == null ? NaN : parseFloat(v); return Number.isFinite(n) ? n : d; };
@@ -51,7 +52,12 @@ function boxOf(t: T): Box {
 
 /** Raises small text to `minFont`, wraps and stacks it so it stays inside its card; then clears labels off strokes. */
 export function prepareText(g: Element, minFont: number, sizes?: Map<Element, number>): void {
-  try { fit(g, minFont, sizes); clear(g, minFont); } catch { /* geometry is best-effort: never block a group */ }
+  try {
+    // Prose first (prose.ts): a sentence or a stack of word lines is never fitted, checked or drawn.
+    const prose = stripProse(g);
+    if (prose.length) g.setAttribute('data-prose-removed', prose.join(' | '));
+    fit(g, minFont, sizes); clear(g, minFont);
+  } catch { /* geometry is best-effort: never block a group */ }
 }
 
 /**
