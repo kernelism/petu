@@ -56,8 +56,12 @@ export function liveMarks(all: Mark[], strokeIds: Set<number>): Mark[] {
   return out;
 }
 
-/** The chips: live marks drawn since the last question, not removed. */
-export const freshMarks = (all: Mark[], strokeIds: Set<number>, round: number) => liveMarks(all, strokeIds).filter((m) => m.round === round && !m.dropped);
+/**
+ * The chips: live marks drawn since the last question, not removed, whose target is still there
+ * (`alive`: a board section that left takes its marks' chips with it).
+ */
+export const freshMarks = (all: Mark[], strokeIds: Set<number>, round: number, alive: (t: Target) => boolean = () => true) =>
+  liveMarks(all, strokeIds).filter((m) => m.round === round && !m.dropped && alive(m.target) && (!m.to || alive(m.to)));
 
 const NAME: Record<MarkKind, string> = { circle: 'circle', underline: 'underline', arrow: 'arrow', confused: '?', note: 'note' };
 const isBoard = (t: Target): t is BoardTarget => 'board' in t;
@@ -75,7 +79,8 @@ function on(t: Target): string {
     return t.text ? `${q(t.text)} on the board${els}` : `part of the board${els || ' with nothing drawn'}`;
   }
   const p = t as PageTarget;
-  const ref = p.ref ? ` (${p.ref.split(',').map((r) => (r.startsWith('#') ? r : `#${r}`)).join(', ')})` : '';
+  // The ids as the page listing shows them (t7, #g2).
+  const ref = p.ref ? ` (${p.ref.split(',').join(', ')})` : '';
   if (p.what === 'figure') return `${p.text ? `the figure ${q(p.text)}` : 'a figure'}${ref} on page ${p.page}`;
   if (p.what === 'area' || !p.text) return `an empty spot on page ${p.page}${p.area ? ` (x ${p.area.x}–${p.area.x + p.area.w}, y ${p.area.y}–${p.area.y + p.area.h} of 1000)` : ''}`;
   return `${q(p.text)}${ref} on page ${p.page}`;

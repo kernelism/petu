@@ -50,7 +50,7 @@ describe('mark targets', () => {
     const t = pageTarget('underline', 88, [{ x: 300, y: 254 }, { x: 540, y: 255 }], lines, figures).target;
     const s = marksContext([{ kind: 'underline', tool: 'pen', target: t }]);
     expect(s).toContain('underlined "');
-    expect(s).toContain('(#t8) on page 88');
+    expect(s).toContain('(t8) on page 88');
     expect(s).not.toMatch(/\d+\.\d+,\s*\d/); // no coordinates
     expect(markLabel({ kind: 'underline', tool: 'pen', target: t })).toBe('your underline · p.88');
     expect(markLabel({ kind: 'confused', tool: 'pen', target: { board: 's1', elements: [], text: '' } })).toBe('your ? · board');

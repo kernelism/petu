@@ -131,7 +131,7 @@ export function CanvasToolbar({ showHint = false }: { showHint?: boolean } = {})
             <button type="button" className="tb-btn" disabled={!undo.length} onClick={() => ink.undoLast()} {...tips.props('Undo', UNDO_KEY)}>
               <Undo2 {...ICON} />
             </button>
-            <button type="button" className="tb-btn" disabled={!strokes.length} onClick={() => ink.clear()} {...tips.props('Clear my ink')}>
+            <button type="button" className="tb-btn" disabled={!strokes.length} onClick={() => ink.clear()} {...tips.props('Clear my marks')}>
               <Trash2 {...ICON} />
             </button>
             <button type="button" className="tb-btn" onClick={() => ink.setCanvas(false)} {...tips.props('Done', 'Esc')}>

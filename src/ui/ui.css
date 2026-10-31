@@ -197,6 +197,8 @@
   animation: ui-pop-in var(--dur-base) var(--ease-out);
 }
 .askbar-about-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Several marks since the last question: one chip each, the later ones give way first. */
+.askbar-about + .askbar-about { flex: 0 1 auto; min-width: 64px; margin-left: -4px; }
 .askbar-about-x {
   flex: none;
   width: 20px;
@@ -1083,6 +1085,8 @@
 
 /* Point-to-ask on the board: the pen's capture layer over the board while the pen is out. */
 .board-pen { position: fixed; z-index: 15; cursor: crosshair; touch-action: none; }
+/* The student's ink on the board (src/ink/student/BoardInk.tsx): in its section, above the drawing, never in the way. */
+.desk-region > .desk-region-student { pointer-events: none; mix-blend-mode: multiply; }
 
 /* ───────── Overview zoom pill (layout C; mockup f15): bottom right while the surface is not at 100% ───────── */
 .overview-pill {
