@@ -18,7 +18,7 @@
  * hears beat 1 while its group is still being written: no silence waiting for the whole board.
  */
 import { ScriptFilter } from './scriptFilter.ts';
-import { completeSvg, escapeSvg } from '../src/svgboard/wire.ts';
+import { BOARD_W, completeSvg, escapeSvg } from '../src/svgboard/wire.ts';
 
 /** A group longer than this is dropped (the client sanitizer caps it again). */
 export const GROUP_MAX = 20000;
@@ -203,7 +203,7 @@ export class SvgBeatFilter extends ScriptFilter {
     if (id) this.groups.push(id);
     if (Number.isNaN(this.firstGroupMs)) this.firstGroupMs = this.now();
     let head = '';
-    if (!this.opened) { this.opened = true; this.board = { w: 1000, h: 700, extend: false }; head = svgboardTag(this.board) + ' '; }
+    if (!this.opened) { this.opened = true; this.board = { w: BOARD_W, h: Math.round(BOARD_W * 0.7), extend: false }; head = svgboardTag(this.board) + ' '; }
     return `${head}{{svg ${escapeSvg(body)}}} `;
   }
 }

@@ -2,6 +2,7 @@
 import { EXAMPLES } from './examples.ts';
 import { SVG_EXAMPLES } from './svgExamples.ts';
 import { variantParts } from './variants/index.ts';
+import { BOARD_W } from '../../src/svgboard/wire.ts';
 
 /**
  * Bump on any change: the eval records it with every run, and it is part of the cache prefix.
@@ -21,8 +22,12 @@ import { variantParts } from './variants/index.ts';
  * p6.5 (2026-10-31, founder: "the '…' is super bad UX"): the script's first characters are spoken words,
  * never the plan or a group; after the scout's opening too (openerNote), so stage 2's first word follows
  * the opening at once instead of after the plan and the first group (p6.4 is lane-legibility's).
+ * p6.6 (2026-10-31, founder: lane text too small to read): the canvas is BOARD_W (560) wide, about the
+ * lane's width in screen pixels, so the model's text sizes are what the student reads (16 units ≈ 14 px
+ * at 1440; on the 1000-wide canvas they were 8–10 px). The examples are laid out on it. Evidence:
+ * docs/superpowers/reference/lane-legibility.md (validated alone as p6.4 against p6.3; p6.5 landed first).
  */
-export const PROMPT_VERSION = 'p6.5';
+export const PROMPT_VERSION = 'p6.6';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -185,13 +190,13 @@ Start speaking at once: the script's first characters are spoken words, never th
 Then a short hidden plan (never shown or spoken), a few compact lines: the carrying case and its computed numbers, then the board's layout, decided before you draw anything:
 <plan>
 the case, its numbers, the order
-BOARD viewBox="0 0 1000 H"   (x 0–1000 left to right, y 0–H top to bottom; choose H to fit)
+BOARD viewBox="0 0 ${BOARD_W} H"   (x 0–${BOARD_W} left to right, y 0–H top to bottom; choose H to fit; one unit is about one pixel on the student's screen)
 regions: name (x0–x1, y0–y1) what goes there; …
 groups: id; id; … (in teaching order)
 </plan>
 Then the beats. Each beat is its drawing first, one SVG group <g id="…">…</g> in absolute board coordinates, then one to three spoken sentences: the group draws across its sentences, part by part, and a part with an id draws on the word that names it (make the id that word). So give the parts you will talk about ids, in the order you say them, and keep a group to what its own sentences say: a long group holds back the words after it.
 Name each part in plain words as it appears, in the sentence it draws across ("this arrow is the pull of the string", "this line is the price the law allows"), so the student hears what they are watching being drawn.
-SVG: plain elements (path, line, polyline, polygon, rect, circle, ellipse, text, tspan) with inline attributes; arrowheads as small polylines. No scripts, foreignObject, images, links, external references or animation. Ids are short, unique, lowercase (letters, digits, hyphens). Text is at least font-size 16. Dark ink for what matters, grey for guides and secondary labels, and one accent colour only for what the student should leave with; the engine sets the fonts and the exact colours. Nothing overlaps: text never sits on text or across a line, and everything stays inside the viewBox. A later group may draw on an earlier one on purpose (an arrow onto it, a mark on a part), since the layout was planned up front. Once drawn is drawn: nothing is erased.
+SVG: plain elements (path, line, polyline, polygon, rect, circle, ellipse, text, tspan) with inline attributes; arrowheads as small polylines. No scripts, foreignObject, images, links, external references or animation. Ids are short, unique, lowercase (letters, digits, hyphens). Text is at least font-size 16, and that is its real size on screen: give every label the room its words take at that size. Dark ink for what matters, grey for guides and secondary labels, and one accent colour only for what the student should leave with; the engine sets the fonts and the exact colours. Nothing overlaps: text never sits on text or across a line, and everything stays inside the viewBox. A later group may draw on an earlier one on purpose (an arrow onto it, a mark on a part), since the layout was planned up front. Once drawn is drawn: nothing is erased.
 After the last beat, only when the answer taught something the student can now work out for themselves, add a check question they may open later: <check>one short question that changes one thing about the case</check>. It is never spoken (a check beat in the PLAN goes here, not into the narration); when there is nothing worth checking, leave it out.${SVG_ENGINE_ATTRS ? `\n${SVG_ENGINE_ATTRS}` : ''}`;
 
 const SVG_CONTEXT = `WHAT YOU GET
@@ -202,7 +207,7 @@ const SVG_POINTING = `POINTING ON THE PAGE (inline in the narration; a tag fires
 {{circle p=4 mark=#d3}} rings a dot or a figure part. {{box p=4 mark=#e1}} frames an equation, box, image or figure. {{highlight p=4 mark=#t12}} lights a whole text line. {{highlight p=4 "words copied exactly from one listed line"}}, with near=x,y when the words occur more than once, and always for one or two characters: {{underline p=4 "f" near=505,342}}. Mark exactly what the sentence names, as small as it is; never the same spot twice. To use another page, {{scroll p=7}} first and say what it is for as you arrive.`;
 
 const SVG_SITUATIONS = `SITUATIONS
-FOLLOW-UPS. MEMORY is what you already taught: never say it again. It shows your earlier board's BOARD layout and group ids. To continue on that board, write BOARD extend viewBox="0 0 1000 H" (H may grow) and add groups with new ids, placed in its free space; a group that reuses an earlier id redraws that part and the old one fades to a ghost. When the student asks for the idea again in another way, what you showed didn't land: start a fresh board with another representation or level, never more of the same.
+FOLLOW-UPS. MEMORY is what you already taught: never say it again. It shows your earlier board's BOARD layout and group ids. To continue on that board, write BOARD extend viewBox="0 0 W H" (W as that board had it, H may grow) and add groups with new ids, placed in its free space; a group that reuses an earlier id redraws that part and the old one fades to a ghost. When the student asks for the idea again in another way, what you showed didn't land: start a fresh board with another representation or level, never more of the same.
 If the document doesn't cover the question, say so, then scroll to the closest thing it does cover and point at it. Never present outside knowledge as the page's.
 Off-topic (nothing to do with the document): one friendly sentence, no plan and no drawing, such as: That's outside these pages, but ask me anything about them.`;
 
