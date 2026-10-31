@@ -15,7 +15,7 @@ function mount(over: Partial<Props> = {}) {
   document.body.appendChild(host);
   root = createRoot(host);
   act(() => root!.render(createElement(AskBar, props)));
-  const input = host.querySelector('input')!;
+  const input = host.querySelector('textarea')!;
   const enter = () => act(() => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); });
   return { props, input, enter, chips: () => [...host!.querySelectorAll('.askbar-about-text')].map((e) => e.textContent) };
 }
@@ -40,7 +40,7 @@ describe('ask bar chips', () => {
     expect(input.placeholder).toBe(EMPTY_ASK_HINT);
     enter();
     expect(onAsk).toHaveBeenLastCalledWith('Explain this.');
-    act(() => { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!; set.call(input, 'why convex?'); input.dispatchEvent(new Event('input', { bubbles: true })); });
+    act(() => { const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!; set.call(input, 'why convex?'); input.dispatchEvent(new Event('input', { bubbles: true })); });
     enter();
     expect(onAsk).toHaveBeenLastCalledWith('why convex?');
   });
