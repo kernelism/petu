@@ -91,7 +91,7 @@ export type AnswerRecord = { at: string; phase: string; model: string; effort: s
   /** EXPERIMENT (boardfirst): the model's script before the board-first reveal, and what it declared and revealed. */
   raw?: string; boardFirst?: { declared: number; revealed: number; hidden: string[]; immediate: number; noId: number };
   /** The svg answer mode: the groups sent, the board opened, what the filter dropped, timings (ms from the request). */
-  svg?: { groups: string[]; board: unknown; notes: string[]; check?: string; firstGroupMs: number; ttftMs: number; totalMs: number } };
+  svg?: { groups: string[]; board: unknown; notes: string[]; check?: string; firstGroupMs: number; ttftMs: number; /** Stage 2's first spoken word (ms from the request; NaN → null when it spoke none). */ firstWordMs?: number; totalMs: number } };
 /**
  * `headersMs`: no response headers → the attempt is abandoned (retried once, before any text).
  * `idleMs`: a streamed answer that sends nothing for this long is ended (cut_off after text). Any
