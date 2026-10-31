@@ -298,7 +298,9 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   const speed = o.speed ?? 1;
   const natural = (s: Step) => (s.kind === 'trace' ? strokeDurationMs(s.len * s.px, s.len * s.px < 60 ? 120 : 200, speed) : 60 * speed);
   // The schedule: paced to the beat's narration (src/playback/pace.ts), else at pen speed.
-  const words = speed >= 0.99 ? (o.beat?.() ?? []) : [];
+  // Paced whenever the beat is known, even a little behind its word (a backlog `speed` < 1): the beat's
+  // times are from now, so the drawing catches up with the words by itself.
+  const words = o.beat?.() ?? [];
   const partIn = (u: Unit) => ({ cat: u.cat, words: u.words, naturalMs: u.steps.reduce((a, s) => a + natural(s), 0) });
   const plannedAt = performance.now();
   const plan = paceParts(units.map(partIn), words, o.slot);
