@@ -24,7 +24,9 @@
     "gate-beats-timing": "node --import ./scripts/lib/tsResolve.mjs --experimental-transform-types --no-warnings scripts/gate-beats/timing.ts"
   },
   "dependencies": {
+    "@fontsource-variable/bricolage-grotesque": "^5.3.0",
     "@fontsource-variable/source-serif-4": "^5.3.1",
+    "@fontsource-variable/stix-two-text": "^5.3.0",
     "katex": "0.18.11",
     "lucide-react": "^1.62.0",
     "pdfjs-dist": "^4.10.38",
