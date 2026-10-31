@@ -1697,9 +1697,10 @@ export default function App() {
   const dockCol = desk ? windowColumn(dockColumn(viewportW, desk), viewportW, ovView) : null;
   /** The shortcuts card sits just above the dock (its top edge, from the window's bottom). */
   const dockBottom = dockRef.current ? Math.max(0, window.innerHeight - dockRef.current.getBoundingClientRect().top) : 96;
-  // The playback row shows once an answer speaks (the question line holds its place until then).
+  // The playback row shows once an answer speaks (the question line holds its place until then); an
+  // aside asked before the first word gets its row at once, so its question is never echoed.
   const curPart = Math.max(0, Math.min(partIdx, parts.length - 1));
-  const partsView: PartsView | undefined = busy && !waiting
+  const partsView: PartsView | undefined = busy && (!waiting || !!aside)
     ? {
       titles: parts.length > 1 ? parts.map(titleOf) : [],
       label: question,
@@ -1708,7 +1709,7 @@ export default function App() {
       paused: aside ? aside.paused : userPaused,
       speed,
       onJump: jumpTo, onTogglePause: togglePause, onReplay: replaySentence, onSpeed: cycleSpeed, onStop,
-      ...(aside ? { aside: { title: parts.length > 1 ? `Answer paused at ${curPart + 1}/${parts.length}` : 'Answer paused', onResume: closeAside } } : {}),
+      ...(aside ? { aside: { onResume: closeAside } } : {}),
     }
     : undefined;
   const mode = barMode({ busy, aside: !!aside, answered, check: checkOpen ? check : null });
