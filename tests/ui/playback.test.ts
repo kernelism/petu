@@ -217,7 +217,7 @@ describe('B1: the dock in its moments', () => {
     const line = "Today's answer budget is used up. It resets tomorrow.";
     act(() => root.render(createElement(AskBar, { onAsk: vi.fn(), onStop: vi.fn(), busy: false, blocked: line })));
     expect(host.querySelector('.askbar-status')!.textContent).toBe(line);
-    expect(host.querySelector<HTMLInputElement>('.askbar-input')!.hidden).toBe(true);
+    expect(host.querySelector<HTMLTextAreaElement>('.askbar-input')!.hidden).toBe(true);
     act(() => root.render(createElement(AskBar, { onAsk: vi.fn(), onStop: vi.fn(), busy: false, mode: 'check', onDismissCheck })));
     expect(host.querySelector('.askbar-status')).toBeNull();
     act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })); });

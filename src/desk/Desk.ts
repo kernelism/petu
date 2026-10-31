@@ -285,6 +285,7 @@ export class Desk implements DeskApi {
 
   async addRegion(spec: RegionSpec, before?: BeforeMove): Promise<RegionInfo | string> {
     const ep = this.epoch;
+    this.replaceHead();
     // Board v2: a scene continues by its id. A later answer (a follow-up that continues) or a repeated
     // scene tag naming a scene already on the board draws on into it; a scene tag with a new id (a
     // revision) starts a fresh section below, and the old scene stays above, untouched.
@@ -702,9 +703,63 @@ export class Desk implements DeskApi {
     this.emit();
   }
 
-  /** The next section added gets `el` as its head, `h` px tall (null: none). Consumed by that section. */
+  /**
+   * The next section added gets `el` as its head, `h` px tall (null: none). Consumed by that section.
+   * A head already on the board (the trail replaying its answer) keeps its card until then: the
+   * replay's first section takes its place (`forget`), so the answer is never listed twice nor gone a while.
+   */
   headNext(el: HTMLElement | null, h = 0): void {
     this.nextHead = el ? { el, h, aside: this.asideOpen } : null;
+    // An aside's head (asked before the replay drew) leaves the pending replacement as it is.
+    if (el && (el.isConnected || this.groups.some((g) => g.head === el))) this.replacing = el;
+    else if (!this.asideOpen) this.replacing = null;
+  }
+  private replacing: HTMLElement | null = null;
+  /** `el` is a replaying answer's head still waiting for its first section (it shows its old card meanwhile). */
+  awaitsHead(el: HTMLElement): boolean { return this.replacing === el; }
+  /** The head about to be consumed belongs to an answer on the board: its old drawing leaves first. */
+  private replaceHead() {
+    const h = this.nextHead, el = this.replacing;
+    if (!h || h.el !== el) return;
+    this.replacing = null;
+    this.forget(el);
+    this.nextHead = h;
+  }
+
+  /**
+   * The trail replays an answer in place: everything drawn under its head `el` (its group: its sections,
+   * its asides' insets) leaves the board, and `el` leaves with it until `headNext(el)` puts it over the
+   * replay's first section. The lane places that group at the replay's anchor, where the answer was.
+   * A follow-up's head inside an earlier answer's board (`BOARD extend`) only lifts out.
+   */
+  forget(el: HTMLElement): void {
+    const g = this.groups.find((x) => x.head === el);
+    const mid = this.midHeads.find((m) => m.el === el);
+    if (!g && !mid && !el.isConnected) return;
+    if (this.nextHead?.el === el) this.nextHead = null;
+    el.remove();
+    el.classList.remove('is-mid');
+    if (!g) {
+      this.midHeads = this.midHeads.filter((m) => m !== mid);
+      for (const x of this.groups) if (x.parts) x.parts = x.parts.filter((p) => p !== el);
+      this.position();
+      return;
+    }
+    const gone = new Set(g.secs);
+    for (const s of gone) { s.el.remove(); this.heads.get(s)?.el.remove(); this.heads.delete(s); this.held.delete(s); }
+    for (const m of this.midHeads) if (gone.has(m.sec)) m.el.remove();
+    this.midHeads = this.midHeads.filter((m) => !gone.has(m.sec));
+    for (const [id, s] of this.ids) if (gone.has(s)) this.ids.delete(id);
+    this.sections = this.sections.filter((s) => !gone.has(s));
+    g.thumb?.remove();
+    g.el.remove();
+    g.leader.remove();
+    this.groups = this.groups.filter((x) => x !== g);
+    if (this.liveGroup === g) { this.liveGroup = null; this.penLane = false; }
+    const lt = this.last?.t;
+    if (lt && 'region' in lt && lt.region != null && !this.ids.has(lt.region)) this.last = null;
+    this.position();
+    this.emit();
   }
 
   /**

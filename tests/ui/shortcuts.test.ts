@@ -27,6 +27,15 @@ describe('shortcutRows', () => {
     expect(labels(true)).toContain('Report a problem');
     expect(labels(false)).not.toContain('Report a problem');
   });
+  it('lists V (ask by voice) when dictation is set up, and V collides with no other key', () => {
+    const rows = shortcutRows({ mac: true, lane: true }).flat();
+    expect(rows.find((r) => r.label.startsWith('Ask by voice'))?.keys).toEqual([['V']]);
+    expect(shortcutRows({ mac: true, voice: false }).flat().some((r) => r.label.startsWith('Ask by voice'))).toBe(false);
+    for (const lane of [true, false]) {
+      const single = shortcutRows({ mac: true, lane, dev: true }).flat().flatMap((r) => r.keys.filter((k) => k.length === 1).map((k) => k[0].toUpperCase()));
+      expect(single.filter((k) => k === 'V')).toHaveLength(1);
+    }
+  });
   it('uses ⌘ on a Mac, Ctrl elsewhere', () => {
     const zoom = (mac: boolean) => shortcutRows({ mac }).flat().find((r) => r.label === 'Fit the board')!.keys[0][0];
     expect(zoom(true)).toBe('⌘');

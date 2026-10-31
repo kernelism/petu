@@ -52,13 +52,45 @@
   height: 28px;
   border: 0;
   outline: 0;
-  padding: 0;
+  /* A textarea: one line (28px, as the bar has always been) that grows with the question to MAX_LINES
+     (AskBar sets its height), then scrolls inside. Words wrap; never a horizontal scroll. */
+  padding: 3px 0;
+  display: block;
+  resize: none;
+  overflow: hidden;
+  overflow-wrap: anywhere;
   background: transparent;
-  font: 400 15px/28px var(--font);
+  font: 400 15px/22px var(--font);
   color: var(--ink);
   letter-spacing: -0.01em;
+  scrollbar-width: thin;
 }
-.askbar-input::placeholder { color: var(--muted); opacity: 1; }
+/* Taller than a line: the controls sit on its last line (the newest words). */
+.askbar.is-tall { align-items: flex-end; }
+/* A pause in dictation: "Sending…" while a hairline drains for the countdown (any key or more speech holds it). */
+.askbar-sending {
+  flex: none;
+  position: relative;
+  height: 28px;
+  line-height: 28px;
+  font-size: 13px;
+  color: var(--ink-2);
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+}
+.askbar-sending::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: 3px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: .5;
+  transform-origin: left center;
+  animation: askbar-send var(--send-in, 1000ms) linear forwards;
+}
+@keyframes askbar-send { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.askbar-input::placeholder { color: var(--muted); opacity: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .askbar-input:focus-visible { outline: none; } /* the bar's ring is the focus indicator */
 /* Asking is paused (spending cap): the cap line reads in place of the placeholder, a step smaller so it fits. */
 .askbar.is-blocked { cursor: default; }
@@ -777,7 +809,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .askbar-btn, .askbar-mic, .askbar-about, .popover, .caption-word, .askbar-chips, .transcript, .topbar-num.is-tick { animation: none; }
+  .askbar-btn, .askbar-mic, .askbar-about, .askbar-sending::after, .popover, .caption-word, .askbar-chips, .transcript, .topbar-num.is-tick { animation: none; }
   .caption-q.is-waiting, .caption-text.is-next, .caption-leaving, .caption-think, .caption-pause { animation: none; }
   .caption-leaving { display: none; }
   .dock, .caption, .caption-viewport, .dropveil, .tb-fold, .tb-tip { transition-duration: 0s; }

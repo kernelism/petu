@@ -42,6 +42,8 @@ type Piece = {
   offsets: number[];
   durMs: number;
   placed: boolean;
+  /** When its audio ends, once placed (a truncate's new end). */
+  endAt?: number;
   handle?: { stop(): void };
 };
 
@@ -129,6 +131,24 @@ export class VoiceClock implements NarrationClock {
     for (const p of this.pieces) { p.handle?.stop(); p.handle = undefined; }
   }
 
+  /**
+   * Another voice takes over from word `at` (a sentence boundary: a piece never spans one): the pieces
+   * from there are silenced and forgotten; the words before it play on as placed (SwitchClock).
+   */
+  truncate(at: number): void {
+    if (at >= this.words.length) return;
+    for (const p of this.pieces) if (p.from >= at) { p.handle?.stop(); p.handle = undefined; }
+    this.pieces = this.pieces.filter((p) => p.from < at);
+    this.words.length = at;
+    this.starts.length = at;
+    this.open = Math.min(this.open, at);
+    this.nextPiece = Math.min(this.nextPiece, this.pieces.length);
+    const last = this.pieces[this.pieces.length - 1];
+    if (last?.placed && last.endAt != null) this.end = last.endAt;
+    if (this.resumeWord != null && this.resumeWord >= at) this.resumeWord = null;
+    if (this.open >= this.words.length && this.timer) { clearTimeout(this.timer); this.timer = null; }
+  }
+
   /** The answer is over (a stop, a skip, a new question): no more audio, no more requests. */
   dispose(): void {
     this.halt();
@@ -189,7 +209,7 @@ export class VoiceClock implements NarrationClock {
       if (p.pcm) p.handle = this.out.play(p.pcm, at, skip);
       for (let i = startWord; i < p.to; i++) this.starts[i] = at + p.offsets[i - p.from] - skip;
       p.placed = true;
-      this.end = at + p.durMs - skip;
+      this.end = p.endAt = at + p.durMs - skip;
       this.resumeWord = null;
       this.resumeAt = -Infinity;
       this.nextPiece++;

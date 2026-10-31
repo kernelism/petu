@@ -78,8 +78,8 @@ function RadioGroup<T>({ label, labelledBy, className, options, value, same = (a
  * it Best is shown disabled with a note. `onSpeed`: a speed pick (App re-times the playing answer);
  * by default it is only stored.
  */
-export function SettingsPopover({ open, onClose, onShowShortcuts = requestShortcuts, bestAvailable = false, onSpeed = (v) => setSettings({ speed: v }) }: {
-  open: boolean; onClose(): void; onShowShortcuts?(): void; bestAvailable?: boolean; onSpeed?(v: number): void;
+export function SettingsPopover({ open, onClose, onShowShortcuts = requestShortcuts, bestAvailable = false, onSpeed = (v) => setSettings({ speed: v }), onVoice = (v) => setSettings({ voice: v }) }: {
+  open: boolean; onClose(): void; onShowShortcuts?(): void; bestAvailable?: boolean; onSpeed?(v: number): void; /** A voice pick (App switches the playing answer's voice). */ onVoice?(v: VoiceSetting): void;
 }) {
   const s = useSettings();
   const ref = useRef<HTMLDivElement>(null);
@@ -156,7 +156,7 @@ export function SettingsPopover({ open, onClose, onShowShortcuts = requestShortc
           className="segmented"
           options={[...VOICE_OPTIONS]}
           value={s.voice}
-          onPick={(v) => setSettings({ voice: v })}
+          onPick={onVoice}
           render={(v, on) => ({ className: `seg${on ? ' is-on' : ''}`, children: VOICE_LABELS[v] })}
         />
       </section>

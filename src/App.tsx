@@ -18,7 +18,8 @@ import { aboutContext, asideContext, bboxOf, isLoop, pointedLabel, type Pointed 
 import { playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
 import { PacedClock, type NarrationClock } from './playback/clock';
 import { VoiceClock, fetchVoice, warmVoice, webAudioOut } from './playback/voiceClock';
-import { BASE_WPM, getSettings, setSettings, SPEEDS, stepSpeed, useSettings } from './settings/settings';
+import { SwitchClock } from './playback/switchClock';
+import { BASE_WPM, getSettings, setSettings, SPEEDS, stepSpeed, useSettings, type VoiceSetting } from './settings/settings';
 import { DEMOS, DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
 import type { DevStep } from './demo/learner';
@@ -108,13 +109,14 @@ let audioCtx: AudioContext | null = null;
  * With a voice on, the voice's audio sets the timeline (src/playback/voiceClock.ts). Called from the
  * question's Enter (a user gesture), so the audio context may start.
  */
-const narrationClock = (): NarrationClock => {
-  const s = getSettings();
-  if (s.voice === 'off' || typeof AudioContext === 'undefined') return new PacedClock(() => BASE_WPM, undefined, undefined, () => getSettings().speed);
+const narrationClock = (): SwitchClock => new SwitchClock(clockFor(getSettings().voice));
+/** The clock for one voice setting (a SwitchClock hands the timeline over when the student changes it mid-answer). */
+const clockFor = (voice: VoiceSetting) => (): NarrationClock => {
+  if (voice === 'off' || typeof AudioContext === 'undefined') return new PacedClock(() => BASE_WPM, undefined, undefined, () => getSettings().speed);
   audioCtx ??= new AudioContext();
   void audioCtx.resume().catch(() => {});
   warmVoice();
-  return new VoiceClock(fetchVoice(s.voice), webAudioOut(audioCtx), () => BASE_WPM, () => getSettings().speed);
+  return new VoiceClock(fetchVoice(voice), webAudioOut(audioCtx), () => BASE_WPM, () => getSettings().speed);
 };
 /** ← within this many words of a part's start goes to the part before; later, to its own start. */
 const PART_RESTART_WORDS = 8;
@@ -455,6 +457,8 @@ export default function App() {
   /** The session trail: every answer this session, with its recorded script (replayed with no new call). */
   const trailRef = useRef<TrailEntry[]>([]);
   const trailN = useRef(0);
+  /** The clocks of the playing answer and aside, with their sessions (null once over): a voice change reaches them. */
+  const clocks = useRef(new Map<SwitchClock, () => AnswerSession | null>());
   /** The shortcuts card (?). */
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const shortcutsOpenRef = useRef(false);
@@ -531,7 +535,7 @@ export default function App() {
     setAside(null);
     // The answer's header waited behind the aside's (no section yet): it goes back in line.
     const h = answerRef.current.head;
-    if (h && !h.el.isConnected) deskRef.current?.headNext(h.el, h.h);
+    if (h && (!h.el.isConnected || deskRef.current?.awaitsHead(h.el))) deskRef.current?.headNext(h.el, h.h);
   };
   const clearHide = () => window.clearTimeout(hideTimer.current);
   const clearPause = () => { window.clearTimeout(pauseTimer.current); setPausing(false); };
@@ -762,12 +766,17 @@ export default function App() {
     // something new, and only the model (which sees the open check question) can tell which.
     const kindCheck = run.again ? !!run.again.check : !!run.check;
     const title = run.again?.title ?? trailTitle('answer', q, point ? pointedLabel(point) : null);
-    const entry: TrailEntry = { num: run.again?.num ?? String(++trailN.current), question: q, title, page: pageRef.current, script: '', head: null as unknown as TrailHead, ...(kindCheck ? { check: run.again?.check ?? run.check } : {}) };
-    entry.head = answerHead({ num: entry.num, question: title, check: false, onReplay: () => replayRef.current(entry) });
+    // A replay is the same entry played again in place: its header and drawings leave the board and come
+    // back as it replays (one entry on the trail and in the session list; the numbering never moves).
+    const entry: TrailEntry = run.again ?? { num: String(++trailN.current), question: q, title, page: pageRef.current, script: '', head: null as unknown as TrailHead, ...(kindCheck ? { check: run.check } : {}) };
+    // (Desk.headNext: a head already on the board keeps its card until the replay's first section replaces it.)
+    if (!run.again) entry.head = answerHead({ num: entry.num, question: title, check: false, onReplay: () => replayRef.current(entry) });
     // Eval runs keep the board as the judge has always seen it (no trail headers).
     if (!EVAL) deskRef.current?.headNext(entry.head.el, entry.head.h);
     answerRef.current = { question: q, plan: '', toAgent, head: EVAL ? null : entry.head };
-    if (!run.rec && !run.replay) trailRef.current.push(entry);
+    if (!run.rec && !run.replay && !run.again) trailRef.current.push(entry);
+    /** What a replay plays: the recorded script as it was (a replay stopped halfway keeps it whole). */
+    const again = run.again ? { script: run.again.script, grounding: run.again.grounding } : null;
     originRef.current = pageRef.current;
     window.clearTimeout(routeTimer.current);
     setRoute(null);
@@ -885,6 +894,7 @@ export default function App() {
     };
 
     const clock = narrationClock();
+    clocks.current.set(clock, () => (sessionRef.current === session ? session : null));
     /** The script stream has not ended: a pause in it is a gap the student can see. */
     let streamOpen = true;
     let firstChunk = true;
@@ -912,8 +922,8 @@ export default function App() {
           ? async function* (signal) {
             // The trail: the recorded script again, resolved against the grounding it had.
             gate?.handoff();
-            groundingRef.current = run.again!.grounding;
-            yield* streamDemo(signal, run.again!.script);
+            groundingRef.current = again!.grounding;
+            yield* streamDemo(signal, again!.script);
           }
           : async function* (signal) {
           gate?.handoff(); // dev scripts have no opener
@@ -931,7 +941,7 @@ export default function App() {
             // As the agent's client does: nothing arrived yet is an error; past that, a cut-off (what played stays).
             const head = FAIL_AT != null ? c.slice(0, Math.max(0, FAIL_AT - sent)) : '';
             if (!sent && !head) throw new Error('dev: ?fail');
-            if (head) { log.chunk(head); entry.script += head; yield head; }
+            if (head) { log.chunk(head); if (!again) entry.script += head; yield head; }
             handlers.onCutOff?.('The answer was cut off.');
             return;
           }
@@ -940,7 +950,7 @@ export default function App() {
           if (firstChunk && DEBUG) { firstChunk = false; const t = performance.now(); setDebug((d) => ({ ...d, chunk: t })); }
           run.rec?.chunk(c);
           log.chunk(c);
-          entry.script += c;
+          if (!again) entry.script += c;
           yield c;
         }
       } catch (e) {
@@ -1008,8 +1018,8 @@ export default function App() {
         sessionRef.current = null;
         // The trail: where it was asked and how long it played; what replays it resolves as it did.
         entry.ms = performance.now() - t0;
-        entry.head.setMeta(`p.${page} · ${clockOf(entry.ms)}`);
-        entry.grounding = groundingRef.current;
+        entry.head.setMeta(`p.${entry.page} · ${clockOf(entry.ms)}`);
+        if (!again) entry.grounding = groundingRef.current;
         if (spoken.length) setAnswered(true);
         if (st === 'done') {
           // A check question to offer ("Test yourself", collapsed): the model's hidden one (p6.2), else
@@ -1169,6 +1179,21 @@ export default function App() {
     sessionRef.current?.respeed();
     asideSession.current?.respeed();
   }, []);
+  /**
+   * A new voice, applied to the playing answer and aside at once: Off stops the audio now and the reading
+   * pace goes on from the current word; a voice takes over from the next sentence (SwitchClock).
+   */
+  const changeVoice = useCallback((v: VoiceSetting) => {
+    if (v === getSettings().voice) return;
+    setSettings({ voice: v });
+    for (const [c, live] of clocks.current) {
+      const s = live();
+      if (!s) { clocks.current.delete(c); continue; }
+      c.switchTo(clockFor(v), s.position(), v === 'off' ? 'now' : 'sentence');
+      // 'now' re-times the next word through the scheduler's hand-off; a sentence switch needs none.
+      if (v === 'off') s.respeed();
+    }
+  }, []);
   const cycleSpeed = useCallback(() => {
     const i = SPEEDS.findIndex((v) => v === getSettings().speed);
     changeSpeed(SPEEDS[(i + 1) % SPEEDS.length]);
@@ -1239,8 +1264,10 @@ export default function App() {
         if (DEV_SCRIPT && docRef.current) asideGrounding.current = await devGrounding(docRef.current, script);
         yield* streamDemo(signal, script);
       };
+    const asideClock = narrationClock();
+    clocks.current.set(asideClock, () => (asideSession.current === sess ? sess : null));
     const sess: AnswerSession = new AnswerSession({
-      clock: narrationClock(),
+      clock: asideClock,
       onParsed: (a) => dir.prefetch(a),
       onAction: (a, at, live) => { if (asideSession.current === sess) dir.run(a, at, live); },
       idle: () => dir.finale(),
@@ -1675,12 +1702,12 @@ export default function App() {
       <OverviewPill />
       <SessionDrawer open={sessionOpen} rows={sessionRows} total={sessionTotal} onPick={pickSession} onClose={() => setSessionOpen(false)} />
       <RouteChip route={route} backTo={backTo} onBack={onBack} x={desk?.lane && desk.page ? desk.page.x + desk.page.w / 2 : dock.x} />
-      <SettingsPopover open={settingsOpen} onClose={closeSettings} onShowShortcuts={openShortcuts} bestAvailable={!!agent.spend?.best} onSpeed={changeSpeed} />
+      <SettingsPopover open={settingsOpen} onClose={closeSettings} onShowShortcuts={openShortcuts} bestAvailable={!!agent.spend?.best} onSpeed={changeSpeed} onVoice={changeVoice} />
       <CanvasToolbar showHint={answered} />
       {inkState.canvasOn && inkState.tool === 'pen' && desk?.board && !desk.stacked && (
         <BoardPen rect={desk.board} color={inkState.color} keep={!!pointed && pointed.kind === 'circle' && pointed.page == null} onLoop={onBoardLoop} onWheel={onBoardWheel} />
       )}
-      <ShortcutsOverlay open={shortcutsOpen} onClose={closeShortcuts} x={dock.x} bottom={dockBottom} dev={import.meta.env.DEV} />
+      <ShortcutsOverlay open={shortcutsOpen} onClose={closeShortcuts} x={dock.x} bottom={dockBottom} dev={import.meta.env.DEV} voice={dictationOn} />
       {/* left/width are set directly rather than through custom properties, so the dock's glide never
           depends on var() invalidation (suspected in a Safari report of the dock staying left; not
           reproduced in Playwright WebKit). */}
