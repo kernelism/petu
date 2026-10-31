@@ -100,9 +100,11 @@ export type TargetCtx = {
 export type Pace = { speed: number; fadeMs?: number;
   /** The narration from this word to the end of its beat, each word with how soon it is spoken (ms): an svg group paces its parts to it. */
   beat?: () => BeatWord[];
+  /** This svg group's share of its beat: several groups that came together split its words in turn. */
+  slot?: { k: number; n: number };
   /** Aborts only on a real stop (a new answer, stop), not on the director's step timeout: a paced group draws on past it. */
   stop?: AbortSignal };
-export type BeatWord = { text: string; inMs: number };
+export type BeatWord = { text: string; inMs: number; endMs?: number };
 
 /** A resolved element, ready to draw on its word. */
 export type ElementPlan = {

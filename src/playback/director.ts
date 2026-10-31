@@ -80,7 +80,7 @@ type Deps = {
   /** Words of the answer said before `at` (an action's word time): a move before the first word frames the answer, it isn't a journey. Default: some. */
   spoken?(at: number): number;
   /** The narration of the current beat with word times (Scheduler.beatWords): an svg group paces its parts to it. */
-  beat?(): { text: string; inMs: number }[];
+  beat?(): { text: string; inMs: number; endMs?: number }[];
   /** Highlights and underlines grow to meaningful units (src/locate/unit.ts). Default on. */
   units?: boolean;
   /**
@@ -600,7 +600,7 @@ export class Director {
     const p = plan;
     desk.noteInk?.(p.target, p.bbox, p.el);
     // Ink after a journey's arrival is not behind: the narration held for it.
-    const k: Pace = { ...backlog(now() - Math.max(word, dep?.arrivedAt ?? -Infinity)), ...(a.kind === 'svg' && this.d.beat ? { beat: this.d.beat, stop: signal } : {}) };
+    const k: Pace = { ...backlog(now() - Math.max(word, dep?.arrivedAt ?? -Infinity)), ...(a.kind === 'svg' && this.d.beat ? { beat: this.d.beat, stop: signal, ...(a.slot ? { slot: a.slot } : {}) } : {}) };
     this.report(t, { startedAt: now() });
     const own = new AbortController();
     if (this.d.instant) own.abort(); // final state at once (an aborted draw completes immediately)

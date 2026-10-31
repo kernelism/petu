@@ -1,5 +1,6 @@
 import type { RawAction as Action, ScriptEvent } from '../script/types';
-import { endsClause, type NarrationClock } from './clock';
+import { endsClause, endsSentence, type NarrationClock } from './clock';
+import { REST_MS, WORD_EST_MS, type BeatWord } from './pace';
 
 export type SchedulerCallbacks = {
   onWord(text: string, index: number): void;
@@ -72,6 +73,14 @@ export class Scheduler {
 
   /** Where the last svg board group was drawn (its beat's words start after it). */
   private beatFrom = 0;
+  /** Whether an svg group has come yet (the narration rests only after a drawn beat). */
+  private drawn = false;
+  /**
+   * Words the narration rests before (REST_MS): the first word of a sentence that opens a new beat,
+   * after a beat that drew. A pause after a drawn step, not a rule for the model: the scheduler reads
+   * it from where the groups stand, whatever the beat sizes.
+   */
+  private rests = new Set<number>();
   /**
    * The word an action fires with: the next one, except an svg board group (it follows its beat's
    * sentences in the stream), which fires on the first word of its beat that names it (its id's
@@ -84,9 +93,23 @@ export class Scheduler {
     const from = this.beatFrom;
     this.beatFrom = n;
     const want = (a.anchor ?? []).filter((w) => w.length >= 2);
-    if (!want.length) return n;
-    for (let i = from; i < n; i++) if (namesWord(this.words[i], want)) return i;
+    if (want.length) for (let i = from; i < n; i++) if (namesWord(this.words[i], want)) return i;
+    // At a sentence boundary after a drawn beat: the next sentence starts after a rest.
+    if (this.drawn && n > 0 && endsSentence(this.words[n - 1])) this.rests.add(n);
+    this.drawn = true;
     return n;
+  }
+
+  /** The k-th of n svg groups that fire on word `word` (they came together and share its beat). */
+  private slotOf(j: number): { k: number; n: number } {
+    let k = 0, n = 0;
+    for (let i = 0; i < this.acts.length; i++) {
+      const x = this.acts[i];
+      if (x.action.kind !== 'svg' || x.word !== this.acts[j].word) continue;
+      if (i < j) k++;
+      n++;
+    }
+    return { k, n };
   }
 
   /**
@@ -94,17 +117,20 @@ export class Scheduler {
    * words so far), each with how soon it is spoken (ms from now; words not yet timed are estimated
    * at 300 ms each). An svg group paces its parts across them.
    */
-  beatWords(max = 80): { text: string; inMs: number }[] {
+  beatWords(max = 80): BeatWord[] {
     const now = this.clock.now();
     let to = this.words.length;
-    for (let i = this.fired; i < this.acts.length; i++) if (this.acts[i].action.kind === 'svg') { to = Math.min(to, this.acts[i].word); break; }
-    const out: { text: string; inMs: number }[] = [];
+    // The next beat's group (one that came with this group, on its word, shares its beat).
+    for (let i = this.fired; i < this.acts.length; i++) if (this.acts[i].action.kind === 'svg' && this.acts[i].word > this.spoken) { to = Math.min(to, this.acts[i].word); break; }
+    const out: BeatWord[] = [];
     let last = now;
     for (let i = this.spoken; i < Math.min(to, this.spoken + max); i++) {
       const s = i < this.released ? this.clock.wordStart(i) : null;
-      const t = s ?? last + 300;
-      out.push({ text: this.words[i], inMs: Math.max(0, t - now) });
-      last = t;
+      // Not timed yet (a voice still loading, a word not released): after the one before, at the clock's estimate.
+      const t = s ?? last;
+      const d = this.clock.durationMs(this.words[i]) || WORD_EST_MS;
+      out.push({ text: this.words[i], inMs: Math.max(0, t - now), endMs: Math.max(0, t + d - now) });
+      last = t + d;
     }
     return out;
   }
@@ -170,7 +196,7 @@ export class Scheduler {
     const now = this.clock.now();
     this.paused = false;
     if (to >= this.spoken) {
-      while (this.released < to) this.clock.enqueue(this.words[this.released++]);
+      while (this.released < to) this.release();
       this.started = true;
       while (this.fired < this.acts.length && this.acts[this.fired].word < to) {
         const a = this.acts[this.fired++];
@@ -240,6 +266,13 @@ export class Scheduler {
     return false;
   }
 
+  /** Hands the next word to the clock (with its rest, after a drawn beat). */
+  private release(): void {
+    const i = this.released++;
+    if (this.rests.has(i)) this.clock.enqueue(this.words[i], REST_MS);
+    else this.clock.enqueue(this.words[i]);
+  }
+
   /** Whether the next word may be handed to the clock now. */
   private canRelease(now: number): boolean {
     const i = this.released;
@@ -279,7 +312,7 @@ export class Scheduler {
     const now = this.clock.now();
 
     while (this.canRelease(now)) {
-      this.clock.enqueue(this.words[this.released++]);
+      this.release();
       this.started = true;
     }
 
@@ -290,9 +323,10 @@ export class Scheduler {
       const t = this.timing(a, now);
       if (!t) break;
       if (t.fireAt > now) { next = Math.min(next, t.fireAt); break; }
-      this.fired++;
+      const j = this.fired++;
       this.lastFire = Math.max(this.lastFire, t.fireAt);
-      this.cb.onAction(a.action, t.at, a.word);
+      const slot = a.action.kind === 'svg' ? this.slotOf(j) : null;
+      this.cb.onAction(slot && slot.n > 1 ? { ...a.action, slot } as Action : a.action, t.at, a.word);
       if (this.stopped) return;
     }
     while (this.spoken < this.released) {

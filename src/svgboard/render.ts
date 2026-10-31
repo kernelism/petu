@@ -10,7 +10,7 @@
 import { penDown, penLift, penTo } from '../ink/agent/penCursor';
 import { prefersReducedMotion, strokeDurationMs, ease } from '../ink/agent/animate';
 import { sanitizeGroup, type Sanitized } from './sanitize';
-import { namesWord } from '../playback/scheduler';
+import { paceParts, splitPart, type BeatWord, type Slot } from '../playback/pace';
 import { INK, type Palette } from './style';
 import { isBound, newScope, resolveData, type DataScope } from './data';
 import { prepareText } from './polish';
@@ -234,12 +234,16 @@ function wordsOf(el: Element, ns: string): string[] {
 
 /**
  * Appends `g` (a replaced id's old group fades to a ghost first) and draws it part by part. With the
- * beat's narration (`beat`: its words and when each is spoken) the parts are spread across it in pen
- * order, and a part the narration names (its id, its label's words) draws on that word; without it
- * they follow one another (≤ GROUP_MAX_MS). `speed` ≤ 1 compresses (backlog); `signal` aborted → the
- * final state at once.
+ * beat's narration (`beat`: its words and when each is spoken) the drawing is paced to the speech
+ * (src/playback/pace.ts): the parts are spread across the beat in pen order, a part the narration names
+ * (its id, its label's words) starts on that word, and each draws across its share of the words, not
+ * at pen speed; `slot`: this group shares the beat with others that came with it. Without a beat they
+ * follow one another at pen speed (≤ GROUP_MAX_MS). `speed` ≤ 1 compresses (backlog); `signal`
+ * aborted → the final state at once.
  */
-export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefined, o: { signal: AbortSignal; speed?: number; color: string; beat?: () => { text: string; inMs: number }[]; stop?: AbortSignal;
+export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefined, o: { signal: AbortSignal; speed?: number; color: string; beat?: () => BeatWord[];
+  /** This group's share of a beat other groups also draw in (they came together, before its words). */
+  slot?: Slot; stop?: AbortSignal;
   /** Each part as it starts drawing (in order): the board follows the pen through a group taller than the view. */
   onStep?: (el: SVGElement) => void }): Promise<void> {
   if (id) {
@@ -293,35 +297,31 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   }
   const speed = o.speed ?? 1;
   const natural = (s: Step) => (s.kind === 'trace' ? strokeDurationMs(s.len * s.px, s.len * s.px < 60 ? 120 : 200, speed) : 60 * speed);
-  // The schedule: pen order, spread over the beat; a named part on its word.
+  // The schedule: paced to the beat's narration (src/playback/pace.ts), else at pen speed.
   const words = speed >= 0.99 ? (o.beat?.() ?? []) : [];
-  const order = units.map((u, i) => ({ u, i })).sort((a, z) => a.u.cat - z.u.cat || a.i - z.i).map((x) => x.u);
+  const plan = paceParts(units.map((u) => ({ cat: u.cat, words: u.words, naturalMs: u.steps.reduce((a, s) => a + natural(s), 0) })), words, o.slot);
+  const paced = !!plan;
+  let order: Unit[];
+  /** Each part's draw time (in `order`); paced, split over its steps in proportion to their pen time. */
   let budget: number[];
-  const paced = words.length >= 3 && order.length > 1;
-  if (paced) {
-    const span = Math.max(1500, Math.min(words[words.length - 1].inMs + 250, 900 * order.length, 9000));
-    order.forEach((u, i) => { u.at = (i / order.length) * span * 0.85; });
-    for (const u of order) {
-      if (!u.words.length) continue;
-      const w = words.find((x) => namesWord(x.text, u.words));
-      if (w && w.inMs <= span + 1500) u.at = w.inMs;
-    }
-    order.sort((a, z) => a.at - z.at);
-    budget = order.map((u, i) => Math.max(260, (order[i + 1]?.at ?? Math.max(u.at + 900, span)) - u.at));
+  if (plan) {
+    order = plan.map((p) => { units[p.i].at = p.at; return units[p.i]; });
+    budget = plan.map((p) => p.dur);
   } else {
+    order = units.map((u, i) => ({ u, i })).sort((a, z) => a.u.cat - z.u.cat || a.i - z.i).map((x) => x.u);
     const total = steps.reduce((a, s) => a + natural(s), 0);
     const k = total > GROUP_MAX_MS * speed ? (GROUP_MAX_MS * speed) / total : 1;
     let t = 0;
     for (const u of order) { u.at = t; t += u.steps.reduce((a, s) => a + natural(s) * k, 0); }
     budget = order.map((u) => u.steps.reduce((a, s) => a + natural(s) * k, 0) + 1);
   }
-  const land = (s: Step) => {
+  const land = (s: Step, fadeMs = TEXT_FADE_MS) => {
     if (s.kind === 'trace') {
       s.el.style.strokeDasharray = ''; s.el.style.strokeDashoffset = ''; s.el.style.vectorEffect = ''; s.el.style.strokeWidth = '';
       for (const [a, v] of saved.get(s.el)?.markers ?? []) s.el.setAttribute(a, v);
       s.el.style.transition = `fill-opacity ${FILL_FADE_MS}ms ease-out`;
       s.el.style.fillOpacity = '';
-    } else { s.el.style.transition = `opacity ${TEXT_FADE_MS}ms ease-out`; s.el.style.opacity = ''; }
+    } else { s.el.style.transition = `opacity ${fadeMs}ms ease-out`; s.el.style.opacity = ''; }
   };
   const pen = {};
   const t0 = performance.now();
@@ -340,13 +340,17 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
       if (wait > 16) { penLift(pen); await sleep(wait); if (sig.aborted) break; }
       penDown(pen);
       setLive(b, u.el);
+      // Paced: the part fills its share of the narration (strokes in proportion to their length).
+      // At pen speed: natural, compressed to its budget.
       const nat = u.steps.reduce((a, s) => a + natural(s), 0);
       const k = nat > budget[ui] * 0.9 ? (budget[ui] * 0.9) / nat : 1;
-      for (const s of u.steps) {
+      const share = paced ? splitPart(budget[ui], u.steps.map(natural)) : u.steps.map((s) => natural(s) * k);
+      for (let si = 0; si < u.steps.length; si++) {
+        const s = u.steps[si];
         if (sig.aborted) break;
         o.onStep?.(s.el);
-        const d = natural(s) * k;
-        if (s.kind === 'fade') { land(s); await sleep(d); continue; }
+        const d = share[si];
+        if (s.kind === 'fade') { land(s, paced ? Math.max(TEXT_FADE_MS, Math.min(TEXT_FADE_MS * 2.5, d)) : TEXT_FADE_MS); await sleep(d); continue; }
         const geo = s.el as unknown as SVGGeometryElement;
         const dur = Math.max(60, d), ts = performance.now();
         for (;;) {
