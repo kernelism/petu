@@ -26,6 +26,15 @@ export const PRICES: Record<string, Price> = {
     long: { above: 100_000, price: { in: 0.50, cached: 0.05, out: 2.50, write30m: 0.625, write12h: 1.00 } } },
 };
 
+/**
+ * Realtime models (server/voice.ts reads one as the narration's voice), USD per 1M tokens from
+ * developers.openai.com/api/docs/models/gpt-realtime-2.1-mini (checked 2026-10-30). `out` is text
+ * output (the transcript and any reasoning), `audioOut` the spoken audio.
+ */
+export const REALTIME_PRICES = {
+  'gpt-realtime-2.1-mini': { in: 0.60, cached: 0.06, out: 2.40, audioOut: 20.00 },
+} as const;
+
 /** The price row a request of `promptTokens` pays (Haiku 5.5's long-prompt tier). */
 export function priceFor(model: string, promptTokens: number): Omit<Price, 'long'> {
   const p = PRICES[model];

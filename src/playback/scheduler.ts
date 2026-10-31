@@ -131,6 +131,7 @@ export class Scheduler {
     this.paused = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.clock.halt?.();
     return true;
   }
 
@@ -151,7 +152,8 @@ export class Scheduler {
     if (this.stopped || !this.clock.retime || ms <= 0) return;
     let i = this.spoken;
     while (i < this.released && (this.clock.wordStart(i) ?? Infinity) < at - 1) i++;
-    const base = i < this.released ? this.clock.wordStart(i)! : Math.max(at, this.clock.now(), this.clock.endsAt());
+    // A released word not yet timed (its voice still loading) starts no earlier than the narration's end.
+    const base = (i < this.released ? this.clock.wordStart(i) : null) ?? Math.max(at, this.clock.now(), this.clock.endsAt());
     this.retimeFrom(i, base + ms);
     if (!this.paused) this.tick();
   }
@@ -220,6 +222,7 @@ export class Scheduler {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.clock.dispose?.();
     this.words = [];
     this.acts = [];
   }
