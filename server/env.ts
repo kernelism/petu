@@ -51,7 +51,7 @@ export const DEFAULT_MODEL = 'gpt-6.1-terra';
  */
 export const DEFAULT_EFFORT: Effort = 'none';
 /** Stage 2's output budget: a script that walks several pages and draws (p3.2 answers used ≤ ~900). */
-export const DEFAULT_MAX_OUTPUT = 3200;
+export const DEFAULT_MAX_OUTPUT = 4800;
 /** With reasoning on, its tokens count against the output budget too. */
 export const DEFAULT_MAX_OUTPUT_REASONING = 6000;
 /** Stage 1 (spec A): the fast model at effort none; its JSON is the opener (one or two sentences), ≤ 6 pages and a plan of ≤ 100 words ending with its beats. */

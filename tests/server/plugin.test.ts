@@ -18,7 +18,7 @@ describe('parseEnv', () => {
   it('defaults: terra/none (answer and scout), founder phase with $3/day, phase caps incl. the lesson phases, $60 total, prior $0.0076', () => {
     const e = parseEnv(from({}), opts);
     expect(e.key).toBe('');
-    expect(e.model).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 3200, fast: false, explicitCache: true });
+    expect(e.model).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 4800, fast: false, explicitCache: true });
     expect(e.scout).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600, fast: false, explicitCache: true });
     expect(e.phase).toBe('founder');
     expect(e.caps).toEqual({ totalUsd: 60, dailyUsd: 3, phaseUsd: PHASE_CAPS });
