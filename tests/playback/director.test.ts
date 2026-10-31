@@ -522,3 +522,17 @@ describe('Director: relational geometry (names, marks, fit)', () => {
     expect(rb.got).toHaveLength(1);
   });
 });
+
+describe('Director: a drawing is never lost', () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it('an svg group with no board open opens a default board and draws into it (founder lec06: "no svg board" ×5)', async () => {
+    const { d, desk, ended } = make();
+    const g = { kind: 'svg', svg: '<g id="row"><line x1="0" y1="0" x2="9" y2="9"/></g>', id: 'row' } as unknown as RawAction;
+    d.run(g, 0);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(desk.addRegion).toHaveBeenCalledWith(expect.objectContaining({ svg: true }), expect.anything());
+    expect([...ended.values()].some((t) => t.skipped === 'no svg board')).toBe(false);
+  });
+});
