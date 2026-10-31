@@ -143,6 +143,12 @@ export class Director {
     // draws into the latest board.
     if (raw.kind === 'sketch' && raw.svgboard) raw = { ...raw, id: raw.svgboard.extend && this.svgBoard ? this.svgBoard : (this.svgBoard = `svgb${++svgBoardN}`) };
     if (raw.kind === 'svg') {
+      // A group with no board open (its {{svgboard}} was lost upstream): a drawing is never lost, so a
+      // default board opens for it, loudly.
+      if (!this.svgBoard) {
+        console.warn('[director] svg group with no board open: opening a default board', (raw as { id?: string }).id ?? '');
+        this.run({ kind: 'sketch', id: 'svgb', size: 'l', svgboard: { w: 1000, h: 700 } } as RawAction, at, live);
+      }
       if (!this.svgBoard) { this.report({ action: raw as Action, firedAt: at, queuedAt: now(), startedAt: now(), endedAt: now() }, { skipped: 'no svg board' }); return; }
       raw = { ...raw, region: this.svgBoard };
     }

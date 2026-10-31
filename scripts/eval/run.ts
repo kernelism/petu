@@ -130,6 +130,12 @@ async function runQuestion(chrome: Chrome, ctx: Ctx, q: Question, rep: number): 
     shots.push(chrome.shot().then((b) => writeFileSync(join(qdir, `${t ? `t${t + 1}-` : ''}s${i}.png`), b)));
   });
   await chrome.goto(urlFor(ctx.base, open, !!prior, gateQuery(ctx.args)));
+  // PETU_EVAL_VOICE=marin|cedar: the answer is read aloud (Settings → Voice), as the founder hears it.
+  const voice = process.env.PETU_EVAL_VOICE?.trim();
+  if (voice) {
+    await chrome.eval(`localStorage.setItem('pdf-tutor.settings', JSON.stringify({ ...JSON.parse(localStorage.getItem('pdf-tutor.settings') ?? '{}'), voice: ${JSON.stringify(voice)} }))`);
+    await chrome.goto(urlFor(ctx.base, open, !!prior, gateQuery(ctx.args)));
+  }
   await chrome.eval(`new Promise((r) => { const t = setInterval(() => { if (window.__petu) { clearInterval(t); r(); } }, 100); setTimeout(r, 30000); })`);
   await chrome.eval('window.__petu.ready()');
   const pageShot = await chrome.shot();

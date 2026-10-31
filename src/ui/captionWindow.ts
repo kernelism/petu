@@ -6,12 +6,14 @@
  * opens on the tail of the previous sentence. Pure: widths come from an injected measure.
  */
 
+import { endsSentence as spokenEnd } from '../playback/clock';
+
 const CLOSERS = `["'”’)\\]]*$`;
 const SENTENCE = new RegExp(`[.?!]${CLOSERS}`);
 const CLAUSE = new RegExp(`[,;:–—]${CLOSERS}`);
 
 /** Ends a sentence ("far.", "right?”"); "1.5" doesn't. */
-export const endsSentence = (t: string | undefined): boolean => !!t && SENTENCE.test(t);
+export const endsSentence = (t: string | undefined): boolean => !!t && SENTENCE.test(t) && spokenEnd(t.replace(/["'”’)\]]+$/, ''));
 /** Ends a clause: a comma, semicolon, colon or dash ("C,", "line:", a lone "—"). */
 export const endsClause = (t: string | undefined): boolean => !!t && (CLAUSE.test(t) || /^[-–—]$/.test(t));
 

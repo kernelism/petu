@@ -11,14 +11,16 @@ import type { RawAction } from '../script/types';
 /**
  * SEVERITY: which checks fail a unit (it is not released) and which only note (logged, in ?debug and
  * the eval). `default` fails only what is measured or mechanical: a skipped or unparsable action (tag),
- * a number said with no engine value (unbound), erasing released ink (erasure), a labelled reference
- * to nothing drawn (named). Deixis, the number family, geometry and every layout check note until
+ * erasing released ink (erasure), a labelled reference to nothing drawn (named). A number typed that
+ * equals the engine's value (unbound) only notes: the student hears the number the board shows, so
+ * the sentence does not mislead (founder lec06, 2026-10-31: every sentence that said a computed value
+ * right was dropped, most of the answer). Deixis, the number family, geometry and every layout check note until
  * their precision on the recorded corpus is measured (gate-beats: 19% false flags on clean beats).
  * `design` is the design's table (2026-10-29 §3; `&gatecheck=all`).
  */
 export type Severity = 'default' | 'design';
 export const SEVERITY: Record<Severity, Record<Flag['check'], 'fail' | 'note'>> = {
-  default: { tag: 'fail', unbound: 'fail', erasure: 'fail', named: 'fail', deixis: 'note', number: 'note', threshold: 'note', direction: 'note', geometry: 'note', layout: 'note', order: 'note', svg: 'fail' },
+  default: { tag: 'fail', unbound: 'note', erasure: 'fail', named: 'fail', deixis: 'note', number: 'note', threshold: 'note', direction: 'note', geometry: 'note', layout: 'note', order: 'note', svg: 'fail' },
   design: { tag: 'fail', unbound: 'fail', erasure: 'fail', named: 'fail', deixis: 'fail', number: 'fail', threshold: 'fail', direction: 'fail', geometry: 'fail', layout: 'fail', order: 'note', svg: 'fail' },
 };
 
