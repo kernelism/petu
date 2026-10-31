@@ -89,7 +89,7 @@ export type PartTime = { i: number; at: number; dur: number };
 
 /**
  * The schedule of a group's parts over its beat, in drawing order, or null when the beat gives
- * nothing to pace by (fewer than two words: the caller draws at pen speed). `start`: when the beat
+ * nothing to pace by (fewer than two words and not still streaming: the caller draws at pen speed). `start`: when the beat
  * began (ms from now; a re-plan once more of the beat has streamed in: the parts left are spread over
  * what is left of the window).
  *
@@ -99,7 +99,7 @@ export type PartTime = { i: number; at: number; dur: number };
  * is PART_MIN_MS unless the window is too short to give every part that much (then an equal share).
  */
 export function paceParts(parts: readonly PartIn[], words: readonly BeatWord[], slot?: Slot, start?: number): PartTime[] | null {
-  if (words.length < 2 || !parts.length) return null;
+  if (!parts.length || (words.length < 2 && !words[words.length - 1]?.open)) return null;
   const win = beatWindow(words, slot, start);
   // Re-planned mid-beat (`start` in the past): what is left of the window, from now.
   const from = Math.max(0, win.from), to = Math.max(from + 1, win.to);

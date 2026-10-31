@@ -58,6 +58,11 @@ describe('pace: the window a group draws in', () => {
 });
 
 describe('pace: each part draws across its share of the words', () => {
+  it('a beat with no words yet but still streaming is paced over OPEN_SPAN_MS (then re-planned)', () => {
+    const t = paceParts([part(), part()], [{ text: '', inMs: 0, endMs: 0, open: true }])!;
+    expect(t.map((x) => x.at)).toEqual([0, OPEN_SPAN_MS / 2]);
+  });
+
   it('needs at least two words (else pen speed: null)', () => {
     expect(paceParts([part()], beat('one'))).toBeNull();
     expect(paceParts([part()], [])).toBeNull();

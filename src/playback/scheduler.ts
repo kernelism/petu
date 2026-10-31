@@ -134,7 +134,11 @@ export class Scheduler {
       last = t + d;
     }
     // Its end isn't known while the stream may still add words to it.
-    if (out.length && !closed && out.length < max) out[out.length - 1].open = true;
+    if (!closed && out.length < max) {
+      // A group that fired before its words (the narration ran dry): the beat is coming, still unknown.
+      if (!out.length) out.push({ text: '', inMs: Math.max(0, last - now), endMs: Math.max(0, last - now) });
+      out[out.length - 1].open = true;
+    }
     return out;
   }
 
