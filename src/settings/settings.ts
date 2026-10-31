@@ -58,7 +58,7 @@ export const nearestSpeed = (x: number): number =>
  * reads as part of the slide. 5.2:1 on a white page, 4.2:1 on the desk.
  */
 export const INK_COLOR = '#8E4EC6';
-export const DEFAULTS: Settings = { inkStyle: 'live', inkColor: INK_COLOR, highlight: 'violet', speed: 1, voice: 'off', quality: 'standard' };
+export const DEFAULTS: Settings = { inkStyle: 'hand', inkColor: INK_COLOR, highlight: 'violet', speed: 1, voice: 'off', quality: 'standard' };
 
 const KEY = 'pdf-tutor.settings';
 /**
