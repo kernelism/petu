@@ -11,6 +11,8 @@ import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, Desk
 import { BOARD_HEAD, boardPad, MIN_TEXT_PX, SECTION_W, TEXT_UNITS } from './layout';
 import { dockTop, FOLDED_H, LANE_PAD, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, visibleLane, wantFor, zoomedInsets } from './lane';
 import { camFor, overviewCam, type Cam } from './scene/camera';
+import { BeatLinks, LaneHover, type Beat, type BeatMark } from './hoverMap';
+import { CardPreview } from './preview';
 
 export type { DeskHost } from './types';
 
@@ -48,7 +50,9 @@ type Group = {
   el: HTMLDivElement; spacer: HTMLDivElement; item: HTMLDivElement; leader: SVGGElement;
   secs: Section[]; head: HTMLElement | null;
   anchor: { page: number; y: number }; lift: number;
-  top: number; h: number; live: boolean; folded: boolean; thumb: HTMLElement | null;
+  top: number; h: number; live: boolean; folded: boolean;
+  /** Board ↔ page (hoverMap.ts): its drawn groups with the page marks spoken with each, and its marks made before its first group. */
+  beats: Beat[]; loose: BeatMark[][];
   /** Its anchor is the view (the answer had not marked the page yet): its first page mark re-anchors it. */
   provisional?: boolean;
   /**
@@ -154,6 +158,10 @@ export class Desk implements DeskApi {
   private groups: Group[] = [];
   private liveGroup: Group | null = null;
   private leaders: SVGSVGElement;
+  /** Layout C: which page marks were spoken with which drawn group, the hover that shows it, a folded card's preview. */
+  private links = new BeatLinks();
+  private hover: LaneHover;
+  private preview: CardPreview;
   /** Layout C: the pen's column (the dock follows it): the page, or the lane once the answer draws there. */
   private penLane = false;
   private zoomCtl: { out: HTMLButtonElement; pct: HTMLSpanElement; in: HTMLButtonElement; fit: HTMLButtonElement };
@@ -183,6 +191,17 @@ export class Desk implements DeskApi {
     this.leaders.setAttribute('class', 'lane-leaders');
     this.leaders.setAttribute('aria-hidden', 'true');
     this.content.appendChild(this.leaders);
+    this.hover = new LaneHover({
+      lane: () => this.lane(),
+      content: this.content,
+      sheet: () => this.host.laneEl?.()?.parentElement ?? null,
+      groups: () => this.groups,
+      sheetRect: (page, r) => this.deskRect(page, r),
+      originX: () => this.board.offsetLeft,
+      zoom: () => this.zoomZ(),
+    });
+    this.preview = new CardPreview({ band: () => ({ top: SAFE_TOP, bottom: safeBottom() }) });
+    this.off.push(() => this.hover.destroy(), () => this.preview.destroy());
     this.wireLayer = document.createElement('div');
     this.wireLayer.className = 'desk-wires';
     stage.append(this.board, this.wireLayer);
@@ -399,9 +418,11 @@ export class Desk implements DeskApi {
     return this.host.crop?.(page, r, pxW) ?? Promise.resolve(null);
   }
 
-  noteInk(t: Target, r: SRect): void {
+  noteInk(t: Target, r: SRect, o: { el?: Element; kind?: string } = {}): void {
     if (t.region != null) {
       const sec = this.ids.get(t.region);
+      // An svg board group opens a beat: the page marks spoken after it, until the next, are its (hoverMap.ts).
+      if (o.el && sec?.svg && sec.group) sec.group.beats.push(this.links.beat(o.el));
       const m = sec && this.midHeads.find((x) => x.sec === sec && x.y == null);
       if (m && sec) {
         // The follow-up's first new group: its header lands right above it, in view with it.
@@ -418,6 +439,7 @@ export class Desk implements DeskApi {
       }
     }
     if (t.page == null) return;
+    this.links.mark(t.page, r, o.kind);
     this.inked.unshift({ page: t.page, r });
     if (this.inked.length > 8) this.inked.length = 8;
     const g = this.liveGroup;
@@ -577,6 +599,7 @@ export class Desk implements DeskApi {
     if (this.liveGroup) this.dock(this.liveGroup, false);
     this.liveGroup = null;
     if (this.lane()) { for (const g of this.groups) this.fold(g, true); this.penLane = false; this.position(); }
+    this.links.newAnswer();
     this.inked = [];
     this.follow.setAnswering(true);
     this.ids.clear();
@@ -597,6 +620,7 @@ export class Desk implements DeskApi {
   setAside(on: boolean): void {
     if (on === this.asideOpen) return;
     this.asideOpen = on;
+    this.links.setAside(on);
     this.board.classList.toggle('has-aside', on);
     // Asking is the student handing the view back: the aside is followed (its inset lands in view, its
     // ink is kept in view), even if they had scrolled away before asking. Scrolling during the aside
@@ -718,6 +742,9 @@ export class Desk implements DeskApi {
     this.liveGroup = null;
     this.penLane = false;
     this.leaders.replaceChildren();
+    this.links.clear();
+    this.hover.clear();
+    this.preview.hide();
     if (this.lane()) {
       // The lane stays (it is the sheet's margin): only its drawings leave.
       gone.forEach((s) => s.el.remove());
@@ -1243,9 +1270,16 @@ export class Desk implements DeskApi {
       const el = div('lane-group'), spacer = div('lane-spacer'), item = div('lane-item');
       el.append(spacer, item);
       const leader = this.leaders.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
-      const ng: Group = { el, spacer, item, leader, secs: [], head: null, provisional: !this.inked.length, marked: !!this.inked.length, anchor: this.anchorNow(page), lift: (head ? this.heads.get(sec)?.h ?? 0 : 0) + 8, top: 0, h: 0, live: true, folded: false, thumb: null };
+      const ng: Group = { el, spacer, item, leader, secs: [], head: null, provisional: !this.inked.length, marked: !!this.inked.length, anchor: this.anchorNow(page), lift: (head ? this.heads.get(sec)?.h ?? 0 : 0) + 8, top: 0, h: 0, live: true, folded: false, beats: [], loose: [this.links.answerMarks()] };
       // A folded card opens in place on a click (before its head's own Replay).
       item.addEventListener('click', (e) => { if (ng.folded) { e.stopPropagation(); e.preventDefault(); this.fold(ng, false); this.position(); } }, true);
+      // Hovered or focused from the keyboard, a folded card previews its drawing beside it (preview.ts).
+      this.preview.attach({
+        item,
+        folded: () => ng.folded,
+        sections: () => ng.secs.filter((s) => s.svg && !s.scene && !s.el.classList.contains('is-aside')).map((s) => s.el),
+        open: () => { this.fold(ng, false); this.position(); },
+      });
       this.content.insertBefore(el, this.leaders);
       this.groups.push(ng);
       this.liveGroup = g = ng;
@@ -1262,27 +1296,20 @@ export class Desk implements DeskApi {
     this.fold(g, false);
     g.live = true;
     this.liveGroup = g;
+    // Its new answer's opening marks are its too (the leader's).
+    if (!g.loose.includes(this.links.answerMarks())) g.loose.push(this.links.answerMarks());
   }
 
-  /** Folds a finished answer's group to its card (its head, a thumbnail of its drawing), or opens it again. */
+  /**
+   * Folds a finished answer's group to its card (number, question, page · time; hovered, it previews
+   * its drawing: preview.ts), or opens it again.
+   */
   private fold(g: Group, on: boolean) {
     if (g.live || !g.head || g.folded === on) return;
     g.folded = on;
     g.el.classList.toggle('is-folded', on);
-    if (on && !g.thumb) {
-      const ink = g.secs[0]?.el.querySelector('.desk-region-ink');
-      if (ink) {
-        const t = document.createElement('span');
-        t.className = 'lane-thumb';
-        t.setAttribute('aria-hidden', 'true');
-        const c = ink.cloneNode(true) as SVGSVGElement;
-        c.removeAttribute('style');
-        c.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-        t.appendChild(c);
-        g.thumb = t;
-        g.head.querySelector('.trail-row')?.prepend(t);
-      }
-    }
+    this.preview.hide();
+    this.hover.clear();
   }
 
   /**
@@ -1382,6 +1409,7 @@ export class Desk implements DeskApi {
     });
     this.leaders.style.height = total;
     for (const g of this.groups) { this.drawLeader(g); if (g !== this.liveGroup) this.clipLane(g); }
+    this.hover.relayout();
     if (this.liveGroup) this.liveLane();
   }
 

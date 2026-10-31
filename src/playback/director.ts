@@ -598,7 +598,7 @@ export class Director {
     }
     if (typeof plan !== 'object') return finish('no plan');
     const p = plan;
-    desk.noteInk?.(p.target, p.bbox);
+    desk.noteInk?.(p.target, p.bbox, { el: p.el, kind: a.kind });
     // Ink after a journey's arrival is not behind: the narration held for it.
     const k: Pace = { ...backlog(now() - Math.max(word, dep?.arrivedAt ?? -Infinity)), ...(a.kind === 'svg' && this.d.beat ? { beat: this.d.beat, stop: signal } : {}) };
     this.report(t, { startedAt: now() });
