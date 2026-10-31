@@ -244,7 +244,7 @@ function roomSizes(g: Element, roles: Map<Element, Role>, st: TypeState): Map<El
     const m = new Map<Element, number>();
     for (const el of els) {
       const r = roles.get(el)!;
-      m.set(el, r === 'title' ? c * TITLE_K : r === 'content' ? c : Math.min(c, Math.max(c * SMALL_K, Math.min(st.scale.small, own.get(el)!))));
+      m.set(el, r === 'title' ? c * TITLE_K : r === 'content' ? c : Math.max(st.floor ?? 0, Math.min(c, Math.max(c * SMALL_K, Math.min(st.scale.small, own.get(el)!)))));
     }
     return m;
   };
