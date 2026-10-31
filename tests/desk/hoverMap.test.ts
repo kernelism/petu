@@ -35,6 +35,13 @@ describe('BeatLinks: page marks belong to the beat they are spoken in', () => {
     expect(s.marks.map((m) => m.r.y)).toEqual([20]);
     expect(a.marks.map((m) => m.r.y)).toEqual([30]);
   });
+  it('a mark that points at the page (highlight, underline, circle, box) is not the tutor\'s own writing (note, label)', () => {
+    const l = new BeatLinks();
+    const a = l.beat(el());
+    l.mark(4, R(1), 'highlight');
+    l.mark(4, R(2), 'note');
+    expect(a.marks.map((m) => !!m.own)).toEqual([false, true]);
+  });
   it('a new answer starts with no beat, and the last answer\'s marks are retired (past)', () => {
     const l = new BeatLinks();
     const a = l.beat(el());
