@@ -24,6 +24,8 @@ export const FLUSH_MS = 220;
 const LONG_PIECE = 24;
 /** The first piece of an answer is cut at its first clause once it has this many words. */
 const FIRST_PIECE = 5;
+/** A piece placed within this of the previous one's end follows it directly on the audio clock. */
+const SEAM_MS = 40;
 /** PCM from the server: 24 kHz, 16-bit signed little-endian, mono. */
 export const SAMPLE_RATE = 24000;
 
@@ -132,6 +134,14 @@ export class VoiceClock implements NarrationClock {
     this.place();
   }
 
+  holdable(i: number): boolean {
+    if (i >= this.open) return i === this.open; // the next piece starts at `open`; past it, mid-piece
+    const p = this.pieces.find((x) => x.from <= i && i < x.to);
+    if (!p || p.from !== i) return false;
+    const st = this.starts[i];
+    return !p.placed || st == null || st > this.clockNow();
+  }
+
   /** Silence now (a pause). The scheduler's resume re-times from the next word. */
   halt(): void {
     this.halted = true;
@@ -230,17 +240,26 @@ export class VoiceClock implements NarrationClock {
 
 /** Web Audio output: one context per page, PCM scheduled on its timeline. */
 export function webAudioOut(ctx: AudioContext): AudioOut {
+  // The last piece scheduled: where it ends on both timelines. A piece meant to follow it directly is
+  // started at that exact audio time, so pieces join sample-accurately: converting each start from
+  // performance.now() on its own put a gap or an overlap at every seam, and a main thread busy with a
+  // scroll or a page render between the two clock reads made it audible.
+  let last: { perf: number; ctx: number; src: AudioBufferSourceNode } | null = null;
   return {
     play(pcm, at, offsetMs) {
       const buf = ctx.createBuffer(1, pcm.length, SAMPLE_RATE);
-      const ch = buf.getChannelData(0);
-      for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+      buf.getChannelData(0).set(Float32Array.from(pcm, (x) => x / 32768));
       const src = ctx.createBufferSource();
       src.buffer = buf;
       src.connect(ctx.destination);
-      const when = ctx.currentTime + Math.max(0, (at - performance.now()) / 1000);
-      src.start(when, Math.max(0, offsetMs / 1000));
-      return { stop: () => { try { src.stop(); } catch { /* not started */ } src.disconnect(); } };
+      const off = Math.max(0, offsetMs / 1000);
+      const seam = last && Math.abs(at - last.perf) < SEAM_MS && last.ctx >= ctx.currentTime;
+      const when = seam ? last!.ctx : ctx.currentTime + Math.max(0, (at - performance.now()) / 1000);
+      src.start(when, off);
+      const mine = { perf: at + (buf.duration - off) * 1000, ctx: when + buf.duration - off, src };
+      last = mine;
+      src.onended = () => { if (last === mine) last = null; };
+      return { stop: () => { if (last === mine) last = null; try { src.stop(); } catch { /* not started */ } src.disconnect(); } };
     },
   };
 }

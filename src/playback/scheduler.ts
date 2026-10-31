@@ -185,6 +185,10 @@ export class Scheduler {
     if (this.stopped || !this.clock.retime || ms <= 0) return;
     let i = this.spoken;
     while (i < this.released && (this.clock.wordStart(i) ?? Infinity) < at - 1) i++;
+    // A voice rests only between its pieces: a hold inside a playing sentence would cut the audio and
+    // restart it mid-word (founder lec06, 2026-10-31: "voice glitches when the slide moves"). The view
+    // still travels; the narration just goes on.
+    if (this.clock.holdable && !this.clock.holdable(i)) return;
     // A released word not yet timed (its voice still loading) starts no earlier than the narration's end.
     const base = (i < this.released ? this.clock.wordStart(i) : null) ?? Math.max(at, this.clock.now(), this.clock.endsAt());
     this.retimeFrom(i, base + ms);

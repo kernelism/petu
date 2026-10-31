@@ -25,6 +25,12 @@ export interface NarrationClock {
    * `start`). Pause, seek and a journey's arrival beat use it; a clock without it can't pause.
    */
   retime?(from: number, start: number): void;
+  /**
+   * Whether a silence may be inserted before word `i` (a journey's hold) without cutting audio: a clock
+   * with audio can only rest between its pieces, never inside one already playing or mid-piece (the
+   * piece would stop and restart at an estimated offset, mid-word). Absent: always.
+   */
+  holdable?(i: number): boolean;
   /** Silences what is being heard now (a pause; a clock with audio). Resume re-times from the next word. */
   halt?(): void;
   /** The answer is over: release audio and requests. */

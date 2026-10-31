@@ -60,12 +60,20 @@ export class SwitchClock implements NarrationClock {
   now(): number { return this.clockNow(); }
   durationMs(word: string): number { return this.cur.clock.durationMs(word); }
 
-  enqueue(word: string): number {
+  enqueue(word: string, restMs = 0): number {
     const i = this.words.length;
     if (this.pending && i > this.pendingFrom && i > this.cur.from && endsSentence(this.words[i - 1])) this.split(i);
     this.words.push(word);
-    this.cur.clock.enqueue(word);
+    // The scheduler's rest after a drawn beat reaches the voice (it was dropped here).
+    this.cur.clock.enqueue(word, restMs);
     return i;
+  }
+
+  holdable(i: number): boolean {
+    const k = this.segAt(i);
+    if (k < 0) return false;
+    const s = this.segs[k];
+    return s.clock.holdable ? s.clock.holdable(i - s.from) : true;
   }
 
   wordStart(i: number): number | null {
