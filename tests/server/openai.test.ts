@@ -606,6 +606,21 @@ describe('Lessons v3: two stages', () => {
     expect(SCOUT_SYSTEM).toMatch(/thirty-five words a beat/);
   });
 
+  it('scout s2.8 (founder 2026-10-31): a "not good enough / not complete" follow-up is about the thread\'s question in full, never the page in view; its plan lists the missed parts; its scope follows the parts', () => {
+    expect(SCOUT_SYSTEM).toMatch(/A follow-up is about the conversation first, not about the page in view/);
+    expect(SCOUT_SYSTEM).toMatch(/the subject is the question their thread is on, in full/);
+    expect(SCOUT_SYSTEM).toMatch(/never gets a new topic and never gets the visible page's content/);
+    expect(SCOUT_SYSTEM).toMatch(/"That's not complete, right\?" asks you to finish the parts still missing, never for a yes or a no/);
+    expect(SCOUT_SYSTEM).toMatch(/lists, by name, every part of the thread's question that the previous answers missed or treated thinly/);
+    expect(SCOUT_SYSTEM).toMatch(/an answer to redo or finish that has several parts/);
+    expect(SCOUT_SYSTEM).toMatch(/never stops after the first part/);
+    // Stage 2's relation notes carry the same contract.
+    for (const r of ['revise-representation', 'simplify', 'new-example', 'deeper'] as const) { expect(relationNote(r)).toMatch(/the question the student's thread is on/); expect(relationNote(r)).toMatch(/never stop after the first/); }
+    expect(relationNote('continue')).toMatch(/asking you to finish/);
+    expect(relationNote('continue')).toMatch(/never answer with a yes or a no/);
+    expect(relationNote('new-topic')).not.toMatch(/finish/);
+  });
+
   const sreq = { question: 'How does it work?', docName: 'd.pdf', docHash: 'h', numPages: 12, page: 3, digest: 'DECK d.pdf\np1: a', prior: { q: 'before?', a: 'x'.repeat(2000), page: 2 },
     pageText: 'PAGE 3 (visible; 16:9 slide; image attached)\nt1 60 40–300: Three' };
   const scfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600, fast: false, explicitCache: true };

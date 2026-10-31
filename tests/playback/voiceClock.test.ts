@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { VoiceClock, FLUSH_MS, SAMPLE_RATE, type AudioOut, type Speak } from '../../src/playback/voiceClock';
+import { VoiceClock, FLUSH_MS, LATE_MS, SAMPLE_RATE, type AudioOut, type Speak } from '../../src/playback/voiceClock';
 import { Scheduler } from '../../src/playback/scheduler';
 import type { ScriptEvent } from '../../src/script/types';
 
@@ -238,15 +238,15 @@ describe('VoiceClock', () => {
     it('a trailing action waits for the narration\'s audio, then fires at its end', async () => {
       const { s, asked, acts, done } = drive();
       s.push([...ev('One two three. Four five six.'), { type: 'action', action: { kind: 'clear' } }, { type: 'end' }]);
-      await vi.advanceTimersByTimeAsync(3000);
+      await vi.advanceTimersByTimeAsync(1000);
       expect(acts).toEqual([]);
-      asked[0].resolve(1000);
-      await vi.advanceTimersByTimeAsync(3000);
+      asked[0].resolve(1000); // within the first piece's grace: plays 1000–2000
+      await vi.advanceTimersByTimeAsync(500);
       expect(acts).toEqual([]); // the second sentence is still loading
-      asked[1].resolve(1000);
+      asked[1].resolve(1000); // in before it is due (2000): plays 2000–3000
       await vi.advanceTimersByTimeAsync(5000);
       expect(acts).toHaveLength(1);
-      expect(acts[0]).toBeGreaterThanOrEqual(7000);
+      expect(acts[0]).toBeGreaterThanOrEqual(3000);
       expect(done()).toBeGreaterThanOrEqual(acts[0]);
     });
 
@@ -272,5 +272,41 @@ describe('VoiceClock', () => {
       expect(played[1].stopped).toBe(true);
       expect(played.at(-1)!.at).toBe(1000 + 2000);
     });
+  });
+});
+
+describe('VoiceClock: a late piece never stalls the lesson', () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
+  afterEach(() => vi.useRealTimers());
+
+  it('a piece whose audio is not in LATE_MS after it was due plays silent at the paced timing; its audio, arriving later, is dropped', async () => {
+    const { clock, asked, played } = make();
+    enqueueAll(clock, 'Supply rises. Demand falls.');
+    asked[0].resolve(1000);
+    await flush();
+    expect(played).toHaveLength(1);
+    expect(clock.wordStart(2)).toBeNull(); // 'Demand' waits for its audio
+    await vi.advanceTimersByTimeAsync(1000 + LATE_MS - 10);
+    expect(clock.wordStart(2)).toBeNull();
+    await vi.advanceTimersByTimeAsync(20);
+    const t = clock.wordStart(2)!;
+    expect(t).toBeGreaterThanOrEqual(1000 + LATE_MS);
+    expect(played).toHaveLength(1); // silent: nothing played for it
+    asked[1].resolve(900);
+    await flush();
+    expect(played).toHaveLength(1);
+    expect(clock.wordStart(2)).toBe(t);
+  });
+
+  it('a piece whose audio comes within the grace plays it, on time', async () => {
+    const { clock, asked, played } = make();
+    enqueueAll(clock, 'Supply rises. Demand falls.');
+    asked[0].resolve(1000);
+    await flush();
+    await vi.advanceTimersByTimeAsync(1200);
+    asked[1].resolve(900);
+    await flush();
+    expect(played).toHaveLength(2);
+    expect(played[1].at).toBe(1200);
   });
 });

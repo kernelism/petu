@@ -362,6 +362,21 @@ export type NumberFix = { start: number; end: number; from: string; to: string; 
  * board's: it is said as the board's value, at the precision it was written with. Plain numbers are
  * never rewritten (they may be a page's own, from a page outside the context).
  */
+/** Words that may stand between a readout's name and its value: "SSD is 155", "SSD comes to 155". "of" is not one: "the middle of 160" is 160's middle. */
+const LINK_WORDS = new Set(['is', 'are', 'was', 'were', 'equals', 'equal', 'to', 'comes', 'gives', 'becomes', 'makes', 'be', 'at', '=']);
+
+/** The readout's label words sit just before word `w0`, with at most 3 link words (is, equals, comes to…) between. */
+export function namedBefore(words: readonly Word[], w0: number, label: string): boolean {
+  const lw = label.split(' ');
+  const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}'=-]/gu, '');
+  for (let gap = 0; gap <= 3; gap++) {
+    const end = w0 - gap, start = end - lw.length;
+    if (start < 0) break;
+    if (lw.every((l, i) => norm(words[start + i].text) === l) && words.slice(end, w0).every((w) => LINK_WORDS.has(norm(w.text)))) return true;
+  }
+  return false;
+}
+
 export function numberFixes(words: readonly Word[], known: readonly Value[]): NumberFix[] {
   const out: NumberFix[] = [];
   // A number matches when it is the value rounded at its own last significant digit ("about 11300" for 11316).
@@ -373,9 +388,12 @@ export function numberFixes(words: readonly Word[], known: readonly Value[]): Nu
   const exact = (m: Mention, v: number) => Math.abs(m.value - v) <= 0.5 * unit(m) + 1e-9;
   for (const m of mentions(words.map((w) => w.text))) {
     if (m.ref || m.spelled || m.frac || m.percent || isYear(m)) continue;
-    if (!m.approx) continue; // a plain number may be the page's own (a page outside the context): never rewritten
     if (known.some((k) => exact(m, k.v))) continue;
-    const comp = known.filter((k) => k.source === 'computed' && Math.abs(k.v - m.value) <= 0.05 * Math.abs(k.v));
+    // A plain number said of a readout the board names ("SSD is 155" beside "SSD = 149", the 149 computed
+    // by the engine): the words right before it name the readout, so it is that number, said wrong
+    // (founder lec09, 2026-10-31). Other plain numbers may be a page's own (a page outside the context).
+    const named = m.approx ? [] : known.filter((k) => k.source === 'computed' && k.label && namedBefore(words, m.w0, k.label));
+    const comp = named.length ? named : m.approx ? known.filter((k) => k.source === 'computed' && Math.abs(k.v - m.value) <= 0.05 * Math.abs(k.v)) : [];
     if (!comp.length) continue;
     const best = comp.reduce((a, b) => (Math.abs(b.v - m.value) < Math.abs(a.v - m.value) ? b : a));
     const to = best.v.toFixed(m.dp);

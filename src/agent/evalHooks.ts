@@ -47,6 +47,8 @@ export type EvalBackend = {
   /** Plays recorded chunks through the same session (no generation); `gapMs` is the recorded offset before each. */
   replay(chunks: { t: number; d: string }[], rec: Recorder, events?: AskEvent[]): Promise<void>;
   addInk(page: number, pts: Pt[]): void;
+  /** Scrolls the PDF to `page` as the student would (the next question is asked from there). */
+  goto?(page: number): Promise<void>;
   /** The largest labelled figure mark on `page`, in page coords (0-1000), or null (App reads its PageGround). */
   largestMark?(page: number): Rect | null;
   registry(): RegistryRow[];
@@ -65,6 +67,7 @@ export class EvalHooks {
     private shot: (i: number) => void = (i) => { (globalThis as { petuShot?: (s: string) => void }).petuShot?.(String(i)); }) {}
 
   ready(): Promise<void> { return this.be.ready(); }
+  goto(page: number): Promise<void> { return this.be.goto ? this.be.goto(page) : Promise.resolve(); }
   addInk(page: number, pts: Pt[]): void { this.be.addInk(page, pts); }
 
   /** Draws a student loop around the page's largest labelled mark. Returns false when the page has none. */
@@ -168,6 +171,7 @@ export function installEvalHooks(be: EvalBackend, w: Window & { __petu?: unknown
   w.__petu = {
     ready: () => h.ready(),
     ask: (q: string) => h.ask(q),
+    goto: (page: number) => h.goto(page),
     addInk: (page: number, pts: Pt[]) => h.addInk(page, pts),
     inkAroundLargestMark: (page: number) => h.inkAroundLargestMark(page),
     replay: (log: EvalResult) => h.replay(log),

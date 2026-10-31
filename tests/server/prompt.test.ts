@@ -160,7 +160,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.6');
+    expect(PROMPT_VERSION).toBe('p6.7');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -201,6 +201,16 @@ describe('system prompt (svg, default)', () => {
 
   it('p6.3 (pace): the narration names each part as it draws', () => {
     expect(s).toMatch(/Name each part in plain words as it appears, in the sentence it draws across/);
+  });
+
+  it('p6.6 (follow-ups and rhythm): the plan accounts for the question\'s parts; a page sentence marks one thing and names it; a complaint is about the thread\'s question in full', () => {
+    expect(s).toMatch(/parts: what the question asks for, each part named; covered here: …; left: …/);
+    expect(s).toMatch(/A question with several parts gets every part it asks for, each with its beat, never the first part alone/);
+    expect(s).toMatch(/marks the one thing it is about and names it in that same sentence \(a highlighted phrase: say its words\)/);
+    expect(s).toMatch(/one page mark in a sentence/);
+    expect(s).toMatch(/a beat whose first sentence is about the page puts its group after that sentence/);
+    expect(s).toMatch(/the subject is the question their thread is on \(MEMORY names it\), in full/);
+    expect(s).toMatch(/"is that complete\?" is answered by finishing, never with a yes or a no/);
   });
 
   it('p6.5 (no dead air): the script starts with spoken words, before the plan, after an opening too', () => {

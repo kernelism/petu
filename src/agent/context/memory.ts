@@ -47,11 +47,17 @@ export type TurnRecord = {
   stopped?: boolean;
   /** The svg board: its BOARD layout from the answer's plan (canvas, regions, groups), for a follow-up that extends it. */
   layout?: string;
+  /**
+   * The answer's own accounting, from its hidden plan's "parts:" line (p6.6): the parts the question asked
+   * for, which this answer covered and which it left, so a follow-up that says "not complete" or "not
+   * good enough" knows what is still owed.
+   */
+  parts?: string;
 };
 
 export const FULL_TURNS = 8;
 const LAYOUT_CHARS = 500;
-const Q_CHARS = 160, PLAN_CHARS = 600, CLAIM_CHARS = 170, MEANS_WORDS = 9, MAX_THINGS = 24, MAX_CLAIMS = 8;
+const Q_CHARS = 300, PARTS_CHARS = 400, PLAN_CHARS = 600, CLAIM_CHARS = 170, MEANS_WORDS = 9, MAX_THINGS = 24, MAX_CLAIMS = 8;
 const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
 const clip = (s: string, n: number) => { const t = squash(s); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
@@ -170,11 +176,20 @@ export function layoutOf(plan: string): string | undefined {
   return i < 0 ? undefined : clip(squash(plan.slice(i)), LAYOUT_CHARS);
 }
 
+/** The answer's accounting of the question's parts from its own plan: the line that starts "parts:" (p6.6), or undefined. */
+export function partsOf(plan: string): string | undefined {
+  const m = /^[ \t]*parts\s*:\s*(.+)$/im.exec(plan);
+  const t = m ? squash(m[1]) : '';
+  return t ? clip(t, PARTS_CHARS) : undefined;
+}
+
 /** A finished answer → its record. */
 export function recordOf(t: { question: string; page: number; pages: number[]; plan: string; script: string; relation?: Relation; storyboard?: Storyboard; stopped?: boolean; answerPlan?: string }): TurnRecord {
   const layout = layoutOf(t.answerPlan ?? '');
+  const parts = partsOf(t.answerPlan ?? '');
   return {
     ...(layout ? { layout } : {}),
+    ...(parts ? { parts } : {}),
     question: t.question, page: t.page, pages: [...new Set([t.page, ...t.pages])],
     ...(t.relation ? { relation: t.relation } : {}),
     plan: planOf(t.plan, t.storyboard), ...boardOf(t.script), ...claimsOf(t.script),
@@ -184,11 +199,17 @@ export function recordOf(t: { question: string; page: number; pages: number[]; p
 
 const thingLine = (x: BoardThing) => `${x.kind}${x.id ? ` ${x.id}` : ''}${x.label ? ` "${x.label}"` : ''}${x.data ? ` [${x.data}]` : ''}${x.means ? ` (said: ${x.means})` : ''}`;
 
-/** One answer as MEMORY lines. */
-export function entryText(n: number, r: TurnRecord): string {
-  const rel = r.relation && r.relation !== 'new-topic' && n > 1 ? `; ${r.relation} of A${n - 1}` : '';
+/**
+ * One answer as MEMORY lines. `root`: the answer that opened the thread this one continues or revises (the
+ * question the student is still on: a follow-up that says the answer was not good enough or not complete
+ * is about that question in full, wherever the student has scrolled to since).
+ */
+export function entryText(n: number, r: TurnRecord, root?: number): string {
+  const follows = r.relation && r.relation !== 'new-topic' && n > 1;
+  const rel = follows ? `; ${r.relation} of A${n - 1}${root && root < n - 1 ? `; still on A${root}'s question` : ''}` : '';
   const lines = [`A${n} (on p${r.page}${rel}${r.stopped ? '; stopped part-way by the student' : ''}) "${clip(r.question, Q_CHARS)}" → taught ${r.pages.map((p) => `p${p}`).join(' ')}`];
   if (r.plan) lines.push(`  plan: ${r.plan}`);
+  if (r.parts) lines.push(`  parts: ${r.parts}`);
   if (r.sections.length || r.things.length) {
     const secs = r.sections.map((s) => `${s.kind} ${s.id}${s.near ? ` near ${s.near}` : ''}`).join(', ');
     lines.push(`  board${secs ? ` (${secs})` : ''}: ${r.things.length ? r.things.map(thingLine).join('; ') : 'nothing drawn'}`);
@@ -212,10 +233,15 @@ export class SessionMemory {
   /** Entries already written, in order (text never changes once written, until a roll). */
   private entries: string[] = [];
   private rolled: string[] = [];
+  /** Per answer, the answer that opened its thread (itself for a new topic). */
+  private roots: number[] = [];
 
   add(r: TurnRecord): void {
     this.records.push(r);
-    this.entries.push(entryText(this.records.length, r));
+    const n = this.records.length;
+    const root = r.relation && r.relation !== 'new-topic' && n > 1 ? this.roots[n - 2] : n;
+    this.roots.push(root);
+    this.entries.push(entryText(n, r, root));
     if (this.entries.length > FULL_TURNS) {
       const k = FULL_TURNS / 2;
       const first = this.records.length - this.entries.length + 1;
@@ -232,11 +258,11 @@ export class SessionMemory {
   text(): string {
     if (!this.records.length) return '';
     return [
-      'MEMORY (what you already taught this student on this document, oldest first: each answer\'s question, the pages it taught from, its plan, the board it left — each drawn thing as kind, id, "label", [the data it was built from] and the words it was drawn on — its constants, what it changed, what it said and the question it asked)',
+      'MEMORY (what you already taught this student on this document, oldest first: each answer\'s question, how it followed the one before and which question its thread is still on, the pages it taught from, its plan, the parts of the question it covered and left, the board it left — each drawn thing as kind, id, "label", [the data it was built from] and the words it was drawn on — its constants, what it changed, what it said and the question it asked)',
       ...(this.rolled.length ? ['earlier, in short:', ...this.rolled.map((l) => `  ${l}`)] : []),
       ...this.entries,
     ].join('\n');
   }
 
-  reset(): void { this.records = []; this.entries = []; this.rolled = []; }
+  reset(): void { this.records = []; this.entries = []; this.rolled = []; this.roots = []; }
 }
