@@ -147,6 +147,8 @@ export type ConfigSummary = {
   judged: number; judgeMean: number | null; byCriterion: Record<string, number>; fatal: number; fakeJudge: boolean;
   firstWordP50: number | null; firstWordP90: number | null;
   stage2P50: number | null; stage2P90: number | null; gapP50: number | null; gapP90: number | null;
+  /** The silence actually heard after the opener (Metrics.silenceMs), and answers with a mid-answer silence over 1.5 s. */
+  silenceP50: number | null; silenceP90: number | null; midSilent: number;
   spokenMeanS: number | null; spokenP50S: number | null;
   genUsd: number; usdPerAnswer: number | null; judgeUsd: number;
   gate: GateCounts; skipped: number; malformed: number;
@@ -173,6 +175,8 @@ export function summarize(config: string, cells: BenchCell[]): ConfigSummary {
     firstWordP50: percentile(ms.map((m) => m.firstWordMs), 0.5), firstWordP90: percentile(ms.map((m) => m.firstWordMs), 0.9),
     stage2P50: percentile(ms.map((m) => m.stage2Ms ?? null), 0.5), stage2P90: percentile(ms.map((m) => m.stage2Ms ?? null), 0.9),
     gapP50: percentile(ms.map((m) => m.handoffGapMs ?? null), 0.5), gapP90: percentile(ms.map((m) => m.handoffGapMs ?? null), 0.9),
+    silenceP50: percentile(ms.map((m) => m.silenceMs ?? null), 0.5), silenceP90: percentile(ms.map((m) => m.silenceMs ?? null), 0.9),
+    midSilent: ms.filter((m) => (m.midSilences ?? 0) > 0).length,
     spokenMeanS: spoken.length ? spoken.reduce((a, b) => a + b, 0) / spoken.length / 1000 : null,
     spokenP50S: spoken.length ? percentile(spoken, 0.5)! / 1000 : null,
     genUsd, usdPerAnswer: ms.length ? genUsd / ms.length : null,
@@ -233,7 +237,7 @@ function cellHtml(c: BenchCell | undefined): string {
   const board = img ? `<div class="board"><a href="${esc(img)}"><img loading="lazy" src="${esc(img)}" alt="${esc(`${c.config} final board`)}"></a></div>` : `<div class="empty">${c.fake ? 'fake answer: no capture' : 'no board capture'}</div>`;
   const frames = c.frames.length ? `<div class="frames">${c.frames.map((f) => `<figure><a href="${esc(f.src)}"><img loading="lazy" src="${esc(f.src)}" alt="${esc(f.label)}"></a><figcaption>${esc(f.label)}</figcaption></figure>`).join('')}</div>` : '';
   return `<div class="cell">${board}${frames}
-<p class="stats"><span>first word <b>${sec(m.firstWordMs)}</b></span><span>author text <b>${sec(m.stage2Ms)}</b>${m.handoffGapMs ? ` (pause ${sec(m.handoffGapMs)})` : ''}</span><span>spoken <b>${sec(m.spokenMs)}</b></span><span>cost <b>${usd(m.answerUsd ?? m.usd)}</b>${m.estimated ? ' (est.)' : ''}</span><span>${m.words} words</span><span>${m.elements} marks</span>${m.skippedTotal || m.malformed ? `<span class="fatal">skipped ${m.skippedTotal} · malformed ${m.malformed}</span>` : ''}</p>
+<p class="stats"><span>first word <b>${sec(m.firstWordMs)}</b></span><span>author text <b>${sec(m.stage2Ms)}</b>${m.silenceMs ? ` (silence ${sec(m.silenceMs)})` : ''}</span><span>spoken <b>${sec(m.spokenMs)}</b></span><span>cost <b>${usd(m.answerUsd ?? m.usd)}</b>${m.estimated ? ' (est.)' : ''}</span><span>${m.words} words</span><span>${m.elements} marks</span>${m.skippedTotal || m.malformed ? `<span class="fatal">skipped ${m.skippedTotal} · malformed ${m.malformed}</span>` : ''}</p>
 ${judgeHtml(c.judge, c.fakeJudge)}${gateHtml(c.gate)}
 ${c.fake ? '<p class="fatal">fake answer (dry run)</p>' : ''}
 <details><summary>Transcript</summary><div class="tr">${esc(c.transcript)}</div></details></div>`;
@@ -241,7 +245,7 @@ ${c.fake ? '<p class="fatal">fake answer (dry run)</p>' : ''}
 
 function summaryHtml(sums: ConfigSummary[]): string {
   const criteria = [...new Set(sums.flatMap((s) => Object.keys(s.byCriterion)))];
-  const head = ['config', 'model / effort', 'answers', 'judge', ...criteria.map((k) => ABBR[k] ?? k), 'fatal', 'first word p50 / p90', 'author text p50 / p90', 'pause after opener p50 / p90', 'spoken mean / p50', 'gen $ (per answer)', 'judge $', 'gate flagged beats', ...GATE_KEYS, 'live skipped / malformed'];
+  const head = ['config', 'model / effort', 'answers', 'judge', ...criteria.map((k) => ABBR[k] ?? k), 'fatal', 'first word p50 / p90', 'author text p50 / p90', 'pause after opener p50 / p90', 'silence heard p50 / p90 (answers with a >1.5 s mid silence)', 'spoken mean / p50', 'gen $ (per answer)', 'judge $', 'gate flagged beats', ...GATE_KEYS, 'live skipped / malformed'];
   const rows = sums.map((s) => [
     `<b>${esc(s.config)}</b>${s.fake ? ' <span class="fatal">fake</span>' : ''}${s.runId ? `<br><span class="mute">${esc(s.runId)}</span>` : ''}`,
     `${esc(s.model)} / ${esc(s.effort)}`,
@@ -252,6 +256,7 @@ function summaryHtml(sums: ConfigSummary[]): string {
     `${sec(s.firstWordP50)} / ${sec(s.firstWordP90)}`,
     `${sec(s.stage2P50)} / ${sec(s.stage2P90)}`,
     `${sec(s.gapP50)} / ${sec(s.gapP90)}`,
+    `${sec(s.silenceP50)} / ${sec(s.silenceP90)} (${s.midSilent})`,
     `${s.spokenMeanS == null ? '–' : `${s.spokenMeanS.toFixed(0)} s`} / ${s.spokenP50S == null ? '–' : `${s.spokenP50S.toFixed(0)} s`}`,
     `${usd(s.genUsd)} (${usd(s.usdPerAnswer)})`,
     usd(s.judgeUsd),
