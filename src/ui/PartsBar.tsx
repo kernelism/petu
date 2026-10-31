@@ -8,7 +8,9 @@ import './ui.css';
  * line): pause/resume, where the answer is (the current part's title, or the question when it has
  * one part), a rail of part segments (≥ 2 parts: done / current with its progress / upcoming; click
  * or ←/→ to move between them), replay the sentence (R), speed (< >) and stop (Esc).
- * During an aside the row belongs to it: an Aside tag, "Answer paused at n/N", and "Back to answer" (Return).
+ * During an aside the row belongs to it, a quiet strip: "Side question" and "Back to answer" (Return),
+ * the one obvious action. Its pause, replay and speed show only while the dock is hovered or focus is
+ * in the row (ui.css, no JS: Tab still reaches them); no stop, Esc and Return close the aside.
  */
 export type PartsView = {
   /** Part titles. Two or more show the rail; with one, `label` fills the title slot. */
@@ -27,8 +29,8 @@ export type PartsView = {
   /** Steps to the next speed (wrapping round). */
   onSpeed(): void;
   onStop(): void;
-  /** An aside is open over the paused answer: its title line and the way back. */
-  aside?: { title: string; onResume(): void };
+  /** An aside is open over the paused answer: the way back to it. */
+  aside?: { onResume(): void };
 };
 
 /** "1×", "1.25×", "0.75×". */
@@ -37,15 +39,38 @@ export const speedLabel = (s: number) => `${s}×`;
 export function PartsBar({ titles, label, current, progress, paused, speed, onJump, onTogglePause, onReplay, onSpeed, onStop, aside }: PartsView) {
   /** A segment under the pointer or focus: the title slot previews that part. */
   const [preview, setPreview] = useState<number | null>(null);
-  const multi = titles.length > 1 && !aside;
+  const multi = titles.length > 1;
   const shown = multi && preview != null && preview < titles.length ? preview : current;
-  const title = aside ? aside.title : multi ? titles[shown] ?? '' : paused ? 'Paused' : label ?? '';
+  const title = multi ? titles[shown] ?? '' : paused ? 'Paused' : label ?? '';
+  const play = (
+    <button type="button" className="pb-btn pb-play" onClick={onTogglePause} aria-label={paused ? 'Resume (Space)' : 'Pause (Space)'} title={paused ? 'Resume (Space)' : 'Pause (Space)'}>
+      {paused ? <Play size={13} strokeWidth={2.2} aria-hidden="true" /> : <Pause size={13} strokeWidth={2.2} aria-hidden="true" />}
+    </button>
+  );
+  const replay = (
+    <button type="button" className="pb-btn" onClick={onReplay} aria-label="Replay this sentence (R)" title="Replay this sentence (R)">
+      <RotateCcw size={13} strokeWidth={2.2} aria-hidden="true" />
+    </button>
+  );
+  const speedBtn = (
+    <button type="button" className="pb-btn pb-speed" onClick={onSpeed} aria-label={`Speed ${speedLabel(speed)}; change speed (< >)`} title="Speed (< slower, > faster)">
+      {speedLabel(speed)}
+    </button>
+  );
+  if (aside) {
+    return (
+      <div className={`pb is-aside${paused ? ' is-paused' : ''}`} role="toolbar" aria-label="Side question playback">
+        <span className="pb-side">Side question</span>
+        <span className="pb-more">{play}{replay}{speedBtn}</span>
+        <button type="button" className="pb-resume" onClick={aside.onResume} title="Back to the answer (Return)">
+          Back to answer <span className="pb-resume-k" aria-hidden="true"><CornerDownLeft size={12} strokeWidth={2} /></span>
+        </button>
+      </div>
+    );
+  }
   return (
-    <div className={`pb${aside ? ' is-aside' : ''}${paused ? ' is-paused' : ''}`} role="toolbar" aria-label={aside ? 'Aside playback' : 'Answer playback'}>
-      <button type="button" className="pb-btn pb-play" onClick={onTogglePause} aria-label={paused ? 'Resume (Space)' : 'Pause (Space)'} title={paused ? 'Resume (Space)' : 'Pause (Space)'}>
-        {paused ? <Play size={13} strokeWidth={2.2} aria-hidden="true" /> : <Pause size={13} strokeWidth={2.2} aria-hidden="true" />}
-      </button>
-      {aside && <span className="pb-aside">Aside</span>}
+    <div className={`pb${paused ? ' is-paused' : ''}`} role="toolbar" aria-label="Answer playback">
+      {play}
       <div className={`pb-where${preview != null && preview !== current ? ' is-preview' : ''}`}>
         {multi && <span className="pb-count" aria-hidden="true">{shown + 1}/{titles.length}</span>}
         <span className="pb-title" title={title}>{title}</span>
@@ -76,17 +101,8 @@ export function PartsBar({ titles, label, current, progress, paused, speed, onJu
           })}
         </ol>
       )}
-      {aside && (
-        <button type="button" className="pb-resume" onClick={aside.onResume} title="Back to the answer (Return)">
-          Back to answer <span className="pb-resume-k" aria-hidden="true"><CornerDownLeft size={12} strokeWidth={2} /></span>
-        </button>
-      )}
-      <button type="button" className="pb-btn" onClick={onReplay} aria-label="Replay this sentence (R)" title="Replay this sentence (R)">
-        <RotateCcw size={13} strokeWidth={2.2} aria-hidden="true" />
-      </button>
-      <button type="button" className="pb-btn pb-speed" onClick={onSpeed} aria-label={`Speed ${speedLabel(speed)}; change speed (< >)`} title="Speed (< slower, > faster)">
-        {speedLabel(speed)}
-      </button>
+      {replay}
+      {speedBtn}
       <button type="button" className="pb-btn pb-stop" onClick={onStop} aria-label="Stop the answer (Esc)" title="Stop (Esc)">
         <Square size={10} strokeWidth={0} fill="currentColor" aria-hidden="true" />
       </button>

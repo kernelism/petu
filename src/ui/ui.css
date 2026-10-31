@@ -814,7 +814,7 @@
   .caption-leaving { display: none; }
   .dock, .caption, .caption-viewport, .dropveil, .tb-fold, .tb-tip { transition-duration: 0s; }
   .empty-card, .askbar, .askbar-chip, .keycap, .icon-btn, .btn-primary, .btn-quiet, .tb-btn, .tb-dot, .seg,
-  .topbar-num, .pb-btn, .pb-resume, .caption-retry, .askbar-about-x, .askbar-transcript, .caption-check-x, .transcript-s { transition-duration: 0s; }
+  .topbar-num, .pb-btn, .pb-resume, .pb-more, .caption-retry, .askbar-about-x, .askbar-transcript, .caption-check-x, .transcript-s { transition-duration: 0s; }
   .icon-btn:active, .btn-primary:active, .tb-btn:active, .askbar-btn:active,
   .askbar-chip:active, .route-back:active { transform: none; }
 }
@@ -950,20 +950,14 @@
 .pb-stop svg { width: 11px; height: 11px; }
 /* Paused: the play glyph sits on a held fill (and the narration steps back: .caption-viewport above). */
 .pb.is-paused .pb-play { color: #fff; background: var(--hover-dark); }
-/* An aside over the paused answer: a warm-grey tag (violet stays tutor ink), the way back as a button.
-   The tag is a word in sentence case ("Aside"), however the markup spells it. */
-.pb-aside {
-  flex: none;
-  margin-left: 4px;
-  padding: 1px 7px;
-  border-radius: var(--radius-s);
-  background: rgba(214,206,190,.2);
-  color: var(--aside-ink);
-  font-size: 12px;
-  font-weight: 500;
-  text-transform: lowercase;
-}
-.pb-aside::first-letter { text-transform: uppercase; }
+/* An aside over the paused answer: a quiet strip. "Side question" lines up with the narration; the way
+   back is the one lit button. The aside's pause, replay and speed fade in only while the dock is hovered
+   or focus is in the row (opacity, so Tab still reaches them; focus in the ask bar doesn't count). The
+   whole caption is the hover target here. */
+.caption:has(.pb.is-aside) { pointer-events: auto; }
+.pb-side { flex: 1 1 auto; min-width: 0; padding-left: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pb-more { flex: none; display: flex; gap: 2px; margin-right: 4px; opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+.dock:hover .pb-more, .pb:focus-within .pb-more { opacity: 1; }
 .pb .pb-resume {
   flex: none;
   display: inline-flex;
