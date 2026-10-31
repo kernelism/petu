@@ -104,12 +104,26 @@ function playwright(name: string, own: boolean): Playwright {
 const installed = (name: string): boolean => { try { playwright(name, true); return true; } catch { return false; } };
 
 async function launch(name: string): Promise<any> {
+  // Every engine is silent: the founder works on this machine while the gallery runs (WebKit has no
+  // flag; its pages route audio into a zero gain, SILENT below).
   if (name === 'webkit') return playwright('webkit', true).webkit.launch();
-  if (name === 'firefox') return playwright('firefox', true).firefox.launch();
+  if (name === 'firefox') return playwright('firefox', true).firefox.launch({ firefoxUserPrefs: { 'media.volume_scale': '0.0' } });
   // System Chrome (CHROME overrides); without one (Linux), Playwright's own Chromium.
   const chrome = process.env.CHROME ?? (existsSync(MAC_CHROME) ? MAC_CHROME : undefined);
-  return playwright('chromium', !chrome).chromium.launch({ ...(chrome ? { executablePath: chrome } : {}), args: ['--hide-scrollbars'] });
+  return playwright('chromium', !chrome).chromium.launch({ ...(chrome ? { executablePath: chrome } : {}), args: ['--hide-scrollbars', '--mute-audio'] });
 }
+
+/** Web Audio and media elements play at zero volume (any engine; WebKit's only mute). */
+const SILENT = `(() => {
+  try {
+    const d = Object.getOwnPropertyDescriptor(BaseAudioContext.prototype, 'destination');
+    const quiet = new WeakMap();
+    if (d && d.get) Object.defineProperty(BaseAudioContext.prototype, 'destination', { configurable: true, get() {
+      let g = quiet.get(this); if (!g) { g = this.createGain(); g.gain.value = 0; g.connect(d.get.call(this)); quiet.set(this, g); } return g; } });
+  } catch {}
+  try { const play = HTMLMediaElement.prototype.play; HTMLMediaElement.prototype.play = function () { this.muted = true; return play.call(this); }; } catch {}
+  try { if (window.speechSynthesis) window.speechSynthesis.speak = () => {}; } catch {}
+})();`;
 
 /** [answer playing, worker messages so far, finite CSS transitions/animations still running (real time)]. */
 const STATE = `[!!document.querySelector('.askbar-btn.is-stop, .pb-stop'), window.__galleryMsgs || 0,
@@ -147,6 +161,7 @@ async function renderScene(browser: any, browserName: string, base: string, scen
     page.on('requestfinished', () => { inflight--; });
     page.on('requestfailed', () => { inflight--; });
     await page.addInitScript(WORKER_COUNTER);
+    await page.addInitScript(SILENT);
     await page.clock.install({ time: FAKE_EPOCH });
     await page.clock.pauseAt(FAKE_EPOCH + PAUSE_LEAD_MS);
     await page.goto(`${base}/?${scene.query}`, { waitUntil: 'commit' });
