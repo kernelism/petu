@@ -700,7 +700,46 @@ export class LiveGate {
       await this.doRepair(u, r, repair, dry, out, signal);
       return;
     }
-    this.drop(u, r, ms, [], out);
+    await this.dropOrSalvage(u, r, ms, [], out, signal);
+  }
+
+  /**
+   * A unit that failed only on svg groups of its own (a group off the board, overlapping text): the
+   * failing groups leave and the words and the other groups play, if that passes. Its sentences never
+   * named a failing group's id (that would point at nothing). Founder lec06 "explain each filter":
+   * a summary line 65 units too wide took the whole edge-detection beat, scroll and words, with it.
+   */
+  private async salvage(u: PreflightUnit, r: PreflightResult, signal: AbortSignal): Promise<{ u: PreflightUnit; removed: string[] } | null> {
+    if (!r.flags.length || !r.flags.every((f) => f.check === 'svg')) return null;
+    const groups = r.tags.filter((t) => /^\s*svg\b/.test(t.body)).map((t) => ({ t, id: /<g\b[^>]*?\bid\s*=\s*["']([^"']+)["']/i.exec(t.body)?.[1] }));
+    const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const names = (id: string, d: string) => new RegExp(`(^|[\\s(])group ${esc(id)}\\b|\\(${esc(id)}\\)`).test(d);
+    const bad = groups.filter((g) => !!g.id && r.flags.some((f) => names(g.id!, f.detail)));
+    if (!bad.length || bad.length === groups.length && !tokenize(u.text).some((t) => t.kind === 'word')) return null;
+    const words = tokenize(u.text).filter((t): t is Word => t.kind === 'word').map((w) => w.text.toLowerCase().replace(/[^\p{L}\p{N}-]/gu, ''));
+    if (bad.some((g) => namedBy(g.t.body, words))) return null;
+    let text = u.text;
+    for (const g of [...bad].sort((a, b) => b.t.start - a.t.start)) text = text.slice(0, g.t.start) + text.slice(g.t.end);
+    const su: PreflightUnit = { key: u.key, kind: u.kind, text, ...(u.end ? { end: true } : {}) };
+    const r2 = await this.d.preflight.check(su);
+    if (signal.aborted) return null;
+    if (r2.flags.length) { this.d.preflight.reject(su); return null; }
+    return { u: su, removed: bad.map((g) => `group ${g.id}`) };
+  }
+
+  /** Drops `u`, unless its failing svg groups can leave and the rest play (salvage). */
+  private async dropOrSalvage(u: PreflightUnit, r: PreflightResult, ms: number, notes: string[], out: Out, signal: AbortSignal): Promise<void> {
+    this.d.preflight.reject(u);
+    const s = await this.salvage(u, r, signal);
+    if (signal.aborted) return;
+    if (s) {
+      this.stats.strips++;
+      console.warn(`[gate] unit ${u.key}: kept its words without ${s.removed.join(', ')} (${r.flags.map((f) => f.detail).join('; ')})`);
+      this.emitGate(u, 'strip', 'release', r, ms, { stripped: s.removed, text: s.u.text, notes: [...notes, 'svg groups that failed left; the words and other groups play'] });
+      this.release(s.u, s.u.text, out);
+      return;
+    }
+    this.drop(u, r, ms, notes, out);
   }
 
   /** The unit with its strippable failed tags removed, when that is all that failed. */
@@ -759,8 +798,8 @@ export class LiveGate {
     } finally { timer.abort(); signal.removeEventListener('abort', onAbort); }
     if (signal.aborted) return;
     const ms = this.now() - t0;
-    if (res === 'late') { ac.abort(); this.d.onEvent({ t: 'repair', k: u.key, phase: 'late', ms: Math.round(ms) }); this.drop(u, r, ms, ['repair late'], out); return; }
-    if (!res.ok) { this.d.onEvent({ t: 'repair', k: u.key, phase: res.reason, ms: Math.round(ms), ...(res.usd != null ? { usd: res.usd } : {}) }); this.drop(u, r, ms, [`repair ${res.reason}${res.detail ? `: ${res.detail}` : ''}`], out); return; }
+    if (res === 'late') { ac.abort(); this.d.onEvent({ t: 'repair', k: u.key, phase: 'late', ms: Math.round(ms) }); await this.dropOrSalvage(u, r, ms, ['repair late'], out, signal); return; }
+    if (!res.ok) { this.d.onEvent({ t: 'repair', k: u.key, phase: res.reason, ms: Math.round(ms), ...(res.usd != null ? { usd: res.usd } : {}) }); await this.dropOrSalvage(u, r, ms, [`repair ${res.reason}${res.detail ? `: ${res.detail}` : ''}`], out, signal); return; }
     // A repair replaces a beat of the board already open: it never opens a board of its own (a BOARD
     // tag here would open a second section, and the beat's group would land below the first figure,
     // out of the frame its coordinates are in). Only a unit that opened the board keeps its tag.

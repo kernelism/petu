@@ -73,4 +73,15 @@ describe('answer loss (founder lec06, synthetic)', () => {
     expect(r.out.indexOf('{{svgboard')).toBeLessThan(r.out.indexOf('<g id="row"'));
     for (const id of ['row', 'even', 'mid', 'mixed']) expect(r.out).toContain(`<g id="${id}"`);
   });
+
+  it('a beat whose only fault is its own off-board group keeps its words and scroll (founder lec06 "explain each filter")', async () => {
+    const text = '{{svgboard h=720}} {{svg <g id="lane"><text x="30" y="45" font-size="22">One lane</text></g>}} The lane holds five tiles. '
+      + '{{scroll p=9}} Edge finding measures {{svg <g id="close"><text x="700" y="685" font-size="21">Same neighbours, different rule: average, prefer close, pick middle, exaggerate, or compare them all</text></g>}} the jump between neighbours, so we blend first. ';
+    const r = await run(text);
+    expect(r.out).toContain('Edge finding measures');
+    expect(r.out).toContain('the jump between neighbours');
+    expect(r.out).toContain('{{scroll p=9}}');
+    expect(r.out).not.toContain('id="close"');
+    expect(r.stats.drops).toBe(0);
+  });
 });
