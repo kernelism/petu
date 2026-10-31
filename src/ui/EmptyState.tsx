@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { FileText } from 'lucide-react';
+import { Specimen } from './Specimen';
 import './ui.css';
+import './landing.css';
 
 const NOT_PDF = "That doesn't look like a PDF.";
 const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
@@ -49,24 +50,34 @@ export function EmptyState({ onFile, onSample, error }: { onFile(f: File): void;
 
   return (
     <div className={`empty${dragging ? ' is-dragging' : ''}`}>
-      <div className="empty-card">
-        <FileText className="empty-icon" size={28} strokeWidth={1.5} aria-hidden="true" />
-        <h1 className="empty-title">Ask about a PDF and see the answer drawn on the page.</h1>
-        <button type="button" className="btn-primary" onClick={() => inputRef.current?.click()}>
-          Open a PDF
-        </button>
-        <input
-          ref={inputRef}
-          type="file"
-          accept="application/pdf"
-          hidden
-          onChange={(e) => { take(e.target.files?.[0]); e.target.value = ''; }}
-        />
-        <button type="button" className="btn-quiet" onClick={onSample}>
-          Try the sample deck
-        </button>
-        <p className="empty-error" role="alert">{shownError ?? ''}</p>
-      </div>
+      <main className="land">
+        <p className="land-mark">petu</p>
+        <section className="land-copy">
+          <h1 className="land-title">Ask your slides a question.</h1>
+          <p className="land-lede">
+            petu answers out loud and draws as it explains: it marks the line on the page that matters,
+            then works the answer out on a board beside it.
+          </p>
+          <div className="land-actions">
+            <button type="button" className="btn-primary land-open" onClick={() => inputRef.current?.click()}>
+              Open a PDF
+            </button>
+            <button type="button" className="btn-quiet land-sample" onClick={onSample}>
+              Try the sample deck
+            </button>
+          </div>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="application/pdf"
+            hidden
+            onChange={(e) => { take(e.target.files?.[0]); e.target.value = ''; }}
+          />
+          <p className="land-hint">Or drop a PDF anywhere on this page. Lecture slides work best.</p>
+          <p className="empty-error" role="alert">{shownError ?? ''}</p>
+        </section>
+        <Specimen />
+      </main>
       <div className={`dropveil${dragging ? ' is-visible' : ''}`} aria-hidden="true">
         <div className="dropveil-label">Drop to open</div>
       </div>
