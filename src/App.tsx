@@ -1541,7 +1541,8 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
   const sessionRows: SessionRow[] = sessionOpen
-    ? trailRef.current.map((e, i) => ({ num: e.num, title: e.title, meta: `p.${e.page}${e.ms != null ? ` · ${clockOf(e.ms)}` : ''}`, asides: e.asides ?? [], current: i === (sessionPick ?? trailRef.current.length - 1) }))
+    // A walking answer reads by the pages it spans ("p.5–89"), as its folded card does.
+    ? trailRef.current.map((e, i) => ({ num: e.num, title: e.title, meta: `${deskRef.current?.spanOf(e.head.el) ?? `p.${e.page}`}${e.ms != null ? ` · ${clockOf(e.ms)}` : ''}`, asides: e.asides ?? [], current: i === (sessionPick ?? trailRef.current.length - 1) }))
     : [];
   const sessionTotal = clockOf(trailRef.current.reduce((a, e) => a + (e.ms ?? 0), 0));
   const pickSession = useCallback((i: number) => {
