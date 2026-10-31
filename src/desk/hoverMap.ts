@@ -137,8 +137,6 @@ export class LaneHover {
   /** Touch: a tapped focus stays until the next tap. */
   private pinned = false;
   private lastType = 'mouse';
-  private req = 0;
-  private at: { x: number; y: number; t: EventTarget | null } | null = null;
   private off: (() => void)[] = [];
 
   constructor(private h: HoverHost) {
@@ -149,8 +147,9 @@ export class LaneHover {
     const move = (e: PointerEvent) => {
       this.lastType = e.pointerType;
       if (e.pointerType !== 'mouse' && e.pointerType !== 'pen') return;
-      this.at = { x: e.clientX, y: e.clientY, t: e.target };
-      if (!this.req) this.req = requestAnimationFrame(() => { this.req = 0; if (this.at && !this.pinned) this.track(this.at.x, this.at.y, this.at.t); });
+      // At once, not on the next frame: WebKit can hold frames back while the pointer moves (the
+      // focus then lagged a group behind). The work is a few rect tests.
+      if (!this.pinned) this.track(e.clientX, e.clientY, e.target);
     };
     const down = (e: PointerEvent) => { this.lastType = e.pointerType; };
     const tap = (e: MouseEvent) => {
@@ -176,7 +175,7 @@ export class LaneHover {
   /** Re-draws the page outlines where the marks are now (the lane re-laid out). */
   relayout(): void { if (this.focus) this.outline(this.focus.marks); }
 
-  destroy(): void { this.clear(); cancelAnimationFrame(this.req); this.off.forEach((f) => f()); this.layer.remove(); }
+  destroy(): void { this.clear(); this.off.forEach((f) => f()); this.layer.remove(); }
 
   private track(x: number, y: number, t: EventTarget | null) {
     if (!this.h.lane()) { if (this.focus || this.hot) this.set(null, null); return; }
@@ -217,16 +216,11 @@ export class LaneHover {
   private beatUnder(g: HoverGroup, sec: Element, x: number, y: number): Beat | null {
     const beats = g.beats.filter((b) => b.el.isConnected && sec.contains(b.el));
     if (!beats.length) return null;
+    // Window boxes (getBoundingClientRect: every transform on the way, the overview zoom's included; the
+    // same in every engine, where getBBox × getScreenCTM is not for nested svgs in WebKit).
     const boxes = beats.map((b) => {
-      const ge = b.el as SVGGraphicsElement;
-      const m = ge.getScreenCTM?.();
-      if (!m || typeof ge.getBBox !== 'function') return null;
-      let bb: DOMRect;
-      try { bb = ge.getBBox(); } catch { return null; }
-      if (!(bb.width > 0 || bb.height > 0)) return null;
-      // The box's corners on screen (the board scales, never rotates).
-      const p = new DOMPoint(bb.x, bb.y).matrixTransform(m), q = new DOMPoint(bb.x + bb.width, bb.y + bb.height).matrixTransform(m);
-      return { x: Math.min(p.x, q.x), y: Math.min(p.y, q.y), w: Math.abs(q.x - p.x), h: Math.abs(q.y - p.y) };
+      const r = b.el.getBoundingClientRect();
+      return r.width > 0 || r.height > 0 ? { x: r.left, y: r.top, w: r.width, h: r.height } : null;
     });
     const i = boxAt(boxes, x, y, 2);
     return i < 0 ? null : beats[i];
