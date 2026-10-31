@@ -30,6 +30,12 @@ export function overviewStep(z: number, dir: 1 | -1): number {
   return OVERVIEW_MIN;
 }
 
+/**
+ * The zoom a step or toggle starts from: the glide's target while one runs (⌘+ pressed twice quickly
+ * goes two steps; Z mid-glide toward 125% returns to 100%, not to the half-way zoom), else the zoom now.
+ */
+export const zoomBase = (z: number, gliding: number | null): number => (gliding != null && Number.isFinite(gliding) ? gliding : z);
+
 /** Z / the pill / smart zoom: back to 100% from any zoom, else to the overview. */
 export const overviewToggle = (z: number): number => (z !== 1 ? 1 : OVERVIEW_FIT);
 

@@ -166,3 +166,15 @@ describe('ScrollOwner.justSettled (Magic Mouse tail momentum)', () => {
     expect(p.justSettled(performance.now())).toBe(false);
   });
 });
+
+describe('zoomBase (steps from where a running glide is heading)', async () => {
+  const { zoomBase, overviewStep, overviewToggle } = await import('../../src/pdf/overview');
+  it('two quick ⌘+ from 100% go two steps, not one', () => {
+    const mid = 1.03; // the first glide toward 1.1, a few frames in
+    expect(overviewStep(zoomBase(mid, 1.1), 1)).toBe(1.25);
+    expect(overviewStep(zoomBase(mid, null), 1)).toBe(1.1);
+  });
+  it('Z mid-glide toward 125% returns to 100% exactly', () => {
+    expect(overviewToggle(zoomBase(1.18, 1.25))).toBe(1);
+  });
+});
