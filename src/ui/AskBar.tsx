@@ -261,10 +261,19 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   const shownLive = busy && mode !== 'aside' ? live ?? null : null;
   const canTranscript = !hasText && (shownLive ? shownLive.sentences.length > 0 : !!transcript && !busy);
 
+  const chipEls = about.map((a, i) => (
+    <span key={a.key} className="askbar-about" title={a.title ?? `About: ${a.label}${a.page ? ` (page ${a.page})` : ''}`}>
+      <span className="askbar-about-text">{i ? '' : 'about: '}{a.label}{a.page ? ` · p.${a.page}` : ''}</span>
+      <button type="button" className="askbar-about-x" onClick={() => { onClearAbout?.(a.key); inputRef.current?.focus(); }} aria-label={`Remove ${a.label} from this question`}>
+        <X size={12} strokeWidth={2.2} aria-hidden="true" />
+      </button>
+    </span>
+  ));
+
   return (
     <form
       ref={formRef}
-      className={`askbar${blocked ? ' is-blocked' : ''}${tall ? ' is-tall' : ''}`}
+      className={`askbar${blocked ? ' is-blocked' : ''}${tall ? ' is-tall' : ''}${about.length > 1 ? ' has-chips' : ''}`}
       onSubmit={(e) => { e.preventDefault(); submit(); }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); inputRef.current?.focus(); } }}
       onFocus={() => { if (!focused) onIntent?.(); setFocused(true); }}
@@ -289,14 +298,10 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
           ))}
         </div>
       )}
-      {about.map((a, i) => (
-        <span key={a.key} className="askbar-about" title={a.title ?? `About: ${a.label}${a.page ? ` (page ${a.page})` : ''}`}>
-          <span className="askbar-about-text">{i ? '' : 'about: '}{a.label}{a.page ? ` · p.${a.page}` : ''}</span>
-          <button type="button" className="askbar-about-x" onClick={() => { onClearAbout?.(a.key); inputRef.current?.focus(); }} aria-label={`Remove ${a.label} from this question`}>
-            <X size={12} strokeWidth={2.2} aria-hidden="true" />
-          </button>
-        </span>
-      ))}
+      {about.length > 1
+        // Several marks: their own wrapping row above the field (each chip whole, each removable).
+        ? <div className="askbar-abouts" role="group" aria-label="What this question is about">{chipEls}</div>
+        : chipEls}
       {/* Asking is paused (a spending cap): a status row that wraps, in the field's place, never a clipped placeholder. */}
       {blocked && !busy && <p className="askbar-status" role="status">{blocked}</p>}
       <textarea
