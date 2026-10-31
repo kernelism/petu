@@ -1,14 +1,16 @@
 // scripts/gate.ts — `npm run gate [-- --expect side,kit@end] [--skip-gallery] [--browsers chromium,firefox]`
 // The pre-merge check: typecheck, tests, build, the gallery diff against the baseline (fails only on
 // changes beyond tolerance that no --expect covers) and, when package.json has `replay-stress`, its
-// skip rate must not rise vs the last recorded value (<gallery root>/../gate/replay-stress.json).
+// skip rate over the scripts the last passing gate recorded must not rise (per-script counts in
+// <gallery root>/../gate/replay-stress.json; scripts recorded since are reported, not gated).
 // Exits non-zero on failure. Makes no API calls.
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { galleryRoot, runGallery } from './gallery/run.ts';
-import { galleryStep, parseSkipRate, stressStep, summarize, type StepResult } from './gallery/summary.ts';
+import { galleryStep, parseSkipRate, stressCorpusStep, stressStep, summarize, type StepResult, type StressBaseline, type StressScripts } from './gallery/summary.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -67,16 +69,22 @@ async function main(): Promise<void> {
   if (pkg.scripts?.['replay-stress']) {
     console.log('gate: replay-stress…');
     const file = join(galleryRoot(), '../gate/replay-stress.json');
-    let last: number | null = null;
-    try { last = (JSON.parse(readFileSync(file, 'utf8')) as { skipRate: number }).skipRate; } catch { /* first run */ }
-    const r = await sh('npm', ['run', '--silent', 'replay-stress']);
-    const rate = r.code === 0 ? parseSkipRate(r.out) : null;
-    const s = r.code === 0 ? stressStep(rate, last, r.ms) : { name: 'replay-stress', ok: false, ms: r.ms, detail: tail(r.out) };
+    let base: StressBaseline | null = null;
+    try { base = JSON.parse(readFileSync(file, 'utf8')) as StressBaseline; } catch { /* first run */ }
+    // Per-script counts (--json) so the comparison runs on the baseline's own scripts: new recordings never fail the gate.
+    const out = join(mkdtempSync(join(tmpdir(), 'petu-stress-')), 'stress.json');
+    const r = await sh('npm', ['run', '--silent', 'replay-stress', '--', '--json', out]);
+    let cur: { skipRate: number; scripts: StressScripts } | null = null;
+    try { cur = r.code === 0 ? JSON.parse(readFileSync(out, 'utf8')) as { skipRate: number; scripts: StressScripts } : null; } catch { /* no JSON: fall back to the printed rate */ }
+    let s: StepResult;
+    if (r.code !== 0) s = { name: 'replay-stress', ok: false, ms: r.ms, detail: tail(r.out) };
+    else if (cur?.scripts) s = stressCorpusStep(cur, base, r.ms);
+    else s = stressStep(parseSkipRate(r.out), base?.skipRate ?? null, r.ms);
     steps.push(s);
     // Recorded only when the whole gate passes (below): a failing branch never moves the bar.
-    if (s.ok && rate != null) record = () => {
+    if (s.ok && cur?.scripts) record = () => {
       mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, JSON.stringify({ skipRate: rate, at: new Date().toISOString() }, null, 1));
+      writeFileSync(file, JSON.stringify({ skipRate: cur.skipRate, at: new Date().toISOString(), recordings: Object.keys(cur.scripts).length, scripts: cur.scripts } satisfies StressBaseline, null, 1));
     };
   } else steps.push({ name: 'replay-stress', ok: true, skipped: true, ms: 0, detail: 'no `replay-stress` script yet' });
 

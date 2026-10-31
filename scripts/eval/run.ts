@@ -24,8 +24,11 @@ import { boardProbeScript, boardScrollScript, boardSegments, downscaleScript, fr
 import { checkBudget, gateQuery, parseArgs, selectQuestions, spendsOnRepairs, wantsJudge, type Args } from './plan.ts';
 import { renderReport, type ReportItem } from './report.ts';
 import { composeScript, pickStills } from './sheet.ts';
-import { buildSummary, runIdOf, type QuestionSummary } from './summary.ts';
+import { buildSummary, hostLoadOf, runIdOf, type HostLoad, type QuestionSummary } from './summary.ts';
 import { promptVersionOf } from '../../server/prompt/system.ts';
+import { SCOUT_VERSION } from '../../server/prompt/scout.ts';
+import { SCOUT_MODEL } from './configs.ts';
+import { cpus, loadavg } from 'node:os';
 /** The prompt this run's server uses (PETU_PROMPT_VARIANT: an experiment variant, recorded in the run id). */
 const PROMPT_VERSION = promptVersionOf(process.env.PETU_PROMPT_VARIANT?.trim() || undefined);
 import type { EvalResult } from '../../src/agent/evalHooks.ts';
@@ -107,6 +110,8 @@ export async function captureEnd(chrome: Chrome, qdir: string, prefix: string): 
 const CTX = process.env.PETU_CTX === 'new' ? '&ctx=new' : process.env.PETU_CTX === 'old' ? '&ctx=old' : '';
 /** EXPERIMENT: PETU_EVAL_URL_EXTRA (e.g. `&e5`) is appended to the app's URL, and PETU_EVAL_TAG to the run id. */
 const URL_EXTRA = process.env.PETU_EVAL_URL_EXTRA ?? '';
+/** What the first word depends on: the scout's prompt version, model and effort, and the app's context options. */
+const SCOUT_ID = `${SCOUT_VERSION}/${process.env.PETU_SCOUT_MODEL?.trim() || SCOUT_MODEL}/${process.env.PETU_SCOUT_EFFORT?.trim() || 'none'}${CTX}${URL_EXTRA}`;
 const urlFor = (base: string, open: StoredQuestion['open'], nogen: boolean, gate = '') => `${base}/?src=${encodeURIComponent(open.src)}&page=${open.page}&eval${nogen ? '&nogen' : ''}${CTX}${gate}${URL_EXTRA}`;
 const sha = (b: Buffer | string) => createHash('sha1').update(b).digest('hex');
 
@@ -282,6 +287,9 @@ async function main(): Promise<void> {
     if (!args.finish && todo.some((q) => q.split === 'test')) noteTestUse(runId, args.qset);
 
     for (let i = 0; i < (args.finish ? 1 : Math.min(args.parallel, todo.length * args.n)); i++) chromes.push(await Chrome.launch({ dir: join(EVAL_DIR, 'tmp') }));
+    // Machine load while answers play (first word and the other latencies are only comparable on a quiet machine).
+    const loads: number[] = [loadavg()[0]];
+    const sampler = setInterval(() => loads.push(loadavg()[0]), 5000);
     const jobs = todo.flatMap((q) => Array.from({ length: replay ? 1 : args.n }, (_, rep) => ({ q, rep })));
     const done: { q: Question; rep: number; stored: StoredQuestion; qdir: string; pageShot: Buffer }[] = [];
     let next = 0;
@@ -302,6 +310,8 @@ async function main(): Promise<void> {
       }
     }));
 
+    clearInterval(sampler);
+    loads.push(loadavg()[0]);
     // Metrics, sheets, judge.
     const priorRun = args.replay ? join(RUNS, args.replay) : args.finish ? dir : null;
     const summaries: QuestionSummary[] = [];
@@ -379,7 +389,11 @@ async function main(): Promise<void> {
     if (args.webkit) {
       await webkitStills(server.base, done.map((d) => ({ id: d.q.id, stored: d.stored, qdir: d.qdir })), gateQuery({ ...args, repair: args.repair ?? 'recorded', replay: args.replay ?? 'webkit' }));
     }
-    const summary = buildSummary({ runId, config: args.config, qset: QSET, promptVersion: PROMPT_VERSION, phase, rubric: rubric.version, questions: summaries });
+    // --finish re-judges an earlier run: it keeps the prompt version that run generated with (not this checkout's).
+    // Its scout and load too: the latencies are the ones it measured then.
+    const priorSummary = args.finish && existsSync(join(dir, 'summary.json')) ? readJson<{ promptVersion?: string; scout?: string; load?: HostLoad }>(join(dir, 'summary.json')) : null;
+    const summary = buildSummary({ runId, config: args.config, qset: QSET, promptVersion: priorSummary?.promptVersion ?? PROMPT_VERSION, phase, rubric: rubric.version, questions: summaries,
+      ...(args.finish ? { scout: priorSummary?.scout, load: priorSummary?.load } : { scout: SCOUT_ID, load: hostLoadOf(loads, cpus().length) }) });
     if (args.fakeJudge) summary.fakeJudge = true;
     writeJson(join(dir, 'summary.json'), summary);
     writeJson(join(dir, 'run.json'), { args, config: cfg, phase, replayOf: args.replay, ...(args.finish ? { finishedAt: new Date().toISOString() } : {}) });

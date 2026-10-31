@@ -117,7 +117,22 @@ function byName(body: string): TagParse {
  * only a missing timing reads "not parsed".
  */
 /** A recorded answer as the transcript needs it; `tags` is its parse (scriptTags.ts), when the caller has one. */
-export type Transcribed = Pick<EvalResult, 'chunks' | 'timings'> & { tags?: TagParse[] };
+export type Transcribed = Pick<EvalResult, 'chunks' | 'timings'> & { tags?: TagParse[]; events?: EvalResult['events'] };
+
+/**
+ * The answer's hidden check question (p6.2: the model's `<check>…</check>`, lifted out of the stream
+ * and sent as done.check; the app offers it as "Test yourself" after the answer, never spoken). An
+ * answer that speaks its question (p6.1) has none here: it is already in the transcript.
+ */
+export function checkOf(r: Pick<Transcribed, 'events'>): string | undefined {
+  for (const e of r.events ?? []) if (e.t === 'done' && typeof e.check === 'string' && e.check.trim()) return e.check.trim();
+  return undefined;
+}
+/** The judge's line for a hidden check question (none when the answer has no hidden one). */
+export const practiceLine = (r: Pick<Transcribed, 'events'>): string | undefined => {
+  const c = checkOf(r);
+  return c ? `Practice question (optional, never spoken: offered after the answer as a "Test yourself" button the student can open): ${c}` : undefined;
+};
 
 export function renderTranscript(r: Transcribed, parsed: TagParse[] | undefined = r.tags): string {
   const raw = r.chunks.map((c) => c.d).join('');
@@ -190,6 +205,7 @@ Score each criterion 1-5 (integers). Give a 5 only when you cannot name a concre
   2 far too long or far too short for the question. 1 the length defeats the answer.
   Too shallow is as much a defect as too long.
 Off-topic questions (nothing to do with the document): one polite sentence that redirects to the document, with no drawing, is the intended answer. Score it 4-5 on every criterion and do not flag ignored_question.
+Practice question: an answer may give the student a short question to try on their own, either spoken as its last sentence or kept off the narration and offered after the answer as a "Test yourself" button the student can open (then you get it after the transcript as "Practice question"; it was never spoken). Treat both forms alike: an optional extra, not part of the lesson's explanation. It neither raises nor lowers any score by being there, missing, spoken or hidden, and it is never padding; judge understanding on what the lesson itself shows. Only a practice question that is wrong or confusing counts against the answer, as any other wrong statement would.
 
 "defects": every one that applies, else an empty list:
 board_copies_page (board text repeats a formula or sentence that is on the page), board_repeats_narration (board text writes out what is being said), written_not_drawn (a list or text block where a drawing was needed), drawing_appears_at_once (the main illustration appears finished instead of building), single_slide (stays on one page when the idea needs others), wrong_page (goes to a page that does not help), padded, too_shallow, out_of_sync (ink lands away from its words), cluttered (overlapping, cramped or cut-off elements), skipped_actions (more than two actions skipped, or a skipped one that the narration or later drawing depends on: the student never saw it), followup_repeats (a follow-up only: it keeps the previous answer's picture or level and adds more of the same, or says again what the previous answer said, instead of changing them as the student asked).
@@ -289,7 +305,8 @@ export function buildJudgeRequestR3(a: { phase: string; question: string; result
     p.frames.forEach((f, i) => content.push({ type: 'input_text', text: `Previous frame ${i + 1}. ${f.caption}` }, { type: 'input_image', b64: f.b64, w: f.w, h: f.h, detail: 'low' }));
     if (p.final) content.push({ type: 'input_text', text: 'Previous answer, final state:' }, { type: 'input_image', ...p.final, detail: 'low' });
     if (p.board) content.push({ type: 'input_text', text: 'Previous answer, the whole board:' }, { type: 'input_image', ...p.board, detail: 'high' });
-    content.push({ type: 'input_text', text: `Previous transcript:\n${renderTranscript(p.result)}\n\nTHE FOLLOW-UP (the answer you score) starts here.` });
+    const pq = practiceLine(p.result);
+    content.push({ type: 'input_text', text: `Previous transcript:\n${renderTranscript(p.result)}${pq ? `\n${pq}` : ''}\n\nTHE FOLLOW-UP (the answer you score) starts here.` });
   }
   content.push(
     { type: 'input_text', text: `${p ? 'Follow-up question' : 'Question'}: ${a.question}\n\nThe page the student was looking at:` },
@@ -304,6 +321,8 @@ export function buildJudgeRequestR3(a: { phase: string; question: string; result
   if (a.final) content.push({ type: 'input_text', text: 'Final state, after the answer finished:' }, { type: 'input_image', ...a.final, detail: 'high' });
   if (a.board) content.push({ type: 'input_text', text: 'The whole board at the end (scrolled content stitched top to bottom):' }, { type: 'input_image', ...a.board, detail: 'high' });
   content.push({ type: 'input_text', text: `Transcript:\n${renderTranscript(a.result)}` });
+  const pq = practiceLine(a.result);
+  if (pq) content.push({ type: 'input_text', text: pq });
   const sk = skippedOf(a.result);
   content.push({ type: 'input_text', text: sk.length ? `Engine: ${sk.length} action(s) were skipped and never appeared: ${sk.join('; ')}.` : 'Engine: no action was skipped.' });
   return { phase: a.phase, instructions: p ? `${RUBRIC_R3}\n\n${FOLLOW_UP_RUBRIC}` : RUBRIC_R3, schema: JUDGE_SCHEMA_R3.schema, name: JUDGE_SCHEMA_R3.name, content };

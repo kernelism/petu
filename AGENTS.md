@@ -36,7 +36,9 @@ Every change ends green on `npx tsc --noEmit && npx vitest run && npm run build`
 
 **Before merging, run `npm run gate`** (instead of hand-written screenshot scripts): typecheck,
 tests and build in parallel, then the gallery diff, then `replay-stress` when that script exists
-(its skip rate must not rise vs the last value recorded by a passing gate). Pass/fail summary, non-zero
+(its skip rate over the scripts the last passing gate recorded must not rise: compared per script on
+that same set, so new recordings are reported but never fail it; a passing gate records the per-script
+counts in `.petu/gate/replay-stress.json` as the next baseline). Pass/fail summary, non-zero
 exit on failure, no API calls. Declare intended visual changes: `npm run gate -- --expect side,kit@end`
 (a scene, `scene@moment`, `scene@moment.browser`, or `*` wildcards); review them in the contact sheet.
 
