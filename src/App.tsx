@@ -1707,7 +1707,7 @@ export default function App() {
       {inkState.canvasOn && inkState.tool === 'pen' && desk?.board && !desk.stacked && (
         <BoardPen rect={desk.board} color={inkState.color} keep={!!pointed && pointed.kind === 'circle' && pointed.page == null} onLoop={onBoardLoop} onWheel={onBoardWheel} />
       )}
-      <ShortcutsOverlay open={shortcutsOpen} onClose={closeShortcuts} x={dock.x} bottom={dockBottom} dev={import.meta.env.DEV} />
+      <ShortcutsOverlay open={shortcutsOpen} onClose={closeShortcuts} x={dock.x} bottom={dockBottom} dev={import.meta.env.DEV} voice={dictationOn} />
       {/* left/width are set directly rather than through custom properties, so the dock's glide never
           depends on var() invalidation (suspected in a Safari report of the dock staying left; not
           reproduced in Playwright WebKit). */}

@@ -24,6 +24,8 @@ type Props = {
   dev?: boolean;
   /** ⌘ (macOS) or Ctrl in the keycaps. Default: detected from the platform. */
   mac?: boolean;
+  /** Dictation is set up (the V row shows). Default true. */
+  voice?: boolean;
 };
 
 type Row = { label: string; keys: string[][] };
@@ -33,11 +35,13 @@ type Row = { label: string; keys: string[][] };
  * listed side by side. Esc is listed once: it stops or closes whatever is in front (an answer, an
  * aside, drawing). The card's own key (?) is in its header, not a row.
  */
-export function shortcutRows(o: { dev?: boolean; mac: boolean; lane?: boolean }): Row[][] {
+export function shortcutRows(o: { dev?: boolean; mac: boolean; lane?: boolean; /** Dictation is set up (false hides the V row). */ voice?: boolean }): Row[][] {
   const m = o.mac ? '⌘' : 'Ctrl';
   return [
     [
       { label: 'Ask a question', keys: [['/']] },
+      // V for voice: tap to start or stop, hold to talk (release sends). Mid-answer it pauses the answer.
+      ...(o.voice === false ? [] : [{ label: 'Ask by voice (hold to talk)', keys: [['V']] }]),
       { label: 'Pause / resume', keys: [['Space']] },
       { label: 'Replay the sentence', keys: [['R']] },
       { label: 'Sentence back / forward', keys: [['⇧', '←'], ['⇧', '→']] },
@@ -100,7 +104,7 @@ export function cardPlace(W: number, H: number, x: number, bottom: number): { wi
   return { wide, left, maxHeight: Math.max(160, H - bottom - GAP - TOP_AIR) };
 }
 
-export function ShortcutsOverlay({ open, onClose, x, bottom = 96, dev, mac }: Props) {
+export function ShortcutsOverlay({ open, onClose, x, bottom = 96, dev, mac, voice = true }: Props) {
   const card = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -141,7 +145,7 @@ export function ShortcutsOverlay({ open, onClose, x, bottom = 96, dev, mac }: Pr
   const W = typeof window !== 'undefined' ? window.innerWidth : 1440;
   const H = typeof window !== 'undefined' ? window.innerHeight : 900;
   const { wide, left, maxHeight } = cardPlace(W, H, x, bottom);
-  const groups = shortcutRows({ dev, mac: mac ?? isMacPlatform(), lane: typeof document !== 'undefined' && document.documentElement.classList.contains('petu-lane') });
+  const groups = shortcutRows({ dev, voice, mac: mac ?? isMacPlatform(), lane: typeof document !== 'undefined' && document.documentElement.classList.contains('petu-lane') });
   return (
     <div
       ref={card}
