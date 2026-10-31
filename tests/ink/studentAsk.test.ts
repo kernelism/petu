@@ -46,3 +46,12 @@ describe('marks sent with a question', () => {
     expect(t.strokes.map((s) => s.id)).toEqual([pending]);
   });
 });
+
+describe('the trail header names the marks', () => {
+  it('one or two by name, more as a count', async () => {
+    const { aboutTitle } = await import('../../src/ink/student/ask');
+    expect(aboutTitle([])).toBeNull();
+    expect(aboutTitle(['your underline · p.88'])).toBe('your underline · p.88');
+    expect(aboutTitle(['a', 'b', 'c', 'd'])).toBe('your 4 marks');
+  });
+});

@@ -34,6 +34,12 @@ export function takeMarks(alive: (t: Target) => boolean = targetAlive): { contex
 /** A mark's target is still there: a page always is (a new document resets the marks); a board section may have left. */
 export const targetAlive = (t: Target): boolean => !('board' in t) || !!sectionEl(t.board);
 
+/** The trail header's "About …": one or two things by name, more as a count ("your 4 marks"). */
+export function aboutTitle(labels: string[]): string | null {
+  if (!labels.length) return null;
+  return labels.length <= 2 ? labels.join(', ') : `your ${labels.length} marks`;
+}
+
 /** A page's figure marks as boxes (a dot or a segment: its extent). */
 export function figuresOf(ms: FigureMark[]): Figure[] {
   return ms.map((m) => {

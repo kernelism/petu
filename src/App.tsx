@@ -31,7 +31,7 @@ import { ink, PEN_COLORS, useInk } from './ink/student/store';
 import { freshMarks, markContext, markLabel, marks, useMarks } from './ink/student/marks';
 import { Marking } from './ink/student/marking';
 import { BoardInk } from './ink/student/BoardInk';
-import { ASK_PAUSE_MS, boardTarget, EXPLAIN_THIS, figuresOf, GROUND_WAIT_MS, takeMarks, targetAlive } from './ink/student/ask';
+import { aboutTitle, ASK_PAUSE_MS, boardTarget, EXPLAIN_THIS, figuresOf, GROUND_WAIT_MS, takeMarks, targetAlive } from './ink/student/ask';
 import { EmptyState } from './ui/EmptyState';
 import { TopBar } from './ui/TopBar';
 import { isShortcutsKey, ShortcutsOverlay } from './ui/ShortcutsOverlay';
@@ -774,7 +774,7 @@ export default function App() {
     // The header is always what the student typed: after a check question they may answer it or ask
     // something new, and only the model (which sees the open check question) can tell which.
     const kindCheck = run.again ? !!run.again.check : !!run.check;
-    const title = run.again?.title ?? trailTitle('answer', q, [point ? pointedLabel(point) : '', ...(taken?.labels ?? [])].filter(Boolean).join(', ') || null);
+    const title = run.again?.title ?? trailTitle('answer', q, aboutTitle([point ? pointedLabel(point) : '', ...(taken?.labels ?? [])].filter(Boolean)));
     // A replay is the same entry played again in place: its header and drawings leave the board and come
     // back as it replays (one entry on the trail and in the session list; the numbering never moves).
     const entry: TrailEntry = run.again ?? { num: String(++trailN.current), question: q, title, page: pageRef.current, script: '', head: null as unknown as TrailHead, ...(kindCheck ? { check: run.check } : {}) };
@@ -1442,7 +1442,15 @@ export default function App() {
   // the bar's chips. Page targets come from the page's grounding (the ids the model's listing uses).
   const inkState = useInk();
   const markList = useMarks();
-  const onBoardWheel = useCallback((e: WheelEvent) => deskRef.current?.wheel(e), []);
+  // The pen over the board covers it: its wheel goes where it would have. In the lane the board is part
+  // of the sheet, so the sheet scrolls (and a pinch reaches the viewer's overview zoom).
+  const onBoardWheel = useCallback((e: WheelEvent) => {
+    const sc = deskRef.current?.state().lane ? document.querySelector<HTMLElement>('.pv-scroll') : null;
+    if (!sc) { deskRef.current?.wheel(e); return; }
+    e.preventDefault();
+    if (e.ctrlKey || e.metaKey) sc.dispatchEvent(new WheelEvent('wheel', e));
+    else sc.scrollBy({ top: e.deltaY, left: e.deltaX });
+  }, []);
   const [focusSeq, setFocusSeq] = useState(0);
   const askPause = useRef(0);
   const markingRef = useRef<Marking | null>(null);
