@@ -21,7 +21,7 @@ import { newScope, resolveData, type DataScope } from '../svgboard/data';
 import { parseGroup } from '../svgboard/sanitize';
 
 export type ValueSource = 'page' | 'question' | 'literal' | 'const' | 'computed' | 'derived';
-export type Value = { v: number; source: ValueSource; /** block id, page, const name… */ of: string; beat: number; row?: { table: string; r: number; cells: number[] } };
+export type Value = { v: number; source: ValueSource; /** block id, page, const name… */ of: string; beat: number; /** An svg readout's own words for the number (data.ts valueLabel). */ label?: string; row?: { table: string; r: number; cells: number[] } };
 
 type Block = {
   id: string; kind: string; vals?: number[][]; full?: number[][]; src?: KitSource; tab?: { heads: string[] }; computedCols?: Set<number>; region?: string;
@@ -405,7 +405,7 @@ export class GateState {
     this.svg.define = (defs) => { this.apply({ kind: 'const', defs } as RawAction, beat); };
     this.svg.values.length = 0;
     const probs = resolveData(g, this.svg);
-    this.addValues(this.svg.values.map((v) => v.v), 'computed', 'svg', beat);
+    for (const x of this.svg.values) if (Number.isFinite(x.v)) this.values.push({ v: x.v, source: 'computed', of: 'svg', beat, ...(x.label ? { label: x.label } : {}) });
     if (this.svg.values.length || g.querySelector('[data-at],[data-fn],[data-param],[data-between]')) this.svgGroups.push(g);
     return probs.length ? probs.map((p) => p.detail).join('; ') : undefined;
   }
@@ -416,7 +416,7 @@ export class GateState {
     this.svg.consts = this.consts;
     this.svg.values.length = 0;
     for (const g of this.svgGroups) resolveData(g, this.svg);
-    this.addValues(this.svg.values.map((v) => v.v), 'computed', 'svg', beat);
+    for (const x of this.svg.values) if (Number.isFinite(x.v)) this.values.push({ v: x.v, source: 'computed', of: 'svg', beat, ...(x.label ? { label: x.label } : {}) });
   }
 
   /** limit / beforeafter: the constant takes its new value; every plot, readout and computed block follows. */

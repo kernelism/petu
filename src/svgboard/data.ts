@@ -44,7 +44,7 @@ export type DataScope = {
   curves: Map<string, CurveSpec>;
   points: Map<string, DPt>;
   /** Computed values written this pass (data-val), for the gate's number check. */
-  values: { v: number; of: string }[];
+  values: { v: number; of: string; /** The words the text puts before the number ("SSD = {}" → "SSD"): what the narration calls it. */ label?: string }[];
 };
 
 export const newScope = (consts: Record<string, number> = {}): DataScope => ({ consts, axes: new Map(), curves: new Map(), points: new Map(), values: [] });
@@ -449,9 +449,10 @@ function resolveOne(el: Element, sc: DataScope): void {
   if (el.hasAttribute('data-val')) {
     const src = el.getAttribute('data-val')!;
     const v = evalF(src, sc);
-    sc.values.push({ v, of: nm ?? src });
     if (!el.hasAttribute('data-tpl')) el.setAttribute('data-tpl', el.textContent ?? '');
     const tpl = el.getAttribute('data-tpl')!;
+    const label = valueLabel(tpl);
+    sc.values.push({ v, of: nm ?? src, ...(label ? { label } : {}) });
     const num = fmtValue(v, el.getAttribute('data-fmt'));
     // "{}" in the text's own words takes the number (the words carry the unit); else value + unit.
     const text = tpl.includes('{}') ? tpl.replace('{}', num) : withUnit(num, el.getAttribute('data-unit'));
@@ -498,4 +499,14 @@ function drawFrame(el: Element, ax: Axes, sc: DataScope): void {
   if (ty) for (const v of nums(ty).reverse()) { const p = toBoard(ax, ax.x0, v); if (p.y < y - 0.5 || p.y > y + h + 0.5) continue; add('line', { x1: r2(x - 5), y1: r2(p.y), x2: r2(x), y2: r2(p.y), stroke: '#6E6E73', 'stroke-width': '1' }); }
   if (tx) for (const v of nums(tx).reverse()) { const p = toBoard(ax, v, ax.y0); if (p.x < x - 0.5 || p.x > x + w + 0.5) continue; add('line', { x1: r2(p.x), y1: r2(y + h), x2: r2(p.x), y2: r2(y + h + 5), stroke: '#6E6E73', 'stroke-width': '1' }); }
   if (el.hasAttribute('data-frame')) add('path', { d: `M${r2(x)} ${r2(y)}L${r2(x)} ${r2(y + h)}L${r2(x + w)} ${r2(y + h)}`, fill: 'none', stroke: '#3A3A3C', 'stroke-width': '2' });
+}
+
+/**
+ * The words a readout's text puts before its number: "SSD = {}" → "ssd", "center output: {}" → "center output",
+ * "{} min" → undefined. Lower-cased, punctuation dropped; what the narration would call the quantity.
+ */
+export function valueLabel(tpl: string): string | undefined {
+  const head = tpl.includes('{}') ? tpl.slice(0, tpl.indexOf('{}')) : tpl;
+  const words = head.toLowerCase().replace(/[=:≈~]/g, ' ').replace(/[^\p{L}\p{N}\s'-]/gu, ' ').split(/\s+/).filter(Boolean);
+  return words.length && words.length <= 4 ? words.join(' ') : undefined;
 }
