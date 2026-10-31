@@ -107,6 +107,8 @@ export async function captureEnd(chrome: Chrome, qdir: string, prefix: string): 
 const CTX = process.env.PETU_CTX === 'new' ? '&ctx=new' : process.env.PETU_CTX === 'old' ? '&ctx=old' : '';
 /** EXPERIMENT: PETU_EVAL_URL_EXTRA (e.g. `&e5`) is appended to the app's URL, and PETU_EVAL_TAG to the run id. */
 const URL_EXTRA = process.env.PETU_EVAL_URL_EXTRA ?? '';
+/** PETU_EVAL_VOICE=marin|cedar: the answer is read aloud by that voice (word times then come from the audio). */
+const VOICE = /^(marin|cedar)$/.test(process.env.PETU_EVAL_VOICE ?? '') ? process.env.PETU_EVAL_VOICE! : '';
 const urlFor = (base: string, open: StoredQuestion['open'], nogen: boolean, gate = '') => `${base}/?src=${encodeURIComponent(open.src)}&page=${open.page}&eval${nogen ? '&nogen' : ''}${CTX}${gate}${URL_EXTRA}`;
 const sha = (b: Buffer | string) => createHash('sha1').update(b).digest('hex');
 
@@ -125,6 +127,11 @@ async function runQuestion(chrome: Chrome, ctx: Ctx, q: Question, rep: number): 
     shots.push(chrome.shot().then((b) => writeFileSync(join(qdir, `${t ? `t${t + 1}-` : ''}s${i}.png`), b)));
   });
   await chrome.goto(urlFor(ctx.base, open, !!prior, gateQuery(ctx.args)));
+  if (VOICE && !prior) {
+    // Settings → Voice: stored as the student's choice, then the page reloads with it (the clock is picked per answer).
+    await chrome.eval(`localStorage.setItem('pdf-tutor.settings', JSON.stringify({ voice: ${JSON.stringify(VOICE)}, v: 3 }))`);
+    await chrome.goto(urlFor(ctx.base, open, !!prior, gateQuery(ctx.args)));
+  }
   await chrome.eval(`new Promise((r) => { const t = setInterval(() => { if (window.__petu) { clearInterval(t); r(); } }, 100); setTimeout(r, 30000); })`);
   await chrome.eval('window.__petu.ready()');
   const pageShot = await chrome.shot();
@@ -254,7 +261,7 @@ async function main(): Promise<void> {
   const judge = wantsJudge(args, cfg);
 
   const date = new Date().toISOString().slice(0, 10);
-  const tag = args.config + (args.ask ? '-ask' : '') + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '') + (args.gate ? `-gate${args.gate}` : '') + (args.gatefail ? '-gatefail' : '') + (args.rubric !== 'r3' ? `-${args.rubric}` : '') + (process.env.PETU_EVAL_TAG ? `-${process.env.PETU_EVAL_TAG}` : '');
+  const tag = args.config + (args.ask ? '-ask' : '') + (args.replay ? '-replay' : '') + (args.prewarmMs ? '-prewarm' : '') + (args.gate ? `-gate${args.gate}` : '') + (args.gatefail ? '-gatefail' : '') + (args.rubric !== 'r3' ? `-${args.rubric}` : '') + (VOICE ? `-voice` : '') + (process.env.PETU_EVAL_TAG ? `-${process.env.PETU_EVAL_TAG}` : '');
   let runId = args.finish ?? runIdOf(date, tag, PROMPT_VERSION, QSET);
   if (!args.finish) for (let i = 2; existsSync(join(RUNS, runId)); i++) runId = `${runIdOf(date, tag, PROMPT_VERSION, QSET)}-${i}`;
   const dir = join(RUNS, runId);
