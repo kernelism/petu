@@ -97,6 +97,25 @@ describe('askStream', () => {
     expect(onCutOff).toHaveBeenCalledOnce();
   });
 
+  it('a connection that drops after done is not a cut-off: the whole answer arrived (QA B1)', async () => {
+    const onCutOff = vi.fn(), onDone = vi.fn();
+    const bytes = new TextEncoder().encode([META, { t: 'text', d: 'All of it.' }, DONE].map((e) => JSON.stringify(e)).join('\n') + '\n');
+    let sent = false;
+    const dropping = new ReadableStream<Uint8Array>({ pull(c) { if (!sent) { sent = true; c.enqueue(bytes); } else c.error(new TypeError('network error')); } });
+    const out = await collect(askStream(REQ, new AbortController().signal, { onCutOff, onDone }, fakeFetch(ok(dropping))));
+    expect(out).toEqual(['All of it.']);
+    expect(onDone).toHaveBeenCalledOnce();
+    expect(onCutOff).not.toHaveBeenCalled();
+  });
+  it('a connection that drops after text but before done is still a cut-off', async () => {
+    const onCutOff = vi.fn();
+    const bytes = new TextEncoder().encode([META, { t: 'text', d: 'half an' }].map((e) => JSON.stringify(e)).join('\n') + '\n');
+    let sent = false;
+    const dropping = new ReadableStream<Uint8Array>({ pull(c) { if (!sent) { sent = true; c.enqueue(bytes); } else c.error(new TypeError('network error')); } });
+    await collect(askStream(REQ, new AbortController().signal, { onCutOff }, fakeFetch(ok(dropping))));
+    expect(onCutOff).toHaveBeenCalledWith('The answer was cut off.');
+  });
+
   it('maps a failed fetch to network and HTTP errors to bad_request / upstream', async () => {
     const net = await collect(askStream(REQ, new AbortController().signal, {}, fakeFetch(() => { throw new TypeError('Failed to fetch'); }))).catch((e) => e);
     expect(net).toMatchObject({ code: 'network', retryable: true });

@@ -482,10 +482,31 @@ describe('ask: upstream timeouts', () => {
 
 describe('ask: incomplete streams', () => {
   const head = [sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message' } }), ...textEvents('m1', ['Part one. '])];
-  it('response.incomplete after text: done (with usage), then cut_off', async () => {
-    const { f } = fakeFetch([{ chunks: [...head, sse({ type: 'response.incomplete', response: { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, usage } })] }]);
+  const incomplete = (reason: string) => sse({ type: 'response.incomplete', response: { status: 'incomplete', incomplete_details: { reason }, usage } });
+  it('response.incomplete mid-sentence: done (with usage), then cut_off', async () => {
+    const midway = [sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message' } }), ...textEvents('m1', ['Part one. Then the'])];
+    const { f } = fakeFetch([{ chunks: [...midway, incomplete('max_output_tokens')] }]);
     const out = await run(req(), deps(f));
     expect(out[out.length - 2]).toMatchObject({ t: 'done', estimated: false });
+    expect(out[out.length - 1]).toMatchObject({ t: 'error', code: 'cut_off' });
+  });
+  // QA B1 (answers.jsonl 2026-10-31T03:04:19Z, lec06 "I missed this lecture"): the budget ran out after
+  // the pyramid sentence and one more drawn group; the whole narration had played, yet the dock said
+  // "The answer was cut off. Retry".
+  it('the output budget runs out just after a whole sentence (a drawn group may follow): done, no cut_off', async () => {
+    const tail = ['A Gaussian pyramid repeatedly filters and subsamples, reducing such aliasing before each smaller level.\n', '{{svg <g id="edges"><text x="40" y="620">One row</text></g>}} '];
+    const chunks = [sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message' } }), ...textEvents('m1', tail)];
+    const { f } = fakeFetch([{ chunks: [...chunks, incomplete('max_output_tokens')] }]);
+    const recs: AnswerRecord[] = [];
+    const out = await run(req(), deps(f, { log: (r) => recs.push(r) }));
+    expect(out[out.length - 1]).toMatchObject({ t: 'done', estimated: false });
+    expect(out.some((e) => e.t === 'error')).toBe(false);
+    expect(recs[0]).toMatchObject({ upstream: 'incomplete (max_output_tokens)' });
+    expect(recs[0].error).toBeUndefined();
+  });
+  it('a content filter stop after a whole sentence is still a cut_off (only the budget is forgiven)', async () => {
+    const { f } = fakeFetch([{ chunks: [...head, incomplete('content_filter')] }]);
+    const out = await run(req(), deps(f));
     expect(out[out.length - 1]).toMatchObject({ t: 'error', code: 'cut_off' });
   });
   it('the answer record says why the upstream cut it short', async () => {
@@ -773,5 +794,22 @@ describe('Lessons v3: two stages', () => {
     const { f, calls } = fakeFetch([{ status: 200, text: JSON.stringify({ usage: { input_tokens: 3000, output_tokens: 0 } }) }]);
     expect(await prewarmScout(sreq, scfg, deps(f))).toMatchObject({ ok: true });
     expect(JSON.parse(String(calls[0].init.body)).input).toHaveLength(2);
+  });
+});
+
+describe('endsOnSentence / isBudgetStop (QA B1)', () => {
+  it('reads the spoken words only: tags removed, an unclosed tag at the end dropped', async () => {
+    const { endsOnSentence, isBudgetStop } = await import('../../server/openai');
+    expect(endsOnSentence('Each level halves. {{svg <g id="a"><text>x</text></g>}} ')).toBe(true);
+    expect(endsOnSentence('It is “aliasing.”')).toBe(true);
+    expect(endsOnSentence('Each level halves. Then the')).toBe(false);
+    expect(endsOnSentence('Each level halves. {{svg <g id="a"><text>half')).toBe(true);
+    expect(endsOnSentence('Then the {{highlight p=4 "box"}}')).toBe(false);
+    expect(endsOnSentence('Each level halves.\n{{svg {{svgboard h=700}} {{svg <g id="e"><text>row</text></g>}} }} ')).toBe(true);
+    expect(endsOnSentence('')).toBe(false);
+    expect(isBudgetStop('incomplete (max_output_tokens)')).toBe(true);
+    expect(isBudgetStop('max_tokens')).toBe(true);
+    expect(isBudgetStop('incomplete (content_filter)')).toBe(false);
+    expect(isBudgetStop(undefined)).toBe(false);
   });
 });

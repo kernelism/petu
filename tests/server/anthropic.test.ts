@@ -185,6 +185,12 @@ describe('Anthropic answer through ask()', () => {
     expect(out.some((e) => e.t === 'done')).toBe(true);
     expect(out.at(-1)).toMatchObject({ t: 'error', code: 'cut_off' });
   });
+  it('max_tokens just after a whole sentence: done, no cut_off', async () => {
+    const { f } = fakeFetch([{ chunks: stream(['A start. And a finish.'], 'max_tokens', 6000) }]);
+    const out = await run(req(), opus, deps(f));
+    expect(out.at(-1)).toMatchObject({ t: 'done' });
+    expect(out.some((e) => e.t === 'error')).toBe(false);
+  });
 });
 
 /** A stream that sends each chunk `gap` ms after the last (fake timers); `next` returns null to end it. */

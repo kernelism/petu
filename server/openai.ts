@@ -653,7 +653,11 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
       if (bf) emitText(bf.end());
       // Stalled, cut short upstream (response.incomplete), or ended without a terminal event: what
       // arrived plays, then the client hears cut_off; with no text at all it is an error.
-      if (!signal.aborted && !failed && (idle || !terminal || !complete)) {
+      // The output budget ran out (max_output_tokens / max_tokens) just after a whole sentence: the
+      // student heard a finished answer, and a Retry would only stop at the same budget again. It
+      // ends as complete (the record keeps the upstream status); mid-sentence it is still a cut-off.
+      const budgetAtSentence = terminal && !complete && !idle && outChars > 0 && isBudgetStop(r.status) && endsOnSentence(script);
+      if (!signal.aborted && !failed && !budgetAtSentence && (idle || !terminal || !complete)) {
         const why = read.overrun ? `${ep.vendor} took too long to finish.` : idle ? `${ep.vendor} stopped sending.` : terminal ? `${ep.vendor} ended the answer early${r.status ? ` (${r.status})` : ''}.` : `The stream from ${ep.vendor} ended early.`;
         failed = { t: 'error', code: outChars ? 'cut_off' : idle ? 'network' : 'upstream', message: why, retryable: true };
       }
@@ -678,6 +682,18 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const s = d.ledger.summary();
   emit({ t: 'done', usage, usd, estimated, spentUsd: s.totalUsd, capUsd: s.capUsd, ttftMs: Math.round(ttft), plan: filter.plan || undefined, ...(svgf?.check ? { check: svgf.check } : {}), lint: lint.notes.length ? lint.notes : undefined });
   if (failed) emit({ ...failed, code: 'cut_off', message: 'The answer was cut off.' });
+}
+
+/** The upstream stopped at its output budget (OpenAI `incomplete (max_output_tokens)`, Anthropic `max_tokens`). */
+export const isBudgetStop = (status: string | undefined): boolean => !!status && /\bmax_(output_)?tokens\b/.test(status);
+
+/** The script's spoken words (tags removed, an unclosed tag at the end dropped) end on a whole sentence. */
+export function endsOnSentence(script: string): boolean {
+  // Innermost tags first (an svg tag may wrap the board's own), then an unclosed one at the end.
+  let said = script, prev = '';
+  while (said !== prev) { prev = said; said = said.replace(/\{\{[^{}]*\}\}/g, ' '); }
+  said = said.replace(/\{\{[\s\S]*$/, '').replace(/\}\}/g, ' ').trim();
+  return /[.!?…][\])"'”’]*$/.test(said);
 }
 
 /** What reading one upstream stream produced (readUpstream). */
