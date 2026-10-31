@@ -76,6 +76,26 @@ export class BeatLinks {
 }
 
 type Box = { x: number; y: number; w: number; h: number };
+
+/**
+ * A drawn group's box now, in its section's units: its own bbox on the board (getBBox, the board's
+ * user units) scaled to the 1000-unit section. The box the director framed was measured hidden before
+ * drawing, which WebKit gets wrong; null when it can't be measured (the framed box stands in).
+ */
+function drawnBox(b: Beat): Box | null {
+  const g = b.el as SVGGraphicsElement, root = g.ownerSVGElement;
+  if (typeof g.getBBox !== 'function' || !root) return null;
+  let bb: DOMRect;
+  try { bb = g.getBBox(); } catch { return null; }
+  const vw = root.viewBox?.baseVal?.width;
+  if (!(bb.width > 0 || bb.height > 0) || !(vw && vw > 0)) return null;
+  // Its own transform (a translated group): the bbox is in its coordinates, the corners go to the board's.
+  const t = g.transform?.baseVal?.consolidate?.()?.matrix;
+  const at = (x: number, y: number) => (t ? { x: t.a * x + t.c * y + t.e, y: t.b * x + t.d * y + t.f } : { x, y });
+  const p = at(bb.x, bb.y), q = at(bb.x + bb.width, bb.y + bb.height);
+  const k = 1000 / vw;
+  return { x: Math.min(p.x, q.x) * k, y: Math.min(p.y, q.y) * k, w: Math.abs(q.x - p.x) * k, h: Math.abs(q.y - p.y) * k };
+}
 const inside = (b: Box, x: number, y: number, pad: number) => x >= b.x - pad && x <= b.x + b.w + pad && y >= b.y - pad && y <= b.y + b.h + pad;
 
 /**
@@ -239,7 +259,7 @@ export class LaneHover {
     const k = Math.min(r.width / vb[2], r.height / vb[3]);
     const ox = r.left + (r.width - vb[2] * k) / 2, oy = r.top + (r.height - vb[3] * k) / 2;
     const ux = vb[0] + (x - ox) / k, uy = vb[1] + (y - oy) / k;
-    const i = boxAt(beats.map((b) => b.box!), ux, uy, 4);
+    const i = boxAt(beats.map((b) => drawnBox(b) ?? b.box!), ux, uy, 4);
     return i < 0 ? null : beats[i];
   }
 
