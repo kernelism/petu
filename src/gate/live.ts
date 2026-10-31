@@ -634,8 +634,10 @@ export class LiveGate {
    */
   private drawingsOf(u: PreflightUnit, r: PreflightResult | null): string | null {
     if (!r || !r.flags.length || r.flags.some((f) => f.check === 'svg')) return null;
-    const svg = r.tags.filter((t) => /^\s*svg\b/.test(t.body));
-    if (!svg.length || svg.some((t) => t.skipped)) return null;
+    // The board tag goes with its groups: a group drawn with no board open is skipped (founder lec06,
+    // 2026-10-31: {{svgboard}} rode in the first sentence the gate dropped and all five drawings were lost).
+    const svg = r.tags.filter((t) => /^\s*svg(?:board)?\b/.test(t.body));
+    if (!svg.some((t) => /^\s*svg\b/.test(t.body)) || svg.some((t) => t.skipped)) return null;
     return ` ${svg.map((t) => u.text.slice(t.start, t.end)).join(' ')} `;
   }
 
