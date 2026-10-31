@@ -28,6 +28,12 @@ const DEFAULT_BEATS: Record<Scope, number> = { narrow: 3, standard: 4, broad: 6 
 export const CHECK_WORDS = 18;
 /** A teaching beat never gets fewer words than this (a beat is a claim and what to notice in the drawing). */
 const MIN_BEAT_WORDS = 22;
+/**
+ * A full beat's words when the plan lists more beats than its scope's seconds hold (founder 2026-10-31: a
+ * request to redo or finish an answer with several parts must cover every part, never stop after the
+ * first): the length then follows the parts, about this many words each, and the cap scales with it.
+ */
+export const BEAT_WORDS = 30;
 
 export type Budget = {
   scope: Scope;
@@ -93,9 +99,10 @@ export function budgetOf(plan: string | undefined, opener = ''): Budget | null {
   const sec = SCOPE_SECONDS[scope];
   const ow = wordsOf(opener);
   const teach = Math.max(1, beats - 1);
-  // A plan longer than its scope keeps its beats whole: the per-beat words shrink to a floor, never the plan.
-  const words = Math.max(Math.round(sec.target * WORDS_PER_SEC) - ow, CHECK_WORDS + teach * MIN_BEAT_WORDS);
-  const capWords = Math.max(Math.round(sec.cap * WORDS_PER_SEC) - ow, words + 12);
+  // A plan longer than its scope keeps its beats whole: the length grows with the beats (BEAT_WORDS each),
+  // never the plan shrinks, and the cap grows in the scope's proportion so the gate never cuts a planned part.
+  const words = Math.max(Math.round(sec.target * WORDS_PER_SEC) - ow, CHECK_WORDS + teach * MIN_BEAT_WORDS, CHECK_WORDS + teach * BEAT_WORDS - ow);
+  const capWords = Math.max(Math.round(sec.cap * WORDS_PER_SEC) - ow, Math.round(words * (sec.cap / sec.target)), words + 12);
   const wordsPerBeat = Math.max(MIN_BEAT_WORDS, Math.round((words - CHECK_WORDS) / teach / 5) * 5);
   return { scope, stated: !!said, beats, wordsPerBeat, words, capWords, seconds: sec.target };
 }
