@@ -803,7 +803,12 @@ export class LiveGate {
     // A repair replaces a beat of the board already open: it never opens a board of its own (a BOARD
     // tag here would open a second section, and the beat's group would land below the first figure,
     // out of the frame its coordinates are in). Only a unit that opened the board keeps its tag.
-    let text = /\{\{svgboard\b/.test(u.text) ? res.text : res.text.replace(/\{\{svgboard\b[^}]*\}\}\s*/g, '');
+    const opened = /\{\{svgboard\b[^}]*\}\}/.exec(u.text);
+    let text = opened ? res.text : res.text.replace(/\{\{svgboard\b[^}]*\}\}\s*/g, '');
+    // The unit that opened the board keeps its own BOARD tag even when the repair wrote none (founder lec06
+    // 2026-10-31, turn 3: the first beat failed, its repair came back without {{svgboard}}, and every group
+    // of the answer was then skipped, "unknown region": the board had never opened).
+    if (opened && !/\{\{svgboard\b/.test(text)) text = `${opened[0]} ${text.trimStart()}`;
     if (!/^\s/.test(text)) text = (leadWs(u.text) || ' ') + text;
     this.d.onEvent({ t: 'repair', k: u.key, phase: 'ok', ms: Math.round(ms), text: res.text, ...(res.usd != null ? { usd: res.usd } : {}) });
     // `&gatefail=K:bad`: the original comes back and its injected skip with it.

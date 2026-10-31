@@ -158,6 +158,17 @@ describe('LiveGate', () => {
     expect(text).toContain('<g id="kept">');
   });
 
+  it('a repair of the unit that opened the board keeps its {{svgboard}} tag when the repair wrote none (lec06 turn 3: every group was skipped, unknown region)', async () => {
+    const h = harness({ preflight: fakePreflight(), headroomMs: 1000, repair: async () => ({ ok: true, text: 'Fixed words here. {{svg <g id="orientation"><line x1="0" y1="0" x2="9" y2="9"/></g>}} ' }) });
+    await h.play([{ handoff: true }, `Intro ${LONG} `, { wait: 300 }, `So ${LONG} `, { wait: 300 }, '{{svgboard h=1580}} {{svg <g id="orientation"><line x1="0" y1="0" x2="9" y2="9"/></g>}} First FIXME beat. ', 'Last. ']);
+    expect(h.repairs().map((e) => e.phase)).toEqual(['sent', 'ok']);
+    const text = h.out.join('');
+    expect(text).not.toContain('FIXME');
+    expect(text).toContain('{{svgboard h=1580}}');
+    expect(text.indexOf('{{svgboard')).toBeLessThan(text.indexOf('<g id="orientation">'));
+    expect(text.match(/\{\{svgboard/g)!.length).toBe(1);
+  });
+
   it('a late repair keeps the beat\'s passing groups', async () => {
     const h = harness({
       preflight: fakePreflight(), headroomMs: 1000,
