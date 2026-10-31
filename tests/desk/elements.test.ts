@@ -17,7 +17,7 @@ function env(over: Partial<BuildEnv> = {}) {
   });
   const page = (t: Target): TargetCtx => ({ ...region(t), h: 1294, scale: () => 0.86, toSpace: (p) => ({ x: p.x, y: p.y * 1.294 }), rectToSpace: (r) => ({ ...r, y: r.y * 1.294, h: r.h * 1.294 }) });
   const desk = { addConnector: vi.fn(() => ({ group: g(), stroke: [{ x: 0, y: 0 }, { x: 10, y: 10 }], scale: 1 })) } as unknown as DeskApi;
-  const e: BuildEnv = { ctx: async (t) => (t.region === 'nope' ? 'unknown region' : t.region ? region(t) : page(t)), registry: new Registry(), settings: DEFAULTS, rng: () => null, desk, ...over };
+  const e: BuildEnv = { ctx: async (t) => (t.region === 'nope' ? 'unknown region' : t.region ? region(t) : page(t)), registry: new Registry(), settings: { ...DEFAULTS, inkStyle: 'live' }, // the scale tests measure the live style; hand labels are 1.12× larger rng: () => null, desk, ...over };
   return { e, layers, desk };
 }
 const run = async (p: ElementPlan | string) => {
