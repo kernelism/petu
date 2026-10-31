@@ -17,6 +17,7 @@ function example(title: string): Demo & { src: string; page: number } {
 import { LEARNER_SCRIPT, type DevStep } from './learner';
 import { SVG_DEMOS } from './svg';
 import { LANE_SCRIPTS } from './lane';
+import { NEWQ_SCRIPT } from './newQuestion';
 
 /**
  * Dev-only named scripts for real PDFs: `?script=<name>` (optionally `&src=<pdf url>`) opens the
@@ -34,6 +35,8 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number;
   gate: GATE_SCRIPT,
   /** The v1 learner UX storyboard as one simulated session on econ.pdf p12 (src/demo/learner.ts). */
   learner: LEARNER_SCRIPT,
+  /** The ask bar's + and the saved questions (src/demo/newQuestion.ts): canned answers, driven by hand or Playwright. */
+  'new-question': NEWQ_SCRIPT,
   /**
    * Flow across the document (econ.pdf, asked on p9): a lead-in on p9, a journey to p2 (the demand
    * line's equation) and back. Exercises the route chip, the arrival beat, answer parts (three:

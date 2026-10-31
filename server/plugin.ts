@@ -16,6 +16,8 @@
 //                              an answer's failed unit, server/repair.ts); 404 unknown reqId, 429 past
 //                              MAX_REPAIRS, 400 bad body or phase, 402 cap, 503 repairs off
 //   POST /api/report           { report, png? } → saved under .petu/reports/ (server/report.ts)
+//   POST /api/title            { questions, sections, phase? } → { title, usd, cached? }: a saved question's
+//                              short title (server/title.ts; cached by content); 402 cap, 502 none, 503 no key
 //   POST /api/voice            { text, voice?, speed? } → raw PCM 24 kHz s16le mono, streamed (server/voice.ts);
 //                              402 cap, 503 no key; { warm: true } → 204 once the voice session is open
 //   GET  /api/stt              → { on }: whether SPEECHMATICS_API_KEY is set (the ask bar hides its mic when not)
@@ -49,6 +51,7 @@ import { mintSttToken } from './stt';
 import { answerConfig, isQuality } from './quality';
 import type { RepairWire, RepairWireEvent } from '../src/agent/protocol';
 import { isRelation } from '../src/agent/context/memory';
+import { makeTitle, TitleCache, validateTitle } from './title';
 
 export const BODY_LIMIT = 12 * 1024 * 1024;
 const PREWARM_TTL_MS = 25 * 60 * 1000;
@@ -92,6 +95,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   let systemWarming: Promise<unknown> | null = null;
   const now = o.now ?? Date.now;
   const prewarmed = new Map<string, number>();
+  const titles = new TitleCache();
 
   /** Marks `k` prewarmed now; drops expired keys and, past PREWARM_MAX, the oldest. */
   const remember = (k: string) => {
@@ -119,6 +123,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
       if (path === '/api/judge') return await routeJudge(req, res);
       if (path === '/api/repair') return await routeRepair(req, res);
       if (path === '/api/report') return await routeReport(req, res, o.root, env.key);
+      if (path === '/api/title') return await routeTitle(req, res);
       if (path === '/api/voice') return await routeVoiceReq(req, res);
       if (path === '/api/stt') return await routeStt(req, res);
       if (path.startsWith('/api/dev-pdf/')) return routePdf(req, res, path.slice('/api/dev-pdf/'.length));
@@ -156,6 +161,17 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
       res.off('close', onClose);
       if (!res.writableEnded && !res.destroyed) res.end();
     }
+  }
+
+  async function routeTitle(req: IncomingMessage, res: ServerResponse) {
+    if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
+    const body = await readJson(req, res);
+    if (body === undefined) return;
+    if (body?.phase != null && body.phase !== env.phase) return json(res, 400, { error: `phase "${String(body.phase)}" ≠ server phase "${env.phase}"` });
+    const i = validateTitle(body);
+    if (typeof i === 'string') return json(res, 400, { error: i });
+    const r = await makeTitle(i, deps, titles);
+    return json(res, r.status, r.body);
   }
 
   async function routeVoiceReq(req: IncomingMessage, res: ServerResponse) {

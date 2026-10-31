@@ -13,6 +13,9 @@ export const dockMax = (W: number) => (W >= LARGE_W ? DOCK_MAX_LARGE : DOCK_MAX)
 /** Layout C: the dock keeps this much of its column clear on each side. */
 export const LANE_DOCK_AIR = 22;
 
+/** The ask bar's + hangs this far left of the dock (its width and gap: ui.css .dock-new); 0 while it is hidden. */
+export const newQuestionReserve = (W: number) => (W >= LARGE_W ? 44 : 40) + 12;
+
 /**
  * The column the dock sits under: the slide column (the page column while reading, the slide column
  * pinned left in a split). In the lane (layout C) always the page column, never the lane: following
@@ -25,9 +28,9 @@ export function dockColumn(W: number, s: DeskState | null): { x: number; w: numb
 
 /**
  * Where the dock (caption + ask bar, one unit) sits: centred under dockColumn, as wide as it up to
- * dockMax(W).
+ * dockMax(W). `reserveLeft`: room the + needs left of it (the dock moves or narrows to keep it in the window).
  */
-export function dockPlacement(W: number, s: DeskState | null, view?: OverviewViewState, reserveRight = 0): { x: number; w: number } {
+export function dockPlacement(W: number, s: DeskState | null, view?: OverviewViewState, reserveRight = 0, reserveLeft = 0): { x: number; w: number } {
   const col = windowColumn(dockColumn(W, s), W, view);
   // The lane (layout C): centred under the page column, with air either side (mockups C1, C2).
   const inset = s?.lane ? 2 * LANE_DOCK_AIR : 0;
@@ -35,9 +38,13 @@ export function dockPlacement(W: number, s: DeskState | null, view?: OverviewVie
   // The overview zoom can push the column half off the window: the dock keeps a readable width.
   w = Math.max(w, Math.min(DOCK_MIN, W - 2 * DOCK_EDGE));
   let x = col.x + col.w / 2;
+  // Room for the + on the left, inside the dock's own column (in the lane it never hangs over the page): the
+  // dock gives it up from its left side first (its right edge stays put), down to DOCK_MIN; past that it moves right.
+  const short = Math.max(DOCK_EDGE, col.x + (s?.lane ? LANE_DOCK_AIR / 2 : 0)) + Math.max(0, reserveLeft) - (x - w / 2);
+  if (short > 0) { const cut = Math.min(short, Math.max(0, w - DOCK_MIN)); w -= cut; x += cut / 2; }
   // One authority for the bottom band: the dock stays inside the window and clear of the control on its
   // right (the overview pill, `reserveRight` px from the right edge, when shown), narrowing if it must.
-  const lo = DOCK_EDGE, hi = W - DOCK_EDGE - Math.max(0, reserveRight);
+  const lo = DOCK_EDGE + Math.max(0, reserveLeft), hi = W - DOCK_EDGE - Math.max(0, reserveRight);
   if (hi - lo >= DOCK_MIN) w = Math.min(w, hi - lo);
   const right = hi - lo >= DOCK_MIN ? hi : W - DOCK_EDGE;
   x = Math.max(lo + w / 2, Math.min(right - w / 2, x));

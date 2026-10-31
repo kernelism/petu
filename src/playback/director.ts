@@ -173,6 +173,10 @@ export class Director {
 
   /** The svg board this answer draws into (a section id; numbered across directors, so an aside's never collides). */
   private svgBoard: string | null = null;
+  /** The svg board a follow-up's `BOARD extend` draws into (null: none on the board). */
+  boardId(): string | null { return this.svgBoard; }
+  /** A saved question's board is back (its svg board id), or a new question starts on an empty board (null). */
+  useBoard(id: string | null): void { this.svgBoard = id; }
 
   private seen = new WeakSet<object>();
   /** Section ids some parsed tag of this answer declares (a connector may name one a moment before its tag). */

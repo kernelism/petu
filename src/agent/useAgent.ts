@@ -45,6 +45,13 @@ export type AgentAsk = {
   released?(): string;
   /** The moment the question is asked in (an aside, what the student points at, a check reply): sent with stage 2. */
   moment?: Pick<AskContext, 'aside' | 'about' | 'check'>;
+  /**
+   * The conversation's own history and memory (a saved question keeps its own: src/session/). Default:
+   * the document's. Read when asked and written when the answer ends, so a stopped answer's record lands
+   * in the conversation it belongs to even after the student has moved on to another.
+   */
+  history?: History;
+  memory?: SessionMemory;
 };
 
 export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
@@ -118,10 +125,11 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
       const phase = spendPhase(spendRef.current);
       // Answer quality: a choice token only, and only when the server says Best can run (the model is the server's to pick).
       const best = getSettings().quality === 'best' && !!spendRef.current?.best;
-      const hist = history.last();
+      const H = a.history ?? history, M = a.memory ?? memory;
+      const hist = H.last();
       const prior = hist[hist.length - 1];
       const hash = doc?.fingerprints?.[0] ?? name;
-      const mem = memory.text();
+      const mem = M.text();
       const sc0 = b.scout ? await b.scout(a.page, a.question, prior) : null;
       const [digest, vis] = sc0 ? [sc0.digest, { pageText: sc0.pageText, ground: sc0.ground }] : await Promise.all([b.digest(a.page, a.question), b.visible(a.page)]);
       if (signal.aborted) return;
@@ -160,7 +168,7 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
       } finally {
         // What played, not what was streamed: a unit the gate dropped was never said or drawn.
         const said = a.released ? a.released() : script;
-        if (said.trim()) memory.add(recordOf({ question: a.question, page: a.page, pages: taught, plan, script: said, ...(answerPlan ? { answerPlan } : {}), ...(relation ? { relation } : {}), ...(story ? { storyboard: story } : {}), ...(signal.aborted ? { stopped: true } : {}) }));
+        if (said.trim()) M.add(recordOf({ question: a.question, page: a.page, pages: taught, plan, script: said, ...(answerPlan ? { answerPlan } : {}), ...(relation ? { relation } : {}), ...(story ? { storyboard: story } : {}), ...(signal.aborted ? { stopped: true } : {}) }));
       }
     } finally {
       inFlight.current--;
