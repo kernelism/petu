@@ -91,7 +91,7 @@ export type AnswerRecord = { at: string; phase: string; model: string; effort: s
   /** EXPERIMENT (boardfirst): the model's script before the board-first reveal, and what it declared and revealed. */
   raw?: string; boardFirst?: { declared: number; revealed: number; hidden: string[]; immediate: number; noId: number };
   /** The svg answer mode: the groups sent, the board opened, what the filter dropped, timings (ms from the request). */
-  svg?: { groups: string[]; board: unknown; notes: string[]; firstGroupMs: number; ttftMs: number; totalMs: number } };
+  svg?: { groups: string[]; board: unknown; notes: string[]; check?: string; firstGroupMs: number; ttftMs: number; totalMs: number } };
 /**
  * `headersMs`: no response headers → the attempt is abandoned (retried once, before any text).
  * `idleMs`: a streamed answer that sends nothing for this long is ended (cut_off after text). Any
@@ -196,7 +196,7 @@ function groundingTail(c: AskContext, cfg: ModelConfig): unknown[] {
   if (c.searchText) tail.push({ type: 'input_text', text: c.searchText });
   if (c.scout) {
     const order = c.scout.pages.join(', ');
-    const budget = budgetNote(budgetOf(c.scout.plan, c.opener)); // the plan's scope as a length (src/agent/pacing.ts)
+    const budget = budgetNote(budgetOf(c.scout.plan, c.opener), isSvgMode(cfg.promptVariant) ? 'hidden' : 'spoken'); // the plan's scope as a length (src/agent/pacing.ts)
     tail.push({ type: 'input_text', text: `PLAN (a first read of the whole document; pages in teaching order: ${order})${c.scout.plan ? `: ${c.scout.plan}` : ''}${budget ? `\n${budget}` : ''}` });
     if (c.memory && c.scout.relation) tail.push({ type: 'input_text', text: relationNote(c.scout.relation) });
   }
@@ -608,7 +608,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const emitText = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; script += s; if (Number.isNaN(ttft)) ttft = now() - t0; emit({ t: 'text', d: s }); };
   // Every answer leaves a record, a failed one too (the failures are the ones worth reading).
   const record = (usd: number) => {
-    try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
+    try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
   };
   try {
     let res: Response | null = null;
@@ -676,7 +676,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   if (signal.aborted) return;
   if (failed && failed.code !== 'cut_off' && !outChars) { emit(failed); return; }
   const s = d.ledger.summary();
-  emit({ t: 'done', usage, usd, estimated, spentUsd: s.totalUsd, capUsd: s.capUsd, ttftMs: Math.round(ttft), plan: filter.plan || undefined, lint: lint.notes.length ? lint.notes : undefined });
+  emit({ t: 'done', usage, usd, estimated, spentUsd: s.totalUsd, capUsd: s.capUsd, ttftMs: Math.round(ttft), plan: filter.plan || undefined, ...(svgf?.check ? { check: svgf.check } : {}), lint: lint.notes.length ? lint.notes : undefined });
   if (failed) emit({ ...failed, code: 'cut_off', message: 'The answer was cut off.' });
 }
 

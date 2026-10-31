@@ -160,10 +160,56 @@ describe('B1: the dock in its moments', () => {
     expect(host.querySelector('.pb-title')!.textContent).toBe('Paused');
   });
 
-  it('F01: the check question stays pinned ("Check yourself: …") once the narration has gone', () => {
-    act(() => root.render(createElement(Caption, { words: [], visible: false, check: 'Would a ceiling of $650 bind?' })));
+  it('F01: an opened check question stays pinned ("Test yourself: …") once the narration has gone; × puts it away', () => {
+    const onDismissCheck = vi.fn();
+    act(() => root.render(createElement(Caption, { words: [], visible: false, check: 'Would a ceiling of $650 bind?', onDismissCheck })));
     expect(host.querySelector('.caption')!.classList.contains('is-visible')).toBe(true);
-    expect(host.querySelector('.caption-check')!.textContent).toBe('Check yourself:Would a ceiling of $650 bind?');
+    expect(host.querySelector('.caption-check')!.textContent).toBe('Test yourself:Would a ceiling of $650 bind?');
+    act(() => host.querySelector<HTMLButtonElement>('.caption-check-x')!.click());
+    expect(onDismissCheck).toHaveBeenCalledOnce();
+  });
+
+  it('p6.2: the answer offers its check as a quiet "Test yourself" chip; opening it is the caller\'s (the bar then takes the answer)', () => {
+    const onTestYourself = vi.fn();
+    act(() => root.render(createElement(AskBar, { onAsk: vi.fn(), onStop: vi.fn(), busy: false, mode: 'follow', onTestYourself })));
+    const chip = host.querySelector<HTMLButtonElement>('.askbar-test')!;
+    expect(chip.textContent).toBe('Test yourself');
+    expect(host.querySelector('.caption-check')).toBeNull(); // collapsed: the question is not shown
+    act(() => chip.click());
+    expect(onTestYourself).toHaveBeenCalledOnce();
+    // Never while an answer plays, and gone once there is nothing to offer.
+    act(() => root.render(createElement(AskBar, { onAsk: vi.fn(), onStop: vi.fn(), busy: true, onTestYourself })));
+    expect(host.querySelector('.askbar-test')).toBeNull();
+    act(() => root.render(createElement(AskBar, { onAsk: vi.fn(), onStop: vi.fn(), busy: false, mode: 'follow' })));
+    expect(host.querySelector('.askbar-test')).toBeNull();
+  });
+
+  it('item 4: the transcript opens mid-answer, lights the spoken sentence, seeks on click, and Esc closes it before stopping', () => {
+    const onSeek = vi.fn(), onStop = vi.fn();
+    const live = (current: number) => ({ question: 'Why upstream?', current, onSeek, sentences: [{ start: 0, words: ['It', 'drifts.'] }, { start: 2, words: ['So', 'aim', 'up.'] }] });
+    const bar = (current: number) => createElement(AskBar, { onAsk: vi.fn(), onStop, busy: true, mode: 'during', live: live(current) });
+    act(() => root.render(bar(0)));
+    const toggle = host.querySelector<HTMLButtonElement>('.askbar-transcript')!;
+    expect(toggle.textContent).toBe('Transcript');
+    act(() => toggle.click());
+    const ss = () => [...host.querySelectorAll<HTMLElement>('.transcript-s')];
+    expect(ss().map((e) => e.textContent)).toEqual(['It drifts.', 'So aim up.']);
+    expect(ss()[0].classList.contains('is-current')).toBe(true);
+    act(() => root.render(bar(1)));
+    expect(ss()[1].classList.contains('is-current')).toBe(true);
+    expect(ss()[0].classList.contains('is-current')).toBe(false);
+    act(() => ss()[0].click());
+    expect(onSeek).toHaveBeenCalledWith(0);
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })); });
+    expect(host.querySelector('.transcript')).toBeNull();
+    expect(onStop).not.toHaveBeenCalled();
+    // The answer ends: the same toggle opens the finished answer (and stays open across the change).
+    act(() => toggle.click());
+    act(() => root.render(createElement(AskBar, { onAsk: vi.fn(), onStop, busy: false, mode: 'follow', transcript: { question: 'Why upstream?', answer: 'It drifts. So aim up.' } })));
+    expect(host.querySelector('.transcript-a')!.textContent).toBe('It drifts. So aim up.');
+    // A new question closes it.
+    act(() => root.render(createElement(AskBar, { onAsk: vi.fn(), onStop, busy: true, mode: 'during', live: { ...live(0), question: 'And downstream?' } })));
+    expect(host.querySelector('.transcript')).toBeNull();
   });
 
   it('F03: the cap is a status row in the bar (wraps), no clipped placeholder; Esc on the pinned check dismisses it', () => {

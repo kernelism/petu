@@ -322,6 +322,17 @@ describe('ask', () => {
     expect(done.spentUsd).toBeCloseTo(done.usd, 10);
     expect(done.capUsd).toBe(40);
   });
+  it('p6.2: a hidden <check> rides on done (and the log), never in the spoken text', async () => {
+    const { f } = fakeFetch([{ chunks: okBody(['Disparity halves. So it ', 'halves. <che', 'ck>What if B doubled?</check>']) }]);
+    const logged: unknown[] = [];
+    const out = await run(req(), deps(f, { log: (r) => logged.push(r) }));
+    const done = out.find((e) => e.t === 'done') as Extract<AskEvent, { t: 'done' }>;
+    expect(texts(out)).not.toMatch(/check|What if/);
+    expect(done.check).toBe('What if B doubled?');
+    expect(logged[0]).toMatchObject({ svg: { check: 'What if B doubled?' } });
+    const { f: f2 } = fakeFetch([{ chunks: okBody(['Disparity halves.']) }]);
+    expect((await run(req(), deps(f2))).find((e) => e.t === 'done')).not.toHaveProperty('check');
+  });
   it('a stream that fails after text plays what arrived, then says cut_off', async () => {
     const chunks = [...okBody(['Part one. ']).slice(0, 2), sse({ type: 'response.failed', response: { error: { message: 'boom' } } })];
     const { f } = fakeFetch([{ chunks }]);

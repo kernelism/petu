@@ -1,20 +1,22 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ArrowUp, Mic, Square, X } from 'lucide-react';
 import { Dictation } from '../agent/dictation';
 import { BAR_LABEL, PLACEHOLDER, type BarMode } from './barMode';
+import { TranscriptPanel, type Transcript } from './Transcript';
+import type { LiveTranscript } from './transcriptLive';
 import './ui.css';
 
 const isTypingTarget = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 
-export type Transcript = { question: string; answer: string };
+export type { Transcript };
 /** Point-to-ask: what the next question is about (a selection or a circled region), shown as a chip. */
 export type About = { label: string; page?: number };
 
 /** Typing this many characters counts as intent to ask (prewarm). */
 const INTENT_CHARS = 3;
 
-export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', showStop = busy, about, onClearAbout, onTyping, onResume, onDismissCheck, focusSeq, suggestions = [], restore, transcript, blocked, onIntent, dictation = true }: {
+export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', showStop = busy, about, onClearAbout, onTyping, onResume, onDismissCheck, onTestYourself, focusSeq, suggestions = [], restore, transcript, live, blocked, onIntent, dictation = true }: {
   onAsk(q: string): void; onStop(): void; busy: boolean;
   /** What the bar means now (src/ui/barMode.ts): its placeholder says which. */
   mode?: BarMode;
@@ -35,6 +37,8 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   restore?: { text: string; seq: number };
   /** The last finished answer: a quiet "Transcript" toggle expands it above the bar. */
   transcript?: Transcript | null;
+  /** The answer playing now: the same toggle opens it as it is spoken (it follows the voice; click a sentence to play from it). */
+  live?: LiveTranscript | null;
   /** Asking is paused (spending cap): the line shows in place of the placeholder and nothing is sent. */
   blocked?: string;
   /** The student is about to ask: the bar was focused, or the 3rd character was typed. */
@@ -43,12 +47,27 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   dictation?: boolean;
   /** Esc with the check question pinned (mode `check`, nothing typed): the question is put away. */
   onDismissCheck?(): void;
+  /** The answer offers a check question (p6.2): a quiet "Test yourself" chip opens it. */
+  onTestYourself?(): void;
 }) {
   const [text, setText] = useState('');
   const [focused, setFocused] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   useEffect(() => { if (restore) setText(restore.text); }, [restore?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (!transcript || busy) setShowTranscript(false); }, [transcript, busy]);
+  // The panel goes with its answer: closed when there is none, and when a new question starts.
+  const tQuestion = live?.question ?? transcript?.question ?? null;
+  useEffect(() => { setShowTranscript(false); }, [tQuestion]);
+  const showRef = useRef(false);
+  showRef.current = showTranscript;
+  // While an answer plays its caption sits on the bar: the panel opens above the caption, not over it.
+  const formRef = useRef<HTMLFormElement>(null);
+  const [capH, setCapH] = useState(0);
+  useLayoutEffect(() => {
+    if (!showTranscript) return;
+    const cap = formRef.current?.parentElement?.querySelector<HTMLElement>(':scope > .caption.is-visible');
+    const h = cap ? cap.offsetHeight : 0;
+    if (h !== capH) setCapH(h);
+  });
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (focusSeq) inputRef.current?.focus(); }, [focusSeq]);
   const typingRef = useRef(false);
@@ -105,6 +124,10 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
       if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target)) {
         e.preventDefault();
         inputRef.current?.focus();
+      } else if (e.key === 'Escape' && showRef.current && !e.defaultPrevented && !isTypingTarget(e.target) && !document.querySelector('.popover')) {
+        // An open transcript closes first (mid-answer, Esc would otherwise stop the answer).
+        e.preventDefault();
+        setShowTranscript(false);
       } else if (e.key === 'Escape' && busyRef.current && !e.defaultPrevented && !isTypingTarget(e.target)) {
         // Esc anywhere stops the answer (the canvas toolbar claims Esc first while drawing).
         onStop();
@@ -146,21 +169,21 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
 
   const hasText = text.trim().length > 0;
   const showChips = focused && !hasText && !busy && !blocked && !showTranscript && suggestions.length > 0;
-  const canTranscript = !!transcript && !busy && !hasText;
+  // Mid-answer the transcript follows the voice; after it, the finished answer. Never during an aside.
+  const shownLive = busy && mode !== 'aside' ? live ?? null : null;
+  const canTranscript = !hasText && (shownLive ? shownLive.sentences.length > 0 : !!transcript && !busy);
 
   return (
     <form
+      ref={formRef}
       className={`askbar${blocked ? ' is-blocked' : ''}`}
       onSubmit={(e) => { e.preventDefault(); submit(); }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); inputRef.current?.focus(); } }}
       onFocus={() => { if (!focused) onIntent?.(); setFocused(true); }}
       onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); }}
     >
-      {showTranscript && transcript && (
-        <section className="transcript" aria-label="Transcript" onMouseDown={(e) => e.stopPropagation()}>
-          <p className="transcript-q">{transcript.question}</p>
-          <p className="transcript-a">{transcript.answer}</p>
-        </section>
+      {showTranscript && canTranscript && (
+        <TranscriptPanel transcript={transcript} live={shownLive} bottom={capH ? capH + 10 : undefined} />
       )}
       {showChips && (
         <div className="askbar-chips" role="group" aria-label="Suggested questions">
@@ -208,6 +231,16 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
         autoComplete="off"
         spellCheck={false}
       />
+      {onTestYourself && !hasText && !busy && (
+        <button
+          type="button"
+          className="askbar-transcript askbar-test"
+          onClick={() => { setShowTranscript(false); onTestYourself(); }}
+          title="A question to check yourself on this answer"
+        >
+          Test yourself
+        </button>
+      )}
       {canTranscript && (
         <button
           type="button"

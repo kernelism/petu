@@ -42,6 +42,10 @@ describe('board capture', () => {
   });
   it('the scripts are canvas-only and find the board by its attribute', () => {
     expect(boardProbeScript).toContain(BOARD_SELECTOR);
+    // Layout C: a lane as tall as the document is clipped to the window (a huge clip hangs the screenshot).
+    const lane = { getBoundingClientRect: () => ({ x: 848, y: -188562, width: 544, height: 814855 }), clientLeft: 0, clientTop: 0, clientWidth: 544, clientHeight: 814855, scrollHeight: 814855, scrollTop: 0 };
+    const probe = new Function('document', 'innerHeight', `return ${boardProbeScript}`)({ querySelector: () => lane }, 900);
+    expect(probe).toEqual({ x: 848, y: 0, w: 544, h: 900, scrollHeight: 900, clientHeight: 900, scrollTop: 0 });
     for (const js of [stitchScript(['data:image/png;base64,AA'], [0], 600), downscaleScript('data:image/png;base64,AA')]) {
       expect(js).toContain('toDataURL'); expect(js).not.toMatch(/foreignObject/i);
     }

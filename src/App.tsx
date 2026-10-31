@@ -36,6 +36,7 @@ import { CanvasToolbar } from './ui/CanvasToolbar';
 import { BoardPen } from './ui/BoardPen';
 import { Caption, joinWords } from './ui/Caption';
 import { AskBar, type Transcript } from './ui/AskBar';
+import { heardSentences, sentenceAt, type LiveTranscript } from './ui/transcriptLive';
 import { dictationAvailable } from './agent/dictation';
 import { FollowPill } from './ui/FollowPill';
 import { OverviewPill } from './ui/OverviewPill';
@@ -346,7 +347,7 @@ function registryRows(reg: Registry): RegistryRow[] {
 /** An aside's state in the dock: its question, words so far, and how it stands. */
 type Aside = { question: string; words: string[]; state: 'thinking' | 'playing' | 'done' | 'error'; paused: boolean };
 /** One answer on the session trail: its header on the board and what replays it. */
-type TrailEntry = { num: string; question: string; title: string; page: number; script: string; grounding?: Grounding; head: TrailHead; check?: string; /** Asides asked during it (the session drawer lists them under it). */ asides?: string[]; /** How long it played (ms), once done. */ ms?: number };
+type TrailEntry = { num: string; question: string; title: string; page: number; script: string; grounding?: Grounding; head: TrailHead; check?: string; /** The check question it offered (done.check), offered again on a replay. */ offered?: string; /** Asides asked during it (the session drawer lists them under it). */ asides?: string[]; /** How long it played (ms), once done. */ ms?: number };
 /** A dev script's aside when it has none of its own (no API call on the demo path). */
 const asideFallback = (q: string) => `Here the side answer to "${q}" would play, with its own small drawing. Press Return to go back to the answer.`;
 
@@ -430,9 +431,21 @@ export default function App() {
   const typingPaused = useRef(false);
   /** The bar's moment (src/ui/barMode.ts): an answer has played; the last one closed on this question. */
   const [answered, setAnswered] = useState(false);
+  /**
+   * The answer's check question (p6.2: the model's hidden <check>, done.check; an older or tag-prompt
+   * answer that closed on a spoken question offers that one). Offered as a collapsed "Test yourself"
+   * chip; `checkOpen` once the student opens it: then it is pinned and the bar takes their answer.
+   */
   const [check, setCheck] = useState<string | null>(null);
+  const [checkOpen, setCheckOpen] = useState(false);
   const checkRef = useRef<string | null>(null);
-  checkRef.current = check;
+  checkRef.current = checkOpen ? check : null;
+  /** Dev learner steps open the check through this (they are defined before it). */
+  const openCheckRef = useRef<() => void>(() => {});
+  /** A new value focuses the ask bar (the check was opened). */
+  const [barFocus, setBarFocus] = useState(0);
+  /** The furthest word reached in the playing answer (a seek back keeps the transcript of what was heard). */
+  const heardRef = useRef(0);
   /** Point-to-ask: what the next question is about (a selection, a circled region). */
   const [pointed, setPointed] = useState<Pointed | null>(null);
   const pointedRef = useRef<Pointed | null>(null);
@@ -566,7 +579,9 @@ export default function App() {
 
   // An answer that closed on a check question: once its narration has gone, the question stays pinned in
   // the caption while the bar asks for the student's answer (F01); a reply, a new question or Esc ends it.
-  const pinCheck = !!check && !busy && !aside && !answerError && !captionVisible;
+  const pinCheck = !!check && checkOpen && !busy && !aside && !answerError && !captionVisible;
+  /** The chip: the answer has a check question, not yet opened. */
+  const offerCheck = !!check && !checkOpen && !busy && !aside && !answerError;
   const captionShown = captionVisible || pinCheck;
   // The viewer's visible area ends above the dock (the caption when it shows, else the ask bar), or,
   // stacked, above the board: no slide content under the dock, no sliver of a page between its parts.
@@ -635,6 +650,7 @@ export default function App() {
     partsRef.current = [];
     // An open check question belongs to the answer (and document) it closed; it never carries over.
     setCheck(null);
+    setCheckOpen(false);
   }, []);
 
   // ---------------------------------------------------------------------------------------------
@@ -736,6 +752,10 @@ export default function App() {
     const point = run.again ? null : pointedRef.current;
     setPointed(null);
     setCheck(null);
+    setCheckOpen(false);
+    heardRef.current = 0;
+    /** The model's hidden check question (done.check), offered once the answer ends. */
+    let offered: string | undefined = run.again?.offered;
     const moment = { ...(point ? { about: aboutContext(point) } : {}), ...(run.check ? { check: run.check } : {}) };
     // The session trail: this answer's header goes above its first section on the board.
     // The header is always what the student typed: after a check question they may answer it or ask
@@ -858,6 +878,7 @@ export default function App() {
       onNote: (m) => { if (DEBUG) { console.info('[ask] note:', m); setDebug((d) => ({ ...d, notes: [...(d.notes ?? []), m] })); } },
       onDone: (e) => {
         if (DEBUG) setDebug((d) => ({ ...d, done: e }));
+        if (e.check) { offered = e.check; entry.offered = e.check; }
         void agentRef.current.refreshSpend();
       },
       onCutOff: (m) => { cutOff = m; },
@@ -959,6 +980,7 @@ export default function App() {
         const idx = partAt(partsRef.current, words.length - 1);
         setPartIdx(idx);
         setSpokenN(words.length);
+        heardRef.current = Math.max(heardRef.current, words.length);
         setReached((r) => Math.max(r, idx));
         // The one wait cue: a faint ellipsis once these words are spoken and nothing new has come for 1.5 s.
         window.clearTimeout(pauseTimer.current);
@@ -990,8 +1012,10 @@ export default function App() {
         entry.grounding = groundingRef.current;
         if (spoken.length) setAnswered(true);
         if (st === 'done') {
-          // An answer that closes on a question to the student: the bar asks for their answer.
-          setCheck(cutOff == null ? closingQuestion(joinWords(spoken)) : null);
+          // A check question to offer ("Test yourself", collapsed): the model's hidden one (p6.2), else
+          // the spoken question an older or tag-prompt answer closed on.
+          setCheck(cutOff == null ? offered ?? closingQuestion(joinWords(spoken)) : null);
+          setCheckOpen(false);
           speak(spoken, true);
           if (toAgent && spoken.length) ag.history.push(q, spoken, page);
           if (cutOff != null || !spoken.length) {
@@ -1316,6 +1340,7 @@ export default function App() {
       if (st.asideDone != null) { await until(() => asideRef.current?.state === 'done'); await sleep(st.asideDone); }
       if (st.idle != null) { await until(() => !sessionRef.current && !asideRef.current); await sleep(st.idle); }
       if (st.ms != null) await sleep(st.ms);
+      if (st.openCheck) openCheckRef.current();
       if (st.type != null || st.ask != null) {
         // Typed into the bar: mid-answer, the first character pauses the answer.
         const text = (st.type ?? st.ask)!;
@@ -1520,7 +1545,16 @@ export default function App() {
   }, []);
   const onIntent = useCallback(() => { if (!DEMO_PATH) agentRef.current.intent(pageRef.current); }, []);
 
-  const dismissCheck = useCallback(() => setCheck(null), []);
+  /** × or Esc on the opened check: it is put away (the chip stays, to open again). */
+  const dismissCheck = useCallback(() => setCheckOpen(false), []);
+  /** The "Test yourself" chip: the question is pinned and the bar takes the student's answer. */
+  const openCheck = useCallback(() => {
+    clearHide();
+    setCaptionVisible(false);
+    setCheckOpen(true);
+    setBarFocus((n) => n + 1);
+  }, []);
+  openCheckRef.current = openCheck;
   // Esc between answers clears a failed answer's line (F18); the question stays in the bar to edit or resend.
   useEffect(() => {
     if (!answerError) return;
@@ -1590,7 +1624,13 @@ export default function App() {
       ...(aside ? { aside: { title: parts.length > 1 ? `Answer paused at ${curPart + 1}/${parts.length}` : 'Answer paused', onResume: closeAside } } : {}),
     }
     : undefined;
-  const mode = barMode({ busy, aside: !!aside, answered, check });
+  const mode = barMode({ busy, aside: !!aside, answered, check: checkOpen ? check : null });
+  // The transcript while the answer plays: the sentences heard so far, the one being spoken lit.
+  const liveWords = busy && !aside ? scriptRef.current?.words : undefined;
+  const liveSentences = liveWords && spokenN > 0 ? heardSentences(liveWords, heardRef.current) : null;
+  const live: LiveTranscript | null = liveSentences?.length && question
+    ? { question, sentences: liveSentences, current: sentenceAt(liveSentences, spokenN), onSeek: seekWord }
+    : null;
   const about = pointed ? { label: pointedLabel(pointed), ...(pointed.page != null ? { page: pointed.page } : {}) } : null;
 
   if (!doc) return <EmptyState onFile={openFile} onSample={openSample} error={loadError} />;
@@ -1655,6 +1695,7 @@ export default function App() {
           parts={partsView}
           error={answerError ? { message: answerError.message, onRetry: answerError.retry ? onRetry : undefined } : undefined}
           check={pinCheck ? check ?? undefined : undefined}
+          onDismissCheck={dismissCheck}
         />
         <AskBar
           onAsk={onAsk}
@@ -1667,9 +1708,12 @@ export default function App() {
           onTyping={onTyping}
           onResume={closeAside}
           onDismissCheck={dismissCheck}
+          onTestYourself={offerCheck ? openCheck : undefined}
+          focusSeq={barFocus}
           suggestions={(isSample || DEV_SCRIPT) && !captionVisible && !answered ? SUGGESTIONS : undefined}
           restore={restore}
-          transcript={captionVisible ? null : transcript}
+          transcript={transcript}
+          live={live}
           blocked={DEMO_PATH ? undefined : agent.blocked}
           onIntent={onIntent}
           dictation={dictationOn}

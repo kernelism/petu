@@ -32,6 +32,8 @@ export type DevStep = {
   zoom?: 'fit';
   /** Opens the shortcuts card (?). */
   shortcuts?: true;
+  /** Opens the answer's check question ("Test yourself" chip). */
+  openCheck?: true;
 };
 
 export const LEARNER_Q = {
@@ -95,8 +97,9 @@ export const LEARNER_SCRIPT = {
     { idle: 2500, circle: { page: 12, x: 284, y: 532, rx: 56, ry: 62 } },
     { ms: 600, type: LEARNER_Q.point },
     { ms: 5000, ask: LEARNER_Q.point },
-    // 6: the answer ended on a check question: the bar reads "Your answer…"; they reply.
-    { idle: 10000, ask: LEARNER_Q.reply },
+    // 6: the answer offers a check question ("Test yourself"); they open it, the bar reads "Your answer…"; they reply.
+    { idle: 3000, openCheck: true },
+    { ms: 7000, ask: LEARNER_Q.reply },
     // 7: what did we cover: zoom the board out to fit, and the shortcuts card.
     { idle: 2500, zoom: 'fit' },
     { ms: 800, shortcuts: true },

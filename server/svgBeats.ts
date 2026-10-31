@@ -11,6 +11,9 @@
  *    an id-less group;
  *  - wrappers the model may add around groups (`<svg …>`, `</svg>`, ``` fences, `{{svg}}`/`{{/svg}}`)
  *    are dropped.
+ *  - p6.2: the optional hidden check question after the last beat, `<check>…</check>`, is lifted out
+ *    (kept in `check`, sent with the `done` event): it is never spoken; the student may open it after
+ *    the answer ("Test yourself").
  * Narration passes through as it streams (only a possible marker start, `<…`, is held), so the student
  * hears beat 1 while its group is still being written: no silence waiting for the whole board.
  */
@@ -21,6 +24,8 @@ import { completeSvg, escapeSvg } from '../src/svgboard/wire.ts';
 export const GROUP_MAX = 20000;
 /** A plan never runs past this (an unclosed one ends at the first group). */
 export const SVG_PLAN_MAX = 4000;
+/** A check question is cut to this (it is never spoken, however long; an unclosed one runs to the end). */
+export const CHECK_MAX = 400;
 
 /** Elements that may stand at the top level of the board. */
 const ELEMENTS = 'g|defs|path|line|polyline|polygon|rect|circle|ellipse|text|marker|use';
@@ -41,7 +46,7 @@ export function boardOf(plan: string): SvgBoardSpec | null {
 
 export const svgboardTag = (b: SvgBoardSpec): string => `{{svgboard${b.w !== 1000 ? ` w=${Math.round(b.w)}` : ''} h=${Math.round(b.h)}${b.extend ? ' extend' : ''}}}`;
 
-type St = 'text' | 'plan' | 'el';
+type St = 'text' | 'plan' | 'el' | 'check';
 
 export class SvgBeatFilter extends ScriptFilter {
   private sbuf = '';
@@ -49,6 +54,9 @@ export class SvgBeatFilter extends ScriptFilter {
   private planBuf = '';
   private el = { name: '', depth: 0, text: '' };
   private opened = false;
+  private checkBuf = '';
+  /** The hidden check question (p6.2 `<check>…</check>`), if the model wrote one: never spoken. */
+  check: string | undefined;
   /** The board this answer opened (null until its plan or first group). */
   board: SvgBoardSpec | null = null;
   /** Ids of the groups sent, in order. */
@@ -91,6 +99,22 @@ export class SvgBeatFilter extends ScriptFilter {
         if (b && !this.opened) { this.board = b; this.opened = true; out += svgboardTag(b) + ' '; }
         continue;
       }
+      if (this.st === 'check') {
+        const close = this.sbuf.search(/<\/check\s*>/i);
+        if (close < 0 && !final) {
+          const keep = Math.min(this.sbuf.length, 9); // "</check>" may be split
+          this.checkBuf = (this.checkBuf + this.sbuf.slice(0, this.sbuf.length - keep)).slice(0, CHECK_MAX + 16); // never spoken, however long
+          this.sbuf = this.sbuf.slice(this.sbuf.length - keep);
+          return out;
+        }
+        this.checkBuf += close < 0 ? this.sbuf : this.sbuf.slice(0, close);
+        this.sbuf = close < 0 ? '' : this.sbuf.slice(close).replace(/^<\/check\s*>/i, '');
+        const q = this.checkBuf.replace(/\s+/g, ' ').trim().slice(0, CHECK_MAX);
+        if (q) this.check = q;
+        this.checkBuf = '';
+        this.st = 'text';
+        continue;
+      }
       if (this.st === 'el') {
         const r = this.scanEl(final);
         if (r === 'wait') return out;
@@ -112,13 +136,14 @@ export class SvgBeatFilter extends ScriptFilter {
         if (last && !/\s/.test(last)) { out += ' '; this.owedWs = true; }
         continue;
       }
+      if (/^<check\s*>/i.test(this.sbuf)) { this.sbuf = this.sbuf.replace(/^<check\s*>/i, ''); this.st = 'check'; continue; }
       const w = WRAPPERS.exec(this.sbuf);
       if (w) { this.sbuf = this.sbuf.slice(w[0].length); continue; }
       const m = OPEN.exec(this.sbuf);
       if (m && m.index === 0) { this.st = 'el'; this.el = { name: m[1].toLowerCase(), depth: 0, text: '' }; continue; }
       // Could it still become a marker? Wait for more text (bounded); else it is narration ("x < 3").
       if (!final && this.sbuf.length < 16 && !/[\s>]/.test(this.sbuf.slice(1)) ) return out;
-      if (!final && /^<(svg|plan|!--|\?xml|\/svg)/i.test(this.sbuf) && this.sbuf.length < 400) return out;
+      if (!final && /^<(svg|plan|check|!--|\?xml|\/svg)/i.test(this.sbuf) && this.sbuf.length < 400) return out;
       if (!final && /^```/.test(this.sbuf) && this.sbuf.length < 12 && !/\n/.test(this.sbuf)) return out;
       if (!final && /^\{\{\s*\/?s?v?g?\s*\}?$/i.test(this.sbuf)) return out;
       out += this.sbuf[0];

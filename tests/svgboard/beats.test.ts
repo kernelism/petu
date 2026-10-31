@@ -23,6 +23,21 @@ const wire = (raw: string, step: number) => {
 const actions = (s: string): RawAction[] => { const p = new ScriptParser(); return [...p.push(s), ...p.end()].flatMap((e) => (e.type === 'action' ? [e.action] : [])); };
 
 describe('svg beats: the server filter', () => {
+  it('p6.2: lifts the hidden check question out of the narration, whatever the chunking', () => {
+    const raw = 'The ferry points upstream. <plan>case\nBOARD viewBox="0 0 1000 400"\n</plan><g id="river"><text x="10" y="40" font-size="18">river</text></g> The river runs. So the aim beats the drift. <check>If the current\nran faster, could it still land at B?</check>';
+    for (const step of [1, 2, 5, 9, 1000]) {
+      const { out, f } = wire(raw, step);
+      expect(f.check, String(step)).toBe('If the current ran faster, could it still land at B?');
+      expect(out).not.toMatch(/check|could it/);
+      expect(out.trim().endsWith('beats the drift.')).toBe(true);
+    }
+    expect(wire('No question here. <g id="a"><text x="1" y="20" font-size="16">a</text></g> The a.', 3).f.check).toBeUndefined();
+    // Unclosed: never spoken, however long.
+    const { out, f } = wire(`Done. <check>${'why '.repeat(200)}`, 7);
+    expect(out).not.toMatch(/why/);
+    expect(f.check!.length).toBeLessThanOrEqual(400);
+  });
+
   for (const ex of SVG_EXAMPLES) {
     it(`wire form is chunk-independent and lifts plan + groups (${ex.title.slice(0, 30)})`, () => {
       const a = wire(ex.script, 1000000).out;

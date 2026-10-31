@@ -157,7 +157,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.1');
+    expect(PROMPT_VERSION).toBe('p6.2');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -200,6 +200,21 @@ describe('system prompt (svg, default)', () => {
     for (const p of [/great teacher at a whiteboard/, /Draw the mechanism, not names/, /ONE concrete case/, /real numbers you compute/, /reads on its own/, /beats are your budget/,
       /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 1000 H"/, /regions:/, /groups:/, /<g id=/, /drawing first/, /draws across its sentences/, /draws on the word that names it/, /Start speaking at once/, /data-fn=/, /data-val=/, /data-at=/, /data-const=/, /\{\{tween /, /data-ghost/, /data-trace/, /BUDGET line/, /Never write on the board what you say/,
       /No scripts, foreignObject/, /font-size 16/, /one accent colour/, /Nothing overlaps/, /inside the viewBox/, /BOARD extend/, /ghost/]) expect(s).toMatch(p);
+  });
+
+  it('p6.2: the narration ends on the takeaway; a check question is optional and hidden (<check>), never spoken', () => {
+    expect(s).toMatch(/end on the takeaway, never on a question/);
+    expect(s).toMatch(/<check>[^<]+<\/check>/);
+    expect(s).toMatch(/never spoken/);
+    expect(s).toMatch(/leave it out/);
+    expect(s).not.toMatch(/ending on a short question|asked of the student/);
+    // The examples show both: a check where the case has a twist to work out, none where it doesn't.
+    expect(SVG_EXAMPLES.filter((e) => /<check>/.test(e.script)).length).toBe(1);
+    for (const ex of SVG_EXAMPLES) {
+      const narration = ex.script.replace(/<check>[\s\S]*?<\/check>/, '').trim();
+      expect(narration.endsWith('?'), ex.title).toBe(false);
+      if (/<check>/.test(ex.script)) expect(ex.script.trim()).toMatch(/<\/check>$/); // after the last beat
+    }
   });
 
   it('covers the answer situations beyond a single question', () => {
@@ -260,7 +275,7 @@ describe('system prompt (svg, default)', () => {
       }
     });
 
-    it('points at the page with tags that parse and quote listed text, and ends on a question to the student', () => {
+    it('points at the page with tags that parse and quote listed text, and ends on the takeaway (p6.2: any check is hidden)', () => {
       const tags = [...ex.script.matchAll(/\{\{([^}]*)\}\}/g)].map((m) => m[1]);
       expect(tags.length).toBeGreaterThan(0);
       for (const t of tags) {
@@ -268,7 +283,8 @@ describe('system prompt (svg, default)', () => {
         const q = /"([^"]+)"/.exec(t)?.[1];
         if (q) expect(ex.listing, q).toContain(q);
       }
-      expect(ex.script.trim()).toMatch(/\?$/);
+      const spoken = ex.script.replace(/<check>[\s\S]*?<\/check>/, '').trim();
+      expect(spoken).toMatch(/\.$/);
       expect(ex.script.slice(ex.script.lastIndexOf('</g>'))).not.toMatch(/<g/);
     });
   });
