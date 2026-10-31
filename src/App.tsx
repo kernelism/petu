@@ -1686,14 +1686,17 @@ export default function App() {
     c.board = null;
     c.marks = null;
     if (board && d) {
-      void d.putBoard(board).then(() => {
+      void d.putBoard(board).then(async () => {
         if (convRef.current !== c) return;
         // The page it was left on is framed again and is the page in view (a follow-up is asked on it, not
         // on the page the last question left the viewer on); the lane's drawings sit beside it. The split
-        // board scrolls to its latest answer.
-        if (left) void viewerRef.current?.scrollToPage(left.page);
+        // board scrolls to its latest answer. The lane places its groups once that page is laid out: put
+        // back while the viewer was elsewhere, their page anchors resolved to the sheet's top and the
+        // board sat out of view until the next layout pass (2026-10-31).
+        if (left) await viewerRef.current?.scrollToPage(left.page);
+        if (convRef.current !== c) return;
         const head = [...c.entries].reverse().map((e) => e.head).find((h) => h?.el.isConnected);
-        if (head && !d.state().lane) void d.showHead(head.el);
+        if (head) void d.showHead(head.el);
       });
     }
     setConvTick((n) => n + 1);
