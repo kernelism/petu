@@ -600,15 +600,15 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const svgf = isSvgMode(cfg.promptVariant) ? new SvgBeatFilter(now0) : null;
   const filter = svgf ?? new ScriptFilter(), lint = new Lint();
   const read = newRead();
-  let outChars = 0, ttft = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
+  let outChars = 0, ttft = NaN, firstWord = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
   let sent = false, terminal = false, complete = false, idle = false, script = '', raw = '';
   // EXPERIMENT: a board-first script's declared elements are held until the narration names them.
   const bf = cfg.promptVariant === 'boardfirst' ? new BoardFirst() : null;
   const send = (s: string) => { if (bf) { raw += s; s = bf.push(s); } emitText(s); };
-  const emitText = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; script += s; if (Number.isNaN(ttft)) ttft = now() - t0; emit({ t: 'text', d: s }); };
+  const emitText = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; script += s; if (Number.isNaN(ttft)) ttft = now() - t0; if (Number.isNaN(firstWord) && spoken(s)) firstWord = now() - t0; emit({ t: 'text', d: s }); };
   // Every answer leaves a record, a failed one too (the failures are the ones worth reading).
   const record = (usd: number) => {
-    try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
+    try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), firstWordMs: Math.round(firstWord), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
   };
   try {
     let res: Response | null = null;
@@ -679,6 +679,13 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   emit({ t: 'done', usage, usd, estimated, spentUsd: s.totalUsd, capUsd: s.capUsd, ttftMs: Math.round(ttft), plan: filter.plan || undefined, ...(svgf?.check ? { check: svgf.check } : {}), lint: lint.notes.length ? lint.notes : undefined });
   if (failed) emit({ ...failed, code: 'cut_off', message: 'The answer was cut off.' });
 }
+
+/**
+ * Whether a piece of the cleaned script holds a spoken word (not only tags or whitespace): stage 2's
+ * first one is what ends the silence after the opener (answers.jsonl `svg.firstWordMs`; ttftMs is often
+ * the board tag or a group).
+ */
+export const spoken = (s: string): boolean => /[\p{L}\p{N}]/u.test(s.replace(/\{\{[\s\S]*?\}\}/g, ' '));
 
 /** What reading one upstream stream produced (readUpstream). */
 export type UpstreamRead = { usage?: Usage; terminal: boolean; complete: boolean; idle: boolean; rawChars: number; failed?: string;

@@ -777,3 +777,12 @@ describe('Lessons v3: two stages', () => {
     expect(JSON.parse(String(calls[0].init.body)).input).toHaveLength(2);
   });
 });
+
+describe('spoken (answers.jsonl svg.firstWordMs)', () => {
+  it('a piece with a word counts; tags and whitespace alone do not', async () => {
+    const { spoken } = await import('../../server/openai');
+    expect(spoken('{{svgboard h=700}}  ')).toBe(false);
+    expect(spoken('{{svg <g id="a"><text x="1" y="2">label</text></g>}} ')).toBe(false);
+    expect(spoken('{{highlight p=2 "x"}} The')).toBe(true);
+  });
+});
