@@ -1,14 +1,16 @@
 // server/plugin.ts — the petu API as Vite dev-server middleware (`apply: 'serve'`, localhost only).
 //
 //   POST /api/ask              AskRequest → NDJSON AskEvents (with an opener and the storyboard on: the
-//                              lesson design first — a `storyboard` event — then stage 2 performing it)
+//                              lesson design first — a `storyboard` event — then stage 2 performing it).
+//                              `quality: 'standard' | 'best'` picks the answer model (server/quality.ts);
+//                              400 for any other value, or for 'best' without the Anthropic key
 //   POST /api/scout            ScoutRequest → NDJSON ScoutEvents (stage 1, streamed: opener sentences,
 //                              then the verdict: pages in teaching order + plan, then the cost; any
 //                              failure falls back to the visible page, never an error status)
 //   POST /api/prewarm          { context } → { ok, usd, reason? }: the answer's prefix (deduped per
 //                              docHash+page for 25 min) and the scout's (per digest)
 //                              { scope: 'system' } → the shared system block (document open; ≤ 1 per 11.5h)
-//   GET  /api/spend            → SpendSummary (+ phase, phaseCapUsd, byPhase, byModel, n)
+//   GET  /api/spend            → SpendSummary (+ phase, phaseCapUsd, byPhase, byModel, n, best: whether Best can run)
 //   POST /api/judge            eval only; header x-petu-eval: <.petu/eval-token> → JudgeResult
 //   POST /api/repair           RepairWire → NDJSON RepairWireEvents (the live gate's replacement beat for
 //                              an answer's failed unit, server/repair.ts); 404 unknown reqId, 429 past
@@ -44,6 +46,7 @@ import { routeReport } from './report';
 import { RepairCache, repair } from './repair';
 import { VoiceLine, routeVoice, validateVoice } from './voice';
 import { mintSttToken } from './stt';
+import { answerConfig, isQuality } from './quality';
 import type { RepairWire, RepairWireEvent } from '../src/agent/protocol';
 import { isRelation } from '../src/agent/context/memory';
 
@@ -100,7 +103,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   };
 
   const statusLine = () =>
-    `petu: model ${env.model.model}/${env.model.effort} · spent $${ledger.spent().toFixed(2)} of $${env.caps.totalUsd} · phase ${env.phase}${env.key ? '' : ' · no OPENAI_API_KEY in .env'}${env.model.model.startsWith('claude-') && !env.anthropicKey ? ' · no PETU_ANTHROPIC_KEY (answers will refuse)' : ''}`;
+    `petu: model ${env.model.model}/${env.model.effort} · spent $${ledger.spent().toFixed(2)} of $${env.caps.totalUsd} · phase ${env.phase}${env.best ? ` · best ${env.best.model}/${env.best.effort}` : ''}${env.key ? '' : ' · no OPENAI_API_KEY in .env'}${env.model.model.startsWith('claude-') && !env.anthropicKey ? ' · no PETU_ANTHROPIC_KEY (answers will refuse)' : ''}`;
 
   async function handle(req: IncomingMessage, res: ServerResponse, next: Next): Promise<void> {
     const path = (req.url ?? '').split('?')[0];
@@ -135,6 +138,8 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     if (body === undefined) return;
     const bad = validateAsk(body) ?? (body.phase != null && body.phase !== env.phase ? `phase "${String(body.phase)}" ≠ server phase "${env.phase}" (start the server with PETU_PHASE=${String(body.phase)})` : null);
     if (bad) return json(res, 400, badRequest(bad));
+    const picked = answerConfig(env, body.quality);
+    if ('error' in picked) return json(res, 400, badRequest(picked.error));
     res.statusCode = 200;
     res.setHeader('content-type', 'application/x-ndjson; charset=utf-8');
     res.setHeader('cache-control', 'no-store');
@@ -146,7 +151,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     res.on('close', onClose);
     const emit = (e: AskEvent) => { if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify(e) + '\n'); };
     try {
-      await ask(body as AskRequest, env.model, deps, emit, ctl.signal, env.storyboard);
+      await ask(body as AskRequest, picked.cfg, deps, emit, ctl.signal, env.storyboard);
     } finally {
       res.off('close', onClose);
       if (!res.writableEnded && !res.destroyed) res.end();
@@ -269,7 +274,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
       + (env.storyboard ? worstCaseUsd(env.storyboard.model, TYPICAL_INPUT_TOKENS, env.storyboard.maxOutput, env.storyboard.fast) : 0);
     const refusal = ledger.check(env.phase, worst);
     // Which keys the server has (booleans only), so a runner can refuse a config before spending on scouts.
-    return json(res, 200, { ...s, phase: env.phase, phaseCapUsd: env.caps.phaseUsd?.[env.phase], model: env.model.model, keys: { openai: !!env.key, anthropic: !!env.anthropicKey }, ...(refusal ? { blocked: refusal.message, blockedCode: refusal.code } : {}) });
+    return json(res, 200, { ...s, phase: env.phase, phaseCapUsd: env.caps.phaseUsd?.[env.phase], model: env.model.model, keys: { openai: !!env.key, anthropic: !!env.anthropicKey }, best: !!env.best, ...(refusal ? { blocked: refusal.message, blockedCode: refusal.code } : {}) });
   }
 
   async function routeJudge(req: IncomingMessage, res: ServerResponse) {
@@ -427,6 +432,7 @@ export function validateAsk(b: any): string | null {
   if (!isStr(b.question) || !b.question.trim() || b.question.length > 2000) return 'question must be 1–2,000 characters';
   if (!Array.isArray(b.history) || b.history.length > 3) return 'history must be an array of at most 3';
   if (!b.history.every((h: any) => h && isStr(h.q) && isStr(h.a) && isInt(h.page))) return 'history items need { q, a, page }';
+  if (b.quality != null && !isQuality(b.quality)) return 'quality must be standard | best';
   return validateContext(b.context);
 }
 

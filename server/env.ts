@@ -16,6 +16,7 @@ import type { Caps, Phase } from './ledger';
 import type { Effort, ModelConfig } from './openai';
 import { ANTHROPIC_NO_NONE, isAnthropicModel } from './anthropic';
 import { VARIANT_NAMES } from './prompt/variants/index';
+import { bestConfig } from './quality';
 
 /** The $60 hard stop (prior spike spend included; $40 until 2026-10-28). PETU_TOTAL_CAP_USD may only lower it. */
 export const MAX_TOTAL_USD = HARD_STOP_USD;
@@ -74,6 +75,8 @@ export type PetuEnv = {
   /** SPEECHMATICS_API_KEY ('' when unset: the mic button says dictation is not set up). Server-side only: the browser gets short-lived keys. */
   speechmaticsKey: string;
   model: ModelConfig;
+  /** Answer quality "Best" (server/quality.ts): Opus at effort low; null without the Anthropic key. */
+  best: ModelConfig | null;
   /** Stage 1 (scout): a fast model at no reasoning; JSON out. */
   scout: ModelConfig;
   /** The lesson designer between the scout and stage 2; null when PETU_STORYBOARD=0. */
@@ -154,11 +157,14 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   const pdfDirs = (dirs ? dirs.split(',') : [join(opts.home, 'Documents/670/contents'), join(opts.root, 'public/dev')])
     .map((s) => s.trim()).filter(Boolean).map(expand);
 
+  const anthropicKey = anthropicKeyOf(opts.fileEnv);
+  const answer: ModelConfig = { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(promptVariant ? { promptVariant } : {}), ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) };
   return {
     key: get('OPENAI_API_KEY')?.trim() ?? '',
-    anthropicKey: anthropicKeyOf(opts.fileEnv),
+    anthropicKey,
     speechmaticsKey: get('SPEECHMATICS_API_KEY')?.trim() ?? '',
-    model: { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(promptVariant ? { promptVariant } : {}), ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) },
+    model: answer,
+    best: anthropicKey ? bestConfig(answer, DEFAULT_MAX_OUTPUT_REASONING) : null,
     scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, fast: str('PETU_SCOUT_FAST') === '1', explicitCache },
     storyboard: storyOn ? { model: storyModel, effort: storyEffort, maxOutput: STORYBOARD_MAX_OUTPUT, fast: false, explicitCache, ...(str('PETU_STORYBOARD_TIMEOUT_MS') ? { timeoutMs: num('PETU_STORYBOARD_TIMEOUT_MS', 12_000) } : {}) } : null,
     repair: repairOn ? { model, effort: repairEffort, maxOutput: REPAIR_MAX_OUTPUT, fast: str('PETU_FAST') === '1', explicitCache } : null,
