@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { budgetNote, budgetOf, planBeats, scopeOf, BEAT_WORDS, CHECK_WORDS, WORDS_PER_SEC, SCOPE_SECONDS } from '../../src/agent/pacing';
+import { budgetNote, budgetOf, planBeats, scopeOf, BEAT_WORDS, CHECK_WORDS, SCOPE_BEATS, WORDS_PER_SEC, SCOPE_SECONDS } from '../../src/agent/pacing';
 
 // Verbatim plans from live Opus p6.0 answers (runs 2026-10-29-claude-opus-low-ask-p6.0-q2-ae05d5d6{-2,-3}).
 const GRAVITY = 'Distinguish the real Earth’s layered density from a uniform-density model; outer spherical shells exert no net force inside. Grow a cutaway Earth with a point moving inward: cancel the surrounding shells, shrink the enclosed sphere, then show that in a uniform model g(r)=g(surface)r/R, reaching zero at the center. Note real gravity can initially increase slightly below the surface. 1. Draw surface and inward point; 2. Cancel outer shells, mark enclosed mass; 3. Plot uniform-model strength against radius; 4. Check gravity at the center. Scope: narrow';
@@ -34,14 +34,16 @@ describe('pacing: the plan read as a length budget', () => {
     expect(b.words).toBeGreaterThanOrEqual(CHECK_WORDS + 7 * 20);
   });
 
-  it('a plan with more beats than its scope holds gets the words its beats need, and a cap in proportion (a redo covers every part)', () => {
+  it('a plan with more beats than its scope holds gets BEAT_WORDS more per beat beyond, and a cap in proportion (a redo covers every part)', () => {
     const four = budgetOf('Redo. 1. a; 2. b; 3. c; 4. check. Scope: standard')!;
     const seven = budgetOf('Redo every part. 1. a; 2. b; 3. c; 4. d; 5. e; 6. f; 7. check. Scope: standard')!;
-    expect(four.words).toBe(Math.round(SCOPE_SECONDS.standard.target * WORDS_PER_SEC));
-    expect(seven.words).toBe(CHECK_WORDS + 6 * BEAT_WORDS);
-    expect(seven.words).toBeGreaterThan(four.words);
-    expect(seven.wordsPerBeat).toBe(BEAT_WORDS);
-    expect(seven.capWords).toBeGreaterThanOrEqual(Math.round(seven.words * (SCOPE_SECONDS.standard.cap / SCOPE_SECONDS.standard.target)));
+    const st = SCOPE_SECONDS.standard;
+    expect(four.words).toBe(Math.round(st.target * WORDS_PER_SEC));
+    expect(seven.words).toBe(Math.round(st.target * WORDS_PER_SEC) + (7 - SCOPE_BEATS.standard) * BEAT_WORDS);
+    expect(seven.capWords).toBe(Math.round(st.cap * WORDS_PER_SEC) + Math.round((7 - SCOPE_BEATS.standard) * BEAT_WORDS * (st.cap / st.target)));
+    // The founder's broad nine-beat redo (lec06 2026-10-31): 376 spoken words no longer cut at the last part.
+    const nine = budgetOf('Beats: 1) a; 2) b; 3) c; 4) d; 5) e; 6) f; 7) g; 8) h; 9) check. Scope: broad', 'word '.repeat(35))!;
+    expect(nine.capWords).toBeGreaterThanOrEqual(376 - 35);
     // A narrow plan within its scope is unchanged: the founder's 30–60 s.
     expect(budgetOf(GRAVITY)!.words).toBe(Math.round(SCOPE_SECONDS.narrow.target * WORDS_PER_SEC));
   });
