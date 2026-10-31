@@ -111,6 +111,8 @@ export type ElementPlan = {
   bbox: SRect;
   /** A connector's second end: both ends are framed together (rule 3). */
   also?: { target: Target; bbox: SRect };
+  /** The element it draws, when it is one (an svg board group): the lane's walk moves it beside its page. */
+  el?: Element;
   /** Draws and resolves when the ink has landed. A string is a skip reason. Aborting completes it at once. */
   draw(signal: AbortSignal, k: Pace): Promise<string | void>;
 };
@@ -153,7 +155,7 @@ export interface DeskApi {
   /** A section's content spans x0–x1 (units): shift the whole group to centre it in the board. */
   centreRegion?(id: string, x0: number, x1: number): void;
   /** Ink is landing at this target-space rect: later page framing keeps it in view when it fits. */
-  noteInk?(t: Target, r: SRect): void;
+  noteInk?(t: Target, r: SRect, el?: Element): void;
   /** A page region as an image (a lift): see DeskHost.crop. */
   pageImage?(page: number, r: { x: number; y: number; w: number; h: number }, pxW: number): Promise<string | null>;
   /** The answer has ended: a scene it drew in is shown whole (Board v2 overview). */

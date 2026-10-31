@@ -9,7 +9,7 @@ import { routeGutter, maskBlocker } from './route';
 import { boardLayout, bodyPx, fitZoom, laneFrame, pageAt, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, cropSpanX, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
 import { BOARD_HEAD, boardPad, MIN_TEXT_PX, SECTION_W, TEXT_UNITS } from './layout';
-import { dockTop, FOLDED_H, LANE_PAD, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, visibleLane, wantFor, zoomedInsets } from './lane';
+import { dockTop, FOLDED_H, LANE_PAD, LEADER_INSET, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, visibleLane, walkSplit, wantFor, zoomedInsets } from './lane';
 import { camFor, overviewCam, type Cam } from './scene/camera';
 
 export type { DeskHost } from './types';
@@ -62,7 +62,20 @@ type Group = {
   pen?: { top: number; h: number } | null; stick?: number | null;
   /** Its sticky insets on screen while it plays (window px; `stick` converts them under the overview zoom). */
   ins?: { top: number; bottom: number } | null;
+  /**
+   * A finished stretch of a walking svg board (the walk, below): a still copy of the groups drawn while
+   * the narration was on one page, shown from `y0` to `y1` (section units of `src`), beside that page.
+   */
+  slice?: { el: HTMLDivElement; src: Section; y0: number; y1: number };
+  /** The slices this answer's walk left behind, oldest first (they fold away with it). */
+  slices?: Group[];
+  /** A slice folded away with its answer's card (no height, no leader). */
+  away?: boolean;
 };
+/** One svg group of the playing answer, in draw order, and the page point it explains (its first page mark). */
+type WalkStep = { sec: Section; r: SRect; el: Element | null; anchor: Group['anchor'] | null };
+/** Air (section units) above and below a stretch of a walking board. */
+const WALK_PAD = 16;
 /** The docking glide at an answer's end (spec §5.2 rule 5). */
 const DOCK_MS = 300;
 /** The comfort band's top: the lane's live item sticks this far below the window top (under the chrome row). */
@@ -153,6 +166,12 @@ export class Desk implements DeskApi {
   /** Layout C: the lane's groups, oldest first, and the one this answer draws into. */
   private groups: Group[] = [];
   private liveGroup: Group | null = null;
+  /**
+   * Layout C, the walk: an answer whose svg board explains several pages leaves each stretch of it beside
+   * the page it explains. Its groups in draw order; `walkFrom`: the first one the live drawing still shows.
+   */
+  private walk: WalkStep[] = [];
+  private walkFrom = 0;
   private leaders: SVGSVGElement;
   /** Layout C: the pen's column (the dock follows it): the page, or the lane once the answer draws there. */
   private penLane = false;
@@ -284,6 +303,7 @@ export class Desk implements DeskApi {
           if (old.group) (old.group.parts ??= []).push(h.el);
           (this.lane() && old.group ? old.group.item : this.content).appendChild(h.el);
         }
+        if (old.group?.slices) this.unwalk(old);
         if (old.y0 !== 0 || old.y1 !== old.full || old.xw != null) { this.uncrop(old); this.position(); }
         this.pen({ t: { region: spec.id }, r: WHOLE_REGION });
         if (this.lane() && old.group) { this.relive(old.group); this.open = true; this.position(); }
@@ -368,11 +388,13 @@ export class Desk implements DeskApi {
   /** A section's content needs `h` units (kit blocks stacked past 700): it grows, never shrinks. */
   growRegion(id: string, h: number): void {
     const sec = this.ids.get(id);
-    if (!sec || sec.scene || !(h > sec.full) || sec.y0 !== 0 || sec.y1 !== sec.full) return;
+    // A walking svg board shows its canvas from its stretch's top (showFrom): it grows below it too.
+    const walking = this.lane() && sec?.svg && sec.group?.live && !!sec.group.slices?.length;
+    if (!sec || sec.scene || !(h > sec.full) || (sec.y0 !== 0 && !walking) || sec.y1 !== sec.full) return;
     // Kit content stops at four sections' height; an svg board grows as tall as its canvas (else its lower
     // groups would sit past the board's scroll range, never brought into view).
     sec.full = sec.y1 = Math.ceil(sec.svg ? h : Math.min(h, 4 * REGION_H));
-    sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 0 ${REGION_W} ${sec.full}`));
+    sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 ${sec.y0} ${REGION_W} ${sec.full - sec.y0}`));
     this.position();
   }
 
@@ -399,9 +421,10 @@ export class Desk implements DeskApi {
     return this.host.crop?.(page, r, pxW) ?? Promise.resolve(null);
   }
 
-  noteInk(t: Target, r: SRect): void {
+  noteInk(t: Target, r: SRect, el?: Element): void {
     if (t.region != null) {
       const sec = this.ids.get(t.region);
+      if (sec?.svg && sec.group?.live && sec.group === this.liveGroup && !this.asideOpen && this.lane()) this.walkStep(sec, r, el ?? null);
       const m = sec && this.midHeads.find((x) => x.sec === sec && x.y == null);
       if (m && sec) {
         // The follow-up's first new group: its header lands right above it, in view with it.
@@ -422,6 +445,7 @@ export class Desk implements DeskApi {
     if (this.inked.length > 8) this.inked.length = 8;
     const g = this.liveGroup;
     if (!g || !this.lane()) return;
+    if (this.walkOn(g, { page: t.page, y: r.y + Math.min(r.h, 40) / 2 })) return;
     if (g.provisional) {
       // The answer's first page mark: the drawing moves level with the passage it explains (one glide).
       g.provisional = false;
@@ -432,6 +456,97 @@ export class Desk implements DeskApi {
       this.glideFrom(g, from);
     }
     this.liveLane();
+  }
+
+  /** The walk: an svg group of the playing answer starts drawing (its page is the first mark made after it). */
+  private walkStep(sec: Section, r: SRect, el: Element | null) {
+    // An empty group draws nothing (its box is the whole canvas): it explains no page.
+    if (el && !el.querySelector('*')) return;
+    this.walk.push({ sec, r, el, anchor: null });
+    // The live drawing shows its stretch from its top: a group drawn above it widens the view.
+    if (sec.y0 > 0 && r.y - WALK_PAD < sec.y0) { this.showFrom(sec, Math.max(0, r.y - WALK_PAD)); this.position(); }
+  }
+
+  /**
+   * A page mark while the answer plays. The svg groups begun since the last mark explain this mark's
+   * page. When that page differs from the page the drawing's earlier groups explain, those earlier
+   * groups stay behind beside their page (a still slice of the board, docked there with its leader) and
+   * the live drawing goes on beside this one, showing only what it draws from here: a multi-page answer
+   * reads as a walk through the pages. True when the drawing moved.
+   */
+  private walkOn(g: Group, mark: Group['anchor']): boolean {
+    const steps = this.walk.map((w) => (w.sec.group === g ? w : null));
+    const { placed, runs: idx, at } = walkSplit(steps.map((w) => (w ? w.anchor?.page ?? null : -1)), this.walkFrom, mark.page);
+    for (const i of placed) this.walk[i].anchor = mark;
+    if (!idx || !placed.length) return false;
+    const fresh = placed.map((i) => this.walk[i]), sec = fresh[0].sec;
+    const runs = idx.map((r) => r.map((i) => this.walk[i]).filter((w) => w.sec === sec)).filter((r) => r.length);
+    const done = runs.flat();
+    if (!done.length) return false;
+    const k = this.laneScale(sec);
+    // Each run of groups on one page becomes a slice, placed before the live group (earlier groups never move).
+    const made: { g: Group; from: number }[] = [];
+    for (const run of runs) {
+      const y0 = Math.max(0, Math.min(...run.map((w) => w.r.y)) - WALK_PAD), y1 = Math.min(sec.full, Math.max(...run.map((w) => w.r.y + w.r.h)) + WALK_PAD);
+      const sl = this.sliceOf(g, sec, run, y0, y1);
+      if (sl) made.push({ g: sl, from: sec.el.getBoundingClientRect().top + (y0 - sec.y0) * k });
+    }
+    for (const w of done) if (w.el instanceof SVGElement) w.el.style.visibility = 'hidden';
+    this.walkFrom = at;
+    const from = g.item.getBoundingClientRect().top;
+    this.showFrom(sec, Math.max(0, Math.min(...fresh.map((w) => w.r.y)) - WALK_PAD));
+    g.anchor = mark;
+    g.marked = true;
+    g.provisional = false;
+    this.position();
+    for (const m of made) this.glideFrom(m.g, m.from);
+    this.glideFrom(g, from);
+    this.liveLane();
+    return true;
+  }
+
+  /** The live svg section shows its canvas from `y0` down (units): the stretch it is drawing now. */
+  private showFrom(sec: Section, y0: number) {
+    sec.y0 = y0;
+    sec.y1 = sec.full;
+    sec.el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 ${y0} ${REGION_W} ${sec.full - y0}`));
+  }
+
+  /** A still copy of `run` (groups of `sec`), cropped to y0–y1, as a docked lane group beside the run's page. */
+  private sliceOf(owner: Group, sec: Section, run: WalkStep[], y0: number, y1: number): Group | null {
+    const keep = new Set(run.map((w) => w.el).filter((e): e is Element => !!e));
+    const root = sec.layers.agent.querySelector(':scope > svg[data-svgboard]');
+    if (!root || !keep.size) return null;
+    const tops = [...root.children].filter((c) => c.tagName.toLowerCase() === 'g');
+    tops.forEach((c, i) => c.setAttribute('data-walk', String(i)));
+    const el = sec.el.cloneNode(true) as HTMLDivElement;
+    const want = new Set(tops.flatMap((c, i) => (keep.has(c) ? [String(i)] : [])));
+    tops.forEach((c) => c.removeAttribute('data-walk'));
+    el.removeAttribute('data-id');
+    el.classList.add('is-slice');
+    el.querySelectorAll('svg[data-svgboard] > g[data-walk]').forEach((c) => { if (!want.has(c.getAttribute('data-walk')!)) c.remove(); else { c.removeAttribute('data-walk'); (c as SVGElement).style.visibility = ''; } });
+    el.querySelectorAll('svg:not([data-svgboard])').forEach((svg) => svg.setAttribute('viewBox', `0 ${y0} ${REGION_W} ${y1 - y0}`));
+    const div = (cls: string) => { const e = document.createElement('div'); e.className = cls; return e; };
+    const gel = div('lane-group'), spacer = div('lane-spacer'), item = div('lane-item');
+    gel.append(spacer, item);
+    item.appendChild(el);
+    const leader = this.leaders.appendChild(document.createElementNS(SVG, 'g')) as SVGGElement;
+    const anchor = run[0].anchor!;
+    const g: Group = { el: gel, spacer, item, leader, secs: [], head: null, anchor, marked: true, lift: 0, top: 0, h: 0, live: false, folded: false, thumb: null, slice: { el, src: sec, y0, y1 } };
+    // The drawing's top sits level with the passage (as an answer's first section does under its head).
+    g.lift = Math.min(LEADER_INSET + 8, ((y1 - y0) * this.laneScale(sec)) / 2);
+    this.content.insertBefore(gel, owner.el);
+    this.groups.splice(this.groups.indexOf(owner), 0, g);
+    (owner.slices ??= []).push(g);
+    return g;
+  }
+
+  /** A walked board drawn into again (a follow-up extends it): its slices go and the whole canvas shows again. */
+  private unwalk(sec: Section) {
+    const g = sec.group;
+    for (const sl of g?.slices ?? []) { sl.el.remove(); sl.leader.remove(); this.groups.splice(this.groups.indexOf(sl), 1); }
+    if (g) delete g.slices;
+    sec.layers.agent.querySelectorAll<SVGElement>(':scope > svg[data-svgboard] > g').forEach((c) => { c.style.visibility = ''; });
   }
 
   /** A FLIP glide of a group's item from its old screen top to where it is now (DOCK_MS; none under reduced motion). */
@@ -578,6 +693,8 @@ export class Desk implements DeskApi {
     this.liveGroup = null;
     if (this.lane()) { for (const g of this.groups) this.fold(g, true); this.penLane = false; this.position(); }
     this.inked = [];
+    this.walk = [];
+    this.walkFrom = 0;
     this.follow.setAnswering(true);
     this.ids.clear();
     this.last = null;
@@ -716,6 +833,8 @@ export class Desk implements DeskApi {
     const goneGroups = this.groups.map((g) => g.el);
     this.groups = [];
     this.liveGroup = null;
+    this.walk = [];
+    this.walkFrom = 0;
     this.penLane = false;
     this.leaders.replaceChildren();
     if (this.lane()) {
@@ -1268,6 +1387,7 @@ export class Desk implements DeskApi {
   private fold(g: Group, on: boolean) {
     if (g.live || !g.head || g.folded === on) return;
     g.folded = on;
+    for (const sl of g.slices ?? []) sl.away = on;
     g.el.classList.toggle('is-folded', on);
     if (on && !g.thumb) {
       const ink = g.secs[0]?.el.querySelector('.desk-region-ink');
@@ -1358,8 +1478,17 @@ export class Desk implements DeskApi {
       if (hd) Object.assign(hd.el.style, { left: '', top: '', width: `${cw - (hd.aside ? 24 : 0)}px`, height: `${hd.h}px`, marginLeft: `${LANE_PAD + (hd.aside ? 24 : 0)}px` });
     }
     for (const s of this.sections) if (s.scene) this.applyCam(s);
-    for (const g of this.groups) g.h = g.folded ? FOLDED_H : g.item.offsetHeight;
-    const tops = packLane(this.groups.map((g) => ({ want: g.live && g.lift === (g.head ? g.head.offsetHeight : 0) + 8 ? wantFor(this.anchorY(g.anchor), g.lift - 8) : this.anchorY(g.anchor) - g.lift, h: g.h })));
+    // A walk's slices: the width and scale of the board they were cut from.
+    for (const g of this.groups) {
+      if (!g.slice) continue;
+      const { el, src, y0, y1 } = g.slice, k = this.laneScale(src), w = REGION_W * k;
+      Object.assign(el.style, { left: '', top: '', width: `${w}px`, height: `${(y1 - y0) * k}px`, marginLeft: `${LANE_PAD + Math.max(0, (cw - w) / 2)}px` });
+      g.el.classList.toggle('is-away', !!g.away);
+    }
+    for (const g of this.groups) g.h = g.away ? 0 : g.folded ? FOLDED_H : g.item.offsetHeight;
+    const shown = this.groups.filter((g) => !g.away);
+    const packed = packLane(shown.map((g) => ({ want: g.live && g.lift === (g.head ? g.head.offsetHeight : 0) + 8 ? wantFor(this.anchorY(g.anchor), g.lift - 8) : this.anchorY(g.anchor) - g.lift, h: g.h })));
+    const tops = this.groups.map((g) => (g.away ? 0 : packed[shown.indexOf(g)]));
     const { H } = this.host.viewport();
     this.groups.forEach((g, i) => {
       g.top = tops[i];
@@ -1456,7 +1585,7 @@ export class Desk implements DeskApi {
   private drawLeader(g: Group, itemTop = g.top) {
     const head = g.head && !g.folded ? g.head.offsetHeight : 0;
     let path: { d: string; y1: number } | null = null, y0 = 0;
-    if (!g.folded && g.secs.length) {
+    if (!g.folded && !g.away && (g.secs.length || g.slice)) {
       const k = g.live ? this.inked[0] : undefined;
       for (const y of leaderFrom(k ? this.anchorY({ page: k.page, y: k.r.y + Math.min(k.r.h, 40) / 2 }) : null, this.anchorY(g.anchor), !!g.marked)) {
         path = leaderPath(y, { top: itemTop, h: g.h }, LANE_PAD - 6, head);

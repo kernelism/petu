@@ -302,6 +302,8 @@ svg[data-svgboard] [data-live] circle[fill]:not([fill="none"]):not([fill="#FFFFF
 /* A follow-up's header inside an extended svg section (BOARD extend): over its first new group. */
 .lane-item > .trail-head.is-mid { position: absolute; z-index: 1; }
 .lane-group.is-folded .trail-head.is-mid { display: none; }
+/* A walk's slice folded away with its answer's card. */
+.lane-group.is-away { display: none; }
 
 /* Leaders: 1 px accent from a dot on the page edge to the drawing (≤ 120 px, never across text). */
 .lane-leaders { position: absolute; left: 0; top: 0; width: 100%; overflow: visible; pointer-events: none; z-index: 3; }

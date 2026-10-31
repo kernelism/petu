@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { frameFor, laneFrame, LANE_MIN_W, pageFrameTop, SAFE_TOP } from '../../src/desk/layout';
-import { dockTop, LANE_GAP, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, wantFor } from '../../src/desk/lane';
+import { dockTop, LANE_GAP, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, wantFor, walkSplit } from '../../src/desk/lane';
 import { dockPlacement } from '../../src/ui/layout';
 
 describe('laneFrame (layout C geometry)', () => {
@@ -113,5 +113,27 @@ describe('visibleLane (the lane part the window shows under the overview zoom)',
       expect(v.x).toBeCloseTo(848);
       expect(v.w).toBeGreaterThanOrEqual(272);
     }
+  });
+});
+
+describe('walkSplit (a multi-page svg answer leaves each stretch beside its page)', () => {
+  it('the first mark places the groups begun so far; nothing stays behind', () => {
+    expect(walkSplit([null], 0, 4)).toEqual({ placed: [0], runs: null, at: 0 });
+  });
+
+  it('a mark on a new page after a new group: the earlier groups stay beside their page', () => {
+    // strip (p4), then averages begins, then the narration marks p21.
+    expect(walkSplit([4, null], 0, 21)).toEqual({ placed: [1], runs: [[0]], at: 1 });
+    // Later: median begins, p33 is marked; the live drawing shows from averages (index 1).
+    expect(walkSplit([4, 21, null], 1, 33)).toEqual({ placed: [2], runs: [[1]], at: 2 });
+  });
+
+  it('consecutive groups on one page stay together; a mark on the same page moves nothing', () => {
+    expect(walkSplit([4, 4, 21, null], 0, 33)).toEqual({ placed: [3], runs: [[0, 1], [2]], at: 3 });
+    expect(walkSplit([4, null], 0, 4)).toEqual({ placed: [1], runs: null, at: 0 });
+  });
+
+  it('a mark with no new group (pointing mid-beat) places nothing and moves nothing', () => {
+    expect(walkSplit([4, 21], 0, 33)).toEqual({ placed: [], runs: null, at: 0 });
   });
 });
