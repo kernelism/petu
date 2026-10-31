@@ -42,18 +42,20 @@ export function PartsBar({ titles, label, current, progress, paused, speed, onJu
   const multi = titles.length > 1;
   const shown = multi && preview != null && preview < titles.length ? preview : current;
   const title = multi ? titles[shown] ?? '' : paused ? 'Paused' : label ?? '';
+  /** The aside's buttons are in the Tab order in Safari too (it tabs only to explicit tabindex by default). */
+  const tab = aside ? 0 : undefined;
   const play = (
-    <button type="button" className="pb-btn pb-play" onClick={onTogglePause} aria-label={paused ? 'Resume (Space)' : 'Pause (Space)'} title={paused ? 'Resume (Space)' : 'Pause (Space)'}>
+    <button type="button" className="pb-btn pb-play" tabIndex={tab} onClick={onTogglePause} aria-label={paused ? 'Resume (Space)' : 'Pause (Space)'} title={paused ? 'Resume (Space)' : 'Pause (Space)'}>
       {paused ? <Play size={13} strokeWidth={2.2} aria-hidden="true" /> : <Pause size={13} strokeWidth={2.2} aria-hidden="true" />}
     </button>
   );
   const replay = (
-    <button type="button" className="pb-btn" onClick={onReplay} aria-label="Replay this sentence (R)" title="Replay this sentence (R)">
+    <button type="button" className="pb-btn" tabIndex={tab} onClick={onReplay} aria-label="Replay this sentence (R)" title="Replay this sentence (R)">
       <RotateCcw size={13} strokeWidth={2.2} aria-hidden="true" />
     </button>
   );
   const speedBtn = (
-    <button type="button" className="pb-btn pb-speed" onClick={onSpeed} aria-label={`Speed ${speedLabel(speed)}; change speed (< >)`} title="Speed (< slower, > faster)">
+    <button type="button" className="pb-btn pb-speed" tabIndex={tab} onClick={onSpeed} aria-label={`Speed ${speedLabel(speed)}; change speed (< >)`} title="Speed (< slower, > faster)">
       {speedLabel(speed)}
     </button>
   );
@@ -62,7 +64,7 @@ export function PartsBar({ titles, label, current, progress, paused, speed, onJu
       <div className={`pb is-aside${paused ? ' is-paused' : ''}`} role="toolbar" aria-label="Side question playback">
         <span className="pb-side">Side question</span>
         <span className="pb-more">{play}{replay}{speedBtn}</span>
-        <button type="button" className="pb-resume" onClick={aside.onResume} title="Back to the answer (Return)">
+        <button type="button" className="pb-resume" tabIndex={0} onClick={aside.onResume} title="Back to the answer (Return)">
           Back to answer <span className="pb-resume-k" aria-hidden="true"><CornerDownLeft size={12} strokeWidth={2} /></span>
         </button>
       </div>

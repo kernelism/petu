@@ -163,6 +163,7 @@ describe('B1: the dock in its moments', () => {
     const more = [...host.querySelectorAll<HTMLButtonElement>('.pb-more button')].map((b) => b.getAttribute('aria-label'));
     expect(more).toEqual(['Resume (Space)', 'Replay this sentence (R)', 'Speed 1.25×; change speed (< >)']);
     const buttons = [...pb.querySelectorAll('button')];
+    expect(buttons.map((b) => b.getAttribute('tabindex'))).toEqual(['0', '0', '0', '0']); // Safari tabs to them too
     const back = host.querySelector<HTMLButtonElement>('.pb-resume')!;
     expect(buttons.at(-1)).toBe(back);
     expect(back.closest('.pb-more')).toBeNull();
