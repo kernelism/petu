@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FolderOpen, Settings } from 'lucide-react';
+import { FolderOpen, List, Settings } from 'lucide-react';
 import { ReportButton, type Capture } from './ReportButton';
 import { glideDock } from './glide';
 import { isGoToPageKey, parsePage, scrollToPageSlot } from './pageNav';
@@ -22,6 +22,9 @@ type Props = {
    * `goToPage(n, { reason: 'student' })`; without it the page's slot is scrolled into the band.
    */
   onGoToPage?(n: number): void;
+  /** The session list (S): its toggle, and whether it is open. */
+  onToggleSession?(): void;
+  sessionOpen?: boolean;
 };
 
 /**
@@ -87,7 +90,7 @@ function PageField({ page, numPages, pageTick, onGo, tip }: { page: number; numP
   );
 }
 
-export function TopBar({ fileName, page, numPages, pageTick, onOpenSettings, onOpenFile, report, onGoToPage }: Props) {
+export function TopBar({ fileName, page, numPages, pageTick, onOpenSettings, onOpenFile, report, onGoToPage, onToggleSession, sessionOpen = false }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const tips = useTips();
   // The dock (App's) glides as a transform when the slide column moves (glide.ts).
@@ -98,6 +101,11 @@ export function TopBar({ fileName, page, numPages, pageTick, onOpenSettings, onO
         <span className="topbar-name" title={fileName}>{fileName}</span>
         <span className="topbar-divider" aria-hidden="true" />
         <PageField page={page} numPages={numPages} pageTick={pageTick} onGo={onGoToPage ?? scrollToPageSlot} tip={tips.props('Go to page', 'G')} />
+        {onToggleSession && (
+          <button type="button" className="icon-btn" onClick={onToggleSession} aria-expanded={sessionOpen} {...tips.props('Questions', 'S')}>
+            <List size={18} strokeWidth={1.75} />
+          </button>
+        )}
         {report && <ReportButton capture={report} tipProps={tips.props} />}
         <button type="button" className="icon-btn" onClick={onOpenSettings} data-settings-anchor="" {...tips.props('Settings')}>
           <Settings size={18} strokeWidth={1.75} />

@@ -185,7 +185,7 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   with its raw text; a hand-placed curve (≥ 4 points) and a drawing made twice are noted too
   (`done.lint`, shown in `?debug`).
 - `server/` — `plugin.ts` (routes: `/api/ask`, `/api/scout`, `/api/prewarm`, `/api/spend`, `/api/judge` (eval
-  token), `/api/report`, `/api/dev-pdf/`), `env.ts` (the only reader of the key and `PETU_*` knobs), `openai.ts`
+  token), `/api/report`, `/api/title` (a saved question's title: `server/title.ts`, gpt-6-luna, ledger kind `title`), `/api/dev-pdf/`), `env.ts` (the only reader of the key and `PETU_*` knobs), `openai.ts`
   (request builder: explicit cache breakpoints after the system prompt (12h) and the page block
   (30m), `prompt_cache_key` = `petu-<PROMPT_VERSION>` shared by every document (scout:
   `petu-scout-<SCOUT_VERSION>`); one retry before the first text), `sse.ts`,

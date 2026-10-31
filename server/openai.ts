@@ -788,11 +788,11 @@ export async function judge(j: JudgeRequest, d: Deps): Promise<JudgeResult> {
   try { return { ok: true, output: JSON.parse(text), usd: r.usd }; } catch { return { ok: false, code: 'upstream', message: `judge returned non-JSON: ${text.slice(0, 120)}`, usd: r.usd }; }
 }
 
-type CallResult = { ok: true; json: any; usd: number } | { ok: false; code: string; message: string; usd: number };
+export type CallResult = { ok: true; json: any; usd: number } | { ok: false; code: string; message: string; usd: number };
 
 /** A non-streamed call: reserve the worst case → POST (one retry on 429/5xx/network) → book usage. */
 type CallOpts = { timeoutMs?: number; retry?: boolean; signal?: AbortSignal; ep?: Endpoint };
-async function callJson(body: unknown, model: string, est: number, maxOutput: number, fast: boolean, kind: 'prewarm' | 'judge' | 'scout', d: Deps, o: CallOpts = {}): Promise<CallResult> {
+export async function callJson(body: unknown, model: string, est: number, maxOutput: number, fast: boolean, kind: 'prewarm' | 'judge' | 'scout' | 'title', d: Deps, o: CallOpts = {}): Promise<CallResult> {
   const id = randomUUID();
   const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(model, est, maxOutput, fast), { kind, model });
   if (refused) return { ok: false, code: 'cap', message: capHint(refused.code, refused.message, d.phase), usd: 0 };
@@ -838,7 +838,7 @@ async function callJson(body: unknown, model: string, est: number, maxOutput: nu
   return last;
 }
 
-function outputText(json: any): string {
+export function outputText(json: any): string {
   if (typeof json?.output_text === 'string') return json.output_text;
   for (const item of json?.output ?? []) if (item?.type === 'message') for (const c of item.content ?? []) if (c?.type === 'output_text') return String(c.text ?? '');
   return '';

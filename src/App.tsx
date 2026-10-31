@@ -42,7 +42,11 @@ import { dictationAvailable } from './agent/dictation';
 import { FollowPill } from './ui/FollowPill';
 import { OverviewPill } from './ui/OverviewPill';
 import { SessionDrawer, type SessionRow } from './ui/SessionDrawer';
-import { dockPlacement, dockReserve, windowColumn } from './ui/layout';
+import { NewQuestion } from './ui/NewQuestion';
+import { linesOf, nameOf, newConversation, pagesOf, titleInputOf, type Conversation } from './session/conversations';
+import { putMarks, takeMarks } from './session/marks';
+import { fetchTitle } from './session/title';
+import { dockPlacement, dockReserve, newQuestionReserve, windowColumn } from './ui/layout';
 import { DOCK_GAP, margin, SAFE_TOP, setSafeBottom } from './desk/layout';
 import { takeSentences } from './ui/text';
 import { pauseCueIn } from './ui/captionWindow';
@@ -152,6 +156,8 @@ const REPAIR_PARAM = params.get('repair');
 /** `&budget=off`: no length budget (the gate never closes an answer early; A/B replays). */
 const BUDGET_OFF = params.get('budget') === 'off';
 const REPAIR_MS = Number(params.get('repairms')) || 1500;
+/** `&title=live`: dev scripts ask the server for saved questions' titles too (else only agent sessions do). */
+const TITLE_LIVE = params.get('title') === 'live';
 const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
 const hasFiles = (e: DragEvent) => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
 
@@ -349,7 +355,7 @@ function registryRows(reg: Registry): RegistryRow[] {
 /** An aside's state in the dock: its question, words so far, and how it stands. */
 type Aside = { question: string; words: string[]; state: 'thinking' | 'playing' | 'done' | 'error'; paused: boolean };
 /** One answer on the session trail: its header on the board and what replays it. */
-type TrailEntry = { num: string; question: string; title: string; page: number; script: string; grounding?: Grounding; head: TrailHead; check?: string; /** The check question it offered (done.check), offered again on a replay. */ offered?: string; /** Asides asked during it (the session drawer lists them under it). */ asides?: string[]; /** How long it played (ms), once done. */ ms?: number };
+type TrailEntry = { num: string; question: string; title: string; page: number; /** The pages its answer's parts taught from (their section titles name it in the session list). */ pages?: number[]; script: string; grounding?: Grounding; head: TrailHead; check?: string; /** The check question it offered (done.check), offered again on a replay. */ offered?: string; /** Asides asked during it (the session drawer lists them under it). */ asides?: string[]; /** How long it played (ms), once done. */ ms?: number };
 /** A dev script's aside when it has none of its own (no API call on the demo path). */
 const asideFallback = (q: string) => `Here the side answer to "${q}" would play, with its own small drawing. Press Return to go back to the answer.`;
 
@@ -457,6 +463,16 @@ export default function App() {
   /** The session trail: every answer this session, with its recorded script (replayed with no new call). */
   const trailRef = useRef<TrailEntry[]>([]);
   const trailN = useRef(0);
+  /**
+   * The session's questions, oldest first (src/session/conversations.ts): each a first question with its
+   * follow-ups and asides on one board. `convRef` is the one on the board; `trailRef` and the gate's
+   * `boardScripts` are its arrays. The ask bar's + saves it and starts a new one.
+   */
+  const convsRef = useRef<Conversation<TrailEntry>[]>([]);
+  const convRef = useRef<Conversation<TrailEntry> | null>(null);
+  if (!convRef.current) { convRef.current = newConversation<TrailEntry>(); convsRef.current = [convRef.current]; trailRef.current = convRef.current.entries; }
+  /** A saved question's title came, or the list changed: the session list re-renders. */
+  const [, setConvTick] = useState(0);
   /** The clocks of the playing answer and aside, with their sessions (null once over): a voice change reaches them. */
   const clocks = useRef(new Map<SwitchClock, () => AnswerSession | null>());
   /** The shortcuts card (?). */
@@ -494,7 +510,7 @@ export default function App() {
   const logRef = useRef<AnswerLog | null>(null);
 
   /** Released scripts of the answers whose board is still up: the gate's shadow board starts from them. */
-  const boardScripts = useRef<string[]>([]);
+  const boardScripts = useRef<string[]>(convRef.current.scripts);
   const directorRef = useRef<Director>();
   if (!directorRef.current) {
     directorRef.current = new Director({
@@ -740,6 +756,8 @@ export default function App() {
   const runAnswer = useCallback((q: string, run: Run = {}): Promise<void> => new Promise<void>((settle) => {
     const toAgent = (!DEMO_PATH || !!run.replay || !!run.rec) && !run.again;
     const t0 = performance.now();
+    /** The conversation it belongs to (its history and memory), even once the student has moved on to another. */
+    const conv = convRef.current!;
     const old = sessionRef.current;
     sessionRef.current = null;
     old?.stop();
@@ -916,7 +934,7 @@ export default function App() {
           question: q, page, ink: () => ink.get().strokes, handlers, onGrounding: (g) => { groundingRef.current = g; },
           onGrounds: (gs) => { for (const g of gs) pageTexts.set(g.page, g.lines.map((l) => l.text).join('\n')); },
           ...(gate ? { released: () => gate!.releasedText() } : {}),
-          moment,
+          moment, history: conv.history, memory: conv.memory,
         })
         : run.again
           ? async function* (signal) {
@@ -969,6 +987,7 @@ export default function App() {
         if (sessionRef.current !== session) return;
         scriptRef.current = sc;
         const ps = deriveParts(sc, page);
+        if (!again) entry.pages = [...new Set(ps.filter((p) => !p.back).map((p) => p.page))];
         const prev = partsRef.current;
         if (ps.length === prev.length && ps.every((p, i) => p.start === prev[i].start && p.page === prev[i].page && p.back === prev[i].back)) return;
         partsRef.current = ps;
@@ -1004,7 +1023,7 @@ export default function App() {
       },
       onState: (st: SessionState, err?: string) => {
         log.state(st, err);
-        if (st === 'stopped' && toAgent && spoken.length) ag.history.push(q, spoken, page);
+        if (st === 'stopped' && toAgent && spoken.length) conv.history.push(q, spoken, page);
         // A stopped answer that spoke counts as answered: the bar offers a follow-up (F20).
         if (st === 'stopped') { if (spoken.length) setAnswered(true); finish(); return; }
         if (sessionRef.current !== session) return;
@@ -1027,7 +1046,7 @@ export default function App() {
           setCheck(cutOff == null ? offered ?? closingQuestion(joinWords(spoken)) : null);
           setCheckOpen(false);
           speak(spoken, true);
-          if (toAgent && spoken.length) ag.history.push(q, spoken, page);
+          if (toAgent && spoken.length) conv.history.push(q, spoken, page);
           if (cutOff != null || !spoken.length) {
             // Cut off (what arrived has played), or nothing came back: say so and offer Retry.
             clearHide();
@@ -1258,7 +1277,7 @@ export default function App() {
     const board = director.registry.entries().map((e) => `${e.kind}${e.id ? ` #${e.id}` : ''}${e.target.region ? ` on ${e.target.region}` : e.target.page ? ` on p${e.target.page}` : ''}`);
     const moment = { aside: asideContext({ question: cur.question, plan: cur.plan, said, board }), ...(point ? { about: aboutContext(point) } : {}) };
     const source: (signal: AbortSignal) => AsyncIterable<string> = cur.toAgent
-      ? agentRef.current.source({ question: q, page: pageRef.current, ink: () => ink.get().strokes, handlers: {}, onGrounding: (g) => { asideGrounding.current = g; }, moment })
+      ? agentRef.current.source({ question: q, page: pageRef.current, ink: () => ink.get().strokes, handlers: {}, onGrounding: (g) => { asideGrounding.current = g; }, moment, history: convRef.current!.history, memory: convRef.current!.memory })
       : async function* (signal) {
         const script = DEV_SCRIPT?.answers?.[q] ?? asideFallback(q);
         if (DEV_SCRIPT && docRef.current) asideGrounding.current = await devGrounding(docRef.current, script);
@@ -1470,7 +1489,14 @@ export default function App() {
     viewerRef.current = api;
     // One desk per viewer (a new document remounts the viewer): the board, its sections, connectors.
     deskRef.current?.destroy();
-    boardScripts.current = [];
+    // A new document (a new desk): the session's questions start over.
+    const conv = newConversation<TrailEntry>();
+    convsRef.current = [conv];
+    convRef.current = conv;
+    trailRef.current = conv.entries;
+    trailN.current = 0;
+    boardScripts.current = conv.scripts;
+    director.useBoard(null);
     // The board's ×: an answer still playing stops first (its ink would have nowhere to go). Closing
     // hides the board and keeps the trail (the next drawing or a session-list pick brings it back).
     const desk = new Desk(api.deskHost(), stageRef.current!, { onClose: () => { if (busyRef.current) closeRef.current(); void deskRef.current?.hide(); } });
@@ -1518,10 +1544,10 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Layout C: S opens the session list, M shows the earlier answers' page marks (spec §5.5).
+  // Layout C: S (or the top bar's list button) opens the session list, M shows the earlier answers' page
+  // marks (spec §5.5). The list is closed until asked for.
   const [sessionOpen, setSessionOpen] = useState(false);
   const [pastOn, setPastOn] = useState(false);
-  const [sessionPick, setSessionPick] = useState<number | null>(null);
   useEffect(() => { document.documentElement.classList.toggle('petu-past-on', pastOn); }, [pastOn]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1540,16 +1566,113 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // ---------------------------------------------------------------------------------------------
+  // Saved questions (founder 2026-10-31): the ask bar's + saves the question on the board, with its
+  // follow-ups and asides, and starts a clean board; a saved one picked in the list comes back as it
+  // was left (src/session/; design note docs/superpowers/specs/2026-10-31-new-question-design.md).
+
+  /** Where each saved question was left: the page in view, its last transcript (the bar offers it again). */
+  const leftAt = useRef(new WeakMap<Conversation<TrailEntry>, { page: number; transcript: Transcript | null }>());
+  const transcriptRef = useRef(transcript);
+  transcriptRef.current = transcript;
+  const sectionOf = (p: number) => labelsRef.current?.get(p);
+
+  /** Its title, once (src/session/title.ts): one small call from its questions and section titles. */
+  const titleConv = async (c: Conversation<TrailEntry>) => {
+    if (c.title || c.titling) return;
+    c.titling = true;
+    const L = labelsRef.current;
+    if (L) await Promise.all(pagesOf(c).map((p) => L.load(p)));
+    const input = titleInputOf(c, sectionOf);
+    // Dev scripts make no API call unless asked (&title=live): their name is the section title.
+    const t = input.questions.length && (!DEMO_PATH || EVAL || TITLE_LIVE) ? await fetchTitle(input, spendPhase(agentRef.current.spend)) : null;
+    c.titling = false;
+    if (t) c.title = t;
+    setConvTick((n) => n + 1);
+  };
+
+  /**
+   * Takes the question on the board off it: an answer or aside playing stops first, then its board and
+   * the tutor's page marks leave (kept as they are); the student's own ink stays. It is titled.
+   * `keepOpen`: a saved board comes back next (the split board stays open for it).
+   */
+  const saveConv = (keepOpen = false) => {
+    const c = convRef.current!;
+    stopAll();
+    resetAnswerUi();
+    c.n = trailN.current;
+    if (!c.entries.length) return;
+    leftAt.current.set(c, { page: pageRef.current, transcript: transcriptRef.current });
+    c.board = deskRef.current?.takeBoard(keepOpen) ?? null;
+    c.marks = viewerRef.current ? takeMarks(viewerRef.current) : null;
+    c.svgBoard = director.boardId();
+    void titleConv(c);
+  };
+
+  /** Puts a question on the board: a saved one comes back as it was left (no replay); a new one starts empty. */
+  const enterConv = (c: Conversation<TrailEntry>) => {
+    convRef.current = c;
+    trailRef.current = c.entries;
+    trailN.current = c.n;
+    boardScripts.current = c.scripts;
+    director.useBoard(c.svgBoard);
+    asideDirRef.current?.useBoard(null);
+    answerRef.current = { question: '', plan: '', toAgent: false, head: null };
+    setAnswered(c.entries.length > 0);
+    const left = leftAt.current.get(c);
+    setTranscript(left?.transcript ?? null);
+    const v = viewerRef.current, d = deskRef.current, board = c.board;
+    if (c.marks && v) putMarks(v, c.marks);
+    c.board = null;
+    c.marks = null;
+    if (board && d) {
+      void d.putBoard(board).then(() => {
+        if (convRef.current !== c) return;
+        // The page it was left on is framed again and is the page in view (a follow-up is asked on it, not
+        // on the page the last question left the viewer on); the lane's drawings sit beside it. The split
+        // board scrolls to its latest answer.
+        if (left) void viewerRef.current?.scrollToPage(left.page);
+        const head = [...c.entries].reverse().map((e) => e.head).find((h) => h?.el.isConnected);
+        if (head && !d.state().lane) void d.showHead(head.el);
+      });
+    }
+    setConvTick((n) => n + 1);
+  };
+
+  /** The ask bar's +: the question on the board goes to the list and the next one starts on a clean board. */
+  const newQuestion = () => {
+    if (!convRef.current!.entries.length) return;
+    saveConv();
+    const next = newConversation<TrailEntry>();
+    convsRef.current.push(next);
+    enterConv(next);
+  };
+
+  /** A row of the session list: the one on the board scrolls to its latest answer; another is brought back. */
+  const pickSession = (id: number) => {
+    const c = convsRef.current.find((x) => x.id === id), cur = convRef.current!;
+    if (!c) return;
+    if (c === cur) {
+      const head = [...c.entries].reverse().map((e) => e.head).find((h) => h?.el.isConnected);
+      if (head) void deskRef.current?.showHead(head.el);
+      return;
+    }
+    saveConv(!!c.board);
+    if (!cur.entries.length) convsRef.current = convsRef.current.filter((x) => x !== cur);
+    enterConv(c);
+  };
+
+  // The list names a question by its section title until its own title comes: the labels load when it opens.
+  useEffect(() => {
+    const L = labelsRef.current;
+    if (!sessionOpen || !L) return;
+    const want = convsRef.current.flatMap((c) => pagesOf(c)).filter((p) => L.get(p) == null);
+    if (want.length) void Promise.all(want.map((p) => L.load(p))).then(() => setConvTick((n) => n + 1));
+  }, [sessionOpen]);
   const sessionRows: SessionRow[] = sessionOpen
-    ? trailRef.current.map((e, i) => ({ num: e.num, title: e.title, meta: `p.${e.page}${e.ms != null ? ` · ${clockOf(e.ms)}` : ''}`, asides: e.asides ?? [], current: i === (sessionPick ?? trailRef.current.length - 1) }))
+    ? convsRef.current.filter((c) => c.entries.length).map((c) => ({ id: c.id, title: nameOf(c, sectionOf), lines: linesOf(c), current: c === convRef.current }))
     : [];
-  const sessionTotal = clockOf(trailRef.current.reduce((a, e) => a + (e.ms ?? 0), 0));
-  const pickSession = useCallback((i: number) => {
-    const e = trailRef.current[i];
-    if (!e) return;
-    setSessionPick(i);
-    void deskRef.current?.showHead(e.head.el);
-  }, []);
 
   // Esc between answers hides the board (while playing, Esc stops the answer first); it never erases:
   // the trail stays and comes back with the board. The lane stays (it is the sheet's margin).
@@ -1633,7 +1756,7 @@ export default function App() {
   const ovView = useSyncExternalStore(overviewHub.subscribe, overviewHub.getView, overviewHub.getView);
   const pillEl = typeof document !== 'undefined' ? document.querySelector('.overview-pill') : null;
   const pillReserve = ovView.z !== 1 ? (pillEl ? Math.max(0, viewportW - pillEl.getBoundingClientRect().left) : 260) + 12 : 0;
-  const dock = dockPlacement(viewportW, desk, ovView, pillReserve);
+  const dock = dockPlacement(viewportW, desk, ovView, pillReserve, EVAL ? 0 : newQuestionReserve(viewportW));
   const dockCol = desk ? windowColumn(desk.column, viewportW, ovView) : null;
   /** The shortcuts card sits just above the dock (its top edge, from the window's bottom). */
   const dockBottom = dockRef.current ? Math.max(0, window.innerHeight - dockRef.current.getBoundingClientRect().top) : 96;
@@ -1692,6 +1815,8 @@ export default function App() {
         onOpenFile={(f) => void openFile(f)}
         report={import.meta.env.DEV ? captureReport : undefined}
         onGoToPage={(n) => void viewerRef.current?.goToPage(n, { reason: 'student' })}
+        onToggleSession={() => setSessionOpen((o) => !o)}
+        sessionOpen={sessionOpen}
       />
       <FollowPill visible={paused} onResume={resumeFollow} x={dock.x} />
       {desk?.edge && desk.page && (
@@ -1700,7 +1825,7 @@ export default function App() {
         </button>
       )}
       <OverviewPill />
-      <SessionDrawer open={sessionOpen} rows={sessionRows} total={sessionTotal} onPick={pickSession} onClose={() => setSessionOpen(false)} />
+      <SessionDrawer open={sessionOpen} rows={sessionRows} onPick={pickSession} onClose={() => setSessionOpen(false)} />
       <RouteChip route={route} backTo={backTo} onBack={onBack} x={desk?.lane && desk.page ? desk.page.x + desk.page.w / 2 : dock.x} />
       <SettingsPopover open={settingsOpen} onClose={closeSettings} onShowShortcuts={openShortcuts} bestAvailable={!!agent.spend?.best} onSpeed={changeSpeed} onVoice={changeVoice} />
       <CanvasToolbar showHint={answered} />
@@ -1712,6 +1837,7 @@ export default function App() {
           depends on var() invalidation (suspected in a Safari report of the dock staying left; not
           reproduced in Playwright WebKit). */}
       <div ref={dockRef} className="dock" style={{ left: `${dock.x}px`, width: `${dock.w}px`, '--glide': `${GLIDE_MS}ms` } as CSSProperties}>
+        {!EVAL && <NewQuestion shown={convRef.current!.entries.length > 0} onClick={newQuestion} />}
         <Caption
           words={aside ? aside.words : captionWords}
           visible={captionVisible || !!aside}
