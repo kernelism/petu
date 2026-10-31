@@ -85,3 +85,33 @@ export function asideHead(o: { question: string; onBack(): void; onToggle(): voi
   el.append(row, marker);
   return { el, h: ASIDE_HEAD_H, setMeta: (m) => { meta.textContent = m; } };
 }
+
+/** Height of a continuation tag (the compact head over a later stretch of a walking answer). */
+export const CONT_H = 30;
+
+export type ContTag = { el: HTMLElement; /** Part `i` of `n` (n: null while the answer still plays). */ set(i: number, n: number | null): void };
+
+/**
+ * A walking answer's later stretch (each page it walks to keeps its own still slice of the board): a
+ * compact tag "3 · cont. 2/4" in the head's quiet style. Hover or focus shows the question; a click
+ * goes to the answer's head (where it began).
+ */
+export function contTag(o: { num: string; question: string; onGo(): void }): ContTag {
+  const el = node('div', 'trail-head is-cont');
+  const btn = node('button', 'trail-row trail-cont');
+  btn.type = 'button';
+  const num = node('span', 'trail-num', o.num);
+  num.setAttribute('aria-hidden', 'true');
+  const n = node('span', 'trail-cont-n');
+  const q = node('span', 'trail-cont-q', o.question);
+  btn.append(num, n, q);
+  btn.addEventListener('click', (e) => { e.stopPropagation(); o.onGo(); });
+  el.append(btn);
+  return {
+    el,
+    set(i, total) {
+      n.textContent = `cont. ${total ? `${i}/${total}` : i}`;
+      btn.setAttribute('aria-label', `Answer ${o.num}, part ${i}${total ? ` of ${total}` : ''}: ${o.question}. Go to its start`);
+    },
+  };
+}
