@@ -68,6 +68,14 @@ export const boardProbeScript = `(() => {
   if (!el) return null;
   const r = el.getBoundingClientRect();
   if (r.width < 2 || r.height < 2) return null;
+  // Layout C (the anchored lane): the board is the lane, one sheet on the viewer's scroll, as tall as the
+  // whole document (800,000 px); a clip that size hangs the screenshot. It doesn't scroll itself: take
+  // the part in the window, what the student sees.
+  if (el.scrollHeight <= el.clientHeight + 1 && r.height > innerHeight) {
+    const y0 = Math.max(0, r.y), y1 = Math.min(innerHeight, r.y + r.height);
+    if (y1 - y0 < 2) return null;
+    return { x: r.x, y: y0, w: r.width, h: y1 - y0, scrollHeight: y1 - y0, clientHeight: y1 - y0, scrollTop: 0 };
+  }
   // The inner (scrolling) area: inside the border, without a scrollbar.
   return { x: r.x + el.clientLeft, y: r.y + el.clientTop, w: el.clientWidth, h: el.clientHeight, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, scrollTop: el.scrollTop };
 })()`;
