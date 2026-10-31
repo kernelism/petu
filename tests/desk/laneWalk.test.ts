@@ -138,3 +138,11 @@ describe('clearOfDocked (the live group never sits over a docked card)', async (
     expect(clearOfDocked(80, 300, [{ top: 300, h: 36 }], 600)).toBe(344); // crossing its lower part: still cleared
   });
 });
+
+describe('dockNow (the newest part stays above the dock at the end)', async () => {
+  const { dockNow } = await import('../../src/desk/lane');
+  it('a group whose bottom would sit under the dock rises; one that fits stays', () => {
+    expect(dockNow(41489, 891, 41708, 813, 141)).toBe(41708 + 813 - 141 - 891);
+    expect(dockNow(41800, 300, 41708, 813, 141)).toBe(41800);
+  });
+});

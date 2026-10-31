@@ -9,7 +9,7 @@ import { routeGutter, maskBlocker } from './route';
 import { boardLayout, bodyPx, fitZoom, laneFrame, pageAt, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, cropSpanX, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
 import { BOARD_HEAD, boardPad, MIN_TEXT_PX, SECTION_W, TEXT_UNITS } from './layout';
-import { clearOfDocked, dockTop, FOLDED_H, LANE_PAD, LEADER_INSET, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, visibleLane, walkSplit, wantFor, zoomedInsets } from './lane';
+import { clearOfDocked, dockNow, dockTop, FOLDED_H, LANE_PAD, LEADER_INSET, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, visibleLane, walkSplit, wantFor, zoomedInsets } from './lane';
 import { camFor, overviewCam, type Cam } from './scene/camera';
 import { CONT_H, contTag, type ContTag } from '../ui/trail';
 
@@ -1629,8 +1629,10 @@ export class Desk implements DeskApi {
     }
     this.position();
     const ay = this.anchorY(g.anchor), headH = this.leadH(g);
-    console.warn('[dockdbg]', JSON.stringify({ now: Math.round(now), h: g.h, ay: Math.round(ay), headH, H, top: Math.round(top), band: H - LANE_STICK - safeBottom(), pen: g.pen, stick: g.stick, secs: g.secs.length, dockTop: Math.round(dockTop(now, g.h, ay, headH)) }));
-    g.lift = ay - dockTop(now, g.h, ay, headH);
+    // The end crop just grew the drawing (a finished board scales up to the lane): its newest part must
+    // still show above the dock, so the group rises as far as that takes before it docks (lane.ts
+    // dockNow). Founder 2026-10-31: a follow-up's new board ended under the dock, the old one in view.
+    g.lift = ay - dockTop(dockNow(now, g.h, top, H, safeBottom() + 12), g.h, ay, headH);
     this.position();
     if (animate) this.glideFrom(g, from);
   }

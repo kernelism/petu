@@ -45,6 +45,16 @@ export function packLane(items: { want: number; h: number }[]): number[] {
 export const wantFor = (anchorY: number, headH: number) => Math.max(0, anchorY - headH - 8);
 
 /**
+ * Where a group docks from (sheet px): its top this frame, raised when its bottom would fall under the
+ * dock (`viewTop` the scroll top, `H` the window, `bottom` the dock's inset): what was drawn last stays
+ * in view at the answer's end, even for a group taller than the band (its first rows then sit above the
+ * window, a scroll away).
+ */
+export function dockNow(now: number, h: number, viewTop: number, H: number, bottom: number): number {
+  return Math.min(now, viewTop + H - bottom - h);
+}
+
+/**
  * Docking at the answer's end (spec §5.2 rule 5): the group stays where it is on screen (`now`, its
  * content top this frame) if the anchor still falls inside it, else it moves the least so it does.
  */
