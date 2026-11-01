@@ -134,7 +134,8 @@ function named(names: readonly string[], words: readonly BeatWord[], said: reado
 
 /**
  * The schedule of a group's parts over its beat, in drawing order, or null when the beat gives
- * nothing to pace by (fewer than two words and not still streaming: the caller draws at pen speed). `start`: when the beat
+ * nothing to pace by (fewer than two words and not still streaming: the caller draws at pen speed); a
+ * beat already over: every part at once. `start`: when the beat
  * began (ms from now; a re-plan once more of the beat has streamed in: the parts left are spread over
  * what is left of the window).
  *
@@ -151,7 +152,11 @@ function named(names: readonly string[], words: readonly BeatWord[], said: reado
  * category is not an order: the group's order is the author's.
  */
 export function paceParts(parts: readonly PartIn[], words: readonly BeatWord[], slot?: Slot, start?: number): PartTime[] | null {
-  if (!parts.length || (words.length < 2 && !words[words.length - 1]?.open)) return null;
+  if (!parts.length || !words.length) return null;
+  // Its beat is over (closed, every word said: a forward seek's skipped group, one held past its words):
+  // what is left lands at once, in the group's order. Spread over SPAN_MIN_MS from now, it drew over the next beat.
+  if (!words[words.length - 1].open && beatEnd(words) <= 0) return parts.map((_, i) => ({ i, at: 0, dur: 0 }));
+  if (words.length < 2 && !words[0].open) return null;
   const win = beatWindow(words, slot, start);
   // Re-planned mid-beat (`start` in the past): what is left of the window, from now.
   const from = Math.max(0, win.from), to = Math.max(from + 1, win.to);

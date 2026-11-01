@@ -69,6 +69,14 @@ describe('pace: each part draws across its share of the words', () => {
     expect(t.map((x) => x.at)).toEqual([0, OPEN_SPAN_MS / 2]);
   });
 
+  it('a beat already over (closed, every word spoken) lands its parts at once, not over the next beat\'s words', () => {
+    // A group fired after its beat (a forward seek, a look): drawn over SPAN_MIN_MS from now, that was the next beat's narration.
+    const w = ['the', 'curve', 'falls.'].map((text) => ({ text, inMs: 0, endMs: 0 }));
+    const p = paceParts([{ words: ['curve'], naturalMs: 300 }, { words: [], naturalMs: 300 }], w)!;
+    expect(Math.max(...p.map((x) => x.at + x.dur))).toBeLessThanOrEqual(0 + 1);
+    expect(p.map((x) => x.i)).toEqual([0, 1]);
+  });
+
   it('needs at least two words (else pen speed: null)', () => {
     expect(paceParts([part()], beat('one'))).toBeNull();
     expect(paceParts([part()], [])).toBeNull();
