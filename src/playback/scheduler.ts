@@ -128,7 +128,7 @@ export class Scheduler {
    * word of its own beat already here that names it (its id's words), else with the next word. Only its
    * own beat's words are searched (src/svgboard/beat.ts): from its `{{beat}}` to the group. A group that
    * opens its beat (lead order) has none before it and fires on its beat's first word; one that closes
-   * its sentences (trailing order) may fire on the word in them that names it. A word of an earlier beat
+   * its sentences (trailing order) fires on the word in them that names it, else on its beat's first. A word of an earlier beat
    * never anchors a group (the ferry's "aim" drew five words before its beat). Legacy streams (no
    * `{{beat}}`): its sentences are the words since the group before.
    */
@@ -144,7 +144,10 @@ export class Scheduler {
     // At a sentence boundary after a drawn beat: the next sentence starts after a rest.
     if (this.drawn && n > 0 && endsSentence(this.words[n - 1])) this.rests.add(n);
     this.drawn = true;
-    return n;
+    // After its own sentences (trailing order) and none names it: with them, from its beat's first word.
+    // On the next word it drew on the next beat's first one (frame, axes, title are rarely said), with
+    // its own beat already spoken, and in a gated stream only once the gate let that next beat out.
+    return this.tagged && from < n ? from : n;
   }
 
   /** When the board is free to draw again (clock time): the look after the last page mark that landed. */
