@@ -571,7 +571,8 @@ const recordHead = (r: AskRequest, cfg: ModelConfig, d: Deps) => ({ at: new Date
  * One answer: [storyboard →] gate → stream → filters → book. Emits AskEvents; resolves when done.
  * With `story` (a model config) and an opener already playing, the lesson is designed first
  * (`storyboard` event, before `meta`) and stage 2 performs it; any storyboard failure means stage 2
- * runs on the scout's plan alone. Without an opener nothing covers the wait, so there is no storyboard.
+ * runs on the scout's plan alone. Without an opener nothing covers the wait, so there is no storyboard;
+ * in the svg format (the default) there is none either (it is written for the tag prompt: server/env.ts).
  */
 export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: AskEvent) => void, signal: AbortSignal, story?: ModelConfig | null): Promise<void> {
   const reqId = randomUUID();
@@ -579,7 +580,8 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   if (!ep.key) { emit({ t: 'error', code: 'no_key', message: noKeyMessage(ep), retryable: false }); return; }
   if (!PRICES[cfg.model]) { emit({ t: 'error', code: 'bad_request', message: `No price for ${cfg.model}.`, retryable: false }); return; }
   let sb: StoryboardEvent | undefined;
-  if (story && r.context.opener) {
+  // Never in the svg format (server/env.ts: the storyboard contradicts it), whatever the caller passes.
+  if (story && r.context.opener && !isSvgMode(cfg.promptVariant)) {
     sb = await storyboard(r, story, d, signal);
     if (signal.aborted) {
       try { d.log?.({ ...recordHead(r, cfg, d), script: '', lint: [], usd: 0, error: 'aborted', storyboard: storyRecord(sb) }); } catch { /* never fails an answer */ }

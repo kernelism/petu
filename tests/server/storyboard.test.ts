@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from '../../server/ledger';
+import { parseEnv } from '../../server/env';
 import { type AnswerRecord, ask, buildStoryboardRequest, storyboard, storyCacheKey, type Deps, type ModelConfig } from '../../server/openai';
 import { STORYBOARD_SYSTEM, STORYBOARD_VERSION } from '../../server/prompt/storyboard';
 import { parseStoryboard, storyboardText, STORYBOARD_LIMITS, type Storyboard } from '../../src/agent/storyboard';
@@ -11,7 +12,8 @@ import type { AskContext, AskEvent, AskRequest } from '../../src/agent/protocol'
 import { EVAL_VOCAB } from './prompt.test';
 
 const KEY = 'sk-test-SECRET-abc123';
-const cfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 1400, fast: false, explicitCache: true };
+// The storyboard runs with the tag prompt only (server/env.ts: it contradicts the svg format).
+const cfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 1400, fast: false, explicitCache: true, promptVariant: 'tags' };
 const story: ModelConfig = { model: 'gpt-6.1-terra', effort: 'low', maxOutput: 4000, fast: false, explicitCache: true };
 const context: AskContext = {
   docName: 'd.pdf', docHash: 'abc', numPages: 9, page: 2,
@@ -216,6 +218,22 @@ describe('ask with a storyboard: opener → storyboard → stage 2', () => {
     const out = await run(req({ context: { ...context, opener: undefined } }), deps(f));
     expect(calls).toHaveLength(1);
     expect(out.map((e) => e.t)).toEqual(['meta', 'text', 'done']);
+  });
+
+  it('C7: the svg format (the default) never runs the storyboard, even when the caller passes one', async () => {
+    const { f, calls } = fakeFetch([{ chunks: reply('Go.') }]);
+    const out: AskEvent[] = [];
+    await ask(req(), { ...cfg, promptVariant: undefined }, deps(f), (e) => out.push(e), new AbortController().signal, story);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body.prompt_cache_key).not.toMatch(/story/);
+    expect(out.map((e) => e.t)).toEqual(['meta', 'text', 'done']);
+  });
+
+  it('C7: PETU_STORYBOARD=1 is refused with the svg format; the tag prompt still takes it', () => {
+    const env = (over: Record<string, string>) => parseEnv((k) => ({ OPENAI_API_KEY: KEY, PETU_PDF_DIRS: dir, PETU_PHASE: 'dev', ...over })[k], { root: dir, home: dir });
+    expect(() => env({ PETU_STORYBOARD: '1' })).toThrow(/storyboard .* written for the tag prompt/);
+    expect(env({ PETU_STORYBOARD: '1', PETU_PROMPT_VARIANT: 'tags' }).storyboard).toMatchObject({ model: expect.any(String) });
+    expect(env({}).storyboard).toBeNull();
   });
 
   it('Esc while the storyboard is being designed: no stage 2 call, no events, the storyboard booked, nothing left open', async () => {

@@ -16,6 +16,7 @@ import type { Caps, Phase } from './ledger';
 import type { Effort, ModelConfig } from './openai';
 import { ANTHROPIC_NO_NONE, isAnthropicModel } from './anthropic';
 import { VARIANT_NAMES } from './prompt/variants/index';
+import { isSvgMode } from './prompt/system';
 import { bestConfig } from './quality';
 
 /** The $80 hard stop (prior spike spend included; $40 until 2026-10-28, $60 until 2026-10-31). PETU_TOTAL_CAP_USD may only lower it. */
@@ -62,6 +63,11 @@ import { REPAIR_MAX_OUTPUT, SCOUT_MAX_OUTPUT, STORYBOARD_MAX_OUTPUT } from './li
  * The storyboard (spec "Board v2" 5): a reasoning model designs the lesson while the opener plays.
  * Off by default until it lands within the opener: the first live runs (2026-10-28) timed out at 12s
  * at effort low and none, a 20–24s handoff gap. PETU_STORYBOARD=1 turns it on for a run.
+ * Tag prompt only (C7, 2026-10-31): it was written for the tag DSL and contradicts the svg format, the
+ * default: its beats end on a check question "asked of the student" (svg hides it in <check>, never
+ * spoken), it asks for "the computation, never its numbers" (svg computes the case's numbers in the
+ * plan), and stage 2 reads it as a second plan beside its own <plan>. So PETU_STORYBOARD=1 is refused
+ * with the svg format, and ask() never runs it there (server/openai.ts).
  */
 export const DEFAULT_STORYBOARD_MODEL = 'gpt-6.1-terra';
 export const DEFAULT_STORYBOARD_EFFORT: Effort = 'low';
@@ -138,6 +144,7 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   const storyEffort = oneOf('PETU_STORYBOARD_EFFORT', EFFORTS, DEFAULT_STORYBOARD_EFFORT);
   if (storyEffort === 'none' && NO_NONE.has(storyModel)) throw new Error(`petu: ${storyModel} does not accept reasoning effort none; set PETU_STORYBOARD_EFFORT=low`);
   const storyOn = oneOf('PETU_STORYBOARD', ['0', '1'] as const, '0') === '1';
+  if (storyOn && isSvgMode(promptVariant)) throw new Error('petu: the storyboard (PETU_STORYBOARD=1) is written for the tag prompt and contradicts the svg format; set PETU_PROMPT_VARIANT=tags or PETU_STORYBOARD=0');
   const repairOn = oneOf('PETU_REPAIR', ['on', 'off'] as const, 'on') === 'on';
   // A repair has only REPAIR_MAX_OUTPUT tokens: above low, reasoning could spend all of them before any text.
   const repairEffort = oneOf('PETU_REPAIR_EFFORT', EFFORTS, effort === 'none' || effort === 'low' ? effort : 'low');
