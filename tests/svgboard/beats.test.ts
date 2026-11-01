@@ -11,6 +11,7 @@ import { checkGroups, groupGeometry, newBoardState, acceptGroups, overlapArea, p
 import { namesWord } from '../../src/playback/scheduler';
 import { anchorWords } from '../../src/script/parseTag';
 import { BOARD_W, completeSvg, rawSvgScript } from '../../src/svgboard/wire';
+import { beatOfGroup } from '../../src/svgboard/beat';
 import type { RawAction } from '../../src/script/types';
 
 const wire = (raw: string, step: number) => {
@@ -126,12 +127,15 @@ describe('svg beats: the gate splitter keeps a beat\'s group with its sentences'
         for (let i = 0; i < text.length; i += step) out.push(...s.push(text.slice(i, i + step)).map((u) => u.text));
         out.push(...s.end().map((u) => u.text));
         expect(out.join('')).toBe(text);
-        // A unit that starts with a group is that group alone (its sentences went out before it).
-        for (const u of out.slice(1)) if (u.trimStart().startsWith('{{svg <')) expect(u.replace(/\{\{svg <[^}]*\}\}/g, '').trim()).toBe('');
-        // p6.1: a beat's group comes before its sentences, so a group is never released after them (the
-        // splitter may send it with the sentence before; the scheduler paces it across its own beat's words).
-        const at = (id: string) => out.join('').indexOf(`<g id="${id}"`);
-        expect(at('drift')).toBeLessThan(out.join('').indexOf('Point it straight'));
+        // Each unit holding a group holds exactly that group's beat: the group and its own sentences (the
+        // filter's {{beat}} boundaries; before them a unit paired one beat's words with the next beat's group).
+        for (const u of out.filter((x) => x.includes('{{svg <'))) {
+          const ids = [...u.matchAll(/\{\{svg <g id="([^"]+)"/g)].map((m) => m[1]);
+          expect(ids, u.slice(0, 80)).toHaveLength(1);
+          const own = beatOfGroup(text, ids[0])!;
+          expect(u, ids[0]).toBe(own.text);
+          expect(own.words.length, ids[0]).toBeGreaterThan(0);
+        }
       }
     });
   }
