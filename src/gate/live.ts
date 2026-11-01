@@ -207,6 +207,7 @@ export class GatePreflight implements Preflight {
     if (this.env.question) state.addValues(textNumbers(this.env.question), 'question', 'question', -1);
     this.beats.forEach((as, k) => { for (const a of as) state.note(a); for (const a of as) { try { state.apply(a, k); } catch { /* the offline engine's gap: noted at check time */ } } });
     const k = this.beats.length;
+    const redef0 = state.redefined.length;
     const beat = beatOf(u.text, toks);
     const unitConsts = tags.flatMap((t) => (t.action?.kind === 'const' && !skipped.has(t) ? t.action.defs.filter(([, v]) => /^[-−+]?\d*\.?\d+$/.test(v.trim())).map(([name, v]) => ({ name, v: Number(v.replace('−', '-')) })) : []));
     const added = tags.flatMap((t) => (skipped.has(t) ? [] : (tagActs.get(t) ?? []).flatMap((a) => shadow.added?.get(a) ?? [])));
@@ -235,6 +236,9 @@ export class GatePreflight implements Preflight {
         const r = checkGroups(srcs, sb, ((this.env.svgMinFont?.() ?? 16) * sb.w) / 1000, state.svg);
         v.flags.push(...r.flags);
         v.notes.push(...r.notes);
+        // A group that defines a constant already defined, to another value: the first stands on the board
+        // (KitStore.defineConsts), so this group would draw (and its words say) a value it does not have.
+        for (const d of new Set(state.redefined.slice(redef0))) v.flags.push({ check: 'svg', detail: `constant ${d} is already defined: give the new value a new name` });
         svg = { board: sb, geos: r.geos, ...(r.grow ? { grow: r.grow } : {}) };
       } else if (sb !== this.svg && sb) svg = { board: sb, geos: [] };
     }

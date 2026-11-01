@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 // Constants never cascade (src/svgboard/defs.ts): a withheld beat's definitions (data-const, frames,
 // named curves and points) still reach the board and the gate's state, so a later group never fails
-// "unknown constant" / "no curve" because an earlier one was withheld.
+// "unknown constant" / "no curve" because an earlier one was withheld. And a constant, once defined,
+// keeps its value: a later definition never redraws what was drawn from the first.
 import { describe, expect, it } from 'vitest';
 import { GatePreflight, LiveGate, remnantOf } from '../../src/gate/live';
 import type { GateEvent, GateLogEvent } from '../../src/gate/events';
@@ -9,6 +10,9 @@ import { defsOf } from '../../src/svgboard/defs';
 import { checkGroups, newBoardState } from '../../src/svgboard/check';
 import { mountBoard, prepareGroup } from '../../src/svgboard/render';
 import { parseTag } from '../../src/script/parseTag';
+import { GateState } from '../../src/gate/engine';
+import { KitStore } from '../../src/desk/kit/kit';
+import type { RawAction } from '../../src/script/types';
 
 async function run(text: string) {
   const events: GateLogEvent[] = [];
@@ -79,5 +83,35 @@ describe('a withheld beat never cascades', () => {
     if (typeof later === 'string') throw new Error(later);
     expect(later.el.querySelector('[data-bad]')).toBeNull();
     expect(later.el.querySelector('text')!.textContent).toBe('crossing 150 s');
+  });
+});
+
+describe('a constant keeps its first value', () => {
+  it('the board: a later definition never redraws what the first drew', () => {
+    const k = new KitStore();
+    k.defineConsts([['k', '2']]);
+    k.defineConsts([['k', '5'], ['j', '3']]);
+    expect(k.consts.k).toBe(2);
+    expect(k.consts.j).toBe(3);
+    k.defineConsts([['k', '2']]); // the same value again (a remnant, a repair): nothing to say
+    k.setConst('k', 7); // a tween still moves it
+    expect(k.consts.k).toBe(7);
+  });
+
+  it('the gate: the state keeps the first value and the redefining group fails (its words would say a value it does not draw)', async () => {
+    const st = new GateState();
+    st.apply({ kind: 'const', defs: [['k', '2']] } as RawAction, 0);
+    st.apply({ kind: 'const', defs: [['k', '5']] } as RawAction, 1);
+    expect(st.consts.k).toBe(2);
+    expect(st.redefined).toEqual(['k=5 (it is 2)']);
+    const r = await run([
+      'Two readouts. {{svgboard h=600}} {{beat}} ',
+      '{{svg <g id="one" data-const="k=2"><text x="60" y="60" font-size="16" data-val="k*10">first {}</text></g>}} The first reads twenty. ',
+      '{{beat}} {{svg <g id="two" data-const="k=5"><text x="60" y="160" font-size="16" data-val="k*10">second {}</text></g>}} The second reads fifty. ',
+    ].join(''));
+    const two = r.events.find((e) => e.text?.includes('fifty'))!;
+    expect(two.action).toBe('drop');
+    expect(two.flags.map((f) => f.detail).join()).toMatch(/constant k=5 \(it is 2\) is already defined/);
+    expect(r.out).toContain('The first reads twenty.');
   });
 });

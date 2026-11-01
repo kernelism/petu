@@ -142,11 +142,18 @@ export class KitStore {
   /** Named numbers ({{const}}), lowercase as the expression language reads names; every kit formula may use them. */
   consts: Record<string, number> = {};
   /** Defines constants in order; each value may use the ones before it. A bad one is dropped (warned). */
+  /**
+   * Defines constants, in order. A name already defined keeps its value: a later definition never changes
+   * what was drawn from the first (two svg groups both writing `data-const="k=…"`: the second redrew the
+   * first's readouts on the next refresh, 20 → 50). The gate flags it (src/gate/live.ts); a change on
+   * purpose is a {{tween}} (setConst).
+   */
   defineConsts(defs: [string, string][]): void {
     for (const [k, v] of defs) {
       const f = C.compileFn(v, Object.keys(this.consts));
       const x = f ? f(this.consts) : NaN;
       const key = k.toLowerCase();
+      if (key in this.consts && this.consts[key] !== x) { console.warn('[kit] const redefined, the first value stands:', `${k}=${v}`); continue; }
       if (Number.isFinite(x)) {
         this.consts[key] = x;
         this.derived = this.derived.filter(([d]) => d !== key);
