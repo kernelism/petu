@@ -3,9 +3,38 @@
 // definitions (the kept check question resolves them), and a repair keeps its beat's {{beat}} boundary
 // even when written words-first (trailing order writes no leading {{beat}}).
 import { describe, expect, it } from 'vitest';
+import { SvgBeatFilter } from '../../server/svgBeats';
+import { beatsOf, groupIdOf } from '../../src/svgboard/beat';
 import { GatePreflight, LiveGate } from '../../src/gate/live';
 import type { GateEvent, GateLogEvent } from '../../src/gate/events';
 
+const wire = (raw: string, o: { opened?: boolean } = {}) => { const f = new SvgBeatFilter(() => 0, o); return f.push(raw) + f.end(); };
+const show = (b: { groups: { body: string }[]; words: { text: string }[] }) => `${b.groups.map((g) => groupIdOf(g.body)).join(',')}: ${b.words.map((w) => w.text).join(' ')}`;
+
+describe('a repair written in trailing order keeps its beat boundary', () => {
+  it('the repaired beat stays its own beat', async () => {
+    const events: GateLogEvent[] = [];
+    let t = 0, ends = 0;
+    const fixed = wire('The frame holds the curve. <g id="frame"><g data-axes="ax" data-x="0,10" data-y="0,10" data-box="50,80,400,280" data-frame=""/></g>', { opened: true });
+    const gate = new LiveGate({
+      clock: { now: () => t, endsAt: () => ends }, preflight: new GatePreflight({}), headroomMs: 500, minRepairMs: 0,
+      repair: async () => ({ ok: true, text: fixed }), onEvent: (e) => events.push(e),
+      sleep: (_ms, sig) => new Promise<void>((r) => sig?.addEventListener('abort', () => r(), { once: true })),
+    });
+    const text = [
+      'One two three four five six seven eight nine ten eleven twelve. {{svgboard h=600}} {{beat}} ',
+      '{{svg <g id="title"><text x="40" y="40" font-size="18">Ferry</text></g>}} The ferry crosses the river from bank to bank today. ',
+      '{{beat}} {{svg <g id="frame"><g data-axes="ax" data-x="0,10" data-y="0,10" data-box="50,50,400,300" data-frame=""/><text x="60" y="40" font-size="16" data-val="nosuch">bad {}</text></g>}} The frame holds the curve. ',
+      '{{beat}} {{svg <g id="use"><text x="60" y="420" font-size="16">end</text></g>}} The end is here. ',
+    ].join('');
+    const src = async function* () { gate.handoff(); for (const c of text.match(/[\s\S]{1,29}/g)!) { t += 30; yield c; } };
+    let out = '';
+    for await (const s of gate.wrap(src)(new AbortController().signal)) { out += s; ends = t + 3000 * s.split(/\s+/).length; }
+    expect(events.some((e) => e.t === 'repair' && e.phase === 'ok')).toBe(true);
+    expect(fixed).not.toContain('{{beat}}');
+    expect(beatsOf(out).slice(1).map(show)).toEqual(['title: The ferry crosses the river from bank to bank today.', 'frame: The frame holds the curve.', 'use: The end is here.']);
+  });
+});
 
 describe('budget: a beat cut past the budget leaves its definitions', () => {
   it('the kept check question still resolves the cut beat\'s constant, and the cut beat says and draws nothing', async () => {

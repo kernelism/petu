@@ -14,7 +14,7 @@
 //      src/svgboard/defs.ts), so one withheld beat never cascades into the beats after it.
 import { BeatSplitter, BEAT_DEFAULTS, NEW_INK, tokenize, units, type Beat, type Tag, type Word } from './segment';
 import { MAX_TAG_CHARS, ScriptParser } from '../script/parser';
-import { isDefsGroup, isSvgTagBody, SVG_TAG_MAX, unescapeSvg, escapeSvg } from '../svgboard/wire';
+import { BEAT_TAG, hasBeatTags, isDefsGroup, isSvgTagBody, SVG_TAG_MAX, unescapeSvg, escapeSvg } from '../svgboard/wire';
 import { definedNames, defsOf } from '../svgboard/defs';
 import { GateState } from './engine';
 import { checkBeat, namedScene, withSeverity, type Severity } from './verdict';
@@ -735,6 +735,10 @@ export class LiveGate {
     // 2026-10-31, turn 3: the first beat failed, its repair came back without {{svgboard}}, and every group
     // of the answer was then skipped, "unknown region": the board had never opened).
     if (opened && !/\{\{svgboard\b/.test(text)) text = `${opened[0]} ${text.trimStart()}`;
+    // A whole beat keeps its boundary: a repair written words-first (trailing order) carries no leading
+    // {{beat}} (the filter owes it to the next word, and none follows), and without one the repaired beat
+    // would join the beat before it: its group anchored and paced on that beat's words.
+    if (u.beat && !hasBeatTags(text)) text = opened ? text.replace(opened[0], `${opened[0]} ${BEAT_TAG}`) : `${BEAT_TAG} ${text.trimStart()}`;
     if (!/^\s/.test(text)) text = (leadWs(u.text) || ' ') + text;
     this.d.onEvent({ t: 'repair', k: u.key, phase: 'ok', ms: Math.round(ms), text: res.text, ...(res.usd != null ? { usd: res.usd } : {}) });
     // `&gatefail=K:bad`: the original comes back and its injected skip with it.
