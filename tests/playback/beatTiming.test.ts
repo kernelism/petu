@@ -82,4 +82,30 @@ describe('beat timing: a group draws in its own beat', () => {
     const { log } = run([BEAT, svg('one'), ...words('The axis goes in.'), BEAT, svg('two')], 5000);
     expect(log.filter((x) => x === '<svg>')).toHaveLength(1);
   });
+  it('the look after a page mark never pushes a short beat\'s group past its beat', () => {
+    const p = new ScriptParser();
+    const script = `Opener. {{svgboard h=400}} {{beat}} {{highlight p=1 "the long quoted phrase on the page here"}} See this on the page now. {{beat}} {{svg <g id="aa"><line x1="1" y1="1" x2="9" y2="9" stroke="#222"/></g>}} It runs. {{beat}} {{svg <g id="bb"><line x1="1" y1="1" x2="9" y2="9" stroke="#222"/></g>}} Then the next beat has many words to say about it all here now. `;
+    const evs: ScriptEvent[] = [...p.push(script), ...p.end(), END];
+    const fired: { id?: string; word?: number }[] = [];
+    const s = new Scheduler(fixedClock(), { onWord() {}, onAction: (a, _at, word) => fired.push({ id: (a as { id?: string }).id ?? a.kind, word }), onDone() {} }, { leadMs: () => 0 });
+    s.push(evs);
+    vi.advanceTimersByTime(20000);
+    const ws = evs.flatMap((e) => (e.type === 'word' ? [e.text] : []));
+    const bStart = ws.indexOf('Then');
+    const a = fired.find((f) => f.id === 'aa')!;
+    expect(a.word, `aa fired on "${ws[a.word!]}" (#${a.word}); beat bb starts at #${bStart}; ${JSON.stringify(fired)}`).toBeLessThan(bStart);
+    // The look outlasts "It runs.": aa draws on its beat's last word, and before bb.
+    expect(a.word).toBe(bStart - 1);
+    expect(fired.map((f) => f.id).filter((x) => x === 'aa' || x === 'bb')).toEqual(['aa', 'bb']);
+  });
+
+  it('a look that outlasts a short beat does not pull the next beat\'s group into a shared slot', () => {
+    const { fired } = run([mark('a long quoted phrase on the slide here'), ...words('See this.'), BEAT, svg('one'), ...words('Short.'), BEAT, svg('two'), ...words('the curve falls fast and then it flattens out slowly over time.'), END]);
+    const two = fired.find((f) => f.id === 'two')!;
+    // 'two' is alone in its beat: it paces over the whole of it, not its second half.
+    expect(two.slot).toBeUndefined();
+    expect(fired.map((f) => f.id)).toEqual(['one', 'two']);
+    expect(fired[0].beat).toEqual(['Short.']);
+    expect(two.beat[0]).toBe('the');
+  });
 });

@@ -185,7 +185,9 @@ export class Scheduler {
   /**
    * The look: holds board action `j` (and the groups that came with it) until the board is free, moving
    * it to the first word spoken from then on and behind every action on earlier words, so page marks
-   * keep firing on their words meanwhile. 'ok': it may fire now (its word is already late enough);
+   * keep firing on their words meanwhile. Never past its own beat's last word: a look that outlasts a
+   * short beat draws the group on that word (moved into the next beat, it drew over that beat's words,
+   * after that beat's group, its own words already spoken). 'ok': it may fire now (its word is already late enough);
    * 'moved': it was re-anchored and re-ordered (look at acts[fired] again); null: not known yet.
    */
   private lookHold(j: number, now: number): 'ok' | 'moved' | null {
@@ -195,14 +197,16 @@ export class Scheduler {
     if (free === -Infinity) return 'ok';
     // Groups that came together (one word) move together and keep their slots.
     let k = j + 1;
-    while (k < this.acts.length && drawsSvg(a.action) && drawsSvg(this.acts[k].action) && this.acts[k].word === a.word) k++;
+    while (k < this.acts.length && drawsSvg(a.action) && drawsSvg(this.acts[k].action) && this.acts[k].word === a.word && this.acts[k].beat === a.beat) k++;
     const group = this.acts.slice(j, k);
+    const last = this.tagged && a.beat != null ? (this.beatStarts.find((b) => b > a.beat!) ?? Infinity) - 1 : Infinity;
     let w = a.word;
-    while (w < this.released && (this.clock.wordStart(w) ?? Infinity) < free) w++;
+    while (w < last && w < this.released && (this.clock.wordStart(w) ?? Infinity) < free) w++;
+    const capped = w >= last;
     // No word to anchor to (the narration ended, or ran dry): the board draws when the look is over.
     const dry = this.started && now > this.clock.endsAt() + FLUSH_MS;
-    const trailing = w >= this.released && ((this.ended && w >= this.words.length) || dry);
-    if (w >= this.released && !trailing) return null; // the word that ends the look isn't released yet
+    const trailing = !capped && w >= this.released && ((this.ended && w >= this.words.length) || dry);
+    if (w >= this.released && !trailing && !capped) return null; // the word that ends the look isn't released yet
     for (const g of group) { g.word = w; if (trailing) g.until = free; else delete g.until; }
     // Behind every action on an earlier word, and page marks on the same word (they fire first).
     let at = k;
@@ -213,12 +217,12 @@ export class Scheduler {
     return 'moved';
   }
 
-  /** The k-th of n svg groups that fire on word `word` (they came together and share its beat). */
+  /** The k-th of n svg groups of one beat that fire on word `word` (they came together and share its beat). */
   private slotOf(j: number): { k: number; n: number } {
     let k = 0, n = 0;
     for (let i = 0; i < this.acts.length; i++) {
       const x = this.acts[i];
-      if (!drawsSvg(x.action) || x.word !== this.acts[j].word) continue;
+      if (!drawsSvg(x.action) || x.word !== this.acts[j].word || x.beat !== this.acts[j].beat) continue;
       if (i < j) k++;
       n++;
     }
