@@ -824,11 +824,17 @@ describe('Lessons v3: two stages', () => {
     expect(tail.at(-2).text).toMatch(/^QUESTION/);
     expect(tail.at(-1).text).toBe(openerNote('{{circle p=2 mark=#d1}} It is the best line.'));
     expect(tail.at(-1).text).toMatch(/^ALREADY SPOKEN:.*Do not repeat.*\nOPENING: \{\{circle p=2 mark=#d1\}\} It is the best line\.$/s);
-    // p6.5: speaking comes first even after an opener, so the plan's writing time is covered.
-    expect(tail.at(-1).text).toMatch(/starts with spoken words, before the plan/);
-    // it continues from where the opener stopped: never its claim again, a first sentence that adds something
-    expect(tail.at(-1).text).toMatch(/never state it again, in any words/);
-    expect(tail.at(-1).text).toMatch(/one or two sentences that need no drawing and add something the opening did not say \(why it holds/);
+    // p6.9 (C7): the plan first while the opener plays; no spoken lead-in before it.
+    expect(tail.at(-1).text).toMatch(/the plan first \(the student is still hearing the opening while you write it\)/);
+    expect(tail.at(-1).text).not.toMatch(/before the plan|sentences that need no drawing/);
+    // The opener spoke before any case existed: a contradiction is corrected in words, once; otherwise never restated.
+    expect(tail.at(-1).text).toMatch(/If your worked case contradicts anything the opening said[^.]*, your first beat corrects it in plain words, once/);
+    expect(tail.at(-1).text).toMatch(/otherwise never state its claim again, in any words/);
+    // The tag prompt keeps its own note (spoken lead-in, no correction rule).
+    const tags = buildRequest(req({ context: { ...multi, opener: 'It is.' } }), { ...cfg, promptVariant: 'tags' }) as any;
+    expect(tags.input.at(-1).content.at(-1).text).toBe(openerNote('It is.', false));
+    expect(openerNote('It is.', false)).toMatch(/starts with spoken words, before the plan/);
+    expect(openerNote('It is.', false)).not.toMatch(/corrects it/);
     // The cached prefix is unchanged by the opener.
     expect(b.input.slice(0, 2)).toEqual((buildRequest(req({ context: multi }), cfg) as any).input.slice(0, 2));
   });
