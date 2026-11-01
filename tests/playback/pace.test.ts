@@ -87,11 +87,27 @@ describe('pace: each part draws across its share of the words', () => {
     expect(t[0]).toEqual({ i: 0, at: 0, dur: PART_MAX_MS });
   });
 
-  it('a short share gets the minimum', () => {
-    // Two parts named on neighbouring words: the first still draws PART_MIN_MS.
+  it('two parts named on neighbouring words: the first is quick, the second keeps its word', () => {
     const t = paceParts([part(['curve']), part(['peak'])], beat('the curve peak rises here and falls slowly again'))!;
-    expect(t[0]).toMatchObject({ i: 0, at: 300, dur: PART_MIN_MS });
+    expect(t[0]).toMatchObject({ i: 0, at: 300, dur: 300 - PART_GAP_MS });
     expect(t[1]).toMatchObject({ i: 1, at: 600 });
+  });
+
+  it('a crowded gap never runs into the named part after it', () => {
+    // Five unnamed strokes before a label said on word 2: they fit in 600 ms, the label keeps its word.
+    const t = paceParts([part(), part(), part(), part(), part([], ['37'])], beat('it is 37 degrees then a b c d e f g'))!;
+    const end = Math.max(...t.filter((x) => x.i < 4).map((x) => x.at + x.dur));
+    expect(t.find((x) => x.i === 4)!.at).toBe(600);
+    expect(end).toBeLessThanOrEqual(600);
+  });
+
+  it('the parts before every named one start at the beat\'s start, not just before the first named in the group', () => {
+    // The ferry's triangle: its strokes come first in the group, its "37°" label is said last.
+    const w = beat(`draw the triangle ${Array(20).fill('w').join(' ')} 2.5 here ${Array(10).fill('w').join(' ')} about 37 degrees`);
+    const t = paceParts([part(), part(), part(), part([], labelNames('37°')), part([], labelNames('2.5 m/s'))], w)!;
+    expect(t.map((x) => x.i)).toEqual([0, 1, 2, 4, 3]);
+    expect(t[0].at).toBe(0);
+    expect(t[2].at + t[2].dur).toBeLessThanOrEqual(23 * 300); // the strokes are done by "2.5"
   });
 
   it('many parts in a short beat share it: the minimum gives way, the drawing ends with the beat', () => {

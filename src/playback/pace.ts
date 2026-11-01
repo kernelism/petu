@@ -139,10 +139,12 @@ function named(names: readonly string[], words: readonly BeatWord[], said: reado
  * draws now), and draws until the next part starts, at least through its naming words, never cut short
  * by PART_MAX_MS (the narration is still on it). An unnamed part goes with its nearest named neighbour in
  * the group's own order (a tie: the one before it): those after a named part draw right after it, those
- * before one right up to it, the first ones from the window's start; each over an even share of the gap,
- * clamped to [min, PART_MAX_MS] (a long gap does not crawl). Nothing named: the parts spread evenly over
- * the window in the group's order. Pen category is not an order: the group's order is the author's.
- * min is PART_MIN_MS unless the window is too short to give every part that much (then an equal share).
+ * before one right up to it; the ones before every named part (a figure's strokes ahead of its labels)
+ * from the window's start, up to the first part named. Each draws over an even share of its gap, at most
+ * PART_MAX_MS (a long gap does not crawl), and never into the named part after it: a named part keeps its
+ * word whatever is before it. Nothing named: the parts spread evenly over the window in the group's order,
+ * each at least min (PART_MIN_MS unless the window is too short to give every part that much). Pen
+ * category is not an order: the group's order is the author's.
  */
 export function paceParts(parts: readonly PartIn[], words: readonly BeatWord[], slot?: Slot, start?: number): PartTime[] | null {
   if (!parts.length || (words.length < 2 && !words[words.length - 1]?.open)) return null;
@@ -166,13 +168,13 @@ export function paceParts(parts: readonly PartIn[], words: readonly BeatWord[], 
   if (!heads.length) {
     for (let i = 0; i < n; i++) at.push({ i, at: from + (i / n) * span, dur: unnamedDur(span / n) });
   } else {
-    const after = parts.map((): number[] => []), before = parts.map((): number[] => []);
+    const after = parts.map((): number[] => []), before = parts.map((): number[] => []), lead: number[] = [];
     for (let i = 0; i < n; i++) {
       if (hits[i]) continue;
       let p = i - 1, q = i + 1;
       while (p >= 0 && !hits[p]) p--;
       while (q < n && !hits[q]) q++;
-      if (p < 0) before[q].push(i);
+      if (p < 0) lead.push(i);
       else if (q >= n || i - p <= q - i) after[p].push(i);
       else before[q].push(i);
     }
@@ -180,19 +182,21 @@ export function paceParts(parts: readonly PartIn[], words: readonly BeatWord[], 
     for (let k = 0; k <= heads.length; k++) {
       const h = k ? heads[k - 1] : -1, nx = k < heads.length ? heads[k] : -1;
       const a = h >= 0 ? hits[h]!.at : from, b = nx >= 0 ? hits[nx]!.at : to;
-      const A = h >= 0 ? after[h] : [], B = nx >= 0 ? before[nx] : [];
+      const A = h >= 0 ? after[h] : lead, B = nx >= 0 ? before[nx] : [];
       if (h >= 0) at.push({ i: h, at: a });
       if (!A.length && !B.length) continue;
       const lo = h >= 0 ? Math.min(b, Math.max(a + (b - a) / (1 + A.length + B.length), hits[h]!.until)) : a;
-      const len = (b - lo) / (A.length + B.length), d = unnamedDur(len), step = Math.min(len, d + PART_GAP_MS);
+      // In the gap: a part never runs into the named one after it (that one keeps its word).
+      const len = (b - lo) / (A.length + B.length), d = Math.max(120, Math.min(PART_MAX_MS, len - PART_GAP_MS)), step = Math.min(len, d + PART_GAP_MS);
       A.forEach((i, j) => at.push({ i, at: lo + j * step, dur: d }));
       B.forEach((i, j) => at.push({ i, at: b - (B.length - j) * step, dur: d }));
     }
   }
   at.sort((x, z) => x.at - z.at || x.i - z.i);
   return at.map((x, j) => {
-    // A named part draws until the next one starts (less a pen lift): the narration is still on it.
-    const dur = x.dur ?? Math.max(min, (j + 1 < at.length ? at[j + 1].at : to) - x.at - PART_GAP_MS);
+    // A named part draws until the next one starts (less a pen lift): the narration is still on it. Two
+    // named on near words: the first is quick, the second keeps its word.
+    const dur = x.dur ?? Math.max(120, (j + 1 < at.length ? at[j + 1].at : to) - x.at - PART_GAP_MS);
     return { i: x.i, at: Math.round(x.at), dur: Math.round(dur) };
   });
 }
