@@ -864,6 +864,10 @@ describe('Lessons v3: two stages', () => {
     expect(tags.input.at(-1).content.at(-1).text).toBe(openerNote('It is.', false));
     expect(openerNote('It is.', false)).toMatch(/starts with spoken words, before the plan/);
     expect(openerNote('It is.', false)).not.toMatch(/corrects it/);
+    // p6.12: the scout's opener (s2.9) orients in both formats, so the tag lead-in gives the answer; it is never told the student already has it.
+    expect(openerNote('It is.', false)).toMatch(/It only oriented the student[^.]*stated no result/);
+    expect(openerNote('It is.', false)).toMatch(/answer the question in plain words/);
+    expect(openerNote('It is.', false)).not.toMatch(/has its claim|never state it again|do not answer the question again/);
     // The cached prefix is unchanged by the opener.
     expect(b.input.slice(0, 2)).toEqual((buildRequest(req({ context: multi }), cfg) as any).input.slice(0, 2));
   });

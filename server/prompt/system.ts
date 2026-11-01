@@ -53,8 +53,11 @@ import { BOARD_W } from '../../src/svgboard/wire.ts';
  * nothing is spoken until it is written, so the prompt asks for a small one. The examples open on their plans.
  * The off-topic reply (one sentence, no plan) and the empty answer (an opening that said it all) are named
  * as the exceptions, so "Plan first" does not contradict them (same version: p6.11 was never run before this note).
+ * p6.12 (2026-10-31, C7 review): the tag format's opener note (server/openai.ts openerNote, svg false) no
+ * longer says the opener made the claim: the scout's s2.9 opener orients in both formats, so the tag
+ * lead-in before the plan gives the answer.
  */
-export const PROMPT_VERSION = 'p6.11';
+export const PROMPT_VERSION = 'p6.12';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
