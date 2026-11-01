@@ -187,6 +187,20 @@ describe('svg checks', () => {
     expect(checkGroups([G('<circle cx="10" cy="10" r="5" stroke="#000"/>'), G('<circle cx="40" cy="10" r="5"/>')], b).flags[0].detail).toMatch(/twice/);
     expect(checkGroups(['<g id="x"><line x1="0" y1="0"></g>'], b).flags[0].detail).toMatch(/parse/);
   });
+  it('a label the model put on an earlier group\'s line or text is moved off it (settle.ts), not only one the raise pushed there', () => {
+    const b = newBoardState(1000, 700);
+    acceptGroups(b, checkGroups(['<g id="axis"><line x1="50" y1="100" x2="400" y2="100" stroke="#000"/><text x="450" y="300" font-size="20">old note</text></g>'], b).geos);
+    const r = checkGroups(['<g id="lab"><text x="100" y="106" font-size="20">on the line</text><text x="455" y="304" font-size="20">on the note</text></g>'], b);
+    expect(r.flags).toEqual([]);
+    expect(r.notes).toEqual([]);
+    const [line, note] = r.geos[0].texts;
+    expect(segHitsBox({ x: 50, y: 100 }, { x: 400, y: 100 }, { x: line.x, y: line.y + line.h * 0.22, w: line.w, h: line.h * 0.56 })).toBe(false);
+    // Both moved from where the model put them (on an empty board they stay).
+    const raw = checkGroups(['<g id="lab"><text x="100" y="106" font-size="20">on the line</text><text x="455" y="304" font-size="20">on the note</text></g>'], newBoardState(1000, 700)).geos[0].texts;
+    expect([line.x, line.y]).not.toEqual([raw[0].x, raw[0].y]);
+    expect([note.x, note.y]).not.toEqual([raw[1].x, raw[1].y]);
+    expect(overlapArea(note, b.texts.find((t) => t.text === 'old note')!)).toBeLessThan(overlapArea(raw[1], b.texts.find((t) => t.text === 'old note')!));
+  });
   it('passes a label beside a line, and lets the bottom grow a little', () => {
     const b = newBoardState(1000, 700);
     expect(checkGroups([G('<line x1="50" y1="120" x2="400" y2="120" stroke="#000"/><text x="100" y="100" font-size="20">clear label</text>')], b).flags).toEqual([]);
