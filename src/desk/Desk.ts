@@ -723,7 +723,7 @@ export class Desk implements DeskApi {
     if (!this.host.layout()) return false;
     await before?.();
     if (ep !== this.epoch) return false;
-    await this.host.glideTo(() => this.inkFrame(t, r, anchor), 450);
+    await this.host.glideTo(() => this.inkFrame(t, r, anchor), 450, t.page);
     return true;
   }
 
@@ -776,7 +776,7 @@ export class Desk implements DeskApi {
     if (ep !== this.epoch) return;
     // The slides and the board scroll independently: both ends come into view together.
     await Promise.all([
-      needPage ? this.host.glideTo(() => this.inkFrame(pageEnd.t, pageEnd.r), 450) : null,
+      needPage ? this.host.glideTo(() => this.inkFrame(pageEnd.t, pageEnd.r), 450, pageEnd.t.page) : null,
       needBoard && this.lane() ? this.reveal(regEnd.t, regEnd.r) : needBoard ? (sec.scene ? this.frameScene(sec, regEnd.r) : this.glideBoard(() => this.boardTop(sec, regEnd.r))) : null,
     ]);
   }
@@ -1557,7 +1557,7 @@ export class Desk implements DeskApi {
   async showEdge(): Promise<void> {
     const k = this.inked[0];
     if (!k || !this.host.layout()) return;
-    await this.host.glideTo(() => this.inkFrame({ page: k.page }, k.r), 450);
+    await this.host.glideTo(() => this.inkFrame({ page: k.page }, k.r), 450, k.page);
   }
 
   /**

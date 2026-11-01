@@ -51,6 +51,16 @@ const PINCH_RATE = 0.01;
 
 const dpr = () => Math.min(2, window.devicePixelRatio || 1);
 
+/**
+ * DeskHost.glideTo as the viewer runs it. A glide that shows page ink (Desk.reveal, frameBoth,
+ * showEdge pass the page) is the tutor steering there, as scrollToPage is: the focus page follows.
+ * Without it the focus stayed on the last {{scroll}} page while the desk had glided to another, and
+ * the indicator and the next question's page (a check reply) named the page no longer in frame.
+ * Steered before the glide, so the student taking over mid-glide (intent) still clears it.
+ */
+export const steeredGlide = (steer: (page: number) => void, glide: (top: () => number, maxMs?: number) => Promise<void>): DeskHost['glideTo'] =>
+  (top, maxMs, page) => { if (page != null) steer(page); return glide(top, maxMs); };
+
 // ---------------------------------------------------------------------------------------------
 // Layout: absolute tops computed in JS (src/desk/layout.ts), so scroll math never reads the DOM.
 
@@ -845,13 +855,13 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       maxScroll: () => Math.max(0, (layoutRef.current?.total ?? 0) - el.clientHeight),
       aspect: (page) => aspectsRef.current?.[clampPage(page) - 1] ?? 1.294,
       setSplit,
-      glideTo: async (top, maxMs) => {
+      glideTo: steeredGlide((page) => steer(clampPage(page)), async (top, maxMs) => {
         leaveOverview();
         glide?.abort();
         const ctrl = (glide = new AbortController());
         try { await animateScrollTo(el, top, { signal: ctrl.signal, maxMs, owner }); }
         finally { if (glide === ctrl) glide = null; publishCurrent(); }
-      },
+      }),
       cancelGlide: () => glide?.abort(),
       scrollToPage: (page, y) => api.scrollToPage(page, y),
       onLayout: (cb) => { layoutSubs.current.add(cb); return () => { layoutSubs.current.delete(cb); }; },
