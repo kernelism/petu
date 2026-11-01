@@ -108,4 +108,27 @@ describe('beat timing: a group draws in its own beat', () => {
     expect(fired[0].beat).toEqual(['Short.']);
     expect(two.beat[0]).toBe('the');
   });
+  it('a group a forward seek skips past still names its own beat (beatFrom), not the target beat', () => {
+    const { fired } = run([BEAT, svg('one'), ...words('first the axis goes in.'), BEAT, svg('two'), ...words('then the curve rises.'), BEAT, svg('three'), ...words('and here it levels off at last.'), END], 20000, { t: 1, to: 12 });
+    const one = fired.find((f) => f.id === 'one')!;
+    const two = fired.find((f) => f.id === 'two')!;
+    expect(two.beatFrom).toBe(5);
+    expect(two.beat[0]).toBe('then');
+    expect(one.beatFrom).toBe(0);
+  });
+
+  it('after a forward seek the skipped beat\'s words are spoken: its group lands, not paced over the target beat', () => {
+    let from: number | undefined;
+    const s: Scheduler = new Scheduler(fixedClock(), {
+      onWord() {}, onAction: (a) => { const x = a as { id?: string; beatFrom?: number }; if (x.id === 'two') from = x.beatFrom; }, onDone() {},
+    }, { leadMs: () => 0 });
+    s.push([BEAT, svg('one'), ...words('first the axis goes in.'), BEAT, svg('two'), ...words('then the curve rises.'), BEAT, svg('three'), ...words('and here it levels off at last.'), END]);
+    vi.advanceTimersByTime(1);
+    s.seek(12);
+    // The director reads it once the group's step runs (after the seek).
+    const beat = s.beatWords(from);
+    expect(beat.length).toBe(4);
+    // They kept their old, later times on the clock; they were skipped, so they are over.
+    expect(beat.map((w) => [w.inMs, w.endMs])).toEqual([[0, 0], [0, 0], [0, 0], [0, 0]]);
+  });
 });

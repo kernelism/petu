@@ -229,6 +229,14 @@ export class Scheduler {
     return { k, n };
   }
 
+  /** Action `j` as it fires: an svg group with its beat's first word (beatFrom) and its slot in it. */
+  private withBeat(j: number): Action {
+    const a = this.acts[j];
+    if (!drawsSvg(a.action)) return a.action;
+    const slot = this.slotOf(j);
+    return { ...a.action, ...(slot.n > 1 ? { slot } : {}), beatFrom: a.beat ?? a.word } as Action;
+  }
+
   /**
    * The words of a beat, each with how soon it is spoken (ms from now; words not yet timed are estimated
    * at 300 ms each, words already spoken at 0). An svg group paces its parts across them.
@@ -257,10 +265,12 @@ export class Scheduler {
     let last = now;
     for (let i = i0; i < Math.min(to, i0 + max); i++) {
       const s = i < this.released ? this.clock.wordStart(i) : null;
-      // Not timed yet (a voice still loading, a word not released): after the one before, at the clock's estimate.
-      const t = s ?? last;
       const d = this.clock.durationMs(this.words[i]) || WORD_EST_MS;
-      out.push({ text: this.words[i], inMs: Math.max(0, t - now), endMs: Math.max(0, t + d - now), ...(i === i0 && t < now ? { sinceMs: now - t } : {}) });
+      // Over once the word after it is spoken (a forward seek's skipped words keep their old, later times).
+      const over = i + 1 < this.spoken;
+      // Not timed yet (a voice still loading, a word not released): after the one before, at the clock's estimate.
+      const t = over ? Math.min(s ?? now, now) : s ?? last;
+      out.push({ text: this.words[i], inMs: Math.max(0, t - now), endMs: over ? 0 : Math.max(0, t + d - now), ...(i === i0 && t < now ? { sinceMs: now - t } : {}) });
       last = Math.max(now, t + d);
     }
     // Its end isn't known while the stream may still add words to it.
@@ -340,8 +350,8 @@ export class Scheduler {
       while (this.released < to) this.release();
       this.started = true;
       while (this.fired < this.acts.length && this.acts[this.fired].word < to) {
-        const a = this.acts[this.fired++];
-        this.cb.onAction(a.action, now - SEEK_LAG_MS);
+        // With its beat and slot as tick() gives them: without them it read the target beat's words and drew over them.
+        this.cb.onAction(this.withBeat(this.fired++), now - SEEK_LAG_MS);
         if (this.stopped) return true;
       }
       while (this.spoken < to) { this.cb.onWord(this.words[this.spoken], this.spoken); this.spoken++; if (this.stopped) return true; }
@@ -476,9 +486,7 @@ export class Scheduler {
       const j = this.fired++;
       this.lastFire = Math.max(this.lastFire, t.fireAt);
       if (isPageMark(a.action)) this.boardFree = Math.max(this.boardFree, t.at + lookMs(a.action));
-      const slot = drawsSvg(a.action) ? this.slotOf(j) : null;
-      const x = slot ? { ...a.action, ...(slot.n > 1 ? { slot } : {}), beatFrom: a.beat ?? a.word } as Action : a.action;
-      this.cb.onAction(x, t.at, a.word);
+      this.cb.onAction(this.withBeat(j), t.at, a.word);
       if (this.stopped) return;
     }
     while (this.spoken < this.released) {
