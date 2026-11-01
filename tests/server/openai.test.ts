@@ -621,6 +621,14 @@ describe('Lessons v3: two stages', () => {
     expect(relationNote('new-topic')).not.toMatch(/finish/);
   });
 
+  it('scout s2.9 (C7): the opener orients and makes no claim the worked case decides, no numbers', () => {
+    expect(SCOUT_SYSTEM).not.toMatch(/Answer the question in plain words straight away/);
+    expect(SCOUT_SYSTEM).toMatch(/OPENER: [^\n]*Orient the student/);
+    expect(SCOUT_SYSTEM).toMatch(/Make no claim that the worked case decides: no numbers, in digits or in words/);
+    expect(SCOUT_SYSTEM).toMatch(/a sentence with a number in it is not spoken/);
+    expect(SCOUT_SYSTEM).toMatch(/a fact the pages state, not a number/);
+  });
+
   const sreq = { question: 'How does it work?', docName: 'd.pdf', docHash: 'h', numPages: 12, page: 3, digest: 'DECK d.pdf\np1: a', prior: { q: 'before?', a: 'x'.repeat(2000), page: 2 },
     pageText: 'PAGE 3 (visible; 16:9 slide; image attached)\nt1 60 40–300: Three' };
   const scfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600, fast: false, explicitCache: true };
