@@ -1,9 +1,18 @@
 // server/svgBeats.ts — the svg answer mode's stream filter (the default stage-2 format, p6).
 /**
- * The model streams (p6.1): a first sentence or two with no drawing, a short hidden `<plan>` ending with its BOARD layout (`BOARD viewBox="0 0 1000 H"`,
+ * The model streams (p6.9): a short hidden `<plan>` ending with its BOARD layout (`BOARD viewBox="0 0 1000 H"`,
  * regions, groups in teaching order), then beats — that beat's `<g id="…">…</g>`, then 1–3 sentences
  * of narration — repeated. This filter sits in front of the ScriptFilter (it IS one, so the plan,
  * markdown clean-up and readUpstream stay the same) and rewrites only what is SVG:
+ *  - plan before speech (C7, 2026-10-31): an answer's narration written before its plan is held until
+ *    the plan closes and then sent just ahead of the board, so nothing stage 2 says is spoken before its
+ *    case and numbers are decided. The plan is hidden and the scout's opener plays meanwhile (the hold
+ *    costs the plan's writing time, ~2 s; tests/svgboard/beats.test.ts measures it). Held text also goes
+ *    out when a group opens with no plan, at the end, or past HOLD_MAX (a plan-less answer: off-topic).
+ *    Only behind an opener (`hold`, server/openai.ts ask): without one nothing covers the wait. A repair's
+ *    stream (`opened`) is not held: it has no plan.
+ *    (p6.1 had one or two sentences spoken before the plan, to cover its writing; with the opener that
+ *    covered nothing the student needed, and the recorded p6.1 answers mostly skipped them anyway.)
  *  - the beat wire (2026-10-31): it writes the beat boundaries, `{{beat}}` (src/svgboard/beat.ts, THE RULE): the moment a
  *    group opens in lead order (the default), before the first word after a group in trailing order
  *    (sentences before the first group), and right after the plan's `{{svgboard}}`. Downstream a beat is
@@ -30,6 +39,8 @@ export const GROUP_MAX = 20000;
 export const SVG_PLAN_MAX = 4000;
 /** A check question is cut to this (it is never spoken, however long; an unclosed one runs to the end). */
 export const CHECK_MAX = 400;
+/** Narration held before a plan never runs past this: an answer this long without a plan has none coming. */
+export const HOLD_MAX = 400;
 
 /** Elements that may stand at the top level of the board. */
 const ELEMENTS = 'g|defs|path|line|polyline|polygon|rect|circle|ellipse|text|marker|use';
@@ -70,8 +81,29 @@ export class SvgBeatFilter extends ScriptFilter {
   /** Timings (ms, the caller's clock) of the first group and the board's opening. */
   firstGroupMs = NaN;
   private now: () => number;
-  /** `opened`: the board is already open (a gate repair's stream redraws one beat of it): no BOARD tag is sent. */
-  constructor(now: () => number = () => performance.now(), o: { opened?: boolean } = {}) { super(); this.now = now; this.opened = !!o.opened; }
+  /**
+   * `opened`: the board is already open (a gate repair's stream redraws one beat of it): no BOARD tag is sent.
+   * `hold`: narration before the plan is held (C7) — only behind an opener, which covers the wait; without
+   * one the hold would be silence. Never with `opened` (a repair has no plan).
+   */
+  constructor(now: () => number = () => performance.now(), o: { opened?: boolean; hold?: boolean } = {}) { super(); this.now = now; this.opened = !!o.opened; this.holding = !!o.hold && !this.opened; }
+
+  /** Narration before the plan is held (C7): `held` until the plan closes, a group opens, the end or HOLD_MAX. */
+  private holding: boolean;
+  private held = '';
+  /** Narration out: held while `holding`, else said. */
+  private speak(s: string): string {
+    if (!this.holding) return this.say(s);
+    this.held += s;
+    return this.held.length > HOLD_MAX ? this.release(false) : '';
+  }
+  /** Ends the hold: the held narration goes out; `close`: a tag follows it, so its last word gets a boundary. */
+  private release(close = true): string {
+    this.holding = false;
+    const h = this.held;
+    this.held = '';
+    return h ? this.say(h) + (!close || /\s$/.test(h) ? '' : ' ') : '';
+  }
 
   /** The last character this filter let through (a plan after narration owes that narration a boundary). */
   private lastCh = '';
@@ -99,7 +131,7 @@ export class SvgBeatFilter extends ScriptFilter {
     return pre + s;
   }
   override push(chunk: string): string { this.sbuf += chunk; const s = this.lift(false); if (s) this.lastCh = s.slice(-1); return super.push(s); }
-  override end(): string { const s = this.lift(true); return super.push(s) + super.end(); }
+  override end(): string { const s = this.lift(true) + this.release(false); return super.push(s) + super.end(); }
 
   private lift(final: boolean): string {
     let out = '';
@@ -121,6 +153,8 @@ export class SvgBeatFilter extends ScriptFilter {
         const b = boardOf(this.planBuf);
         this.planBuf = '';
         this.st = 'text';
+        // Narration held before the plan goes out ahead of the board (it is not part of beat 1).
+        if (this.holding) out += this.release();
         // The opener ends with the plan: the board's first beat starts here (its sentences are counted from here).
         if (b && !this.opened) { this.board = b; this.opened = true; out += svgboardTag(b) + ' ' + this.beat(); }
         this.sinceBoard = '';
@@ -151,16 +185,16 @@ export class SvgBeatFilter extends ScriptFilter {
       // Narration: pass through up to the next marker.
       if (this.owedWs && this.sbuf) { if (/^ /.test(this.sbuf)) this.sbuf = this.sbuf.slice(1); if (this.sbuf) this.owedWs = false; }
       const lt = this.sbuf.search(/<|```|\{\{\s*\/?svg\s*\}\}/i);
-      if (lt < 0) { out += this.say(this.sbuf); this.sbuf = ''; return out; }
-      out += this.say(this.sbuf.slice(0, lt));
+      if (lt < 0) { out += this.speak(this.sbuf); this.sbuf = ''; return out; }
+      out += this.speak(this.sbuf.slice(0, lt));
       this.sbuf = this.sbuf.slice(lt);
       if (/^<plan\s*>/i.test(this.sbuf)) {
         this.sbuf = this.sbuf.replace(/^<plan\s*>/i, '');
         this.st = 'plan';
-        // p6.1: the first sentence comes before the plan. Its last word goes out with a boundary now, so
-        // it is spoken while the plan is written (a word is released only once whitespace follows it).
+        // Narration that went out before a plan (a repair's stream, or past HOLD_MAX): its last word gets a
+        // boundary now, so it is spoken while the plan is written (a word is released only once whitespace follows it).
         const last = out ? out.slice(-1) : this.lastCh;
-        if (last && !/\s/.test(last)) { out += ' '; this.owedWs = true; }
+        if (!this.holding && last && !/\s/.test(last)) { out += ' '; this.owedWs = true; }
         continue;
       }
       if (/^<check\s*>/i.test(this.sbuf)) { this.sbuf = this.sbuf.replace(/^<check\s*>/i, ''); this.st = 'check'; continue; }
@@ -168,6 +202,8 @@ export class SvgBeatFilter extends ScriptFilter {
       if (w) { this.sbuf = this.sbuf.slice(w[0].length); continue; }
       const m = OPEN.exec(this.sbuf);
       if (m && m.index === 0) {
+        // A group with no plan before it: the held narration goes first, as written.
+        if (this.holding) out += this.release();
         this.st = 'el'; this.el = { name: m[1].toLowerCase(), depth: 0, text: '' };
         if (this.el.name === 'g') {
           // The first group fixes the order: sentences before it since the board opened → trailing, unless it
@@ -192,7 +228,7 @@ export class SvgBeatFilter extends ScriptFilter {
       if (!final && /^<(svg|plan|check|!--|\?xml|\/svg)/i.test(this.sbuf) && this.sbuf.length < 400) return out;
       if (!final && /^```/.test(this.sbuf) && this.sbuf.length < 12 && !/\n/.test(this.sbuf)) return out;
       if (!final && /^\{\{\s*\/?s?v?g?\s*\}?$/i.test(this.sbuf)) return out;
-      out += this.say(this.sbuf[0]);
+      out += this.speak(this.sbuf[0]);
       this.sbuf = this.sbuf.slice(1);
     }
   }

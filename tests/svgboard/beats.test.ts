@@ -2,7 +2,9 @@
 // The svg answer mode end to end, offline: the model's raw beats (the prompt's own examples) → the
 // server filter (wire tags) → the parser, the gate's splitter and checks, the scheduler's anchoring.
 import { describe, expect, it } from 'vitest';
-import { SvgBeatFilter, boardOf } from '../../server/svgBeats';
+import { HOLD_MAX, SvgBeatFilter, boardOf } from '../../server/svgBeats';
+import { spoken } from '../../server/openai';
+import { WORDS_PER_SEC } from '../../src/agent/pacing';
 import { SVG_EXAMPLES } from '../../server/prompt/svgExamples';
 import { ScriptParser } from '../../src/script/parser';
 import { BeatSplitter, tokenize, units } from '../../src/gate/segment';
@@ -325,7 +327,7 @@ describe('svg demos (gallery scenes)', () => {
   });
 });
 
-describe('p6.1: the first sentence before the plan', () => {
+describe('p6.1: the first sentence before the plan (no opener: nothing to hold behind)', () => {
   it('passes the sentence through at once, with a boundary, and lifts the plan after it', async () => {
     const { SvgBeatFilter } = await import('../../server/svgBeats');
     const f = new SvgBeatFilter(() => 0);
@@ -355,3 +357,82 @@ describe('a label at a data-at point is not crossing its own curves (a32: "E1" b
     expect(later.notes.join()).toMatch(/a line of rule crosses text "E1 here"/);
   });
 });
+
+// C7: behind an opener, stage 2 says nothing before its plan has decided the case and its numbers.
+describe('plan before speech: narration before the plan is held until it closes (hold)', () => {
+  const PLAN = '<plan>\ncase: 300 m, 1.5, 2.5\nBOARD viewBox="0 0 1000 600"\ngroups: axes\n</plan>\n';
+  const GROUP = '<g id="axes"><line x1="0" y1="0" x2="10" y2="10"/></g>';
+  const held = (raw: string, step: number, o: { hold?: boolean; opened?: boolean } = { hold: true }) => {
+    const f = new SvgBeatFilter(() => 0, o);
+    const outs: string[] = [];
+    for (let i = 0; i < raw.length; i += step) outs.push(f.push(raw.slice(i, i + step)));
+    outs.push(f.end());
+    return { outs, out: outs.join(''), f };
+  };
+
+  it('nothing goes out before the plan closes; then the held words, ahead of the board and outside beat 1', () => {
+    const pre = '{{highlight p=2 "x"}} It holds because the push never stops.';
+    const raw = `${pre}${PLAN}${GROUP} These axes, the case.`;
+    const ref = held(raw, 1e6).out;
+    for (const step of [1, 4, 9, 50]) {
+      const { outs, out } = held(raw, step);
+      expect(out, String(step)).toBe(ref);
+      // Every push before the one that closes the plan sent nothing.
+      const closes = Math.ceil((raw.indexOf('</plan>') + '</plan>'.length) / step);
+      expect(outs.slice(0, closes - 1).join(''), String(step)).toBe('');
+    }
+    expect(ref.startsWith(`${pre} {{svgboard h=600}} {{beat}} `)).toBe(true);
+    // The held sentence is not read as the board's first sentences (no trailing order from it).
+    expect(held(raw, 3).f.order).toBe('lead');
+  });
+
+  it('without hold (no opener) the sentence still plays at once', () => {
+    const { outs } = held(`It holds because the push never stops. ${PLAN}${GROUP} These axes.`, 10, {});
+    expect(outs[0]).toBe('It holds b');
+  });
+
+  it('a plan-first stream is unchanged by the hold', () => {
+    const raw = `${PLAN}${GROUP} These axes, the case.`;
+    expect(held(raw, 7).out).toBe(held(raw, 7, {}).out);
+  });
+
+  it('the hold ends at a group with no plan, at the end, and past HOLD_MAX; a repair stream is never held', () => {
+    expect(held(`The push never stops. ${GROUP} These axes.`, 5).out).toBe(held(`The push never stops. ${GROUP} These axes.`, 5, {}).out);
+    expect(held("That's outside these pages, but ask me anything about them.", 6).out).toBe("That's outside these pages, but ask me anything about them.");
+    const long = 'The push never stops and the boat keeps drifting. '.repeat(10);
+    const r = held(long, 10);
+    expect(r.outs.slice(0, Math.ceil((HOLD_MAX + 1) / 10)).join('')).toMatch(/^The push never stops/);
+    expect(r.out).toBe(long);
+    expect(held('The repair says this. <g id="a"><text x="1" y="20" font-size="16">a</text></g>', 4, { hold: true, opened: true }).outs[0]).toBe('The ');
+  });
+
+  // The hold's cost, measured: a p6.1-style stream (sentences before the plan) at the slowest stage-2
+  // rate recorded (146 chars/s; median 256, .petu/answers.jsonl svg answers) and the prompt's own plans.
+  // The hold delays stage 2's first word by the time to write the rest of the preamble and the plan;
+  // that must fit inside the opener still playing, here the shortest recorded orienting opener (eval
+  // D19, 12 words at WORDS_PER_SEC).
+  it('the added latency is the plan\'s writing time, within the opener\'s duration', () => {
+    const RATE = 146 / 1000; // chars per ms
+    const opener = 'The {{highlight p=9 "slope is constant; P/Q is not."}} Elasticity changes because it measures percentage changes, not just the slope.';
+    const words = opener.replace(/\{\{[^}]*\}\}/g, ' ').split(/\s+/).filter(Boolean).length;
+    expect(words).toBe(12);
+    const openerMs = words / WORDS_PER_SEC * 1000; // 5.0 s
+    const pre = 'It holds because the water pushes the whole way across. So the aim has to cancel that push.';
+    for (const ex of SVG_EXAMPLES) {
+      const plan = /<plan>[\s\S]*?<\/plan>/.exec(ex.script)![0];
+      const body = ex.script.slice(ex.script.indexOf('</plan>') + '</plan>'.length);
+      const raw = `${pre}\n${plan}${body}`;
+      const firstWordMs = (hold: boolean) => {
+        let t = 0, at = NaN;
+        const f = new SvgBeatFilter(() => t, { hold });
+        for (let i = 0; i < raw.length && Number.isNaN(at); i += 8) { t = (i + 8) / RATE; if (spoken(f.push(raw.slice(i, i + 8)))) at = t; }
+        return at;
+      };
+      const added = firstWordMs(true) - firstWordMs(false);
+      expect(added, ex.title).toBeGreaterThan(0);
+      expect(added, ex.title).toBeCloseTo((pre.length + 1 + plan.length) / RATE, -2);
+      expect(added, ex.title).toBeLessThan(openerMs);
+    }
+  });
+});
+

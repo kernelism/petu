@@ -285,6 +285,24 @@ describe('ask', () => {
     expect(recs).toHaveLength(1);
     expect(recs[0]).toMatchObject({ question: 'Why does disparity shrink?', page: 2, script: 'Look {{grid on=s id=g vals=1,2;3}} here.', lint: ['malformed (dropped): {{grid on=s id=g vals=1,2;3}}'] });
   });
+  it('C7: behind an opener, stage 2 speaks nothing before its plan closes (svg); with none it speaks at once', async () => {
+    const parts = ['It holds because ', 'the push never stops. ', '<plan>\ncase\nBOARD viewBox="0 0 1000 600"\ngroups: a\n</plan>', '<g id="a"><text x="1" y="20" font-size="16">a</text></g>', ' The a.'];
+    const chunks = [
+      sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message', phase: 'final_answer' } }),
+      ...textEvents('m1', parts),
+      sse({ type: 'response.completed', response: { status: 'completed', usage } }),
+    ];
+    const texts = async (opener?: string) => {
+      const { f } = fakeFetch([{ chunks }]);
+      const out: AskEvent[] = [];
+      await run(req(opener ? { context: { ...context, opener } } : {}), deps(f), (e) => out.push(e));
+      return out.flatMap((e) => (e.t === 'text' ? [e.d] : []));
+    };
+    const held = await texts('Elasticity is about percentages.');
+    expect(held[0]).toMatch(/^It holds because the push never stops\. \{\{svgboard h=600\}\}/);
+    const free = await texts();
+    expect(free[0]).toBe('It holds because ');
+  });
   it('a failed answer leaves a record too, with its error code and no cost', async () => {
     const { f } = fakeFetch([{ status: 400, text: 'bad' }]);
     const recs: AnswerRecord[] = [];

@@ -599,7 +599,8 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   if (signal.aborted) up.abort();
   const now0 = d.now ?? (() => performance.now());
   // The svg answer mode (the default): plan → {{svgboard}}, each group → one {{svg}} tag (server/svgBeats.ts).
-  const svgf = isSvgMode(cfg.promptVariant) ? new SvgBeatFilter(now0) : null;
+  // Behind an opener, stage 2's narration waits for its plan (C7: nothing it says before its case is decided).
+  const svgf = isSvgMode(cfg.promptVariant) ? new SvgBeatFilter(now0, { hold: !!r.context.opener }) : null;
   const filter = svgf ?? new ScriptFilter(), lint = new Lint();
   const read = newRead();
   let outChars = 0, ttft = NaN, firstWord = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
