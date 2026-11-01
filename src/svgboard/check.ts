@@ -320,7 +320,10 @@ export function grounded(g: Element, sc: DataScope, readouts: DataScope['values'
   for (const el of [g, ...Array.from(g.querySelectorAll('circle,ellipse'))].filter((e) => isMarker(e) && free(e))) {
     const at = `(${el.getAttribute('cx') ?? '?'}, ${el.getAttribute('cy') ?? '?'})`;
     if (el.hasAttribute('data-snap-ambiguous')) flags.push(`${name}: the dot at ${at} sits between ${el.getAttribute('data-snap-ambiguous')}: place it with data-at`);
+    // Labelled as a crossing, and at none: the board would name a point the engine never computed.
+    else if (el.hasAttribute('data-snap-off')) flags.push(`${name}: the dot labelled ${el.getAttribute('data-snap-off')} at ${at} is at no crossing the engine computes: place it with data-at="cross(…)"`);
     else if (el.hasAttribute('data-snapped')) notes.push(`${name}: a hand-placed dot was put on ${el.getAttribute('data-snapped')}`);
+    else if (el.hasAttribute('data-snap-near')) notes.push(`${name}: the dot at ${at} sits by ${el.getAttribute('data-snap-near')}, not on it: place it with data-at if it is that point`);
     else if (!enginePlaced(el)) notes.push(`${name}: the dot at ${at} is placed by hand: place it with data-at`);
   }
   // Each readout with the text that shows it (resolveData writes them in document order).

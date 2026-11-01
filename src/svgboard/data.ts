@@ -357,17 +357,28 @@ export function resolveData(g: Element, sc: DataScope): Problem[] {
 }
 
 /**
- * A dot the model placed by hand on a plot (cx/cy, no data-at) means a point of a curve, and was often a
- * little off it (C1, 2026-10-31: a dot labelled E drawn beside the curves' real crossing, so the picture
- * and its numbers disagreed). Inside a frame, a small circle within reach of exactly one crossing of the
- * frame's named data-fn curves is placed at cross(a,b), else within reach of exactly one such curve at
- * at(c, x=…), written as its data-at (data-snapped keeps what it became): from then on the engine places
- * it, so it follows a tween and the gate checks the point that is drawn. Reach is relative to the frame
- * (8% / 4% of its shorter side). Two candidates: never guessed; marked data-snap-ambiguous for the gate.
- * A dot in a [data-schematic] group, a transformed one, or one off every curve is left as it is. Each dot
- * is decided once (data-snap-done): a later resolve (a tween's frame) never snaps what the first left.
+ * A dot the model placed by hand on a plot (cx/cy, no data-at) beside a crossing of the frame's named
+ * data-fn curves was often that crossing a little off (C1, 2026-10-31: a dot labelled E drawn beside the
+ * curves' real crossing, so the picture and its numbers disagreed). What the dot means decides, not only
+ * where it is (review, numbers-agree: a ceiling's Qd and Qs, each on its curve 14 px from E, both became E;
+ * data points ±10 px about a line lost their residuals; a dot labelled E past the crossing's reach was put
+ * on the demand curve):
+ *  - labelled as a crossing (E, E*, eq, equilibrium…: the short text beside it): within reach of exactly
+ *    one crossing, placed at cross(a,b); within reach of none, marked data-snap-off (the gate fails it);
+ *  - labelled with a curve's name: within reach of that curve, placed on it at at(c, x=…);
+ *  - unlabelled, and on a curve already (within SNAP_ON): a point of that curve, left where it is;
+ *  - unlabelled, off every curve, within reach of exactly one crossing: placed at cross(a,b);
+ *  - unlabelled, near a curve but not on it: left where it is, marked data-snap-near (a note: data with
+ *    a residual looks the same as a point drawn a little off).
+ * A placed dot gets data-at (data-snapped keeps what it became): from then on the engine places it, so it
+ * follows a tween and the gate checks the point that is drawn. Reach is relative to the frame's shorter
+ * side. Two crossings in reach: never guessed; marked data-snap-ambiguous for the gate. A dot in a
+ * [data-schematic] group or a transformed one is left as it is. Each dot is decided once (data-snap-done):
+ * a later resolve (a tween's frame) never snaps what the first left.
  */
-export const SNAP_CROSS = 0.08, SNAP_CURVE = 0.04;
+export const SNAP_CROSS = 0.08, SNAP_CURVE = 0.04, SNAP_ON = 0.01, SNAP_LABEL = 0.08;
+/** A label that names a crossing: E, E1, E*, E′, eq, equilibrium, crossing, intersection. */
+const CROSS_LABEL = /^(e|eq\.?|equilibrium|crossing|intersection)\s*[*′'’₀-₉\d]*$/i;
 /** A point marker: a small circle (or ellipse), r ≤ 8 board units. */
 export const isMarker = (el: Element): boolean => {
   const t = el.nodeName.toLowerCase().replace(/^svg:/, '');
@@ -381,6 +392,10 @@ function snapMarkers(g: Element, sc: DataScope): void {
   // Decided once, on the first resolve: a tween frame never moves a dot the first draw left where it was.
   for (const el of marks) el.setAttribute('data-snap-done', '');
   if (!marks.length || !sc.curves.size) return;
+  // Short hand-written texts (not readouts, not the engine's ticks): the labels a dot may carry.
+  const labels = Array.from(g.querySelectorAll('text')).filter((t) => !t.closest('[data-engine],[data-val]') && !t.querySelector('[data-val]'))
+    .map((t) => ({ s: (t.textContent ?? '').trim(), x: parseFloat(t.getAttribute('x') ?? ''), y: parseFloat(t.getAttribute('y') ?? '') }))
+    .filter((t) => t.s && t.s.length <= 14 && Number.isFinite(t.x) && Number.isFinite(t.y));
   for (const el of marks) {
     let tf = false;
     for (let e: Element | null = el; e && !tf; e = e === g ? null : e.parentElement) tf = !!e.getAttribute('transform');
@@ -393,16 +408,28 @@ function snapMarkers(g: Element, sc: DataScope): void {
     const reach = Math.min(ax.box.w, ax.box.h);
     const names = [...sc.curves.entries()].filter(([k, c]) => c.kind === 'fn' && !k.startsWith('_c') && lc(c.ax ?? '') === lc(ax!.name)).map(([k]) => k);
     const d = (q: { x: number; y: number }) => Math.hypot(q.x - p.x, q.y - p.y);
-    const hits: { at: string; q: DPt }[] = [];
+    const crosses: { at: string; q: DPt }[] = [];
     for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
-      try { const q = point(`cross(${names[i]},${names[j]})`, sc); if (d(q) <= SNAP_CROSS * reach && !hits.some((h) => Math.hypot(h.q.x - q.x, h.q.y - q.y) < 1)) hits.push({ at: `cross(${names[i]},${names[j]})`, q }); } catch { /* they do not cross */ }
+      try { const q = point(`cross(${names[i]},${names[j]})`, sc); if (d(q) <= SNAP_CROSS * reach && !crosses.some((h) => Math.hypot(h.q.x - q.x, h.q.y - q.y) < 1)) crosses.push({ at: `cross(${names[i]},${names[j]})`, q }); } catch { /* they do not cross */ }
     }
-    if (!hits.length) for (const n of names) {
+    // Each curve's nearest point to the dot.
+    const near: { n: string; at: string; q: DPt }[] = [];
+    for (const n of names) {
       try {
-        const c = curve(n, sc);
-        const near = samples(c, 480).reduce<DPt | null>((b, q) => (!b || d(q) < d(b) ? q : b), null);
-        if (near && d(near) <= SNAP_CURVE * reach) hits.push({ at: `at(${n}, x=${+near.dx.toPrecision(6)})`, q: near });
+        const q = samples(curve(n, sc), 480).reduce<DPt | null>((b, s) => (!b || d(s) < d(b) ? s : b), null);
+        if (q && d(q) <= SNAP_CURVE * reach) near.push({ n, at: `at(${n}, x=${+q.dx.toPrecision(6)})`, q });
       } catch { /* a curve that does not resolve */ }
+    }
+    const lab = labels.filter((t) => Math.hypot(t.x - p.x, t.y - p.y) <= SNAP_LABEL * reach).sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0]?.s;
+    const onCurve = near.some((h) => d(h.q) <= SNAP_ON * reach);
+    let hits: { at: string; q: DPt }[] = [];
+    if (lab && CROSS_LABEL.test(lab)) {
+      if (!crosses.length) { el.setAttribute('data-snap-off', lab); continue; }
+      hits = crosses;
+    } else if (lab && names.some((n) => lc(n) === lc(lab))) hits = near.filter((h) => lc(h.n) === lc(lab));
+    else if (!onCurve) {
+      hits = crosses;
+      if (!hits.length && near.length) { el.setAttribute('data-snap-near', near.map((h) => h.at).join(' | ')); continue; }
     }
     if (hits.length > 1) { el.setAttribute('data-snap-ambiguous', hits.map((h) => h.at).join(' | ')); continue; }
     if (!hits.length) continue;
