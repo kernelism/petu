@@ -177,6 +177,8 @@ export class SvgBeatFilter extends ScriptFilter {
             const n = (bare.match(/[.!?]["”’)\]]*(?=\s|$)/g) ?? []).length || (/[\p{L}\p{N}]/u.test(bare) ? 1 : 0);
             const marks = /\{\{\s*(?:highlight|underline|circle|box|scroll)\b[^}]*\bp=/.test(this.sinceBoard);
             this.order = n >= 2 || (n === 1 && !marks) ? 'trail' : 'lead';
+            // A whole answer read one way on the evidence of its first group: seen in answers.jsonl and ?debug.
+            if (this.order === 'trail') this.notes.push(`beat order: trailing (${n} sentence${n === 1 ? '' : 's'} before the first group): each group closes the sentences before it`);
             this.sinceBoard = '';
           }
           // Lead: the group opens its beat now (the gate may close the beat before while this one is written);

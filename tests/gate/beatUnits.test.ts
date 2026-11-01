@@ -40,6 +40,8 @@ describe('the beat rule: three orders, one Beat {group, sentences}', () => {
       for (const step of [1, 3, 11, 1e6]) {
         const { out, f } = wire(raw, step);
         expect(f.order, String(step)).toBe(name === 'trailing' ? 'trail' : 'lead');
+        // A trailing reading is the whole answer's, on one group's evidence: it is logged, never silent.
+        expect(f.notes.some((x) => /^beat order: trailing \(2 sentences before the first group\)/.test(x)), String(step)).toBe(name === 'trailing');
         const bs = beatsOf(out);
         expect(bs[0].groups).toEqual([]); // the opener: no drawing
         expect(bs.slice(1).map(show), `${name} @${step}`).toEqual(EXPECT[name]);
