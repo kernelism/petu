@@ -2,7 +2,7 @@
 // timing math (src/playback/pace.ts), the scheduler's rest after a drawn beat and the beat's word
 // times on both clocks (paced and voiced).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { beatEnd, beatWindow, partWords, OPEN_SPAN_MS, paceParts, splitPart, PART_MIN_MS, PART_MAX_MS, PART_GAP_MS, REST_MS, SPAN_MIN_MS, type BeatWord } from '../../src/playback/pace';
+import { beatEnd, beatWindow, labelNames, partWords, OPEN_SPAN_MS, paceParts, splitPart, PART_MIN_MS, PART_MAX_MS, PART_GAP_MS, REST_MS, SPAN_MIN_MS, type BeatWord } from '../../src/playback/pace';
 import { PacedClock } from '../../src/playback/clock';
 import { Scheduler, namesWord } from '../../src/playback/scheduler';
 import { VoiceClock, SAMPLE_RATE, type AudioOut, type Speak } from '../../src/playback/voiceClock';
@@ -10,7 +10,7 @@ import type { Action, ScriptEvent } from '../../src/script/types';
 
 /** Words `ms` apart, starting now. */
 const beat = (text: string, ms = 300): BeatWord[] => text.split(' ').map((t, i) => ({ text: t, inMs: i * ms, endMs: (i + 1) * ms }));
-const part = (cat = 1, words: string[] = [], naturalMs = 300) => ({ cat, words, naturalMs });
+const part = (words: string[] = [], label?: string[], naturalMs = 300) => ({ words, ...(label ? { label } : {}), naturalMs });
 
 describe('pace: the words a part answers to', () => {
   it('short ids count as whole words; the group\'s own words are left to the group', () => {
@@ -27,7 +27,7 @@ describe('pace: the words a part answers to', () => {
   });
   it('a part named "in" draws on the word "in", not on the group\'s name', () => {
     const w = beat('two masses held out wide then pull them in close to the axis and watch');
-    const t = paceParts([part(1, partWords('masses-out', 'masses')), part(1, partWords('masses-in', 'masses'))], w)!;
+    const t = paceParts([part(partWords('masses-out', 'masses')), part(partWords('masses-in', 'masses'))], w)!;
     expect(t.map((x) => [x.i, x.at])).toEqual([[0, 3 * 300], [1, 8 * 300]]);
   });
 });
@@ -51,6 +51,12 @@ describe('pace: the window a group draws in', () => {
     w[w.length - 1].open = true;
     expect(beatEnd(w)).toBe(OPEN_SPAN_MS);
     expect(beatWindow(w)).toEqual({ from: 0, to: OPEN_SPAN_MS });
+  });
+  it('a beat still streaming: its guessed end is fixed from when its first word started, not from now', () => {
+    // Re-read 4 s into the beat (its first words spoken, clamped to now): it ends 2 s from now, not 6.
+    const w: BeatWord[] = [{ text: 'the', inMs: 0, endMs: 0, sinceMs: 4000 }, { text: 'river', inMs: 0, endMs: 300, open: true }];
+    expect(beatEnd(w)).toBe(OPEN_SPAN_MS - 4000);
+    expect(beatEnd([{ ...w[0], sinceMs: undefined }, w[1]])).toBe(OPEN_SPAN_MS); // (the old slide)
   });
   it('a word with no end time counts a word\'s length', () => {
     expect(beatWindow([{ text: 'a', inMs: 0 }, { text: 'b', inMs: 2000 }]).to).toBe(2300);
@@ -87,11 +93,27 @@ describe('pace: each part draws across its share of the words', () => {
     expect(t[0]).toEqual({ i: 0, at: 0, dur: PART_MAX_MS });
   });
 
-  it('a short share gets the minimum', () => {
-    // Two parts named on neighbouring words: the first still draws PART_MIN_MS.
-    const t = paceParts([part(1, ['curve']), part(1, ['peak'])], beat('the curve peak rises here and falls slowly again'))!;
-    expect(t[0]).toMatchObject({ i: 0, at: 300, dur: PART_MIN_MS });
+  it('two parts named on neighbouring words: the first is quick, the second keeps its word', () => {
+    const t = paceParts([part(['curve']), part(['peak'])], beat('the curve peak rises here and falls slowly again'))!;
+    expect(t[0]).toMatchObject({ i: 0, at: 300, dur: 300 - PART_GAP_MS });
     expect(t[1]).toMatchObject({ i: 1, at: 600 });
+  });
+
+  it('a crowded gap never runs into the named part after it', () => {
+    // Five unnamed strokes before a label said on word 2: they fit in 600 ms, the label keeps its word.
+    const t = paceParts([part(), part(), part(), part(), part([], ['37'])], beat('it is 37 degrees then a b c d e f g'))!;
+    const end = Math.max(...t.filter((x) => x.i < 4).map((x) => x.at + x.dur));
+    expect(t.find((x) => x.i === 4)!.at).toBe(600);
+    expect(end).toBeLessThanOrEqual(600);
+  });
+
+  it('the parts before every named one start at the beat\'s start, not just before the first named in the group', () => {
+    // The ferry's triangle: its strokes come first in the group, its "37°" label is said last.
+    const w = beat(`draw the triangle ${Array(20).fill('w').join(' ')} 2.5 here ${Array(10).fill('w').join(' ')} about 37 degrees`);
+    const t = paceParts([part(), part(), part(), part([], labelNames('37°')), part([], labelNames('2.5 m/s'))], w)!;
+    expect(t.map((x) => x.i)).toEqual([0, 1, 2, 4, 3]);
+    expect(t[0].at).toBe(0);
+    expect(t[2].at + t[2].dur).toBeLessThanOrEqual(23 * 300); // the strokes are done by "2.5"
   });
 
   it('many parts in a short beat share it: the minimum gives way, the drawing ends with the beat', () => {
@@ -102,20 +124,70 @@ describe('pace: each part draws across its share of the words', () => {
     expect(end).toBeLessThanOrEqual(1800 + 120);
   });
 
-  it('a named part starts on the word that names it; the others keep pen order around it', () => {
-    const parts = [part(3, ['label']), part(0), part(1, ['cap'])]; // a label, a frame, a line named "cap"
+  it('a named part starts on the word that names it; the unnamed ones draw up to it in the group\'s order, not pen order', () => {
+    const parts = [part(['label']), part(), part(['cap'])]; // a label never said, a frame, a line named "cap"
     const t = paceParts(parts, beat('here the frame and then this line is the cap at five hundred dollars'))!;
     const byI = Object.fromEntries(t.map((x) => [x.i, x]));
-    expect(byI[1].at).toBe(0); // the frame first
     expect(byI[2].at).toBe(9 * 300); // "cap" is word 9
-    expect(byI[0].at).toBe(2800); // the unnamed label keeps its pen-order place (2 of 3 over 4.2 s)
-    expect(t.map((x) => x.i)).toEqual([1, 2, 0]); // drawn in time order
-    expect(t.every((x, j) => j === 0 || x.at >= t[j - 1].at)).toBe(true);
+    expect(byI[0].at).toBe(0); // the label first: the group's order (a pen-category sort put it last)
+    expect(byI[1].at).toBe(1350); // the frame right after, up to "cap"
+    expect(t.map((x) => x.i)).toEqual([0, 1, 2]);
+  });
+
+  it('a named part is not cut at PART_MAX_MS: it draws until the next part starts', () => {
+    const w = beat(`the curve ${Array(30).fill('w').join(' ')} and the peak`);
+    const t = paceParts([part(['curve']), part(['peak'])], w)!;
+    expect(t[0]).toEqual({ i: 0, at: 300, dur: 34 * 300 - 300 - PART_GAP_MS });
+    expect(t[0].dur).toBeGreaterThan(PART_MAX_MS);
+  });
+
+  it('an unnamed part goes with its nearest named neighbour: after the one before it, before the one after it', () => {
+    // 0 axis (named), 1 tick, 2 tick, 3 label, 4 curve (named): 1 follows the axis, 3 leads into the curve, 2 (a tie) follows the axis.
+    const w = beat(`the axis ${Array(16).fill('w').join(' ')} then the curve ${Array(10).fill('w').join(' ')}`);
+    const t = paceParts([part(['axis']), part(), part(), part(), part(['curve'])], w)!;
+    const byI = Object.fromEntries(t.map((x) => [x.i, x]));
+    expect(byI[0].at).toBe(300);
+    expect(byI[4].at).toBe(20 * 300);
+    expect(byI[1].at).toBeGreaterThan(300);
+    expect(byI[1].at).toBeLessThan(2600); // right after the axis, not spread to the middle
+    expect(byI[2].at).toBeGreaterThan(byI[1].at);
+    expect(byI[3].at + byI[3].dur).toBeLessThanOrEqual(6000); // ends as the curve starts
+    expect(byI[3].at).toBeGreaterThan(3000);
+    expect(t.map((x) => x.i)).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it('a label is named by its number, however it is said', () => {
+    const lab = (l: string) => part([], labelNames(l));
+    const w = beat('the ferry points 37° upstream at two point five metres a second against thirty-seven');
+    const t = paceParts([lab('2.5 m/s'), lab('aims 37 upstream')], w)!;
+    const byI = Object.fromEntries(t.map((x) => [x.i, x.at]));
+    expect(byI[1]).toBe(3 * 300); // "37°" (before its word "upstream")
+    expect(byI[0]).toBe(6 * 300); // "two point five"
+    expect(paceParts([lab('thirty seven'), lab('37')], beat('a b thirty-seven c d e'))!.find((x) => x.i === 1)!.at).toBe(600);
+    // To the label's precision: "2.0" is not 2.5, "about 40" is not 37, a page number is not a value.
+    expect(paceParts([lab('2.5'), part(['x'])], beat('it is 2.0 here x then more words go on'))!.find((x) => x.i === 0)!.at).toBe(0);
+    expect(paceParts([lab('37'), part(['x'])], beat('it is about 40 x then more words go on'))!.find((x) => x.i === 0)!.at).toBe(0);
+    expect(paceParts([lab('4'), part(['x'])], beat('see page 4 now x then more words go on'))!.find((x) => x.i === 0)!.at).toBe(0);
+  });
+
+  it('a label\'s numbers and words name it only when its id\'s words are not said; a data-say is the only name', () => {
+    expect(labelNames('current 1.5 m/s')).toEqual(['1.5', 'current']);
+    expect(labelNames('lands 120 m downstream', true)).toEqual(['120', 'lands', 'downstream']);
+    const w = beat('the drift is 120 metres and the boat lands downstream');
+    expect(paceParts([part(['drift'], labelNames('120 m')), part(['x'])], w)![0].at).toBe(300); // its id first
+    expect(paceParts([part(['gone'], labelNames('120 m')), part(['x'])], w)![0].at).toBe(900); // else its label
+  });
+
+  it('a naming word already spoken when the group starts draws the part now', () => {
+    // Held by the look: the beat began 1 s ago and "cap" was its second word (clamped to now).
+    const w: BeatWord[] = [{ text: 'the', inMs: 0, endMs: 0 }, { text: 'cap', inMs: 0, endMs: 0 }, ...beat('is high and then it falls away slowly here').map((x) => ({ ...x, inMs: x.inMs + 300, endMs: x.endMs! + 300 }))];
+    const t = paceParts([part(), part(['cap'])], w, undefined, -1000)!;
+    expect(t.find((x) => x.i === 1)!.at).toBe(0);
   });
 
   it('a name said outside the group\'s slot is not taken (another group draws then)', () => {
     const w = beat('the cap here then a b c d e f g h i j k');
-    const t = paceParts([part(1, ['cap'])], w, { k: 1, n: 2 })!;
+    const t = paceParts([part(['cap'])], w, { k: 1, n: 2 })!;
     expect(t[0].at).toBe(beatWindow(w, { k: 1, n: 2 }).from);
   });
 
@@ -141,6 +213,7 @@ const w = (text: string): ScriptEvent => ({ type: 'word', text });
 const words = (s: string) => s.split(' ').map(w);
 const svg = (id: string): ScriptEvent => ({ type: 'action', action: { kind: 'svg', id, svg: `<g id="${id}"/>` } as Action });
 const END: ScriptEvent = { type: 'end' };
+const BEAT: ScriptEvent = { type: 'action', action: { kind: 'beat' } };
 
 describe('pace: the scheduler', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
@@ -195,6 +268,66 @@ describe('pace: the scheduler', () => {
     expect(seen[0].at(-1)!.open).toBe(true);
     s.push([svg('two')]);
     expect(s.beatWords().at(-1)!.open).toBeUndefined();
+    s.stop();
+  });
+
+  it('a group waits for its beat\'s first word: never flushed into the silence while the gate holds its words', () => {
+    vi.setSystemTime(0);
+    const fired: [string, number][] = [];
+    const s: Scheduler = new Scheduler(new PacedClock(() => 170, () => Date.now(), () => 100), {
+      onWord: () => {}, onAction: (a) => { if (a.kind === 'svg') fired.push([a.id!, Date.now()]); }, onDone: () => {},
+    }, { leadMs: () => 0 });
+    s.push([...words('Look here.'), BEAT, svg('river')]); // the gate still checking the river beat's words
+    vi.advanceTimersByTime(5000);
+    expect(fired).toEqual([]); // it used to fire at the narration's end + FLUSH_MS, over a guessed 6 s
+    s.push([...words('The river runs east.'), END]);
+    vi.advanceTimersByTime(5000);
+    expect(fired).toEqual([['river', 5000]]);
+    s.stop();
+  });
+
+  it('a group reads its own beat\'s words, to the next {{beat}}, even once the next beat\'s group has fired', () => {
+    vi.setSystemTime(0);
+    const seen: Record<string, number> = {};
+    const s: Scheduler = new Scheduler(new PacedClock(() => 170, () => Date.now(), () => 100), {
+      onWord: () => {}, onAction: (a) => { if (a.kind === 'svg') seen[a.id!] = a.beatFrom!; }, onDone: () => {},
+    }, { leadMs: () => 0 });
+    s.push([...words('Look here.'), BEAT, svg('river'), ...words('The river runs east.'), BEAT, svg('drift'), ...words('The boat drifts.'), END]);
+    vi.advanceTimersByTime(1000); // both fired, the drift beat under way
+    expect(seen).toEqual({ river: 2, drift: 6 });
+    expect(s.beatWords(seen.river).map((x) => x.text)).toEqual(['The', 'river', 'runs', 'east.']);
+    expect(s.beatWords(seen.river).at(-1)!.open).toBeUndefined();
+    expect(s.beatWords().map((x) => x.text)).toEqual(['boat', 'drifts.']); // the old read: the next beat's words
+    s.stop();
+  });
+
+  it('beatWords tells how long ago its beat\'s first word started, once it has', () => {
+    vi.setSystemTime(0);
+    let from = -1;
+    const s: Scheduler = new Scheduler(new PacedClock(() => 170, () => Date.now(), () => 100), {
+      onWord: () => {}, onAction: (a) => { if (a.kind === 'svg') from = a.beatFrom!; }, onDone: () => {},
+    }, { leadMs: () => 0 });
+    s.push([...words('Look here.'), BEAT, svg('river'), ...words('The river runs east,')]);
+    vi.advanceTimersByTime(200);
+    expect(s.beatWords(from)[0].sinceMs).toBeUndefined(); // its first word starts now
+    vi.advanceTimersByTime(250);
+    expect(s.beatWords(from)[0]).toMatchObject({ text: 'The', inMs: 0, sinceMs: 250 });
+    s.stop();
+  });
+
+  it('a beat still streaming stays open until its next {{beat}} comes', () => {
+    vi.setSystemTime(0);
+    let from = -1;
+    const s: Scheduler = new Scheduler(new PacedClock(() => 170, () => Date.now(), () => 100), {
+      onWord: () => {}, onAction: (a) => { if (a.kind === 'svg') from = a.beatFrom!; }, onDone: () => {},
+    }, { leadMs: () => 0 });
+    s.push([...words('Look here.'), BEAT, svg('river'), ...words('The river runs,')]);
+    vi.advanceTimersByTime(250);
+    expect(from).toBe(2);
+    expect(s.beatWords(from).at(-1)!.open).toBe(true);
+    s.push([...words('east.'), BEAT]);
+    expect(s.beatWords(from).map((x) => x.text)).toEqual(['The', 'river', 'runs,', 'east.']);
+    expect(s.beatWords(from).at(-1)!.open).toBeUndefined();
     s.stop();
   });
 

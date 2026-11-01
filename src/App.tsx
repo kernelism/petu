@@ -528,7 +528,7 @@ export default function App() {
       onJourney: (j) => journeyRef.current(j),
       hold: (at, ms) => sessionRef.current?.hold(at, ms),
       spoken: (at) => sessionRef.current?.wordsBefore(at) ?? 0,
-      beat: () => sessionRef.current?.beatWords() ?? [],
+      beat: (from) => sessionRef.current?.beatWords(from) ?? [],
       paused: () => sessionRef.current?.isPaused() ?? false,
       onTiming: (t) => {
         logRef.current?.timing(t);
@@ -1258,7 +1258,7 @@ export default function App() {
         onScrolledTo: () => setPageTick((n) => n + 1),
         hold: (at, ms) => asideSession.current?.hold(at, ms),
         spoken: (at) => asideSession.current?.wordsBefore(at) ?? 0,
-        beat: () => asideSession.current?.beatWords() ?? [],
+        beat: (from) => asideSession.current?.beatWords(from) ?? [],
         paused: () => asideSession.current?.isPaused() ?? false,
       });
     }

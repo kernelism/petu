@@ -360,6 +360,8 @@ export type SvgAction = { kind: 'svg'; id?: string; svg: string; anchor?: string
   defs?: true;
   /** Set by the scheduler when it fires: this group is the k-th of n that share one beat's words (they came together). */
   slot?: { k: number; n: number };
+  /** Set by the scheduler when it fires: the first word of its beat (Scheduler.beatWords reads that beat's words). */
+  beatFrom?: number;
   /** The board section it draws in (set by the director when it fires). */ region?: string; /** never set: a group is never on a page */ page?: undefined };
 /** {{beat}}: the svg answer's beat boundary (src/svgboard/beat.ts). No words, no ink: the scheduler starts a beat's word window here. */
 export type BeatAction = { kind: 'beat' };

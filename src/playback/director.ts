@@ -82,8 +82,11 @@ type Deps = {
   hold?(at: number, ms: number): void;
   /** Words of the answer said before `at` (an action's word time): a move before the first word frames the answer, it isn't a journey. Default: some. */
   spoken?(at: number): number;
-  /** The narration of the current beat with word times (Scheduler.beatWords): an svg group paces its parts to it. */
-  beat?(): { text: string; inMs: number; endMs?: number }[];
+  /**
+   * The narration of a beat with word times (Scheduler.beatWords): an svg group paces its parts to it.
+   * `from`: its beat's first word (SvgAction.beatFrom), so it reads its own beat, never the next.
+   */
+  beat?(from?: number): { text: string; inMs: number; endMs?: number }[];
   /** Whether the answer is paused (AnswerSession.isPaused): its ink in flight stands still until it resumes. */
   paused?(): boolean;
   /** Highlights and underlines grow to meaningful units (src/locate/unit.ts). Default on. */
@@ -625,7 +628,7 @@ export class Director {
     const p = plan;
     desk.noteInk?.(p.target, p.bbox, p.el);
     // Ink after a journey's arrival is not behind: the narration held for it.
-    const k: Pace = { ...backlog(now() - Math.max(word, dep?.arrivedAt ?? -Infinity)), ...(a.kind === 'svg' && this.d.beat ? { beat: this.d.beat, stop: signal, ...(a.slot ? { slot: a.slot } : {}) } : {}), ...(this.d.paused && !this.d.instant ? { paused: this.paused } : {}) };
+    const k: Pace = { ...backlog(now() - Math.max(word, dep?.arrivedAt ?? -Infinity)), ...(a.kind === 'svg' && this.d.beat ? { beat: () => this.d.beat!(a.beatFrom), stop: signal, ...(a.slot ? { slot: a.slot } : {}) } : {}), ...(this.d.paused && !this.d.instant ? { paused: this.paused } : {}) };
     this.report(t, { startedAt: now() });
     const own = new AbortController();
     if (this.d.instant) own.abort(); // final state at once (an aborted draw completes immediately)
