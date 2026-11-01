@@ -20,6 +20,7 @@ import type { Grounding } from '../geometry/resolve';
 import type { RawAction } from '../script/types';
 import { acceptGroups, checkGroups, newBoardState, type BoardState, type GroupGeo } from '../svgboard/check';
 import type { NarrationClock } from '../playback/clock';
+import { clauseAfter, lookahead, markQuote, quoteRole, sentenceTail, spokenAt } from '../script/quoteWords';
 import { CHECK_WORDS } from '../agent/pacing';
 import type { FaultMode, Faults, GateFlag, GateLogEvent, GateMode, GateSetting, RepairFn, RepairReport, RepairResult } from './events';
 
@@ -108,6 +109,21 @@ export function pagePointingOk(a: RawAction, pageText: (p: number) => string | u
   return x.at != null;
 }
 
+/** Why the gate strips a long quote mark whose words may be missing from its sentence (quoteRole `unclear`). */
+export const QUOTE_UNSAID = 'quoted words not said (say them after the tag, or mark the line: mark=#tN)';
+
+/**
+ * A page mark's quote in its sentence (src/script/quoteWords.ts), read from the narration around the tag
+ * the way the session's parser reads it: `prior` is the text released before the unit. Null: no quote.
+ */
+function quoteAt(prior: string, text: string, t: { start: number; end: number; action: RawAction | null }) {
+  const q = markQuote(t.action);
+  if (!q) return null;
+  const said = (prior.slice(-800) + text.slice(0, t.start)).replace(/\{\{[\s\S]*?\}\}/g, ' ').split(/\s+/).filter(Boolean);
+  const before = sentenceTail(said), clause = clauseAfter(text.slice(t.end), true, lookahead(q)) ?? '';
+  return { role: quoteRole(before, q, clause), say: spokenAt(before, q, clause) };
+}
+
 /** One unit as a beat (all of its sentences). */
 function beatOf(text: string, toks = tokenize(text)): Beat {
   const us = units(text, toks);
@@ -190,6 +206,10 @@ export class GatePreflight implements Preflight {
       if (r != null && !regions.has(r) && !skipped.has(t)) skipped.set(t, 'unknown region');
     }
     if (this.env.recorded) for (const t of tags) { const r = this.env.recorded(t.body); if (r && !skipped.has(t)) skipped.set(t, r); }
+    // A long quote mark in a slot its next word may or may not fill: the page would light words the
+    // sentence may not say (diag C8). Flagged as its tag, so the strip rule removes it and the words play
+    // as the parser speaks them (it says nothing for such a tag either way).
+    for (const t of tags) if (!skipped.has(t) && quoteAt(this.accepted, u.text, t)?.role === 'unclear') skipped.set(t, QUOTE_UNSAID);
     if (u.fault) {
       const t = tags.find((x) => x.action && NEW_INK.has(x.action.kind) && !skipped.has(x));
       if (t) skipped.set(t, 'injected');
@@ -756,8 +776,12 @@ export class LiveGate {
     }
     let text = u.text;
     for (const t of [...bad].sort((a, b) => b.start - a.start)) {
+      // A mark the sentence used as a word leaves its words (the parser spoke them at the tag): "The
+      // {{highlight p=8 "Midpoint method"}} uses…" stripped is "The Midpoint method uses…", not "The uses…".
+      const say = quoteAt(this.releasedAll, u.text, t)?.say;
       const before = text.slice(0, t.start), after = text.slice(t.end);
-      text = /\s$/.test(before) && /^\s/.test(after) ? before + after.replace(/^[ \t]+/, '') : before + after;
+      if (say) text = before + (before && !/\s$/.test(before) ? ' ' : '') + say + (/^[\p{L}\p{N}]/u.test(after) ? ' ' : '') + after;
+      else text = /\s$/.test(before) && /^\s/.test(after) ? before + after.replace(/^[ \t]+/, '') : before + after;
     }
     return { text, removed: bad.map((t) => `{{${t.body}}}`) };
   }
