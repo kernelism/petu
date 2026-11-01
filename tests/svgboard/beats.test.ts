@@ -135,13 +135,20 @@ describe('svg beats: the gate splitter keeps a beat\'s group with its sentences'
       }
     });
   }
-  it('a sentence never waits for its group; the group goes out alone as soon as it closes', () => {
+  it('a stream with no {{beat}} (recorded before the beat wire, 2026-10-31): a sentence never waits for its group; the group goes out alone as soon as it closes', () => {
     const s = new BeatSplitter('sentence');
     expect(s.push('{{svgboard h=700}} The arm swings out.')).toEqual([]);
     expect(s.push(' ')).toHaveLength(1);
     expect(s.push('\n{{svg <g id="arm"><line x1="0" y1="0" x2="9" y2="9"')).toEqual([]);
     const u = s.push(' stroke="#000"/></g>}}');
     expect(u.map((x) => x.text)).toEqual([' \n{{svg <g id="arm"><line x1="0" y1="0" x2="9" y2="9" stroke="#000"/></g>}}']);
+  });
+  it('a tagged beat closes the moment the next {{beat}} arrives, before the next group is written', () => {
+    const s = new BeatSplitter('sentence');
+    // The opener ends at the first {{beat}} (the filter writes it right after the board's tag): it goes out whole.
+    expect(s.push('It swings. {{svgboard h=700}} {{beat}} {{svg <g id="arm"><line x1="0" y1="0" x2="9" y2="9" stroke="#000"/></g>}} The arm swings out. It stops.').map((x) => x.text)).toEqual(['It swings. {{svgboard h=700}} ']);
+    expect(s.push(' \n')).toEqual([]);
+    expect(s.push('{{beat}} {{svg <g id="stop"><line x1="0" y1="0"').map((x) => x.text)).toEqual(['{{beat}} {{svg <g id="arm"><line x1="0" y1="0" x2="9" y2="9" stroke="#000"/></g>}} The arm swings out. It stops. \n']);
   });
 });
 

@@ -156,7 +156,7 @@ export class Director {
       if (!this.svgBoard) { this.report({ action: raw as Action, firedAt: at, queuedAt: now(), startedAt: now(), endedAt: now() }, { skipped: 'no svg board' }); return; }
       raw = { ...raw, region: this.svgBoard };
     }
-    if (raw.kind === 'let') return; // definitions were taken when it was parsed (prefetch)
+    if (raw.kind === 'let' || raw.kind === 'beat') return; // definitions were taken when it was parsed (prefetch); a beat boundary is the scheduler's
     if (raw.kind === 'const') { if (!this.seen.has(raw)) kitStore(this.registry).defineConsts(raw.defs); return; }
     if (raw.kind === 'find') { if (!this.seen.has(raw)) { this.figures.note(raw); kitStore(this.registry).finds.set(raw.id, raw); } return; }
     // A bound number is a word, not ink: the parser said it. Unresolved, the caption shows a dash: recorded as a skip.
@@ -231,7 +231,7 @@ export class Director {
 
   /** As soon as an action is parsed: takes its point definitions (lookahead), warms caches (text runs, KaTeX). */
   prefetch(raw: RawAction): void {
-    if (raw.kind === 'svg') return;
+    if (raw.kind === 'svg' || raw.kind === 'beat') return;
     this.seen.add(raw);
     if (raw.kind === 'sketch') this.declared.add(raw.id);
     if (raw.kind === 'const') { kitStore(this.registry).defineConsts(raw.defs); return; }

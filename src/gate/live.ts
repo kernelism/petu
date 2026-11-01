@@ -39,7 +39,7 @@ export const LOUD_LOSS = 0.2;
 // Preflight: what checks one unit.
 
 export type UnitKind = 'opener' | 'sentence' | 'beat';
-export type PreflightUnit = { key: string; kind: UnitKind; text: string; fault?: FaultMode; /** The stream's end: no boundary is known after it. */ end?: boolean };
+export type PreflightUnit = { key: string; kind: UnitKind; text: string; fault?: FaultMode; /** The stream's end: no boundary is known after it. */ end?: boolean; /** A whole svg beat (a beat boundary before it). */ beat?: true };
 /** A tag of the checked unit: offsets in the unit's text; `skipped` when the board (or the parser) would not draw it. */
 export type PreflightTag = { start: number; end: number; body: string; action: RawAction | null; skipped?: string };
 export type PreflightResult = { flags: GateFlag[]; notes: string[]; tags: PreflightTag[]; /** Spoken numbers the board's computed values contradict (check.ts numberFixes). */ fixes?: NumberFix[]; report?: () => Omit<RepairReport, 'later' | 'tail' | 'maxWords'> };
@@ -327,19 +327,6 @@ function namedBy(svgBody: string, words: string[]): boolean {
   return !!id && id.split(/[-_]/).some((part) => part.length >= 2 && words.some((w) => w === part || w.startsWith(part)));
 }
 
-/** A unit's trailing svg groups that its own words don't name (they lead the next beat), split off. */
-export function splitLeadingGroups(text: string): { head: string; tail: string } {
-  const toks = tokenize(text);
-  const words = toks.filter((t): t is Word => t.kind === 'word').map((w) => w.text.toLowerCase().replace(/[^\p{L}\p{N}-]/gu, ''));
-  let cut = text.length;
-  for (let i = toks.length - 1; i >= 0; i--) {
-    const t = toks[i];
-    if (t.kind !== 'tag' || !isSvgTagBody(t.body.slice(0, 6)) || namedBy(t.body, words)) break;
-    cut = t.start;
-  }
-  return cut < text.length ? { head: text.slice(0, cut), tail: text.slice(cut) } : { head: text, tail: '' };
-}
-
 export class LiveGate {
   private stage2 = false;
   private openerBuf = '';
@@ -404,8 +391,8 @@ export class LiveGate {
     this.queue.push({ key: `o${this.nOpener++}`, kind: 'opener', text });
   }
 
-  private enqueue(us: { text: string; kind: 'sentence' | 'beat' }[], end = false) {
-    for (const u of us) this.queue.push({ key: String(this.nUnit++), kind: u.kind, text: u.text, ...(end ? { end } : {}) });
+  private enqueue(us: { text: string; kind: 'sentence' | 'beat'; beat?: true }[], end = false) {
+    for (const u of us) this.queue.push({ key: String(this.nUnit++), kind: u.kind, text: u.text, ...(end ? { end } : {}), ...(u.beat ? { beat: true as const } : {}) });
   }
 
   /** A raw chunk arrived. */
@@ -441,8 +428,6 @@ export class LiveGate {
     const worker = (async () => {
       try {
         for await (const u0 of this.queue.drain()) { if (signal.aborted) break; for (const u of this.paced(u0)) { if (signal.aborted) break; await this.process(u, out, signal); } }
-        // Groups carried for a beat that never came (the stream ended): they play last, or are cut with the rest.
-        if (!signal.aborted && this.carry) { const c: PreflightUnit = { key: `${this.nUnit++}`, kind: 'sentence', text: this.carry, end: true }; this.carry = ''; if (this.closing) this.held.push(c); else await this.process(c, out, signal); }
         if (!signal.aborted && this.held.length) for (const u of this.closingBeat()) { if (signal.aborted) break; await this.process(u, out, signal); }
         // A gate that gutted an answer is a defect to see, not a quiet success: say so loudly.
         const kept = wordCount(this.released2), lost = this.stats.droppedWords;
@@ -500,104 +485,37 @@ export class LiveGate {
 
 
   /**
-   * Whether a beat boundary lies just before stage-2 unit `u` (`prev`: the text just before it). Groups
-   * may come after their words (p6.0) or just before the words that name them (p6.1), and the splitter
-   * keeps a group with the sentence before it either way, so the boundary is read from the words: `u`
-   * starts with words (a page-pointing tag may lead), the text before it ends a sentence or a group, and
-   * no group just before it is named by `u`'s first words (that group belongs to `u`'s beat). Cutting
-   * there never leaves a drawn group without its words, nor words without their group.
+   * Whether a beat boundary lies just before stage-2 unit `u` (`prev`: the text just before it). A whole
+   * svg beat always opens one (src/svgboard/beat.ts). Otherwise (the opener's sentences; a stream with no
+   * `{{beat}}`, where a group rides with the sentence before it): `u` starts with words (a page-pointing
+   * tag may lead) and the text before it ends a sentence or a group.
    */
   private opensBeat(u: PreflightUnit, prev: string): boolean {
+    if (u.beat) return true;
     const toks = tokenize(u.text);
-    const words = toks.filter((t): t is Word => t.kind === 'word');
-    if (!words.length) return false;
-    const lead = words.slice(0, 6).map((w) => w.text.toLowerCase().replace(/[^\p{L}\p{N}-]/gu, ''));
-    // Groups ahead of the first word must be named by it (p6.1: a group just before the words that name it).
-    for (const t of toks) {
-      if (t.kind === 'word') break;
-      if (t.kind === 'tag' && isSvgTagBody(t.body.slice(0, 6)) && !this.groupsLead && !namedBy(t.body, lead)) return false;
-    }
-    const p = prev.trimEnd();
-    if (!/[.!?…]["'’”)\]]*$/.test(p) && !/\}\}$/.test(p)) return false;
-    for (let rest = p; /\}\}$/.test(rest);) {
-      const open = rest.lastIndexOf('{{');
-      if (open < 0) break;
-      const body = rest.slice(open + 2, -2);
-      if (!isSvgTagBody(body.slice(0, 6))) break;
-      if (this.groupsLead || namedBy(body, lead)) return false;
-      rest = rest.slice(0, open).trimEnd();
-    }
-    return true;
+    const first = toks.findIndex((t) => t.kind === 'word');
+    if (first < 0 || toks.slice(0, first).some((t) => t.kind === 'tag' && isSvgTagBody(t.body.slice(0, 6)))) return false;
+    return /[.!?…]["'’”)\]]*$|\}\}$/.test(prev.trimEnd());
   }
-
-  /**
-   * Trailing groups held back from a unit near the budget until the next unit shows whose they are: a
-   * group just before the words that name it opens the next beat (p6.1), else it closes its own (p6.0).
-   */
-  private carry = '';
-  /** Whether groups lead their beat's sentences (p6.1) or close them (p6.0); null until the board opens. */
-  private groupsLead: boolean | null = null;
 
   /**
    * The length budget: once the released stage-2 words leave no room for more than the check question,
    * the answer closes at the next beat boundary. Everything after it is held; at the stream's end only
-   * the check question's beat is checked and played (closingBeat). Near the budget, groups at a unit's
-   * end that its own words do not name are carried to the next unit (they lead its beat), so a cut never
-   * leaves a group drawn without its words. Returns the unit to check, or null when it was held.
+   * the check question's beat is checked and played (closingBeat). A beat is never cut inside: the
+   * splitter hands whole svg beats. Returns the units to check now (none when held).
    */
-  private paced(u0: PreflightUnit): PreflightUnit[] {
-    if (u0.kind === 'opener' || !this.budget || !this.stage2) return [u0];
-    let u = u0;
-    // The format: p6.1 speaks before its plan (words before the board opens), and each beat's group leads
-    // its sentences; p6.0 opens the board first, and a group closes its beat.
-    if (this.groupsLead == null) {
-      const at = u.text.indexOf('{{svgboard');
-      if (at >= 0) this.groupsLead = this.words2 > 0 || wordCount(u.text.slice(0, at)) > 0;
-      else if (/\{\{\s*svg\b/.test(u.text)) this.groupsLead = false;
-    }
-    const go: PreflightUnit[] = [];
-    let prev = this.released2;
-    if (this.carry) {
-      // The carried groups belong to this unit's beat when its first words name them (p6.1); else they
-      // close the beat before (p6.0) and play now, ahead of it.
-      const c = this.carry;
-      this.carry = '';
-      const lead = tokenize(u.text).filter((t): t is Word => t.kind === 'word').slice(0, 6).map((w) => w.text.toLowerCase().replace(/[^\p{L}\p{N}-]/gu, ''));
-      const ours = this.groupsLead || tokenize(c).some((t) => t.kind === 'tag' && isSvgTagBody(t.body.slice(0, 6)) && namedBy(t.body, lead));
-      if (ours) u = { ...u, text: c + u.text };
-      else { go.push({ key: `${u.key}g`, kind: 'sentence', text: c }); prev += c; }
-    }
-    if (this.closing) { this.held.push(u); return go; }
+  private paced(u: PreflightUnit): PreflightUnit[] {
+    if (u.kind === 'opener' || !this.budget || !this.stage2) return [u];
+    if (this.closing) { this.held.push(u); return []; }
     const room = this.budget.capWords - CHECK_WORDS;
-    if (this.words2 >= room && this.opensBeat(u, prev)) { this.closing = true; this.held.push(u); return go; }
-    if (this.words2 + wordCount(u.text) >= room) {
-      const { head, tail } = splitLeadingGroups(u.text);
-      if (tail) {
-        this.carry = tail;
-        // A unit that is only groups waits whole for the words after it.
-        if (!head.trim()) { if (head) this.carry = head + tail; return go; }
-        u = { ...u, text: head };
-      }
-    }
-    return [...go, u];
+    if (this.words2 >= room && this.opensBeat(u, this.released2)) { this.closing = true; this.held.push(u); return []; }
+    return [u];
   }
 
   /** The held units' last beat that asks the student a question (played); the rest are cut. */
   private closingBeat(): PreflightUnit[] {
-    let h = this.held;
+    const h = this.held;
     this.held = [];
-    // A beat's group leads its sentences (p6.1): a unit that is only groups joins the unit after it.
-    if (this.groupsLead) {
-      const f: PreflightUnit[] = [];
-      let pend: PreflightUnit | null = null;
-      for (const u of h) {
-        if (pend) { f.push({ ...u, key: pend.key, text: pend.text + u.text }); pend = null; continue; }
-        if (wordCount(u.text) === 0 && /\{\{\s*svg\b/.test(u.text)) { pend = u; continue; }
-        f.push(u);
-      }
-      if (pend) f.push(pend);
-      h = f;
-    }
     const starts = h.flatMap((u, i) => (i === 0 || this.opensBeat(u, h[i - 1].text) ? [i] : []));
     const asks = (us: PreflightUnit[]) => /\?/.test(us.map((u) => u.text.replace(/\{\{[^}]*\}\}/g, ' ')).join(' '));
     let keep: [number, number] | null = null;

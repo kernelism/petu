@@ -135,7 +135,7 @@ export function stressScript(script: string, env: ReplayEnv = {}): ScriptReport 
 
   for (const [i, a] of actions.entries()) {
     noteUpTo(i);
-    if (a.kind === 'let') continue;
+    if (a.kind === 'let' || a.kind === 'beat') continue;
     const tag = tagOf(a);
     const done = (reason?: string, unverified = false) => outcomes.push(reason ? { tag, status: 'skip', reason: normReason(reason) } : { tag, status: unverified ? 'unverified' : 'ok' });
     const x = a as Record<string, unknown> & { page?: number; region?: string; id?: string };

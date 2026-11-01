@@ -87,6 +87,7 @@ function end(s: string | undefined, near: Pt | undefined): RawEnd | undefined {
 export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
   // The svg board (src/svgboard/wire.ts): {{svgboard h=900}} opens its section (size l: the wide split, the board is the lesson's main picture), {{svg <g …>…</g>}} draws a group.
   if (/^\s*svg\s*</.test(body)) return svgGroup(body.replace(/^\s*svg\s*/, ''));
+  if (/^\s*beat\s*$/.test(body)) return { kind: 'beat' };
   const sb = /^\s*svgboard\b([^}]*)$/.exec(body);
   if (sb) {
     const num = (k: string, d: number) => { const m = new RegExp(`\\b${k}=(\\d+(?:\\.\\d+)?)`).exec(sb[1]); const v = m ? Number(m[1]) : d; return v > 0 ? v : d; };

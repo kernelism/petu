@@ -131,6 +131,7 @@ export class GateState {
       case 'beforeafter': return this.move(a, beat);
       case 'tween': return this.tween(a, beat);
       case 'svg': return this.svgGroup(a.svg, beat);
+      case 'beat': return;
     }
     if (a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table' || a.kind === 'calc' || a.kind === 'scatter' || a.kind === 'fit' || a.kind === 'shares' || a.kind === 'tokens') return this.kit(a, beat);
     if ('ref' in a) return this.verb(a, beat);

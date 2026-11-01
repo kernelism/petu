@@ -97,13 +97,16 @@ export class Scheduler {
     for (const e of events) {
       if (e.type === 'end') this.ended = true;
       else if (e.type === 'word') this.words.push(e.text);
+      else if (e.action.kind === 'beat') this.anchorOf(e.action); // a boundary: nothing fires
       else this.acts.push({ action: e.action, word: this.anchorOf(e.action) });
     }
     this.tick();
   }
 
-  /** Where the last svg board group was drawn (its beat's words start after it). */
+  /** Where the current beat's words start: its `{{beat}}`; legacy streams (none), right after the last group. */
   private beatFrom = 0;
+  /** The stream writes `{{beat}}` boundaries (src/svgboard/beat.ts). */
+  private tagged = false;
   /** Whether an svg group has come yet (the narration rests only after a drawn beat). */
   private drawn = false;
   /**
@@ -113,16 +116,21 @@ export class Scheduler {
    */
   private rests = new Set<number>();
   /**
-   * The word an action fires with: the next one, except an svg board group (it follows its beat's
-   * sentences in the stream), which fires on the first word of its beat that names it (its id's
-   * words), else with the next word — right after its sentences.
+   * The word an action fires with: the next one, except an svg board group, which fires on the first
+   * word of its own beat already here that names it (its id's words), else with the next word. Only its
+   * own beat's words are searched (src/svgboard/beat.ts): from its `{{beat}}` to the group. A group that
+   * opens its beat (lead order) has none before it and fires on its beat's first word; one that closes
+   * its sentences (trailing order) may fire on the word in them that names it. A word of an earlier beat
+   * never anchors a group (the ferry's "aim" drew five words before its beat). Legacy streams (no
+   * `{{beat}}`): its sentences are the words since the group before.
    */
   private anchorOf(a: Action): number {
     const n = this.words.length;
+    if (a.kind === 'beat') { this.tagged = true; this.beatFrom = n; return n; }
     if (a.kind === 'sketch' && a.svgboard) this.beatFrom = n; // the opener's words never name a group
     if (a.kind !== 'svg') return n;
     const from = this.beatFrom;
-    this.beatFrom = n;
+    if (!this.tagged) this.beatFrom = n;
     const want = (a.anchor ?? []).filter((w) => w.length >= 2);
     if (want.length) for (let i = from; i < n; i++) if (namesWord(this.words[i], want)) return i;
     // At a sentence boundary after a drawn beat: the next sentence starts after a rest.

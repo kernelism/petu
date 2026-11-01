@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { GatePreflight, LiveGate, type Preflight, type PreflightResult, type PreflightUnit, type ShadowBoard } from '../../src/gate/live';
 import { parseFaults } from '../../src/gate/faults';
+import { SvgBeatFilter } from '../../server/svgBeats';
 import type { GateEvent, GateLogEvent, RepairFn, RepairEvent } from '../../src/gate/events';
 import type { RawAction } from '../../src/script/types';
 
@@ -348,12 +349,14 @@ describe('live gate: the length budget', () => {
     expect(h.gate.closed()).toBe(true);
   });
 
-  it('never splits a beat from its group (group before its words)', async () => {
+  it('never splits a beat from its group (the filter\'s {{beat}} boundaries: group first, then its words)', async () => {
     const h = harness({ preflight: svgPreflight() });
     h.gate.setBudget({ capWords: 40 });
-    // The splitter keeps each group with the sentence before it: the group whose name opens the next beat belongs to that beat.
-    const nb = (i: number) => `{{svg <g id="curve${i}"></g>}} curve${i} ${Array.from({ length: 24 }, (_, j) => `v${i}x${j}`).join(' ')}. `;
-    await h.play(['Opener. ', { handoff: true }, 'First words here. ', nb(1), nb(2), nb(3), check]);
+    const nb = (i: number) => `<g id="curve${i}"></g>\ncurve${i} ${Array.from({ length: 24 }, (_, j) => `v${i}x${j}`).join(' ')}.\n`;
+    const f = new SvgBeatFilter(() => 0);
+    // The question is a beat of its own (a beat is whole: a question inside the last beat keeps all of it).
+    const wire = f.push(`First words here. <plan>BOARD viewBox="0 0 560 400"</plan>\n${nb(1)}${nb(2)}${nb(3)}<g id="ask"></g>`) + f.push(check) + f.end();
+    await h.play(['Opener. ', { handoff: true }, ...wire.match(/[\s\S]{1,40}/g)!]);
     const text = h.out.join('');
     for (const i of [1, 2, 3]) expect(text.includes(`curve${i}"`), `group ${i}`).toBe(text.includes(`v${i}x0`));
     expect(text).not.toContain('v3x0');
@@ -385,8 +388,10 @@ describe('live gate: the length budget, p6.1 (spoken first, then the plan; each 
   it("cuts before a beat's group, never between a group and its sentences, even when the id is named late", async () => {
     const h = harness({ preflight: pre() });
     h.gate.setBudget({ capWords: 60 });
-    const beat = (id: string, n: number) => `{{svg <g id="${id}"></g>}} ${Array.from({ length: n }, (_, j) => `${id}w${j}`).join(' ')} the ${id}. `;
-    await h.play(['Opener. ', { handoff: true }, 'It holds because the push never stops. {{svgboard h=600}} ', beat('river', 20), beat('drift', 20), beat('triangle', 20), '{{svg <g id="time"></g>}} What if the current were faster? ']);
+    const beat = (id: string, n: number) => `<g id="${id}"></g>\n${Array.from({ length: n }, (_, j) => `${id}w${j}`).join(' ')} the ${id}.\n`;
+    const f = new SvgBeatFilter(() => 0);
+    const wire = f.push(`It holds because the push never stops. <plan>BOARD viewBox="0 0 560 600"</plan>\n${beat('river', 20)}${beat('drift', 20)}${beat('triangle', 20)}<g id="time"></g>\nWhat if the current were faster?`) + f.end();
+    await h.play(['Opener. ', { handoff: true }, ...wire.match(/[\s\S]{1,40}/g)!]);
     const text = h.out.join('');
     for (const id of ['river', 'drift', 'triangle']) expect(text.includes(`id="${id}"`), id).toBe(text.includes(`${id}w0`));
     expect(text).toContain('driftw19');
