@@ -358,13 +358,13 @@ const drawnGroups = (text: string): Tag[] => tokenize(text).filter((t): t is Tag
  * in a dropped sentence and all five drawings were skipped), its constants (`{{const}}`) and its groups'
  * definitions (defs.ts). No words, no ink. Empty when it defined nothing.
  */
-export function remnantOf(text: string, except: Set<string> = new Set()): string {
+export function remnantOf(text: string, except: Set<string> = new Set(), constsOnly = false): string {
   const out: string[] = [];
   for (const t of tokenize(text, { end: true })) {
     if (t.kind !== 'tag') continue;
     if (/^\s*(?:svgboard|const)\b/.test(t.body)) { out.push(`{{${t.body}}}`); continue; }
     if (!isSvgTagBody(t.body.slice(0, 6))) continue;
-    const d = defsOf(unescapeSvg(t.body.replace(/^svg\s*/, '')), except);
+    const d = defsOf(unescapeSvg(t.body.replace(/^svg\s*/, '')), except, constsOnly);
     if (d) out.push(`{{svg ${escapeSvg(d)}}}`);
   }
   return out.length ? ` ${out.join(' ')} ` : '';
@@ -602,12 +602,22 @@ export class LiveGate {
   private async remnant(u: PreflightUnit, out: Out, signal: AbortSignal, o: { board?: boolean; after?: string; note?: string } = {}) {
     // After a repair: only what the repair did not define itself (its own frame or curve stands).
     const except = new Set(o.after ? drawnGroups(o.after).flatMap((t) => [...definedNames(unescapeSvg(t.body.replace(/^svg\s*/, '')))]) : []);
-    const text = o.board === false ? remnantOf(u.text, except).replace(/\{\{svgboard\b[^}]*\}\}\s*/g, '') : remnantOf(u.text, except);
-    if (!text.trim()) return;
-    const ru: PreflightUnit = { key: `${u.key}d`, kind: u.kind, text, ...(u.end ? { end: true } : {}) };
-    const r = await this.d.preflight.check(ru);
-    if (signal.aborted) return;
-    if (r.flags.length) { this.d.preflight.reject(ru); return; }
+    // The definitions that broke the beat (a curve with no value, a frame that does not resolve) break
+    // its remnant too; then its constants alone go out, which later beats need most (eval D19, 2026-11-01:
+    // the remnant was refused whole and the two beats after it failed on "unknown constant").
+    let ru: PreflightUnit | null = null, r: PreflightResult | null = null, text = '';
+    for (const constsOnly of [false, true]) {
+      const t = remnantOf(u.text, except, constsOnly);
+      text = o.board === false ? t.replace(/\{\{svgboard\b[^}]*\}\}\s*/g, '') : t;
+      if (!text.trim()) return;
+      ru = { key: `${u.key}d${constsOnly ? 'c' : ''}`, kind: u.kind, text, ...(u.end ? { end: true } : {}) };
+      r = await this.d.preflight.check(ru);
+      if (signal.aborted) return;
+      if (!r.flags.length) break;
+      this.d.preflight.reject(ru);
+      r = null;
+    }
+    if (!r || !ru) return;
     this.emitGate(ru, 'strip', 'release', r, 0, { stripped: ['its words', 'its drawing'], notes: [o.note ?? 'withheld whole: only its board and definitions go out'] });
     this.release(ru, text, out);
   }

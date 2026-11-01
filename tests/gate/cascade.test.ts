@@ -95,6 +95,26 @@ describe('a withheld beat never cascades', () => {
   });
 });
 
+describe('a remnant whose own definitions fail still leaves its constants (eval D19, 2026-11-01)', () => {
+  // Beat 1's curve has no value anywhere (sqrt of a negative over the whole axis), so its remnant, which
+  // defines that curve, fails too; its constants must still reach beat 2.
+  const BAD = '<g id="curve" data-const="a=60 b=5 q1=10 e1=-b*(a-q1)/b/q1"><g data-axes="el" data-x="0,60" data-y="-6,0" data-box="80,75,270,240" data-frame=""/><path id="el" data-fn="sqrt(-1-x)" data-axes="el" fill="none" stroke="#222"/></g>';
+  const S = [
+    'Elasticity changes along the line. {{svgboard h=600}} {{beat}} ',
+    `{{svg ${BAD}}} This curve shows it for each quantity. `,
+    '{{beat}} {{svg <g id="high"><text x="370" y="112" font-size="17" data-val="e1" data-fmt="0">at ten: {}</text></g>}} At a quantity of ten it is minus five. ',
+  ].join('');
+  it('the curve beat is withheld; the next beat resolves e1', async () => {
+    const r = await run(S);
+    expect(r.events.find((e) => e.text?.includes('This curve shows'))!.action).toBe('drop');
+    const high = r.events.find((e) => e.text?.includes('At a quantity of ten'))!;
+    expect(high.flags).toEqual([]);
+    expect(high.action).toBe('release');
+    expect(r.out).toMatch(/data-const="a=60; b=5; q1=10; e1=[^"]*"/);
+    expect(r.out).not.toContain('sqrt(-1-x)');
+  });
+});
+
 describe('a repaired beat\'s definitions stand', () => {
   it('the original\'s remnant follows the repair with only what the repair did not define', async () => {
     const events: GateLogEvent[] = [];

@@ -51,8 +51,8 @@ export function definedNames(src: string): Set<string> {
  * not parse). `except` (definedNames of a repair that replaced it): names the replacement defines itself are
  * left out, so the original never overrides what the repair drew from (a frame moved, a curve rewritten).
  */
-export function defsOf(src: string, except: Set<string> = new Set()): string | null {
-  const ds = (definitions(src) ?? []).filter((d) => !except.has(`${d.kind}:${d.name.toLowerCase()}`));
+export function defsOf(src: string, except: Set<string> = new Set(), constsOnly = false): string | null {
+  const ds = (definitions(src) ?? []).filter((d) => !except.has(`${d.kind}:${d.name.toLowerCase()}`) && (!constsOnly || d.kind === 'const'));
   const parts: string[] = [];
   // Constants in their order, one data-const per run (a formula may read the ones before it).
   for (let i = 0; i < ds.length; i++) {
