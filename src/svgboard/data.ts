@@ -48,7 +48,9 @@ export type DataScope = {
   points: Map<string, DPt>;
   /** Computed values written this pass (data-val), for the gate's number check. */
   values: { v: number; of: string; /** The words the text puts before the number ("SSD = {}" → "SSD"): what the narration calls it. */ label?: string;
-    /** The readout's name (its data-name or id): what `{{val id=…}}` says. */ id?: string; /** The number as the board writes it (fmtValue, data-fmt): what is seen. */ text: string }[];
+    /** The readout's name (its data-name or id): what `{{val id=…}}` says. */ id?: string; /** The number as the board writes it (fmtValue, data-fmt): what is seen. */ text: string;
+    /** Its unit (unitOf: the word after {}, or data-unit): a number said in another unit is not this one. */ unit?: string;
+    /** Its text's own words, unit and filler dropped ("lands {} m downstream" → lands, downstream): words that refer to it. */ words?: string[] }[];
 };
 
 export const newScope = (consts: Record<string, number> = {}): DataScope => ({ consts, axes: new Map(), curves: new Map(), points: new Map(), values: [] });
@@ -512,9 +514,9 @@ function resolveOne(el: Element, sc: DataScope): void {
     const v = evalF(src, sc);
     if (!el.hasAttribute('data-tpl')) el.setAttribute('data-tpl', el.textContent ?? '');
     const tpl = el.getAttribute('data-tpl')!;
-    const label = valueLabel(tpl);
+    const label = valueLabel(tpl), unit = valueUnit(tpl, el.getAttribute('data-unit')), words = valueWords(tpl);
     const num = fmtValue(v, el.getAttribute('data-fmt'));
-    sc.values.push({ v, of: nm ?? src, ...(label ? { label } : {}), ...(nm ? { id: nm } : {}), text: num });
+    sc.values.push({ v, of: nm ?? src, ...(label ? { label } : {}), ...(nm ? { id: nm } : {}), text: num, ...(unit ? { unit } : {}), ...(words.length ? { words } : {}) });
     // "{}" in the text's own words takes the number (the words carry the unit); else value + unit.
     const text = tpl.includes('{}') ? tpl.replace('{}', num) : withUnit(num, el.getAttribute('data-unit'));
     if (tag === 'text' || tag === 'tspan') {
@@ -571,3 +573,31 @@ export function valueLabel(tpl: string): string | undefined {
   const words = head.toLowerCase().replace(/[=:≈~]/g, ' ').replace(/[^\p{L}\p{N}\s'-]/gu, ' ').split(/\s+/).filter(Boolean);
   return words.length && words.length <= 4 ? words.join(' ') : undefined;
 }
+
+/**
+ * A unit, from the words right after a number ("175 metres downstream" → m, "2.1 metres a second" → m/s,
+ * "12%" → %): undefined when the next word is not one. Read the same way off a readout's template and off
+ * the narration, so a number said in seconds is never a readout in metres (check.ts boardNumbers).
+ */
+const UNIT: Record<string, string> = Object.fromEntries(Object.entries({
+  s: 's sec secs second seconds', min: 'min mins minute minutes', h: 'h hr hrs hour hours', m: 'm metre metres meter meters',
+  km: 'km kilometre kilometres kilometer kilometers', cm: 'cm centimetre centimetres centimeter centimeters', mm: 'mm millimetre millimetres millimeter millimeters',
+  kg: 'kg kilogram kilograms kilo kilos', '%': '% percent', '°': '° deg degree degrees', $: '$ dollar dollars', 'm/s': 'm/s', 'km/h': 'km/h kph',
+}).flatMap(([u, ws]) => ws.split(' ').map((w) => [w, u])));
+export function unitOf(after: readonly string[]): string | undefined {
+  const t = after.map((w) => w.toLowerCase().replace(/^[("“]+|[)"”,;:.!?]+$/g, ''));
+  if (/^%/.test(t[0] ?? '')) return '%';
+  if (t[0] === 'per' && t[1] === 'cent') return '%';
+  const u = UNIT[t[0] ?? ''];
+  if (!u) return undefined;
+  // "metres a second", "km per hour": a speed.
+  const per = (t[1] === 'a' || t[1] === 'per' || t[1] === 'an') ? UNIT[t[2] ?? ''] : undefined;
+  return (u === 'm' || u === 'km') && (per === 's' || per === 'h') ? `${u}/${per}` : u;
+}
+/** A readout's unit: data-unit, else the word after its {}. */
+export const valueUnit = (tpl: string, dataUnit?: string | null): string | undefined =>
+  dataUnit ? unitOf(dataUnit.split(/\s+/)) : tpl.includes('{}') ? unitOf(tpl.slice(tpl.indexOf('{}') + 2).trim().split(/\s+/)) : undefined;
+const FILLER = new Set(['a', 'an', 'the', 'of', 'at', 'is', 'in', 'on', 'to', 'by', 'for', 'and', 'or', 'it', 'its', 'per', 'now', 'than']);
+/** A readout's own words, lower-cased, its unit and filler dropped: what a sentence about it would say. */
+export const valueWords = (tpl: string): string[] =>
+  [...new Set(tpl.replace('{}', ' ').toLowerCase().replace(/[^\p{L}\s'-]/gu, ' ').split(/\s+/).filter((w) => w && !FILLER.has(w) && !UNIT[w]))].slice(0, 8);

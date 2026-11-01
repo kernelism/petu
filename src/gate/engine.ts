@@ -22,7 +22,8 @@ import { parseGroup } from '../svgboard/sanitize';
 
 export type ValueSource = 'page' | 'question' | 'literal' | 'const' | 'computed' | 'derived';
 export type Value = { v: number; source: ValueSource; /** block id, page, const name, an svg readout's id (else 'svg')… */ of: string; beat: number; /** An svg readout's own words for the number (data.ts valueLabel). */ label?: string; row?: { table: string; r: number; cells: number[] };
-  /** An svg board readout (data-val): the number as the board writes it. Spoken numbers are held to these (check.ts boardNumbers). */ shown?: string };
+  /** An svg board readout (data-val): the number as the board writes it. Spoken numbers are held to these (check.ts boardNumbers). */ shown?: string;
+  /** An svg readout's unit and its text's words (data.ts valueUnit, valueWords): what ties a spoken number to it. */ unit?: string; words?: string[] };
 
 type Block = {
   id: string; kind: string; vals?: number[][]; full?: number[][]; src?: KitSource; tab?: { heads: string[] }; computedCols?: Set<number>; region?: string;
@@ -440,7 +441,7 @@ export class GateState {
   private takeReadouts(beat: number): void {
     for (const x of this.svg.values) {
       if (!Number.isFinite(x.v)) continue;
-      this.values.push({ v: x.v, source: 'computed', of: x.id ?? 'svg', beat, shown: x.text, ...(x.label ? { label: x.label } : {}) });
+      this.values.push({ v: x.v, source: 'computed', of: x.id ?? 'svg', beat, shown: x.text, ...(x.label ? { label: x.label } : {}), ...(x.unit ? { unit: x.unit } : {}), ...(x.words ? { words: x.words } : {}) });
       if (x.id) this.readouts.set(x.id.toLowerCase(), { v: x.v, text: x.text });
     }
   }
