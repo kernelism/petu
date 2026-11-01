@@ -139,14 +139,40 @@ export const OPENER_TAGS = new Set(['highlight', 'underline', 'circle', 'box', '
 /** A clause shorter than this waits for more ("So," alone is not worth a release). */
 const MIN_CLAUSE = 16;
 /**
- * A number in spoken words: digits (not inside a name such as CO2 or L1) or a cardinal. Left out: "one"
- * (a pronoun in orienting speech: "the one on the right"), ordinals ("first"), "half" ("the second half
- * of the proof"), "percent" (a concept's name: "percent change") and a cardinal after a determiner
- * ("the two values", "these three cases": counting what the page shows, not a result).
+ * A number in spoken words: digits or a cardinal. Left out: "one" (a pronoun in orienting speech: "the
+ * one on the right"), ordinals ("first"), "half" ("the second half of the proof"), "percent" (a concept's
+ * name: "percent change") and a cardinal after a determiner ("the two values", "these three cases":
+ * counting what the page shows, not a result).
  */
-const NUMBER = /(?<!\p{L})\d|(?<!\b(?:the|these|those|its|their|all|both) )\b(?:zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds?|thousands?|millions?|billions?|twice|thrice)\b/iu;
-/** Whether spoken script (tags aside: a page number or a quoted phrase is pointing, not a claim) says a number. */
-export const saysNumber = (s: string): boolean => NUMBER.test(s.replace(/\{\{[^}]*\}\}?/g, ' '));
+const NUMBER = /\d+(?:\.\d+)?|\b(?:zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds?|thousands?|millions?|billions?|twice|thrice)\b/giu;
+/** What a number names rather than claims, by the words before it: "Section 3", "Eq. 4", "Lecture 5", "step 2", "the two values", "n minus 1". */
+const NAME_BEFORE = /(?:\b(?:sections?|sec|chapters?|ch|figures?|fig|equations?|eqn?|tables?|theorems?|lemmas?|lectures?|slides?|pages?|pp?|steps?|parts?|problems?|exercises?|examples?|questions?|hw|homework|weeks?|lines?|rows?|columns?|layers?|stages?|phases?|cases?|appendix|algorithms?|definitions?|propositions?|corollary|rules?)\.?\s*|\b\p{L}\s*(?:minus|plus|times|over|[-+−×*/])\s*)$/iu;
+/** …and by what follows it: "2D", "3D" (a name's letter), "1 minus p". */
+const NAME_AFTER = /^(?:\p{Lu}|\s*(?:minus|plus|[-+−])\s*\p{L}(?!\p{L}))/u;
+/** An era, not a quantity: "the 1990s", "the '80s" (not "5s", five seconds). */
+const decade = (n: string, before: string, after: string) => /^'?s\b/.test(after) && (/^\d{3}0$/.test(n) || (/^\d0$/.test(n) && /'$/.test(before)));
+const DETERMINER = /\b(?:the|these|those|its|their|all|both)\s+$/i;
+/**
+ * Whether spoken script (tags aside: a page number or a quoted phrase is pointing, not a claim) says a
+ * number. Not one: digits inside a name ("CO2", "L1", "2D", "Section 3", "n minus 1", "the 1990s"), and
+ * any number the student said themselves (`own`: the question): echoing their own words orients, and
+ * a check reply's verdict ("Yes, 0.5 is right.") is about their number, not a result the case decides.
+ */
+export const saysNumber = (s: string, own = ''): boolean => {
+  const said = s.replace(/\{\{[^}]*\}\}?/g, ' ');
+  const theirs = new Set([...own.matchAll(NUMBER)].map((m) => m[0].toLowerCase()));
+  for (const m of said.matchAll(NUMBER)) {
+    const before = said.slice(0, m.index), after = said.slice(m.index + m[0].length);
+    const digits = /\d/.test(m[0]);
+    if (digits && /[\p{L}_]$/u.test(before)) continue; // CO2, L1, x2
+    if (digits && /\d[.,]$/.test(before)) continue; // the tail of a number already seen
+    if (NAME_BEFORE.test(before) || (!digits && DETERMINER.test(before))) continue;
+    if (digits && (NAME_AFTER.test(after) || decade(m[0], before, after))) continue;
+    if (theirs.has(m[0].toLowerCase())) continue;
+    return true;
+  }
+  return false;
+};
 
 /**
  * Splits the opener into whole sentences or clauses as its characters arrive (`push` returns what
@@ -168,7 +194,8 @@ export class OpenerGate {
   /** The first dropped sentence (raw), spoken at the end only if nothing else was. */
   private first = '';
   private firstOpen = false;
-  constructor(private visible: number) {}
+  /** `own`: the student's question (the numbers in it are theirs to hear back). */
+  constructor(private visible: number, private own = '') {}
 
   push(d: string): string {
     this.buf += d;
@@ -206,7 +233,7 @@ export class OpenerGate {
     const sep = end ? null : /[,;:]\s+$/.exec(text);
     const body = sep ? text.slice(0, sep.index) : text;
     const said = this.emit(body);
-    if (saysNumber(said)) {
+    if (saysNumber(said, this.own)) {
       this.notes.push(`opener: dropped a number ${JSON.stringify(text.trim().slice(0, 60))}`);
       this.skip = !end;
       this.pend = '';

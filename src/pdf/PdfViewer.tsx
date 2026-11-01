@@ -702,6 +702,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       numPages: () => doc.numPages,
       currentPage: () => currentRef.current,
       mostVisiblePage: () => (layoutRef.current ? computeCurrent() : currentRef.current),
+      focusPage: () => focusRef.current,
       spaceHeight: (page) => 1000 * (aspectsRef.current?.[clampPage(page) - 1] ?? 1.294),
       scale: () => (layoutRef.current?.pageW ?? 0) / 1000,
       layers: (page) => {

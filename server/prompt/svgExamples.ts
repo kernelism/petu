@@ -1,4 +1,4 @@
-// server/prompt/svgExamples.ts — the svg answer format's few-shot examples (PROMPT_VERSION p6.11).
+// server/prompt/svgExamples.ts — the svg answer format's few-shot examples (PROMPT_VERSION p6.12).
 /**
  * Two invented documents (a river ferry, proofing dough): one a geometric figure built up beat by
  * beat, one a quantity over time read off its own chart. Each script is exactly what the model
@@ -7,7 +7,7 @@
  * with ids draw on the word that names them), then its sentences. The first beat points at the page and
  * says the answer (p6.1–p6.10 spoke that sentence before the plan: C7, it claimed before the case was decided). Numbers that follow from a formula are
  * formulas (data-const, data-axes/data-fn, data-at, data-val: src/svgboard/data.ts). The board holds
- * the picture, labels and key numbers, never the narration's derivation. Every number is computed (the ferry's 3-4-5 triangle; the dough's doublings),
+ * the picture, labels and key numbers, never the narration's derivation. Every number is computed (the ferry's velocity triangle; the dough's doublings),
  * every group id is a word its beat says, and nothing overlaps (rendered and checked by eye;
  * tests/server/prompt.test.ts checks the form). They set the bar for richness: draw the mechanism,
  * labelled, composed so the finished board reads on its own. p6.2: both end on the takeaway; the ferry,
@@ -19,6 +19,11 @@
  * the board's numbers with {{val id=…}} (a readout's id, or a constant) and types only the page's own; the
  * plans carry the givens, not results. They resolve to the p6.4 layout within a unit (the stray "1 m/s =
  * 56 units" scale note went); tests/server/prompt.test.ts runs the grounded check and the {{val}} words.
+ * p6.12: the first group is title-sized (the ferry's frame and title, the dough's title and first cell),
+ * because nothing is spoken until it is written and the plan comes first (p6.11): the ferry's 1.6k-char
+ * river group put its first word 7.8 s after the plan began at the median stream rate. The banks and the
+ * cell rows draw in beat 2. The plans are trimmed to the givens and formulas, and the ferry no longer types
+ * "3, 4, 5" (not the page's numbers: NUMBERS YOU SAY).
  */
 import type { Example } from './examples.ts';
 
@@ -35,13 +40,17 @@ t2 170 40–900: A ferry that aims upstream can land straight across from where 
 t3 205 40–860: River 300 m wide, current 1.5 m/s, ferry speed in still water 2.5 m/s.
 #g1 figure 520,320 420×380 "ferry"`,
     script: String.raw`<plan>
-Case: the page's river W = 300 m, current c = 1.5, ferry v = 2.5. The board computes: across u = sqrt(v² − c²), the aim atan(c/u); aimed at B, t0 = W/v and drift c·t0; aimed upstream, t1 = W/u.
+Case: W = 300 m, c = 1.5, v = 2.5 (the page's). The board computes u = sqrt(v² − c²), the aim atan(c/u), t0 = W/v and drift c·t0 aimed at B, t1 = W/u aimed upstream.
 BOARD viewBox="0 0 560 410"
-regions: river (22–314, 39–350) from above, 224 units = 300 m; triangle (330–560, 185–345) 1 m/s = 56 units; time (270–560, 372–400)
-groups: river; drift; triangle; aim; time
+regions: river (22–314, 20–350) 224 units = 300 m; triangle (330–560, 185–345) 1 m/s = 56 units; time (270–560, 372–400)
+groups: river; banks; drift; triangle; aim; time
 </plan>
 <g id="river" data-const="W=300 c=1.5 v=2.5 u=sqrt(v^2-c^2) t0=W/v t1=W/u">
 <g data-axes="rv" data-x="-120,270" data-y="0,W" data-box="22.5,78.5,291.2,224"/>
+<text x="22" y="36" font-size="18" fill="#222">the river from above</text>
+</g>
+{{highlight p=6 "aims upstream"}} The ferry aims upstream because the river carries it sideways for the whole crossing, so its aim has to cancel that push.
+<g id="banks">
 <line data-from="pt(rv,-120,W)" data-to="pt(rv,270,W)" stroke="#222" stroke-width="3"/>
 <line data-from="pt(rv,-120,0)" data-to="pt(rv,270,0)" stroke="#222" stroke-width="3"/>
 <text x="42" y="100" font-size="16" fill="#888">far bank</text>
@@ -65,7 +74,7 @@ groups: river; drift; triangle; aim; time
 <text x="245" y="288" font-size="18" text-anchor="middle" fill="#222" data-val="c" data-fmt="1">current {} m/s</text>
 </g>
 </g>
-{{highlight p=6 "aims upstream"}} The ferry aims upstream because the water carries it sideways for the whole crossing, so its aim has to cancel that push. Here is the river from above: 300 metres between the banks, and the current carrying everything downstream at 1.5 metres per second.
+Here are the banks, 300 metres apart, and the current carrying everything downstream at 1.5 metres per second.
 <g id="drift">
 <line data-from="A" data-to="pt(rv, c*t0, W)" stroke="#888" stroke-width="2" stroke-dasharray="8 6"/>
 <circle data-name="D" data-at="pt(rv, c*t0, W)" r="4" fill="#888"/>
@@ -90,7 +99,7 @@ Point it straight at B and the crossing takes {{val id=t0}} seconds, but the wat
 <text data-at="mid(pt(vt,0,0), pt(vt,0,u))" dx="10" dy="-7.5" font-size="18" fill="#222">across</text>
 <text id="across" data-at="mid(pt(vt,0,0), pt(vt,0,u))" dx="10" dy="14.5" font-size="18" fill="#222" data-val="u" data-fmt="1">{} m/s</text>
 </g>
-Velocities add tip to tail, so draw the triangle: the ferry's 2.5 through the water plus the current's 1.5 must sum to a velocity pointing straight across. It is a 3, 4, 5 triangle, so {{val id=across}} metres per second is left for crossing, with the aim about {{val id=angle}} degrees upstream.
+Velocities add tip to tail, so draw the triangle: the ferry's 2.5 through the water plus the current's 1.5 must sum to a velocity pointing straight across. What is left for crossing is the third side, {{val id=across}} metres per second, with the aim about {{val id=angle}} degrees upstream.
 <g id="aim">
 <g stroke-width="3" fill="none">
 <line data-from="A" data-to="pt(rv, -27*c, 27*u)" stroke="#222"/>
@@ -120,25 +129,28 @@ t2 140 100–900: The dough doubles every 45 minutes at room temperature: 400 ml
 t3 175 100–700: in just over two hours. Most of the rise comes at the end.
 #g1 figure 100,300 800×420 "bowls"`,
     script: String.raw`<plan>
-Case: the page's v0 = 400 ml doubling every T = 45 min: v = v0·2^(t/T), read at T, 2T and 3T; the gains are the steps between them. One cell → 2, 4, 8.
+Case: v0 = 400 ml doubling every T = 45 min (the page's): v = v0·2^(t/T) at T, 2T, 3T; the gains are the steps between. One cell → 2, 4, 8.
 BOARD viewBox="0 0 560 396"
-regions: cells (22–220, 50–240) one row per 45 min; chart (220–560, 50–336) 0–135 min → x 260–500, 0–3200 ml → y 314–67; brackets (260–500, 336–390)
-groups: yeast; curve; steps; same
+regions: cells (22–220, 50–240) a row per 45 min; chart (220–560, 50–336) 0–135 min → x 260–500, 0–3200 ml → y 314–67; brackets (260–500, 336–390)
+groups: yeast; splits; curve; steps; same
 </plan>
 <g id="yeast" data-const="v0=400 T=45">
 <text x="28" y="61.5" font-size="18" fill="#222">yeast cells</text>
 <text x="28" y="98.5" font-size="16" fill="#888">0 min</text>
+<circle data-schematic="" cx="100" cy="93" r="7" fill="none" stroke="#222" stroke-width="2"/>
+</g>
+{{highlight p=3 "Most of the rise comes at the end."}} The pace is steady per cell, not per bowl, so the yeast's growth piles up at the end.
+<g id="splits">
 <text x="28" y="143.5" font-size="16" fill="#888" data-val="T" data-fmt="0">{} min</text>
 <text x="28" y="188" font-size="16" fill="#888" data-val="2*T" data-fmt="0">{} min</text>
 <text x="28" y="233" font-size="16" fill="#888" data-val="3*T" data-fmt="0">{} min</text>
 <g data-schematic="" fill="none" stroke="#222" stroke-width="2">
-<circle cx="100" cy="93" r="7"/>
 <circle cx="100" cy="138" r="7"/><circle cx="116" cy="138" r="7"/>
 <circle cx="100" cy="183" r="7"/><circle cx="116" cy="183" r="7"/><circle cx="132" cy="183" r="7"/><circle cx="148" cy="183" r="7"/>
 <circle cx="100" cy="228" r="7"/><circle cx="116" cy="228" r="7"/><circle cx="132" cy="228" r="7"/><circle cx="148" cy="228" r="7"/><circle cx="164" cy="228" r="7"/><circle cx="180" cy="228" r="7"/><circle cx="196" cy="228" r="7"/><circle cx="212" cy="228" r="7"/>
 </g>
 </g>
-{{highlight p=3 "Most of the rise comes at the end."}} The pace is steady per cell, not per bowl, so the growth piles up at the end. Every yeast cell splits in two each 45 minutes, so 1 becomes 2, then 4, then 8.
+Every yeast cell splits in two each 45 minutes, so 1 becomes 2, then 4, then 8.
 <g id="curve">
 <g data-axes="ax" data-x="0,3*T" data-y="0,8*v0" data-box="260,67,240,247" data-frame="" data-ticks-x="0,T,2*T,3*T" data-ticks-y="v0,2*v0,4*v0,8*v0" data-unit-x=" min"/>
 <text x="267" y="56" font-size="18" fill="#222">dough volume (ml)</text>

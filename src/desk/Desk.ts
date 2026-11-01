@@ -6,7 +6,7 @@ import type { Stroke } from '../ink/agent/strokes';
 import { animateScrollTo } from '../pdf/scroll';
 import { Follow, ScrollOwner, wheelPx, wheelScrolls } from './follow';
 import { routeGutter, maskBlocker } from './route';
-import { boardLayout, bodyPx, fitZoom, laneFrame, pageAt, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, cropSpanX, frameFor, frameInk, frameTop, inView, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
+import { boardLayout, bodyPx, fitZoom, laneFrame, pageAt, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, cropSpanX, frameFor, frameInk, frameTop, inView, laneAnchorAt, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
 import { BOARD_HEAD, boardPad, MIN_TEXT_PX, SECTION_W, TEXT_UNITS } from './layout';
 import { clearOfDocked, dockNow, dockTop, FOLDED_H, LANE_PAD, LEADER_INSET, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, visibleLane, walkSplit, wantFor, zoomedInsets } from './lane';
@@ -1581,16 +1581,16 @@ export class Desk implements DeskApi {
     if (inLane !== this.penLane) { this.penLane = inLane; if (this.lane()) this.emit(); }
   }
 
-  /** The page point the answer is explaining now: its latest page ink, else the reading line in view. */
+  /** The page point the answer is explaining now: its latest page ink, else `page` (the section's: the asked page) in view, else the reading line in view. */
   private anchorNow(page: number): Group['anchor'] {
     const k = this.inked[0];
     if (k) return { page: k.page, y: k.r.y + Math.min(k.r.h, 40) / 2 };
     const L = this.host.layout();
     if (!L) return { page, y: 0 };
     const { H } = this.host.viewport();
-    const y = this.host.scrollTop() + SAFE_TOP + 0.12 * (H - SAFE_TOP - safeBottom());
-    const p = Math.max(1, Math.min(L.tops.length, pageAt(L, y)));
-    return { page: p, y: Math.max(0, (y - L.tops[p - 1]) / (L.pageW / 1000)) };
+    const top = this.host.scrollTop();
+    const a = laneAnchorAt(L, top + SAFE_TOP, top + H - safeBottom(), top + SAFE_TOP + 0.12 * (H - SAFE_TOP - safeBottom()), page);
+    return { page: a.page, y: Math.max(0, (a.y - L.tops[a.page - 1]) / (L.pageW / 1000)) };
   }
 
   /** An anchor's content y now. */

@@ -750,6 +750,14 @@ describe('Lessons v3: two stages', () => {
     expect(ev[3]).toMatchObject({ t: 'end', usd: r.usd, cached: 2800, input: 3000 });
   });
 
+  it('scout stream: a check reply\'s verdict on the student\'s own number is spoken; a number of its own is not', async () => {
+    const obj = { opener: 'Yes, 0.5 is right. It lands 180 m downstream. The current sets it.', pages: [3], plan: 'p' };
+    const { f } = fakeFetch([{ chunks: scoutSse(obj, 4) }]);
+    const ev: ScoutEvent[] = [];
+    const r = await scoutStream({ ...sreq, question: 'I got 0.5 for the ratio, is that right?' }, scfg, deps(f), (e) => ev.push(e));
+    expect(r.opener).toBe('Yes, 0.5 is right. The current sets it.');
+  });
+
   it('scout stream: the verdict comes as soon as pages and plan are parsed, before the stream completes', async () => {
     const order: string[] = [];
     const f = (async () => {
@@ -856,6 +864,10 @@ describe('Lessons v3: two stages', () => {
     expect(tags.input.at(-1).content.at(-1).text).toBe(openerNote('It is.', false));
     expect(openerNote('It is.', false)).toMatch(/starts with spoken words, before the plan/);
     expect(openerNote('It is.', false)).not.toMatch(/corrects it/);
+    // p6.12: the scout's opener (s2.9) orients in both formats, so the tag lead-in gives the answer; it is never told the student already has it.
+    expect(openerNote('It is.', false)).toMatch(/It only oriented the student[^.]*stated no result/);
+    expect(openerNote('It is.', false)).toMatch(/answer the question in plain words/);
+    expect(openerNote('It is.', false)).not.toMatch(/has its claim|never state it again|do not answer the question again/);
     // The cached prefix is unchanged by the opener.
     expect(b.input.slice(0, 2)).toEqual((buildRequest(req({ context: multi }), cfg) as any).input.slice(0, 2));
   });

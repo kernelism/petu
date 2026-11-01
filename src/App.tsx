@@ -796,7 +796,7 @@ export default function App() {
     // The one page this question is about (moment.ts askedPage), decided now and handed to every
     // consumer below. An eval run asks on the page it scrolled to and set (pageRef); a trail replay on its own.
     const visible = run.rec || run.replay ? pageRef.current : viewerRef.current?.mostVisiblePage?.() ?? pageRef.current;
-    const page = run.again ? run.again.page : askedPage({ point, check: run.check ? run.checkPage : null, mark: taken?.page, visible });
+    const page = run.again ? run.again.page : askedPage({ point, check: run.check ? run.checkPage : null, mark: taken?.page, focus: run.rec || run.replay ? null : viewerRef.current?.focusPage?.(), visible });
     const aboutText = [point ? aboutContext(point) : '', taken?.context ?? ''].filter(Boolean).join('\n\n');
     const moment = { ...(aboutText ? { about: aboutText } : {}), ...(run.check ? { check: run.check } : {}) };
     // The session trail: this answer's header goes above its first section on the board.
@@ -1308,7 +1308,7 @@ export default function App() {
     const point = pointedRef.current;
     setPointed(null);
     const taken = takeMarks();
-    const page = askedPage({ point, mark: taken.page, visible: viewerRef.current?.mostVisiblePage?.() ?? pageRef.current });
+    const page = askedPage({ point, mark: taken.page, focus: viewerRef.current?.focusPage?.(), visible: viewerRef.current?.mostVisiblePage?.() ?? pageRef.current });
     dir.ask(page);
     const next: Aside = { question: q, words: [], state: 'thinking', paused: false };
     asideRef.current = next;

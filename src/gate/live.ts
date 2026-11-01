@@ -14,7 +14,7 @@
 //      src/svgboard/defs.ts), so one withheld beat never cascades into the beats after it.
 import { BeatSplitter, BEAT_DEFAULTS, NEW_INK, tokenize, units, type Beat, type Tag, type Word } from './segment';
 import { MAX_TAG_CHARS, ScriptParser } from '../script/parser';
-import { isDefsGroup, isSvgTagBody, SVG_TAG_MAX, unescapeSvg, escapeSvg } from '../svgboard/wire';
+import { BEAT_TAG, hasBeatTags, isDefsGroup, isSvgTagBody, SVG_TAG_MAX, unescapeSvg, escapeSvg } from '../svgboard/wire';
 import { definedNames, defsOf } from '../svgboard/defs';
 import { GateState } from './engine';
 import { checkBeat, namedScene, withSeverity, type Severity } from './verdict';
@@ -471,7 +471,13 @@ export class LiveGate {
     const worker = (async () => {
       try {
         for await (const u0 of this.queue.drain()) { if (signal.aborted) break; for (const u of this.paced(u0)) { if (signal.aborted) break; await this.process(u, out, signal); } }
-        if (!signal.aborted && this.held.length) for (const u of this.closingBeat()) { if (signal.aborted) break; await this.process(u, out, signal); }
+        if (!signal.aborted && this.held.length) {
+          const { cut, keep } = this.closingBeat();
+          // A cut beat's definitions go out ahead of the kept one, as a withheld beat's do: the check
+          // question builds on them ("twice the constant" of a cut beat's k) and would fail without them.
+          for (const u of cut) { if (signal.aborted) break; await this.remnant(u, out, signal, { board: !/\{\{svgboard\b/.test(this.releasedAll), note: 'cut by the budget: only its definitions go out' }); }
+          for (const u of keep) { if (signal.aborted) break; await this.process(u, out, signal); }
+        }
         // A gate that gutted an answer is a defect to see, not a quiet success: say so loudly.
         const kept = wordCount(this.released2), lost = this.stats.droppedWords;
         if (lost > 0 && lost >= LOUD_LOSS * (kept + lost)) {
@@ -555,8 +561,8 @@ export class LiveGate {
     return [u];
   }
 
-  /** The held units' last beat that asks the student a question (played); the rest are cut. */
-  private closingBeat(): PreflightUnit[] {
+  /** The held units' last beat that asks the student a question (`keep`, played); the rest are cut (`cut`: those before it, whose definitions it may use). */
+  private closingBeat(): { cut: PreflightUnit[]; keep: PreflightUnit[] } {
     const h = this.held;
     this.held = [];
     const starts = h.flatMap((u, i) => (i === 0 || this.opensBeat(u, h[i - 1].text) ? [i] : []));
@@ -566,14 +572,15 @@ export class LiveGate {
       const a = starts[j], b = j + 1 < starts.length ? starts[j + 1] : h.length;
       if (asks(h.slice(a, b))) keep = [a, b];
     }
-    const out: PreflightUnit[] = [];
+    const out: PreflightUnit[] = [], cut: PreflightUnit[] = [];
     h.forEach((u, i) => {
       if (keep && i >= keep[0] && i < keep[1]) { out.push({ ...u, ...(i === keep[1] - 1 ? { end: true } : {}) }); return; }
       this.stats.cuts++;
       this.stats.cutWords += wordCount(u.text);
       this.emitGate(u, 'pass', 'cut', null, 0, { notes: ['budget: past the answer\'s length, closed at a beat boundary'] });
+      if (keep && i < keep[0]) cut.push(u);
     });
-    return out;
+    return { cut, keep: out };
   }
 
   /** Withholds `u` whole (words and drawing); what later beats build on still goes out (remnant). */
@@ -592,7 +599,7 @@ export class LiveGate {
    * gate's state alike. Checked like any unit; a definition that conflicts with one already out (a repair
    * that defined it again differently) is not sent.
    */
-  private async remnant(u: PreflightUnit, out: Out, signal: AbortSignal, o: { board?: boolean; after?: string } = {}) {
+  private async remnant(u: PreflightUnit, out: Out, signal: AbortSignal, o: { board?: boolean; after?: string; note?: string } = {}) {
     // After a repair: only what the repair did not define itself (its own frame or curve stands).
     const except = new Set(o.after ? drawnGroups(o.after).flatMap((t) => [...definedNames(unescapeSvg(t.body.replace(/^svg\s*/, '')))]) : []);
     const text = o.board === false ? remnantOf(u.text, except).replace(/\{\{svgboard\b[^}]*\}\}\s*/g, '') : remnantOf(u.text, except);
@@ -601,7 +608,7 @@ export class LiveGate {
     const r = await this.d.preflight.check(ru);
     if (signal.aborted) return;
     if (r.flags.length) { this.d.preflight.reject(ru); return; }
-    this.emitGate(ru, 'strip', 'release', r, 0, { stripped: ['its words', 'its drawing'], notes: ['withheld whole: only its board and definitions go out'] });
+    this.emitGate(ru, 'strip', 'release', r, 0, { stripped: ['its words', 'its drawing'], notes: [o.note ?? 'withheld whole: only its board and definitions go out'] });
     this.release(ru, text, out);
   }
 
@@ -728,6 +735,10 @@ export class LiveGate {
     // 2026-10-31, turn 3: the first beat failed, its repair came back without {{svgboard}}, and every group
     // of the answer was then skipped, "unknown region": the board had never opened).
     if (opened && !/\{\{svgboard\b/.test(text)) text = `${opened[0]} ${text.trimStart()}`;
+    // A whole beat keeps its boundary: a repair written words-first (trailing order) carries no leading
+    // {{beat}} (the filter owes it to the next word, and none follows), and without one the repaired beat
+    // would join the beat before it: its group anchored and paced on that beat's words.
+    if (u.beat && !hasBeatTags(text)) text = opened ? text.replace(opened[0], `${opened[0]} ${BEAT_TAG}`) : `${BEAT_TAG} ${text.trimStart()}`;
     if (!/^\s/.test(text)) text = (leadWs(u.text) || ' ') + text;
     this.d.onEvent({ t: 'repair', k: u.key, phase: 'ok', ms: Math.round(ms), text: res.text, ...(res.usd != null ? { usd: res.usd } : {}) });
     // `&gatefail=K:bad`: the original comes back and its injected skip with it.

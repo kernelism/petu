@@ -166,7 +166,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.11');
+    expect(PROMPT_VERSION).toBe('p6.12');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -329,6 +329,25 @@ describe('system prompt (svg, default)', () => {
       for (const v of vals) { expect(v.said, v.ref).toBeDefined(); expect(shown, v.ref).toContain(v.said); }
       for (const b of beatsOfWire(wire)) expect(boardNumbers(b.words, p.values.values).flags, b.text).toEqual([]);
       expect(numberFixes(beatsOfWire(wire).flatMap((b) => b.words), p.values.values)).toEqual([]);
+    });
+
+    it('p6.12: the first group is frame- or title-sized (nothing is spoken until it is written); the heavy drawing comes in a later beat', () => {
+      const bs = beatsOf(ex.script);
+      expect(bs[0].svg.length, bs[0].id).toBeLessThanOrEqual(400);
+      expect(Math.max(...bs.slice(1).map((b) => b.svg.length))).toBeGreaterThan(2 * bs[0].svg.length);
+      // The plan is a few compact lines (it is written before the first word too).
+      expect((/<plan>([\s\S]*?)<\/plan>/.exec(ex.script)![1]).length).toBeLessThanOrEqual(400);
+    });
+
+    it('p6.12 (NUMBERS YOU SAY): the narration types only the page\'s and the question\'s numbers, or a count its schematic group draws', () => {
+      const own = `${ex.listing} ${ex.question}`;
+      for (const b of beatsOf(ex.script)) {
+        const said = b.narration.replace(/\{\{[^}]*\}\}/g, ' ').replace(/<check>[\s\S]*?<\/check>/, ' ');
+        for (const m of said.matchAll(/\d+(?:\.\d+)?/g)) {
+          if (new RegExp(`(^|[^\\d.])${m[0].replace('.', '\\.')}(?![\\d.]\\d)`).test(own)) continue;
+          expect(/data-schematic/.test(b.svg) && Number(m[0]) <= 8, `${b.id}: "${m[0]}" is neither the page's, the question's nor a drawn count`).toBe(true);
+        }
+      }
     });
 
     it('each group id is a word its beat says (the engine draws it on that word)', () => {
