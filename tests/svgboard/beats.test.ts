@@ -7,7 +7,7 @@ import { SVG_EXAMPLES } from '../../server/prompt/svgExamples';
 import { ScriptParser } from '../../src/script/parser';
 import { BeatSplitter, tokenize, units } from '../../src/gate/segment';
 import { newScope } from '../../src/svgboard/data';
-import { checkGroups, groupGeometry, newBoardState, acceptGroups, pathPolys, segHitsBox } from '../../src/svgboard/check';
+import { checkGroups, groupGeometry, newBoardState, acceptGroups, overlapArea, pathPolys, segHitsBox } from '../../src/svgboard/check';
 import { namesWord } from '../../src/playback/scheduler';
 import { anchorWords } from '../../src/script/parseTag';
 import { BOARD_W, completeSvg, rawSvgScript } from '../../src/svgboard/wire';
@@ -154,9 +154,11 @@ describe('svg beats: the gate splitter keeps a beat\'s group with its sentences'
 
 describe('svg checks', () => {
   const G = (body: string) => `<g id="t">${body}</g>`;
-  it('flags text on text, text across a line, out of the canvas, a reused id and bad XML', () => {
+  it('fails only a reused id and bad XML; text on text, text across a line, out of the canvas only note (layout is fixed, never a withheld beat)', () => {
     const b = newBoardState(1000, 700);
-    expect(checkGroups([G('<text x="100" y="100" font-size="20">first label</text><text x="110" y="104" font-size="20">second label</text>')], b).flags[0].detail).toMatch(/overlaps/);
+    const over = checkGroups([G('<text x="100" y="100" font-size="20">first label</text><text x="110" y="104" font-size="20">second label</text>')], b);
+    expect(over.flags).toEqual([]);
+    expect(over.notes[0]).toMatch(/overlaps/);
     // Across groups a crossing fails; within one group the label is nudged off its own line (polish.ts)…
     const own = checkGroups([G('<line x1="50" y1="94" x2="400" y2="94" stroke="#000"/><text x="100" y="100" font-size="20">crossed</text>')], b);
     expect(own.flags).toEqual([]);
@@ -168,8 +170,16 @@ describe('svg checks', () => {
     expect(boxed.notes[0]).toMatch(/crosses text/);
     const b2 = newBoardState();
     acceptGroups(b2, checkGroups(['<g id="lab"><text x="100" y="100" font-size="20">crossed</text></g>'], b2).geos);
-    expect(checkGroups(['<g id="ray"><line x1="50" y1="94" x2="400" y2="94" stroke="#000"/></g>'], b2).flags[0].detail).toMatch(/a line of ray crosses text "crossed" \(lab\)/);
-    expect(checkGroups([G('<text x="980" y="100" font-size="20">far right</text>')], b).flags[0].detail).toMatch(/outside/);
+    const ray = checkGroups(['<g id="ray"><line x1="50" y1="94" x2="400" y2="94" stroke="#000"/></g>'], b2);
+    expect(ray.flags).toEqual([]);
+    expect(ray.notes[0]).toMatch(/a line of ray crosses text "crossed" \(lab\)/);
+    // A label run off the canvas is nudged back in (settle.ts) before it is measured.
+    const far = checkGroups([G('<text x="980" y="100" font-size="20">far right</text>')], b);
+    expect(far.flags).toEqual([]);
+    expect(far.geos[0].texts[0].x + far.geos[0].texts[0].w).toBeLessThanOrEqual(1000);
+    const wide = checkGroups([G('<rect x="900" y="100" width="300" height="40" stroke="#000"/>')], b);
+    expect(wide.flags).toEqual([]);
+    expect(wide.notes[0]).toMatch(/outside/);
     expect(checkGroups([G('<circle cx="10" cy="10" r="5" stroke="#000"/>'), G('<circle cx="40" cy="10" r="5"/>')], b).flags[0].detail).toMatch(/twice/);
     expect(checkGroups(['<g id="x"><line x1="0" y1="0"></g>'], b).flags[0].detail).toMatch(/parse/);
   });
@@ -184,7 +194,12 @@ describe('svg checks', () => {
     const b = newBoardState();
     const src = G('<text x="100" y="100" font-size="10">aaaa</text><text x="125" y="100" font-size="10">bbbb</text>');
     expect(checkGroups([src], b, 10).flags).toEqual([]);
-    expect(checkGroups([src], b, 22).flags.length).toBeGreaterThan(0);
+    // Raised to 22 the two run together; the gate nudges them apart as the renderer will (settle.ts).
+    const raised = checkGroups([src], b, 22);
+    expect(raised.flags).toEqual([]);
+    expect(raised.notes.filter((n) => /overlaps/.test(n))).toEqual([]);
+    const [t0, t1] = raised.geos[0].texts;
+    expect(overlapArea(t0, t1)).toBe(0);
     // A list (one line under the other) is restacked when raised: its lines no longer collide.
     const list = G('<text x="100" y="100" font-size="10">aaaa</text><text x="100" y="116" font-size="10">bbbb</text>');
     const r = checkGroups([list], newBoardState(), 22);
@@ -303,5 +318,22 @@ describe('p6.1: the first sentence before the plan', () => {
     expect(out).toContain('{{svgboard h=600}}');
     expect(out).toMatch(/On these \{\{svg <g id="axes">.*\}\}\s+axes, the/);
     expect(f.plan).toMatch(/BOARD viewBox/);
+  });
+});
+
+describe('a label at a data-at point is not crossing its own curves (a32: "E1" beside its cross() dot)', () => {
+  it('the curves through the point are exempt; any other line across the label still notes', () => {
+    const b = newBoardState(560, 600);
+    const curves = checkGroups(['<g id="curves"><g data-axes="ax" data-x="0,40" data-y="0,12" data-box="60,60,400,300"/><path id="demand" data-fn="12-x/5" data-axes="ax" stroke="#222" fill="none"/><path id="supply" data-fn="2+x/5" data-axes="ax" stroke="#222" fill="none"/></g>'], b);
+    expect(curves.flags).toEqual([]);
+    acceptGroups(b, curves.geos);
+    const eq = checkGroups(['<g id="equilibrium"><circle data-at="cross(demand,supply)" r="4" fill="#222"/><text data-at="cross(demand,supply)" font-size="16" text-anchor="middle">E1 here</text></g>'], b, 16, curves.scope);
+    expect(eq.flags).toEqual([]);
+    expect(eq.notes.filter((n) => /crosses text "E1 here"/.test(n))).toEqual([]);
+    // E1 sits at (310, 185) on the board; a later rule drawn through it is a real crossing (it notes).
+    acceptGroups(b, eq.geos);
+    const later = checkGroups(['<g id="rule"><line x1="60" y1="181" x2="560" y2="181" stroke="#222"/></g>'], b, 16, curves.scope);
+    expect(later.flags).toEqual([]);
+    expect(later.notes.join()).toMatch(/a line of rule crosses text "E1 here"/);
   });
 });
