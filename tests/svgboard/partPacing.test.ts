@@ -3,7 +3,8 @@
 // as "thirty-seven"), in its own beat; the rest go next to their named neighbours in the group's order.
 // Fake clock and a fake requestAnimationFrame; jsdom has no layout, so lines get a length by hand.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { drawGroup, mountBoard, GROUP_MAX_MS, type SvgBoard } from '../../src/svgboard/render';
+import { drawGroup, mountBoard, prepareGroup, GROUP_MAX_MS, type SvgBoard } from '../../src/svgboard/render';
+import { checkGroups, newBoardState } from '../../src/svgboard/check';
 import { ACTION_TIMEOUT_MS } from '../../src/playback/director';
 import type { BeatWord } from '../../src/playback/pace';
 
@@ -89,5 +90,16 @@ describe('svg parts draw on the words that name them', () => {
 
   it('a group at pen speed fits under the director\'s step timeout', () => {
     expect(GROUP_MAX_MS).toBeLessThan(ACTION_TIMEOUT_MS);
+  });
+
+  it('a data-say passes the gate\'s check and the board\'s preparation, and reaches the drawing', () => {
+    const src = '<g id="aim"><line data-say="heading" x1="0" y1="50" x2="400" y2="50" stroke="#222"/><text x="10" y="80" font-size="20">37°</text></g>';
+    const r = checkGroups([src], newBoardState());
+    expect(r.flags).toEqual([]);
+    expect(r.notes.join(' ')).not.toMatch(/say/);
+    const s = setup('');
+    const g = prepareGroup(s.b, src, 16, 1);
+    expect(typeof g).not.toBe('string');
+    expect((g as { el: Element }).el.querySelector('line')!.getAttribute('data-say')).toBe('heading');
   });
 });
