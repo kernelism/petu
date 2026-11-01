@@ -1,4 +1,5 @@
 // src/script/parseTag.ts
+import { isDefsGroup } from '../svgboard/wire';
 import { REGION_H, type Compass, type RawEnd, type Pt, type RawAction, type Target, type Weight } from './types';
 import { tokenize, unquote } from './tokenize';
 import { NAME, normName, parsePtArg, worldPt, isBlockRef, isFormula, type PtArg } from './pointExpr';
@@ -87,6 +88,7 @@ function end(s: string | undefined, near: Pt | undefined): RawEnd | undefined {
 export function parseTag(body: string, ctx?: ParseCtx): RawAction | null {
   // The svg board (src/svgboard/wire.ts): {{svgboard h=900}} opens its section (size l: the wide split, the board is the lesson's main picture), {{svg <g …>…</g>}} draws a group.
   if (/^\s*svg\s*</.test(body)) return svgGroup(body.replace(/^\s*svg\s*/, ''));
+  if (/^\s*beat\s*$/.test(body)) return { kind: 'beat' };
   const sb = /^\s*svgboard\b([^}]*)$/.exec(body);
   if (sb) {
     const num = (k: string, d: number) => { const m = new RegExp(`\\b${k}=(\\d+(?:\\.\\d+)?)`).exec(sb[1]); const v = m ? Number(m[1]) : d; return v > 0 ? v : d; };
@@ -424,5 +426,6 @@ function svgGroup(svg: string): RawAction | null {
   const t = svg.trim();
   if (!t.startsWith('<')) return null;
   const id = /^<g\b[^>]*?\bid\s*=\s*["']([^"']+)["']/i.exec(t)?.[1];
+  if (isDefsGroup(t)) return { kind: 'svg', svg: t, defs: true };
   return { kind: 'svg', svg: t, ...(id ? { id, anchor: anchorWords(id) } : {}) };
 }

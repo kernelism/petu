@@ -2,7 +2,7 @@
 import { parseTag } from '../src/script/parseTag';
 import { isSvgTagBody, tagLimit } from '../src/svgboard/wire';
 /** Every tag name the parser knows (src/script/parseTag.ts). */
-export const TAG_NAMES = new Set(['scroll', 'highlight', 'underline', 'circle', 'box', 'line', 'arrow', 'point', 'label', 'curve', 'shade', 'angle', 'brace', 'write', 'math', 'axes', 'plot', 'let', 'sketch', 'connect', 'emph', 'move', 'fade', 'clear',
+export const TAG_NAMES = new Set(['beat', 'scroll', 'highlight', 'underline', 'circle', 'box', 'line', 'arrow', 'point', 'label', 'curve', 'shade', 'angle', 'brace', 'write', 'math', 'axes', 'plot', 'let', 'sketch', 'connect', 'emph', 'move', 'fade', 'clear',
   // the visual kit (src/script/parseKit.ts)
   'grid', 'bars', 'scatter', 'table', 'calc', 'fit', 'step', 'sweep', 'set', 'band', 'dist', 'col', 'level', 'const',
   // Board v2 (src/script/parseScene.ts)

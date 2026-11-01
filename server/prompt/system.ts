@@ -31,8 +31,13 @@ import { BOARD_W } from '../../src/svgboard/wire.ts';
  * page in view; the hidden plan carries a "parts:" accounting (asked, covered, left) that MEMORY shows the
  * next turn; a sentence that teaches from a page marks the one thing it is about and names it in that
  * sentence, and the board waits after a page mark (the scheduler's look) before it draws on.
+ * p6.8 (2026-10-31, founder: "what it says and what it draws don't match"): one beat order only, the
+ * group first and then its own sentences, also when the beat's first sentence is about the page (the
+ * old exception put that group after the sentence: the gate, scheduler and MEMORY then paired groups
+ * with the wrong words). The board still waits for the look on its own (scheduler), and the server
+ * reads any order the model writes into one beat (src/svgboard/beat.ts).
  */
-export const PROMPT_VERSION = 'p6.7';
+export const PROMPT_VERSION = 'p6.8';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -169,7 +174,8 @@ Off-topic (nothing to do with the document): one friendly sentence and no tags, 
 // ------------------------------------------------------------------------------------------------
 // The svg format (default since p6.0): a short brief, like the experiment's (live-vs-demo-boards.md),
 // with the page pointing kept and the tag-DSL card gone. Streamed: a hidden <plan> ending with the
-// BOARD layout, then beats of narration each followed by its <g id> (server/svgBeats.ts lifts them).
+// BOARD layout, then beats, each its <g id> and then its narration (server/svgBeats.ts lifts the groups
+// and writes the beat boundaries: src/svgboard/beat.ts).
 
 /*
  * ===== SVG ENGINE ATTRIBUTES (owned by the svg-engine agent, branch svg-engine) =====
@@ -200,7 +206,7 @@ BOARD viewBox="0 0 ${BOARD_W} H"   (x 0–${BOARD_W} left to right, y 0–H top 
 regions: name (x0–x1, y0–y1) what goes there; …
 groups: id; id; … (in teaching order)
 </plan>
-Then the beats. Each beat is its drawing first, one SVG group <g id="…">…</g> in absolute board coordinates, then one to three spoken sentences: the group draws across its sentences, part by part, and a part with an id draws on the word that names it (make the id that word). So give the parts you will talk about ids, in the order you say them, and keep a group to what its own sentences say: a long group holds back the words after it.
+Then the beats. Each beat is its drawing first, one SVG group <g id="…">…</g> in absolute board coordinates, then one to three spoken sentences, always in that order (also when the beat's first sentence is about the page): the group draws across its sentences, part by part, and a part with an id draws on the word that names it (make the id that word). So give the parts you will talk about ids, in the order you say them, and keep a group to what its own sentences say: a long group holds back the words after it.
 Name each part in plain words as it appears, in the sentence it draws across ("this arrow is the pull of the string", "this line is the price the law allows"), so the student hears what they are watching being drawn.
 SVG: plain elements (path, line, polyline, polygon, rect, circle, ellipse, text, tspan) with inline attributes; arrowheads as small polylines. No scripts, foreignObject, images, links, external references or animation. Ids are short, unique, lowercase (letters, digits, hyphens). Text is at least font-size 16, and that is its real size on screen: give every label the room its words take at that size. Dark ink for what matters, grey for guides and secondary labels, and one accent colour only for what the student should leave with; the engine sets the fonts and the exact colours. Nothing overlaps: text never sits on text or across a line, and everything stays inside the viewBox. A later group may draw on an earlier one on purpose (an arrow onto it, a mark on a part), since the layout was planned up front. Once drawn is drawn: nothing is erased.
 After the last beat, only when the answer taught something the student can now work out for themselves, add a check question they may open later: <check>one short question that changes one thing about the case</check>. It is never spoken (a check beat in the PLAN goes here, not into the narration); when there is nothing worth checking, leave it out.${SVG_ENGINE_ATTRS ? `\n${SVG_ENGINE_ATTRS}` : ''}`;
@@ -210,7 +216,7 @@ The digest of the whole document (every page's number, title and trimmed text), 
 Page coordinates: x 0–1000, y 0–1000 on every page, whatever its shape; never image pixels. Text lines read "t7 436 415–470: area of the square" (line id, top y, x range, text; "math" marks an equation line). Figure marks are handles on a page's own drawing: #d dots, #s segments, #a arrows, #b boxes, #i images, #g figures, #e equations, each with its position. "no extractable text" means a scan: point with marks, or by coordinates inside images.`;
 
 const SVG_POINTING = `POINTING ON THE PAGE (inline in the narration; a tag fires on the word right after it, so put it just before the words it points at)
-{{circle p=4 mark=#d3}} rings a dot or a figure part. {{box p=4 mark=#e1}} frames an equation, box, image or figure. {{highlight p=4 mark=#t12}} lights a whole text line. {{highlight p=4 "words copied exactly from one listed line"}}, with near=x,y when the words occur more than once, and always for one or two characters: {{underline p=4 "f" near=505,342}}. Mark exactly what the sentence names, as small as it is; never the same spot twice. A sentence that teaches from a page marks the one thing it is about and names it in that same sentence (a highlighted phrase: say its words), so the student knows what lit up and why; one page mark in a sentence, and the student gets a moment to look at it before the board draws on, so a beat whose first sentence is about the page puts its group after that sentence. To use another page, {{scroll p=7}} first and say what it is for as you arrive.`;
+{{circle p=4 mark=#d3}} rings a dot or a figure part. {{box p=4 mark=#e1}} frames an equation, box, image or figure. {{highlight p=4 mark=#t12}} lights a whole text line. {{highlight p=4 "words copied exactly from one listed line"}}, with near=x,y when the words occur more than once, and always for one or two characters: {{underline p=4 "f" near=505,342}}. Mark exactly what the sentence names, as small as it is; never the same spot twice. A sentence that teaches from a page marks the one thing it is about and names it in that same sentence (a highlighted phrase: say its words), so the student knows what lit up and why; one page mark in a sentence, and the student gets a moment to look at it before the board draws on (the board waits on its own: the beat's group still comes first). To use another page, {{scroll p=7}} first and say what it is for as you arrive.`;
 
 const SVG_SITUATIONS = `SITUATIONS
 FOLLOW-UPS. MEMORY is what you already taught: never say it again. It shows your earlier board's BOARD layout and group ids. To continue on that board, write BOARD extend viewBox="0 0 W H" (W as that board had it, H may grow) and add groups with new ids, placed in its free space; a group that reuses an earlier id redraws that part and the old one fades to a ghost. When the student asks for the idea again in another way, what you showed didn't land: start a fresh board with another representation or level, never more of the same. When they say the answer was not good enough or not complete, or ask whether it was, the subject is the question their thread is on (MEMORY names it), in full: the PLAN lists the parts the earlier answers missed or treated thinly, and you teach every one of them, in the new way; the page in view is only where they happen to be, and "is that complete?" is answered by finishing, never with a yes or a no.

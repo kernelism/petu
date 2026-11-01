@@ -1,5 +1,7 @@
 // src/playback/director.ts
 import { mountBoard } from '../svgboard/render';
+import { defineSvgGroup } from '../svgboard/element';
+import { isDefsGroup } from '../svgboard/wire';
 import { REGION_H, REGION_W, targetOf, type Action, type InkAction, type LayoutAction, type RawAction, type Target } from '../script/types';
 import { Figures, type Grounding } from '../geometry/resolve';
 import type { ViewerApi } from '../pdf/viewerApi';
@@ -155,8 +157,10 @@ export class Director {
       }
       if (!this.svgBoard) { this.report({ action: raw as Action, firedAt: at, queuedAt: now(), startedAt: now(), endedAt: now() }, { skipped: 'no svg board' }); return; }
       raw = { ...raw, region: this.svgBoard };
+      // A withheld beat's definitions (src/svgboard/defs.ts): taken into the board's data, never drawn.
+      if (isDefsGroup(raw.svg)) { const env = this.env(); if (env) void defineSvgGroup(raw, env).then((r) => { if (r) console.warn('[director] svg definitions not taken:', r); }); return; }
     }
-    if (raw.kind === 'let') return; // definitions were taken when it was parsed (prefetch)
+    if (raw.kind === 'let' || raw.kind === 'beat') return; // definitions were taken when it was parsed (prefetch); a beat boundary is the scheduler's
     if (raw.kind === 'const') { if (!this.seen.has(raw)) kitStore(this.registry).defineConsts(raw.defs); return; }
     if (raw.kind === 'find') { if (!this.seen.has(raw)) { this.figures.note(raw); kitStore(this.registry).finds.set(raw.id, raw); } return; }
     // A bound number is a word, not ink: the parser said it. Unresolved, the caption shows a dash: recorded as a skip.
@@ -231,7 +235,7 @@ export class Director {
 
   /** As soon as an action is parsed: takes its point definitions (lookahead), warms caches (text runs, KaTeX). */
   prefetch(raw: RawAction): void {
-    if (raw.kind === 'svg') return;
+    if (raw.kind === 'svg' || raw.kind === 'beat') return;
     this.seen.add(raw);
     if (raw.kind === 'sketch') this.declared.add(raw.id);
     if (raw.kind === 'const') { kitStore(this.registry).defineConsts(raw.defs); return; }

@@ -83,13 +83,14 @@ describe('svg data: exact geometry', () => {
     expect(fmtValue(63700)).toBe('63,700');
   });
 
-  it('the gate sees resolved geometry: a curve through earlier text is caught', () => {
+  it('the gate sees resolved geometry: a curve through earlier text is caught (a note: layout never withholds a beat)', () => {
     const board = newBoardState();
     const a = checkGroups([`<g id="ax" data-axes="ax" data-x="0,10" data-y="0,10" data-box="100,100,400,400"><text x="290" y="305" font-size="20">label</text></g>`], board, 16);
     expect(a.flags).toEqual([]);
     board.texts.push(...a.geos[0].texts);
     const b = checkGroups([`<g id="c"><path data-fn="x" data-axes="ax" stroke="#000" fill="none"/></g>`], board, 16, a.scope);
-    expect(b.flags.map((f) => f.detail).join()).toMatch(/crosses text "label"/);
+    expect(b.flags).toEqual([]);
+    expect(b.notes.join()).toMatch(/crosses text "label"/);
   });
 });
 

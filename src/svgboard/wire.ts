@@ -18,6 +18,16 @@ export const SVG_TAG_MAX = 24000;
  */
 export const BOARD_W = 560;
 
+/** The beat boundary (src/svgboard/beat.ts): zero words, no ink; a beat runs from one to the next. */
+export const BEAT_TAG = '{{beat}}';
+export const isBeatTagBody = (s: string): boolean => /^\s*beat\s*$/.test(s);
+/** Whether a text uses beat boundaries (the beat wire, 2026-10-31); without them it is read the legacy way. */
+export const hasBeatTags = (text: string): boolean => text.includes(BEAT_TAG);
+
+/** A withheld beat's definitions-only group (src/svgboard/defs.ts). */
+export const DEFS_ATTR = 'data-defs';
+export const isDefsGroup = (svg: string): boolean => /^\s*(?:svg\s*)?<g\b[^>]*\sdata-defs\b/.test(svg);
+
 /** Whether the text right after `{{` opens an svg group tag (`{{svg <…`). */
 export const isSvgTagBody = (s: string): boolean => /^svg\s*</.test(s);
 
@@ -68,5 +78,5 @@ export function cutTagBody(afterOpen: string): string | null {
 /** The wire body back to raw SVG (for the repair note and logs; XML parsers decode the references themselves). */
 export const unescapeSvg = (s: string): string => s.replace(/&#123;/g, '{').replace(/&#125;/g, '}');
 
-/** A script's wire svg tags shown as the model wrote them (`{{svg <g…>}}` → `<g…>`). */
-export const rawSvgScript = (script: string): string => script.replace(/\{\{svg\s*(<[\s\S]*?>)\}\}/g, (_m, g: string) => `\n${unescapeSvg(g)}\n`);
+/** A script's wire svg tags shown as the model wrote them (`{{svg <g…>}}` → `<g…>`; the filter's `{{beat}}` boundaries dropped). */
+export const rawSvgScript = (script: string): string => script.replace(/\{\{beat\}\}\s*/g, '').replace(/\{\{svg\s*(<[\s\S]*?>)\}\}/g, (_m, g: string) => `\n${unescapeSvg(g)}\n`);

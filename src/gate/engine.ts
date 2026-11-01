@@ -69,6 +69,8 @@ export class GateState {
   readonly figures: Figures;
   /** The svg board's exact data (src/svgboard/data.ts): its constants are this state's, its data-val numbers are computed values. */
   readonly svg: DataScope = newScope();
+  /** Constants a later definition tried to change (the first value stands): `k=5 (it is 2)`. */
+  readonly redefined: string[] = [];
   private svgGroups: Element[] = [];
   /** The id of the last shape or block apply() created (anonymous ones get `_n`). */
   lastId: string | undefined;
@@ -101,6 +103,8 @@ export class GateState {
           const v = f ? f({}) : NaN;
           // A constant written as a number is the model's own literal; one written as a formula (T=2*v/g) is computed.
           const lit = /^[-−+]?\d*\.?\d+$/.test(src.trim());
+          // A name already defined keeps its value (as on the board: KitStore.defineConsts); the gate flags it.
+          if (k.toLowerCase() in this.consts && this.consts[k.toLowerCase()] !== v) { this.redefined.push(`${k}=${src} (it is ${+this.consts[k.toLowerCase()].toPrecision(6)})`); continue; }
           if (Number.isFinite(v)) {
             const key = k.toLowerCase();
             this.consts[key] = v; this.declared.set(key, beat); this.addValues([v], lit ? 'const' : 'computed', k, beat);
@@ -131,6 +135,7 @@ export class GateState {
       case 'beforeafter': return this.move(a, beat);
       case 'tween': return this.tween(a, beat);
       case 'svg': return this.svgGroup(a.svg, beat);
+      case 'beat': return;
     }
     if (a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table' || a.kind === 'calc' || a.kind === 'scatter' || a.kind === 'fit' || a.kind === 'shares' || a.kind === 'tokens') return this.kit(a, beat);
     if ('ref' in a) return this.verb(a, beat);

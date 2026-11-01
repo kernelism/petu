@@ -1,9 +1,13 @@
 // server/svgBeats.ts — the svg answer mode's stream filter (the default stage-2 format, p6).
 /**
  * The model streams (p6.1): a first sentence or two with no drawing, a short hidden `<plan>` ending with its BOARD layout (`BOARD viewBox="0 0 1000 H"`,
- * regions, groups in teaching order), then beats — 1–3 sentences of narration, then that beat's
- * `<g id="…">…</g>` — repeated. This filter sits in front of the ScriptFilter (it IS one, so the plan,
+ * regions, groups in teaching order), then beats — that beat's `<g id="…">…</g>`, then 1–3 sentences
+ * of narration — repeated. This filter sits in front of the ScriptFilter (it IS one, so the plan,
  * markdown clean-up and readUpstream stay the same) and rewrites only what is SVG:
+ *  - the beat wire (2026-10-31): it writes the beat boundaries, `{{beat}}` (src/svgboard/beat.ts, THE RULE): the moment a
+ *    group opens in lead order (the default), before the first word after a group in trailing order
+ *    (sentences before the first group), and right after the plan's `{{svgboard}}`. Downstream a beat is
+ *    the text from one `{{beat}}` to the next, whatever order the model wrote;
  *  - the plan is lifted out whole (kept in `plan`, as the ScriptFilter keeps its own), and the BOARD
  *    line becomes `{{svgboard h=H}}` at once, so the client opens the board while beat 1 is written;
  *  - every top-level SVG element (a `<g>`, a `<defs>`, a stray `<rect …/>`) is held until it closes,
@@ -18,7 +22,7 @@
  * hears beat 1 while its group is still being written: no silence waiting for the whole board.
  */
 import { ScriptFilter } from './scriptFilter.ts';
-import { BOARD_W, completeSvg, escapeSvg } from '../src/svgboard/wire.ts';
+import { BEAT_TAG, BOARD_W, completeSvg, escapeSvg } from '../src/svgboard/wire.ts';
 
 /** A group longer than this is dropped (the client sanitizer caps it again). */
 export const GROUP_MAX = 20000;
@@ -73,6 +77,27 @@ export class SvgBeatFilter extends ScriptFilter {
   private lastCh = '';
   /** That boundary was added: the narration's own leading space after the plan is dropped once. */
   private owedWs = false;
+  /**
+   * The beat order (src/svgboard/beat.ts): `lead` (a group opens its beat) or `trail` (a group closes it),
+   * decided at the first group by the sentences since the board opened; null until then.
+   */
+  order: 'lead' | 'trail' | null = null;
+  /** Narration since the last `{{beat}}` (words: the next group opens a beat), and since the board opened (until the order is known). */
+  private beatWords = false;
+  private beats = 0;
+  private sinceBoard = '';
+  /** Trailing order: a group closed its beat; the next word opens one. */
+  private owedBeat = false;
+  private beat(): string { this.beats++; this.beatWords = false; return `${BEAT_TAG} `; }
+  /** Narration going out: its boundary first when one is owed, then its words and sentence ends counted. */
+  private say(s: string): string {
+    if (!s) return s;
+    let pre = '';
+    if (this.owedBeat && /\S/.test(s)) { this.owedBeat = false; const i = s.search(/\S/); pre = s.slice(0, i) + this.beat(); s = s.slice(i); }
+    if (this.order == null && this.sinceBoard.length < 4000) this.sinceBoard += s;
+    if (/[\p{L}\p{N}]/u.test(s.replace(/\{\{[^}]*\}\}/g, ' '))) this.beatWords = true;
+    return pre + s;
+  }
   override push(chunk: string): string { this.sbuf += chunk; const s = this.lift(false); if (s) this.lastCh = s.slice(-1); return super.push(s); }
   override end(): string { const s = this.lift(true); return super.push(s) + super.end(); }
 
@@ -96,7 +121,9 @@ export class SvgBeatFilter extends ScriptFilter {
         const b = boardOf(this.planBuf);
         this.planBuf = '';
         this.st = 'text';
-        if (b && !this.opened) { this.board = b; this.opened = true; out += svgboardTag(b) + ' '; }
+        // The opener ends with the plan: the board's first beat starts here (its sentences are counted from here).
+        if (b && !this.opened) { this.board = b; this.opened = true; out += svgboardTag(b) + ' ' + this.beat(); }
+        this.sinceBoard = '';
         continue;
       }
       if (this.st === 'check') {
@@ -124,8 +151,8 @@ export class SvgBeatFilter extends ScriptFilter {
       // Narration: pass through up to the next marker.
       if (this.owedWs && this.sbuf) { if (/^ /.test(this.sbuf)) this.sbuf = this.sbuf.slice(1); if (this.sbuf) this.owedWs = false; }
       const lt = this.sbuf.search(/<|```|\{\{\s*\/?svg\s*\}\}/i);
-      if (lt < 0) { out += this.sbuf; this.sbuf = ''; return out; }
-      out += this.sbuf.slice(0, lt);
+      if (lt < 0) { out += this.say(this.sbuf); this.sbuf = ''; return out; }
+      out += this.say(this.sbuf.slice(0, lt));
       this.sbuf = this.sbuf.slice(lt);
       if (/^<plan\s*>/i.test(this.sbuf)) {
         this.sbuf = this.sbuf.replace(/^<plan\s*>/i, '');
@@ -140,13 +167,32 @@ export class SvgBeatFilter extends ScriptFilter {
       const w = WRAPPERS.exec(this.sbuf);
       if (w) { this.sbuf = this.sbuf.slice(w[0].length); continue; }
       const m = OPEN.exec(this.sbuf);
-      if (m && m.index === 0) { this.st = 'el'; this.el = { name: m[1].toLowerCase(), depth: 0, text: '' }; continue; }
+      if (m && m.index === 0) {
+        this.st = 'el'; this.el = { name: m[1].toLowerCase(), depth: 0, text: '' };
+        if (this.el.name === 'g') {
+          // The first group fixes the order: sentences before it since the board opened → trailing, unless it
+          // is one sentence that marks the page (the old pointing order: that sentence is page talk).
+          if (this.order == null) {
+            const bare = this.sinceBoard.replace(/\{\{[^}]*\}\}/g, ' ');
+            const n = (bare.match(/[.!?]["”’)\]]*(?=\s|$)/g) ?? []).length || (/[\p{L}\p{N}]/u.test(bare) ? 1 : 0);
+            const marks = /\{\{\s*(?:highlight|underline|circle|box|scroll)\b[^}]*\bp=/.test(this.sinceBoard);
+            this.order = n >= 2 || (n === 1 && !marks) ? 'trail' : 'lead';
+            // A whole answer read one way on the evidence of its first group: seen in answers.jsonl and ?debug.
+            if (this.order === 'trail') this.notes.push(`beat order: trailing (${n} sentence${n === 1 ? '' : 's'} before the first group): each group closes the sentences before it`);
+            this.sinceBoard = '';
+          }
+          // Lead: the group opens its beat now (the gate may close the beat before while this one is written);
+          // groups in a row share one beat.
+          if (this.order === 'lead' && (this.beatWords || !this.beats)) out += this.beat();
+        }
+        continue;
+      }
       // Could it still become a marker? Wait for more text (bounded); else it is narration ("x < 3").
       if (!final && this.sbuf.length < 16 && !/[\s>]/.test(this.sbuf.slice(1)) ) return out;
       if (!final && /^<(svg|plan|check|!--|\?xml|\/svg)/i.test(this.sbuf) && this.sbuf.length < 400) return out;
       if (!final && /^```/.test(this.sbuf) && this.sbuf.length < 12 && !/\n/.test(this.sbuf)) return out;
       if (!final && /^\{\{\s*\/?s?v?g?\s*\}?$/i.test(this.sbuf)) return out;
-      out += this.sbuf[0];
+      out += this.say(this.sbuf[0]);
       this.sbuf = this.sbuf.slice(1);
     }
   }
@@ -201,6 +247,7 @@ export class SvgBeatFilter extends ScriptFilter {
     const body = name === 'g' || name === 'defs' ? svg : `<g>${svg}</g>`;
     const id = /^<g\b[^>]*?\bid\s*=\s*["']([^"']+)["']/i.exec(body)?.[1];
     if (id) this.groups.push(id);
+    if (name === 'g' && this.order === 'trail') this.owedBeat = true;
     if (Number.isNaN(this.firstGroupMs)) this.firstGroupMs = this.now();
     let head = '';
     if (!this.opened) { this.opened = true; this.board = { w: BOARD_W, h: Math.round(BOARD_W * 0.7), extend: false }; head = svgboardTag(this.board) + ' '; }

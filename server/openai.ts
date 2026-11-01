@@ -93,7 +93,7 @@ export type AnswerRecord = { at: string; phase: string; model: string; effort: s
   /** EXPERIMENT (boardfirst): the model's script before the board-first reveal, and what it declared and revealed. */
   raw?: string; boardFirst?: { declared: number; revealed: number; hidden: string[]; immediate: number; noId: number };
   /** The svg answer mode: the groups sent, the board opened, what the filter dropped, timings (ms from the request). */
-  svg?: { groups: string[]; board: unknown; notes: string[]; check?: string; firstGroupMs: number; ttftMs: number; /** Stage 2's first spoken word (ms from the request; NaN → null when it spoke none). */ firstWordMs?: number; totalMs: number } };
+  svg?: { groups: string[]; board: unknown; notes: string[]; /** The beat order the filter read (src/svgboard/beat.ts). */ order?: 'lead' | 'trail'; check?: string; firstGroupMs: number; ttftMs: number; /** Stage 2's first spoken word (ms from the request; NaN → null when it spoke none). */ firstWordMs?: number; totalMs: number } };
 /**
  * `headersMs`: no response headers → the attempt is abandoned (retried once, before any text).
  * `idleMs`: a streamed answer that sends nothing for this long is ended (cut_off after text). Any
@@ -615,7 +615,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const beat = hb > 0 ? setInterval(() => { if (!signal.aborted && quietBeat(firstWord, lastEmit, now(), script, hb)) { lastEmit = now(); emit({ t: 'text', d: ' ' }); } }, Math.min(250, hb)) : null;
   // Every answer leaves a record, a failed one too (the failures are the ones worth reading).
   const record = (usd: number) => {
-    try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), firstWordMs: Math.round(firstWord), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
+    try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.order ? { order: svgf.order } : {}), ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), firstWordMs: Math.round(firstWord), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
   };
   try {
     let res: Response | null = null;

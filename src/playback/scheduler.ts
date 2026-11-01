@@ -56,10 +56,12 @@ export function isPageMark(a: Action): boolean {
 }
 /** A drawing on the board: an svg group, or ink in a board section. */
 export function drawsBoard(a: Action): boolean {
-  if (a.kind === 'svg') return true;
+  if (a.kind === 'svg') return !a.defs;
   if (a.kind === 'scroll' || a.kind === 'sketch' || a.kind === 'clear') return false;
   return (a as { region?: string }).region != null;
 }
+/** An svg group that draws (not a withheld beat's definitions). */
+const drawsSvg = (a: Action): boolean => a.kind === 'svg' && !a.defs;
 /** How long the board waits after this page mark lands: by the quoted words' length, within [LOOK_MIN_MS, LOOK_MAX_MS]. */
 export function lookMs(a: Action): number {
   const q = (a as { quote?: string }).quote;
@@ -97,13 +99,16 @@ export class Scheduler {
     for (const e of events) {
       if (e.type === 'end') this.ended = true;
       else if (e.type === 'word') this.words.push(e.text);
+      else if (e.action.kind === 'beat') this.anchorOf(e.action); // a boundary: nothing fires
       else this.acts.push({ action: e.action, word: this.anchorOf(e.action) });
     }
     this.tick();
   }
 
-  /** Where the last svg board group was drawn (its beat's words start after it). */
+  /** Where the current beat's words start: its `{{beat}}`; legacy streams (none), right after the last group. */
   private beatFrom = 0;
+  /** The stream writes `{{beat}}` boundaries (src/svgboard/beat.ts). */
+  private tagged = false;
   /** Whether an svg group has come yet (the narration rests only after a drawn beat). */
   private drawn = false;
   /**
@@ -113,16 +118,21 @@ export class Scheduler {
    */
   private rests = new Set<number>();
   /**
-   * The word an action fires with: the next one, except an svg board group (it follows its beat's
-   * sentences in the stream), which fires on the first word of its beat that names it (its id's
-   * words), else with the next word — right after its sentences.
+   * The word an action fires with: the next one, except an svg board group, which fires on the first
+   * word of its own beat already here that names it (its id's words), else with the next word. Only its
+   * own beat's words are searched (src/svgboard/beat.ts): from its `{{beat}}` to the group. A group that
+   * opens its beat (lead order) has none before it and fires on its beat's first word; one that closes
+   * its sentences (trailing order) may fire on the word in them that names it. A word of an earlier beat
+   * never anchors a group (the ferry's "aim" drew five words before its beat). Legacy streams (no
+   * `{{beat}}`): its sentences are the words since the group before.
    */
   private anchorOf(a: Action): number {
     const n = this.words.length;
+    if (a.kind === 'beat') { this.tagged = true; this.beatFrom = n; return n; }
     if (a.kind === 'sketch' && a.svgboard) this.beatFrom = n; // the opener's words never name a group
-    if (a.kind !== 'svg') return n;
+    if (a.kind !== 'svg' || a.defs) return n;
     const from = this.beatFrom;
-    this.beatFrom = n;
+    if (!this.tagged) this.beatFrom = n;
     const want = (a.anchor ?? []).filter((w) => w.length >= 2);
     if (want.length) for (let i = from; i < n; i++) if (namesWord(this.words[i], want)) return i;
     // At a sentence boundary after a drawn beat: the next sentence starts after a rest.
@@ -175,7 +185,7 @@ export class Scheduler {
     if (free === -Infinity) return 'ok';
     // Groups that came together (one word) move together and keep their slots.
     let k = j + 1;
-    while (k < this.acts.length && a.action.kind === 'svg' && this.acts[k].action.kind === 'svg' && this.acts[k].word === a.word) k++;
+    while (k < this.acts.length && drawsSvg(a.action) && drawsSvg(this.acts[k].action) && this.acts[k].word === a.word) k++;
     const group = this.acts.slice(j, k);
     let w = a.word;
     while (w < this.released && (this.clock.wordStart(w) ?? Infinity) < free) w++;
@@ -198,7 +208,7 @@ export class Scheduler {
     let k = 0, n = 0;
     for (let i = 0; i < this.acts.length; i++) {
       const x = this.acts[i];
-      if (x.action.kind !== 'svg' || x.word !== this.acts[j].word) continue;
+      if (!drawsSvg(x.action) || x.word !== this.acts[j].word) continue;
       if (i < j) k++;
       n++;
     }
@@ -215,7 +225,7 @@ export class Scheduler {
     let to = this.words.length;
     // The next beat's group (one that came with this group, on its word, shares its beat).
     let closed = this.ended;
-    for (let i = this.fired; i < this.acts.length; i++) if (this.acts[i].action.kind === 'svg' && this.acts[i].word > this.spoken) { to = Math.min(to, this.acts[i].word); closed = true; break; }
+    for (let i = this.fired; i < this.acts.length; i++) if (drawsSvg(this.acts[i].action) && this.acts[i].word > this.spoken) { to = Math.min(to, this.acts[i].word); closed = true; break; }
     const out: BeatWord[] = [];
     let last = now;
     for (let i = this.spoken; i < Math.min(to, this.spoken + max); i++) {
@@ -436,7 +446,7 @@ export class Scheduler {
       const j = this.fired++;
       this.lastFire = Math.max(this.lastFire, t.fireAt);
       if (isPageMark(a.action)) this.boardFree = Math.max(this.boardFree, t.at + lookMs(a.action));
-      const slot = a.action.kind === 'svg' ? this.slotOf(j) : null;
+      const slot = drawsSvg(a.action) ? this.slotOf(j) : null;
       this.cb.onAction(slot && slot.n > 1 ? { ...a.action, slot } as Action : a.action, t.at, a.word);
       if (this.stopped) return;
     }
