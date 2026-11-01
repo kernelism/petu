@@ -41,22 +41,30 @@ export const WORD_EST_MS = 300;
  */
 export const REPLAN_MS = 400;
 /**
- * A beat still streaming is assumed to run at least this long from its first word (a sentence or two),
- * so its first parts don't all draw in the words known so far; the re-plan corrects it either way.
+ * A beat still streaming whose words are here is assumed to run this much past its last known word (the
+ * next one may be on its way); the re-plan follows it as it grows. With the gate, a beat's words come
+ * whole: it is "open" only because the next {{beat}} waits on the next unit's check.
+ */
+export const OPEN_TAIL_MS = 600;
+/**
+ * A beat still streaming with none of its words here yet (its group fired first: the narration ran dry)
+ * is assumed to run at least this long, so its first parts don't all draw at once; the re-plan corrects it.
  */
 export const OPEN_SPAN_MS = 6000;
 
 /**
  * When the beat's narration ends, ms from now: its last word's end (else its start plus a word); a
- * beat still streaming, at least OPEN_SPAN_MS after its first word started (sinceMs: a guess fixed in
- * time; read from a first word clamped to now, it slid 6 s ahead at every re-plan, and a short beat the
- * gate closed late drew its last parts over the next beat).
+ * beat still streaming, OPEN_TAIL_MS past its last known word (it used to be at least OPEN_SPAN_MS
+ * after its first word: a short beat still open when its group fired, the gate holding the next one,
+ * drew its last parts seconds into the next beat, and a part under way keeps the budget it started
+ * with); with no word known yet, OPEN_SPAN_MS after its first word started (sinceMs).
  */
 export function beatEnd(words: readonly BeatWord[]): number {
   if (!words.length) return 0;
   const last = words[words.length - 1];
   const end = Math.max(last.endMs ?? last.inMs + WORD_EST_MS, last.inMs);
-  return last.open ? Math.max(end, words[0].inMs - (words[0].sinceMs ?? 0) + OPEN_SPAN_MS) : end;
+  if (!last.open) return end;
+  return words.length > 1 || last.text ? end + OPEN_TAIL_MS : Math.max(end, words[0].inMs - (words[0].sinceMs ?? 0) + OPEN_SPAN_MS);
 }
 
 /**
@@ -134,7 +142,8 @@ function named(names: readonly string[], words: readonly BeatWord[], said: reado
 
 /**
  * The schedule of a group's parts over its beat, in drawing order, or null when the beat gives
- * nothing to pace by (fewer than two words and not still streaming: the caller draws at pen speed). `start`: when the beat
+ * nothing to pace by (fewer than two words and not still streaming: the caller draws at pen speed); a
+ * beat already over: every part at once. `start`: when the beat
  * began (ms from now; a re-plan once more of the beat has streamed in: the parts left are spread over
  * what is left of the window).
  *
@@ -151,7 +160,12 @@ function named(names: readonly string[], words: readonly BeatWord[], said: reado
  * category is not an order: the group's order is the author's.
  */
 export function paceParts(parts: readonly PartIn[], words: readonly BeatWord[], slot?: Slot, start?: number): PartTime[] | null {
-  if (!parts.length || (words.length < 2 && !words[words.length - 1]?.open)) return null;
+  if (!parts.length || !words.length) return null;
+  // Its beat is over (closed, every word said: a forward seek's skipped group, one held past its words):
+  // what is left lands at once, in the group's order. Spread over SPAN_MIN_MS from now, it drew over the next beat.
+  if (!words[words.length - 1].open && beatEnd(words) <= 0) return parts.map((_, i) => ({ i, at: 0, dur: 0 }));
+  // A re-plan (`start`) paces whatever the beat turned out to be, one word too: it is already paced.
+  if (words.length < 2 && !words[0].open && start == null) return null;
   const win = beatWindow(words, slot, start);
   // Re-planned mid-beat (`start` in the past): what is left of the window, from now.
   const from = Math.max(0, win.from), to = Math.max(from + 1, win.to);
