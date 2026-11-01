@@ -98,6 +98,18 @@ describe('a constant keeps its first value', () => {
     expect(k.consts.k).toBe(7);
   });
 
+  it('a follow-up on an extended board may give an inherited name its own value (only an answer\'s own names are first-wins)', () => {
+    const before = new KitStore();
+    before.defineConsts([['c', '1.5']]);
+    // linkStore (element.ts): the follow-up's store takes the board's constants it does not have.
+    const after = new KitStore();
+    for (const [k, v] of Object.entries(before.consts)) if (!(k in after.consts)) after.consts[k] = v;
+    after.defineConsts([['c', '2.5']]);
+    expect(after.consts.c).toBe(2.5);
+    after.defineConsts([['c', '3']]);
+    expect(after.consts.c).toBe(2.5);
+  });
+
   it('the gate: the state keeps the first value and the redefining group fails (its words would say a value it does not draw)', async () => {
     const st = new GateState();
     st.apply({ kind: 'const', defs: [['k', '2']] } as RawAction, 0);
