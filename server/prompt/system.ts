@@ -56,6 +56,9 @@ import { BOARD_W } from '../../src/svgboard/wire.ts';
  * p6.12 (2026-10-31, C7 review): the tag format's opener note (server/openai.ts openerNote, svg false) no
  * longer says the opener made the claim: the scout's s2.9 opener orients in both formats, so the tag
  * lead-in before the plan gives the answer.
+ * The examples' first groups are title-sized and their plans shorter (svgExamples.ts): the format asks for
+ * a small first group, and the examples' 1–1.6k-char first groups delayed the first word to 5.5–7.8 s
+ * after the plan began (median stream rate); now 2.4–2.5 s. The ferry types no "3, 4, 5" (NUMBERS YOU SAY).
  */
 export const PROMPT_VERSION = 'p6.12';
 

@@ -331,6 +331,25 @@ describe('system prompt (svg, default)', () => {
       expect(numberFixes(beatsOfWire(wire).flatMap((b) => b.words), p.values.values)).toEqual([]);
     });
 
+    it('p6.12: the first group is frame- or title-sized (nothing is spoken until it is written); the heavy drawing comes in a later beat', () => {
+      const bs = beatsOf(ex.script);
+      expect(bs[0].svg.length, bs[0].id).toBeLessThanOrEqual(400);
+      expect(Math.max(...bs.slice(1).map((b) => b.svg.length))).toBeGreaterThan(2 * bs[0].svg.length);
+      // The plan is a few compact lines (it is written before the first word too).
+      expect((/<plan>([\s\S]*?)<\/plan>/.exec(ex.script)![1]).length).toBeLessThanOrEqual(400);
+    });
+
+    it('p6.12 (NUMBERS YOU SAY): the narration types only the page\'s and the question\'s numbers, or a count its schematic group draws', () => {
+      const own = `${ex.listing} ${ex.question}`;
+      for (const b of beatsOf(ex.script)) {
+        const said = b.narration.replace(/\{\{[^}]*\}\}/g, ' ').replace(/<check>[\s\S]*?<\/check>/, ' ');
+        for (const m of said.matchAll(/\d+(?:\.\d+)?/g)) {
+          if (new RegExp(`(^|[^\\d.])${m[0].replace('.', '\\.')}(?![\\d.]\\d)`).test(own)) continue;
+          expect(/data-schematic/.test(b.svg) && Number(m[0]) <= 8, `${b.id}: "${m[0]}" is neither the page's, the question's nor a drawn count`).toBe(true);
+        }
+      }
+    });
+
     it('each group id is a word its beat says (the engine draws it on that word)', () => {
       for (const b of beatsOf(ex.script)) expect(b.narration.toLowerCase().split(/[^a-z0-9-]+/), b.id).toContain(b.id);
     });
