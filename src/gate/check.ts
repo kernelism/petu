@@ -366,9 +366,9 @@ export const BOARD_FIX = 0.05, BOARD_NEAR = 0.15;
 /** Mentions the board rule reads: quantities (no fraction, page reference or year). Counts and percents are read only of a readout the words refer to. */
 const boardMention = (m: Mention) => !(m.ref || m.frac || isYear(m));
 const boardVals = (known: readonly Value[]) => known.filter((k) => k.shown != null);
-/** Read by magnitude ("an elasticity of 1.3" for −1.5, like matches); a sign typed ("-1.5") against a positive readout is that readout said wrong. */
+/** Read by magnitude ("an elasticity of 1.3" for −1.5, like matches); a sign said ("minus 1.5") against a positive readout is that readout said wrong. */
 const rel = (m: Mention, v: number) => Math.abs(Math.abs(m.value) - Math.abs(v)) / Math.max(Math.abs(v), 1e-12) - 1e-9;
-const wrongSign = (m: Mention, v: number) => m.value < 0 && v > 0;
+const wrongSign = (m: Mention, v: number) => (m.minus || m.value < 0) && v > 0;
 /** The mention's rounding unit by its last significant digit ("about 11300" → 100): a hedged number is that round. */
 const sigUnit = (m: Mention) => {
   if (m.dp > 0) return 10 ** -m.dp;
@@ -468,7 +468,7 @@ export function boardNumbers(words: readonly Word[], known: readonly Value[], be
         const d = /[−-]?\d+(?:,\d{3})*(?:\.\d+)?/.exec(words[w].text);
         if (!d) continue;
         const start = words[w].start + d.index;
-        // A sign left unsaid (a magnitude) stays so: only the digits change.
+        // A sign said as a word ("minus 1.3") or left unsaid (a magnitude) stays so: only the digits change.
         fixes.push({ start, end: start + d[0].length, from: d[0], to: /^[−-]/.test(d[0]) ? k.shown! : k.shown!.replace(/^[−-]/, ''), of: k.of });
         break;
       }

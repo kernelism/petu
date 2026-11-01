@@ -167,6 +167,11 @@ describe('small integers, spoken negatives and percents against readouts', () =>
     expect(boardNumbers(words('The elasticity is minus 1.5 here.'), vs, 0)).toMatchObject({ fixes: [], flags: [] });
     expect(boardNumbers(words('an elasticity of 1.3 here.'), vs, 0).flags.map((f) => f.check)).toEqual(['drift']);
   });
+  it('a sign said is read: "minus 1.5" of a gain of +1.5 is said wrong (a fail, never a digit fix); "3 minus 1.5" is arithmetic', () => {
+    const vs = one('<g id="g" data-const="k=1.5"><text id="gain" x="0" y="20" data-val="k" data-fmt="1">gain {}</text></g>');
+    expect(boardNumbers(words('The gain is minus 1.5 here.'), vs, 0)).toMatchObject({ fixes: [], flags: [{ check: 'drift' }] });
+    expect(boardNumbers(words('The gain is 3 minus 1.5 here.'), vs, 0)).toMatchObject({ fixes: [], flags: [] });
+  });
   it('a percent said is held to a percent readout, and only to one', () => {
     const vs = one('<g id="g" data-const="q=0.123"><text id="fall" x="0" y="20" data-val="q*100" data-fmt="0">demand falls {}%</text></g>');
     expect(boardNumbers(words('Demand falls by about 14 percent.'), vs, 0).flags.map((f) => f.check)).toEqual(['drift']);
