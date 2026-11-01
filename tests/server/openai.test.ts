@@ -845,7 +845,7 @@ describe('Lessons v3: two stages', () => {
     expect(tail.at(-2).text).toMatch(/^QUESTION/);
     expect(tail.at(-1).text).toBe(openerNote('{{circle p=2 mark=#d1}} It is the best line.'));
     expect(tail.at(-1).text).toMatch(/^ALREADY SPOKEN:.*Do not repeat.*\nOPENING: \{\{circle p=2 mark=#d1\}\} It is the best line\.$/s);
-    // p6.9 (C7): the plan first while the opener plays; no spoken lead-in before it.
+    // p6.11 (C7): the plan first while the opener plays; no spoken lead-in before it.
     expect(tail.at(-1).text).toMatch(/the plan first \(the student is still hearing the opening while you write it\)/);
     expect(tail.at(-1).text).not.toMatch(/before the plan|sentences that need no drawing/);
     // The opener spoke before any case existed: a contradiction is corrected in words, once; otherwise never restated.

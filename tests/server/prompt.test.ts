@@ -271,7 +271,7 @@ describe('system prompt (svg, default)', () => {
   describe.skipIf(typeof DOMParser === 'undefined').each(SVG_EXAMPLES.map((e) => [e.title, e] as const))('example: %s', (_t, ex) => {
     it('has a plan ending with the BOARD layout: viewBox, regions, groups in teaching order', () => {
       const plan = /<plan>([\s\S]*?)<\/plan>/.exec(ex.script)?.[1] ?? '';
-      // p6.9 (C7): the plan comes first; nothing is said before it. The first beat points at the page.
+      // p6.11 (C7): the plan comes first; nothing is said before it. The first beat points at the page.
       expect(ex.script.indexOf('<plan>')).toBe(0);
       expect(beatsOf(ex.script)[0].narration).toMatch(/^\s*\{\{highlight p=\d+ /);
       expect(boardH(plan)).toBeGreaterThan(0);

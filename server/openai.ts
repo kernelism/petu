@@ -351,7 +351,7 @@ export function momentNotes(c: Pick<AskContext, 'aside' | 'about' | 'check'>): s
 /**
  * Stage 2 continues the scout's opener: the student has already heard it (and seen its marks), so the
  * script picks up at the next sentence, as one continuous explanation.
- * svg (C7, p6.9): the opener only oriented (scout s2.9; the gate drops its numbers), so stage 2 writes
+ * svg (C7, p6.11): the opener only oriented (scout s2.9; the gate drops its numbers), so stage 2 writes
  * its plan first while the opener plays, then makes the claims on its case. The opener was said before
  * any case existed, so where the case contradicts it, the first beat says so in words, once (it cannot
  * be unsaid; leaving it would be the mismatch C7 is about). `svg` false: the tag prompt's note, unchanged.

@@ -1,6 +1,6 @@
 // server/svgBeats.ts — the svg answer mode's stream filter (the default stage-2 format, p6).
 /**
- * The model streams (p6.9): a short hidden `<plan>` ending with its BOARD layout (`BOARD viewBox="0 0 1000 H"`,
+ * The model streams (p6.11): a short hidden `<plan>` ending with its BOARD layout (`BOARD viewBox="0 0 1000 H"`,
  * regions, groups in teaching order), then beats — that beat's `<g id="…">…</g>`, then 1–3 sentences
  * of narration — repeated. This filter sits in front of the ScriptFilter (it IS one, so the plan,
  * markdown clean-up and readUpstream stay the same) and rewrites only what is SVG:
