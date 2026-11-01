@@ -67,6 +67,17 @@ describe('locateQuote', () => {
     expect(findQuote(lr, 'a small rate does not overshot the minimum')?.fuzzy).toBe(true);
   });
 
+  it('several exact hits and no near=: the one nearest `prefer` (the reading), not the first', () => {
+    const gd = [run('Gradient descent', 100, 60, 128), run('The learning rate sets the step.', 100, 200, 300), run('Gradient descent with momentum smooths the steps.', 100, 400, 400)];
+    expect(locateQuote(gd, 'gradient descent')[0].y).toBe(60);
+    expect(locateQuote(gd, 'gradient descent', undefined, { prefer: { x: 300, y: 380 } })[0].y).toBe(400);
+    expect(locateQuote(gd, 'gradient descent', undefined, { prefer: { x: 300, y: 90 } })[0].y).toBe(60);
+    // near= still wins over prefer, and prefer never rejects (a short quote far from it is still found).
+    expect(locateQuote(gd, 'gradient descent', { x: 100, y: 60 }, { prefer: { x: 300, y: 400 } })[0].y).toBe(60);
+    const x1 = [run('then x moves', 50, 100, 130)];
+    expect(locateQuote(x1, 'x', undefined, { prefer: { x: 900, y: 900 } })).toHaveLength(1);
+  });
+
   it('returns [] when nothing is close', () => {
     expect(locateQuote(runs, 'convolutional neural networks')).toEqual([]);
   });

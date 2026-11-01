@@ -6,8 +6,13 @@ import { textLines } from '../agent/context/textLines';
 export type TextRun = { text: string; rect: PageRect; font?: string; vertical?: boolean };
 /** Width of `s` in `font`, in any consistent unit (only ratios are used). */
 export type Measure = (font: string, s: string) => number;
-/** `aspect` = page h / w (default 1): the line index compares gaps in x units. */
-export type LocateOpts = { measure?: Measure; aspect?: number };
+/**
+ * `aspect` = page h / w (default 1): the line index compares gaps in x units. `prefer`: where the
+ * reading is on the page (the previous mark there), in model coords: among several exact hits and no
+ * `near`, the one closest to it wins instead of the first in reading order (a term that is also the
+ * page's title lit the title, diag C8). Unlike `near` it never rejects a hit.
+ */
+export type LocateOpts = { measure?: Measure; aspect?: number; prefer?: { x: number; y: number } };
 
 let canvasMeasure: Measure | null | undefined;
 /** A cached 2D-canvas measurer, or null where no canvas exists (jsdom, node). */
@@ -169,10 +174,10 @@ const isWordChar = (c: string | undefined) => !!c && /[\p{L}\p{N}]/u.test(c);
 
 /**
  * Finds `quote` in the page's text runs. Returns one rect per line, in model coords, or [].
- * Exact matches on word boundaries win; among several, the one nearest `near` (or the first). A
- * fuzzy hit counts only with `near`: words that are not on the page, with no position to confirm the
- * guess, light a line the narration does not say (the gate's shadow board is this same call, so the
- * gate reports it as not found and the tag is stripped or repaired to a mark=#tN).
+ * Exact matches on word boundaries win; among several, the one nearest `near` (else `prefer`, else
+ * the first). A fuzzy hit counts only with `near`: words that are not on the page, with no position to
+ * confirm the guess, light a line the narration does not say (the gate's shadow board is this same
+ * call, so the gate reports it as not found and the tag is stripped or repaired to a mark=#tN).
  */
 export function locateQuote(pageRuns: TextRun[], quote: string, near?: { x: number; y: number }, opts: LocateOpts = {}): PageRect[] {
   const hit = findQuote(pageRuns, quote, near, opts);
@@ -227,10 +232,11 @@ export function findQuote(pageRuns: TextRun[], quote: string, near?: { x: number
   if (short && !near && candidates.length !== 1) return null;
   const results = candidates.map((range) => ({ range, rects: rectsFor(runs, map, range, opts.measure ?? defaultMeasure()), index, fuzzy: score < 1, score })).filter((r) => r.rects.length);
   if (!results.length) return null;
-  if (!near) return results[0];
-  const dist = (rs: PageRect[]) => Math.hypot(rs[0].x + rs[0].w / 2 - near.x, rs[0].y + rs[0].h / 2 - near.y);
+  const at = near ?? opts.prefer;
+  if (!at) return results[0];
+  const dist = (rs: PageRect[]) => Math.hypot(rs[0].x + rs[0].w / 2 - at.x, rs[0].y + rs[0].h / 2 - at.y);
   const best = results.reduce((b, r) => (dist(r.rects) < dist(b.rects) ? r : b));
-  return short && dist(best.rects) > NEAR_MAX ? null : best;
+  return near && short && dist(best.rects) > NEAR_MAX ? null : best;
 }
 
 function rectsFor(runs: TextRun[], map: Slot[], range: [number, number], measure: Measure | null): PageRect[] {
