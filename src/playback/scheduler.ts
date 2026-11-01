@@ -252,7 +252,7 @@ export class Scheduler {
       // Not timed yet (a voice still loading, a word not released): after the one before, at the clock's estimate.
       const t = s ?? last;
       const d = this.clock.durationMs(this.words[i]) || WORD_EST_MS;
-      out.push({ text: this.words[i], inMs: Math.max(0, t - now), endMs: Math.max(0, t + d - now) });
+      out.push({ text: this.words[i], inMs: Math.max(0, t - now), endMs: Math.max(0, t + d - now), ...(i === i0 && t < now ? { sinceMs: now - t } : {}) });
       last = Math.max(now, t + d);
     }
     // Its end isn't known while the stream may still add words to it.

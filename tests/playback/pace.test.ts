@@ -52,6 +52,12 @@ describe('pace: the window a group draws in', () => {
     expect(beatEnd(w)).toBe(OPEN_SPAN_MS);
     expect(beatWindow(w)).toEqual({ from: 0, to: OPEN_SPAN_MS });
   });
+  it('a beat still streaming: its guessed end is fixed from when its first word started, not from now', () => {
+    // Re-read 4 s into the beat (its first words spoken, clamped to now): it ends 2 s from now, not 6.
+    const w: BeatWord[] = [{ text: 'the', inMs: 0, endMs: 0, sinceMs: 4000 }, { text: 'river', inMs: 0, endMs: 300, open: true }];
+    expect(beatEnd(w)).toBe(OPEN_SPAN_MS - 4000);
+    expect(beatEnd([{ ...w[0], sinceMs: undefined }, w[1]])).toBe(OPEN_SPAN_MS); // (the old slide)
+  });
   it('a word with no end time counts a word\'s length', () => {
     expect(beatWindow([{ text: 'a', inMs: 0 }, { text: 'b', inMs: 2000 }]).to).toBe(2300);
   });
@@ -292,6 +298,20 @@ describe('pace: the scheduler', () => {
     expect(s.beatWords(seen.river).map((x) => x.text)).toEqual(['The', 'river', 'runs', 'east.']);
     expect(s.beatWords(seen.river).at(-1)!.open).toBeUndefined();
     expect(s.beatWords().map((x) => x.text)).toEqual(['boat', 'drifts.']); // the old read: the next beat's words
+    s.stop();
+  });
+
+  it('beatWords tells how long ago its beat\'s first word started, once it has', () => {
+    vi.setSystemTime(0);
+    let from = -1;
+    const s: Scheduler = new Scheduler(new PacedClock(() => 170, () => Date.now(), () => 100), {
+      onWord: () => {}, onAction: (a) => { if (a.kind === 'svg') from = a.beatFrom!; }, onDone: () => {},
+    }, { leadMs: () => 0 });
+    s.push([...words('Look here.'), BEAT, svg('river'), ...words('The river runs east,')]);
+    vi.advanceTimersByTime(200);
+    expect(s.beatWords(from)[0].sinceMs).toBeUndefined(); // its first word starts now
+    vi.advanceTimersByTime(250);
+    expect(s.beatWords(from)[0]).toMatchObject({ text: 'The', inMs: 0, sinceMs: 250 });
     s.stop();
   });
 

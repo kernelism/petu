@@ -16,7 +16,9 @@ import { namesWord } from './scheduler';
 /** A beat word: how soon it is spoken (ms from now) and, when known, when it ends. */
 export type BeatWord = { text: string; inMs: number; endMs?: number;
   /** On the last word: the beat is still streaming (its end isn't known yet). */
-  open?: boolean };
+  open?: boolean;
+  /** On the first word, once spoken (its inMs is then 0): how long ago it started. */
+  sinceMs?: number };
 /** The k-th (0-based) of n groups that share one beat's words. */
 export type Slot = { k: number; n: number };
 
@@ -46,13 +48,15 @@ export const OPEN_SPAN_MS = 6000;
 
 /**
  * When the beat's narration ends, ms from now: its last word's end (else its start plus a word); a
- * beat still streaming, at least OPEN_SPAN_MS after its first word.
+ * beat still streaming, at least OPEN_SPAN_MS after its first word started (sinceMs: a guess fixed in
+ * time; read from a first word clamped to now, it slid 6 s ahead at every re-plan, and a short beat the
+ * gate closed late drew its last parts over the next beat).
  */
 export function beatEnd(words: readonly BeatWord[]): number {
   if (!words.length) return 0;
   const last = words[words.length - 1];
   const end = Math.max(last.endMs ?? last.inMs + WORD_EST_MS, last.inMs);
-  return last.open ? Math.max(end, words[0].inMs + OPEN_SPAN_MS) : end;
+  return last.open ? Math.max(end, words[0].inMs - (words[0].sinceMs ?? 0) + OPEN_SPAN_MS) : end;
 }
 
 /**
