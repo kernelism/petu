@@ -42,7 +42,10 @@ export type TurnRecord = {
   /** Later changes to drawn things (set, move, contrast…), in order. */
   changes: string[];
   claims: string[];
+  /** The check question it ended on: the hidden <check> (done.check), else a spoken closing question. */
   check?: string;
+  /** The page the check is about (moment.ts checkPageOf): a reply to it is asked there. */
+  checkPage?: number;
   /** The student stopped it part-way. */
   stopped?: boolean;
   /** The svg board: its BOARD layout from the answer's plan (canvas, regions, groups), for a follow-up that extends it. */
@@ -184,15 +187,19 @@ export function partsOf(plan: string): string | undefined {
 }
 
 /** A finished answer → its record. */
-export function recordOf(t: { question: string; page: number; pages: number[]; plan: string; script: string; relation?: Relation; storyboard?: Storyboard; stopped?: boolean; answerPlan?: string }): TurnRecord {
+export function recordOf(t: { question: string; page: number; pages: number[]; plan: string; script: string; relation?: Relation; storyboard?: Storyboard; stopped?: boolean; answerPlan?: string; check?: string; checkPage?: number }): TurnRecord {
   const layout = layoutOf(t.answerPlan ?? '');
   const parts = partsOf(t.answerPlan ?? '');
+  // The hidden check is never spoken: claimsOf only finds a spoken closing question, so a reply to the
+  // check came with no record of what was asked (C5). done.check, with its page, wins.
+  const check = t.check ? clip(t.check, CLAIM_CHARS) : undefined;
   return {
     ...(layout ? { layout } : {}),
     ...(parts ? { parts } : {}),
     question: t.question, page: t.page, pages: [...new Set([t.page, ...t.pages])],
     ...(t.relation ? { relation: t.relation } : {}),
     plan: planOf(t.plan, t.storyboard), ...boardOf(t.script), ...claimsOf(t.script),
+    ...(check ? { check, ...(t.checkPage ? { checkPage: t.checkPage } : {}) } : {}),
     ...(t.stopped ? { stopped: true } : {}),
   };
 }
@@ -218,7 +225,7 @@ export function entryText(n: number, r: TurnRecord, root?: number): string {
   if (r.constants.length) lines.push(`  constants: ${r.constants.join(' ')}`);
   if (r.changes.length) lines.push(`  changed: ${r.changes.join('; ')}`);
   if (r.claims.length) lines.push(`  said: ${r.claims.join(' | ')}`);
-  if (r.check) lines.push(`  asked: ${r.check}`);
+  if (r.check) lines.push(`  asked${r.checkPage ? ` (on p${r.checkPage})` : ''}: ${r.check}`);
   return lines.join('\n');
 }
 
