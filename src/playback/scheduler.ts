@@ -69,6 +69,7 @@ export function lookMs(a: Action): number {
 }
 
 type PendingAction = { action: Action; word: number;
+  /** An svg group: the first word of its beat (the `{{beat}}` it came after; legacy: its own word). */ beat?: number;
   /** A board action held past its words (the look): it fires no earlier than this (clock time). */ until?: number };
 
 /**
@@ -99,14 +100,19 @@ export class Scheduler {
     for (const e of events) {
       if (e.type === 'end') this.ended = true;
       else if (e.type === 'word') this.words.push(e.text);
-      else if (e.action.kind === 'beat') this.anchorOf(e.action); // a boundary: nothing fires
-      else this.acts.push({ action: e.action, word: this.anchorOf(e.action) });
+      else if (e.action.kind === 'beat') { this.anchorOf(e.action); this.beatStarts.push(this.words.length); } // a boundary: nothing fires
+      else {
+        const from = this.beatFrom, word = this.anchorOf(e.action);
+        this.acts.push({ action: e.action, word, ...(drawsSvg(e.action) ? { beat: this.tagged ? from : word } : {}) });
+      }
     }
     this.tick();
   }
 
   /** Where the current beat's words start: its `{{beat}}`; legacy streams (none), right after the last group. */
   private beatFrom = 0;
+  /** Where each `{{beat}}` stood (the first word of its beat), in order. */
+  private beatStarts: number[] = [];
   /** The stream writes `{{beat}}` boundaries (src/svgboard/beat.ts). */
   private tagged = false;
   /** Whether an svg group has come yet (the narration rests only after a drawn beat). */
@@ -216,25 +222,38 @@ export class Scheduler {
   }
 
   /**
-   * The words from the one being spoken to the end of its beat (the next svg group's word, or the
-   * words so far), each with how soon it is spoken (ms from now; words not yet timed are estimated
-   * at 300 ms each). An svg group paces its parts across them.
+   * The words of a beat, each with how soon it is spoken (ms from now; words not yet timed are estimated
+   * at 300 ms each, words already spoken at 0). An svg group paces its parts across them.
+   *
+   * `from` (the director passes the group's `beatFrom`): the beat that starts at that word, fixed by the
+   * beat structure: up to the next `{{beat}}` (legacy streams: the next svg group's word, fired or not),
+   * open while that isn't here yet. A re-plan reads the same words (it can only lose those that pass),
+   * never the next beat's: a group whose next beat's group had already fired used to pace its leftovers
+   * over the next beat. Without `from`: from the word being spoken to the next svg group not yet fired.
    */
-  beatWords(max = 80): BeatWord[] {
+  beatWords(from?: number, max = 80): BeatWord[] {
     const now = this.clock.now();
     let to = this.words.length;
-    // The next beat's group (one that came with this group, on its word, shares its beat).
     let closed = this.ended;
-    for (let i = this.fired; i < this.acts.length; i++) if (drawsSvg(this.acts[i].action) && this.acts[i].word > this.spoken) { to = Math.min(to, this.acts[i].word); closed = true; break; }
+    let i0 = this.spoken;
+    if (from != null) {
+      i0 = Math.max(0, Math.min(from, this.words.length));
+      const next = this.tagged ? this.beatStarts.find((b) => b > from)
+        : this.acts.reduce<number | undefined>((m, x) => drawsSvg(x.action) && x.word > from && (m == null || x.word < m) ? x.word : m, undefined);
+      if (next != null) { to = Math.min(to, next); closed = true; }
+    } else {
+      // The next beat's group (one that came with this group, on its word, shares its beat).
+      for (let i = this.fired; i < this.acts.length; i++) if (drawsSvg(this.acts[i].action) && this.acts[i].word > this.spoken) { to = Math.min(to, this.acts[i].word); closed = true; break; }
+    }
     const out: BeatWord[] = [];
     let last = now;
-    for (let i = this.spoken; i < Math.min(to, this.spoken + max); i++) {
+    for (let i = i0; i < Math.min(to, i0 + max); i++) {
       const s = i < this.released ? this.clock.wordStart(i) : null;
       // Not timed yet (a voice still loading, a word not released): after the one before, at the clock's estimate.
       const t = s ?? last;
       const d = this.clock.durationMs(this.words[i]) || WORD_EST_MS;
       out.push({ text: this.words[i], inMs: Math.max(0, t - now), endMs: Math.max(0, t + d - now) });
-      last = t + d;
+      last = Math.max(now, t + d);
     }
     // Its end isn't known while the stream may still add words to it.
     if (!closed && out.length < max) {
@@ -449,7 +468,8 @@ export class Scheduler {
       this.lastFire = Math.max(this.lastFire, t.fireAt);
       if (isPageMark(a.action)) this.boardFree = Math.max(this.boardFree, t.at + lookMs(a.action));
       const slot = drawsSvg(a.action) ? this.slotOf(j) : null;
-      this.cb.onAction(slot && slot.n > 1 ? { ...a.action, slot } as Action : a.action, t.at, a.word);
+      const x = slot ? { ...a.action, ...(slot.n > 1 ? { slot } : {}), beatFrom: a.beat ?? a.word } as Action : a.action;
+      this.cb.onAction(x, t.at, a.word);
       if (this.stopped) return;
     }
     while (this.spoken < this.released) {

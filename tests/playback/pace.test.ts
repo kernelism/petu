@@ -264,6 +264,37 @@ describe('pace: the scheduler', () => {
     s.stop();
   });
 
+  it('a group reads its own beat\'s words, to the next {{beat}}, even once the next beat\'s group has fired', () => {
+    vi.setSystemTime(0);
+    const seen: Record<string, number> = {};
+    const s: Scheduler = new Scheduler(new PacedClock(() => 170, () => Date.now(), () => 100), {
+      onWord: () => {}, onAction: (a) => { if (a.kind === 'svg') seen[a.id!] = a.beatFrom!; }, onDone: () => {},
+    }, { leadMs: () => 0 });
+    s.push([...words('Look here.'), BEAT, svg('river'), ...words('The river runs east.'), BEAT, svg('drift'), ...words('The boat drifts.'), END]);
+    vi.advanceTimersByTime(1000); // both fired, the drift beat under way
+    expect(seen).toEqual({ river: 2, drift: 6 });
+    expect(s.beatWords(seen.river).map((x) => x.text)).toEqual(['The', 'river', 'runs', 'east.']);
+    expect(s.beatWords(seen.river).at(-1)!.open).toBeUndefined();
+    expect(s.beatWords().map((x) => x.text)).toEqual(['boat', 'drifts.']); // the old read: the next beat's words
+    s.stop();
+  });
+
+  it('a beat still streaming stays open until its next {{beat}} comes', () => {
+    vi.setSystemTime(0);
+    let from = -1;
+    const s: Scheduler = new Scheduler(new PacedClock(() => 170, () => Date.now(), () => 100), {
+      onWord: () => {}, onAction: (a) => { if (a.kind === 'svg') from = a.beatFrom!; }, onDone: () => {},
+    }, { leadMs: () => 0 });
+    s.push([...words('Look here.'), BEAT, svg('river'), ...words('The river runs,')]);
+    vi.advanceTimersByTime(250);
+    expect(from).toBe(2);
+    expect(s.beatWords(from).at(-1)!.open).toBe(true);
+    s.push([...words('east.'), BEAT]);
+    expect(s.beatWords(from).map((x) => x.text)).toEqual(['The', 'river', 'runs,', 'east.']);
+    expect(s.beatWords(from).at(-1)!.open).toBeUndefined();
+    s.stop();
+  });
+
   it('beatWords gives each word\'s end on the paced clock', () => {
     const { fired } = run([...words('Look here.'), svg('one'), ...words('The curve falls.'), END]);
     expect(fired[0].beat).toEqual([
