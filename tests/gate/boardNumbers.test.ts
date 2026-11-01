@@ -134,6 +134,13 @@ describe('a spoken number is held to a readout only when the sentence refers to 
     expect(run('The boat takes 175 seconds.').fixes).toEqual([]);
   });
 
+  it('near a readout only in another unit: a note, as a number far from every value gets', () => {
+    const r = boardNumbers(words('The boat takes 190 seconds.'), board().values, 0);
+    expect(r.flags).toEqual([]);
+    expect(r.fixes).toEqual([]);
+    expect(r.notes.join()).toMatch(/"190" matches no value on the board in its unit/);
+  });
+
   it('close but not referred to: a note, never a fix or a fail', () => {
     const r = boardNumbers(words('A slower boat would need about 160 seconds.'), board().values, 0);
     expect(r.flags).toEqual([]);

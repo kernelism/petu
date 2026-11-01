@@ -447,7 +447,13 @@ export function boardNumbers(words: readonly Word[], known: readonly Value[], be
     if (!boardMention(m) || board.some((k) => kindOk(m, k) && boardEqual(m, k)) || known.some((k) => k.shown == null && own(m, k.v))) continue;
     const said = unitOf(m.percent ? ['%'] : ws.slice(m.w1 + 1, m.w1 + 4));
     const close = board.filter((k) => kindOk(m, k) && rel(m, k.v) <= BOARD_NEAR && !(said && k.unit && said !== k.unit));
-    if (!close.length) continue;
+    if (!close.length) {
+      // checkNumbers left it here (nearBoard is by value); a readout near in value but in another unit is not
+      // its value, so it gets the note a number far from every value gets.
+      const other = board.find((k) => kindOk(m, k) && rel(m, k.v) <= BOARD_NEAR);
+      if (other && !isSmallCount(m)) notes.push(`"${m.text}" matches no value on the board in its unit (${said} vs ${other.shown}${other.unit ? ` ${other.unit}` : ''})`);
+      continue;
+    }
     const [c0, c1] = cls.find(([a, b]) => m.w0 >= a && m.w0 <= b) ?? [0, ws.length - 1];
     const span = ws.slice(Math.max(c0, m.w0 - REFER_SPAN), Math.min(c1, m.w1 + REFER_SPAN) + 1).map(lc);
     const named = (k: Value) => !!k.label && namedBefore(words, m.w0, k.label);
