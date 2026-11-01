@@ -44,7 +44,8 @@ export type DataScope = {
   curves: Map<string, CurveSpec>;
   points: Map<string, DPt>;
   /** Computed values written this pass (data-val), for the gate's number check. */
-  values: { v: number; of: string; /** The words the text puts before the number ("SSD = {}" → "SSD"): what the narration calls it. */ label?: string }[];
+  values: { v: number; of: string; /** The words the text puts before the number ("SSD = {}" → "SSD"): what the narration calls it. */ label?: string;
+    /** The readout's name (its data-name or id): what `{{val id=…}}` says. */ id?: string; /** The number as the board writes it (fmtValue, data-fmt): what is seen. */ text: string }[];
 };
 
 export const newScope = (consts: Record<string, number> = {}): DataScope => ({ consts, axes: new Map(), curves: new Map(), points: new Map(), values: [] });
@@ -452,8 +453,8 @@ function resolveOne(el: Element, sc: DataScope): void {
     if (!el.hasAttribute('data-tpl')) el.setAttribute('data-tpl', el.textContent ?? '');
     const tpl = el.getAttribute('data-tpl')!;
     const label = valueLabel(tpl);
-    sc.values.push({ v, of: nm ?? src, ...(label ? { label } : {}) });
     const num = fmtValue(v, el.getAttribute('data-fmt'));
+    sc.values.push({ v, of: nm ?? src, ...(label ? { label } : {}), ...(nm ? { id: nm } : {}), text: num });
     // "{}" in the text's own words takes the number (the words carry the unit); else value + unit.
     const text = tpl.includes('{}') ? tpl.replace('{}', num) : withUnit(num, el.getAttribute('data-unit'));
     if (tag === 'text' || tag === 'tspan') {
