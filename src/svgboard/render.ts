@@ -22,8 +22,11 @@ import { holdFades, InkTime, type Paused } from '../playback/inkTime';
 import type { SRect } from '../geometry/space';
 
 const NS = 'http://www.w3.org/2000/svg';
-/** No group takes longer than this to draw (strokes are compressed to fit). */
-export const GROUP_MAX_MS = 3200;
+/**
+ * No group takes longer than this to draw at pen speed (strokes are compressed to fit). Under the
+ * director's ACTION_TIMEOUT_MS (3 s): at 3.2 s its timeout landed the last 200 ms of every long group at once.
+ */
+export const GROUP_MAX_MS = 2600;
 const TEXT_FADE_MS = 240;
 const FILL_FADE_MS = 220;
 
@@ -357,11 +360,15 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   /** When the last fade started lands (ink time). */
   let fadesTo = 0;
   const t0 = clock.now();
-  // Paced over the beat, the drawing outlives the director's step (it resolves once under way): from
-  // then on only a stop (a new answer, the student's stop) ends it, landing everything at once.
+  // Paced over the beat, the drawing outlives the director's step (it resolves once under way), and only
+  // a stop (a new answer, the student's stop) ends it, landing everything at once. The step's own signal
+  // (the director's land() before the view moves, its step timeout) no longer does, even in the step's
+  // first moments: a scroll or a reveal then landed the whole group at once, skipping every part still
+  // to come in its beat. At pen speed (or with no stop to end it) the step's signal still lands it.
   const bg = new AbortController();
   const onSig = () => bg.abort();
-  o.signal.addEventListener('abort', onSig);
+  const own = paced && !!o.stop;
+  if (!own) o.signal.addEventListener('abort', onSig);
   o.stop?.addEventListener('abort', onSig);
   const sig = bg.signal;
   const run = async () => { try {
@@ -422,7 +429,9 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   if (!sig.aborted) await clock.sleep(Math.max(Math.min(FILL_FADE_MS, TEXT_FADE_MS), fadesTo - clock.now()), sig);
   clock.release(); };
   const done = run();
-  if (paced && o.stop) await Promise.race([done, sleep(Math.min(1500, ACTION_STEP_MS))]);
+  // The step hands back early when its signal asks (land() waits for it), the drawing goes on.
+  const asked = new Promise<void>((r) => { if (o.signal.aborted) r(); else o.signal.addEventListener('abort', () => r(), { once: true }); });
+  if (own) await Promise.race([done, sleep(Math.min(1500, ACTION_STEP_MS)), asked]);
   else await done;
   o.signal.removeEventListener('abort', onSig);
 }

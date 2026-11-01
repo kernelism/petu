@@ -3,7 +3,8 @@
 // as "thirty-seven"), in its own beat; the rest go next to their named neighbours in the group's order.
 // Fake clock and a fake requestAnimationFrame; jsdom has no layout, so lines get a length by hand.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { drawGroup, mountBoard, type SvgBoard } from '../../src/svgboard/render';
+import { drawGroup, mountBoard, GROUP_MAX_MS, type SvgBoard } from '../../src/svgboard/render';
+import { ACTION_TIMEOUT_MS } from '../../src/playback/director';
 import type { BeatWord } from '../../src/playback/pace';
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -59,5 +60,34 @@ describe('svg parts draw on the words that name them', () => {
     expect(t.water).toBeLessThan(100); // unnamed, first in the group: from the beat's start
     expect(Math.abs(t.angle - 8 * 300)).toBeLessThanOrEqual(40); // "thirty-seven" is word 8
     expect(Math.abs(t.aim - 12 * 300)).toBeLessThanOrEqual(40); // "heading" is word 12
+  });
+
+  it('the director\'s land() (the view about to move) does not land the parts still to come in the beat', async () => {
+    const s = setup('<line data-k="water" x1="0" y1="0" x2="400" y2="0"/><line data-k="aim" data-say="heading" x1="0" y1="50" x2="400" y2="50"/>');
+    const beat = narration('the water flows east all morning then the heading turns up the river and on');
+    const step = new AbortController();
+    const done = drawGroup(s.b, s.g, 'ferry', { signal: step.signal, stop: new AbortController().signal, color: '#000', beat });
+    await vi.advanceTimersByTimeAsync(300);
+    step.abort(); // a scroll 0.3 s in: land() aborts the step
+    await vi.advanceTimersByTimeAsync(20);
+    await done; // the step hands back at once
+    const aim = s.g.querySelector('[data-k="aim"]') as SVGElement;
+    expect(aim.style.strokeDashoffset).toBe(String(LEN)); // not landed: it waits for "heading"
+    const t = await starts(s.g, 3000);
+    expect(Math.abs(t.aim + 320 - 8 * 300)).toBeLessThanOrEqual(40); // "heading" is word 8 (watched from 0.32 s on)
+  });
+
+  it('a stop still lands everything at once', async () => {
+    const s = setup('<line data-k="water" x1="0" y1="0" x2="400" y2="0"/><line data-k="aim" data-say="heading" x1="0" y1="50" x2="400" y2="50"/>');
+    const stop = new AbortController();
+    void drawGroup(s.b, s.g, 'ferry', { signal: new AbortController().signal, stop: stop.signal, color: '#000', beat: narration('the water flows east all morning then the heading turns up the river and on') });
+    await vi.advanceTimersByTimeAsync(300);
+    stop.abort();
+    await vi.advanceTimersByTimeAsync(40);
+    expect((s.g.querySelector('[data-k="aim"]') as SVGElement).style.strokeDashoffset).toBe('');
+  });
+
+  it('a group at pen speed fits under the director\'s step timeout', () => {
+    expect(GROUP_MAX_MS).toBeLessThan(ACTION_TIMEOUT_MS);
   });
 });
