@@ -70,4 +70,16 @@ describe('beat timing: a group draws in its own beat', () => {
     expect(log).toContain('<svg>');
     expect(log.indexOf('<svg>')).toBeLessThan(log.indexOf('sideways.'));
   });
+
+  it('legacy (no {{beat}}): a group after its words still flushes once the narration runs dry', () => {
+    // Old recordings, eval --replay, svgReplay: always words first. Its words are released (spoken), so
+    // nothing is gained by holding it for the next word; held, it drew one beat late, over that beat.
+    const { log } = run([...words('Aim it straight at the landing and the water pushes it sideways.'), svg('drift', ['drift'])], 1100 + FLUSH_MS + 5000);
+    expect(log).toContain('<svg>');
+  });
+
+  it('lead order: a group whose beat\'s first word is not released yet still waits for it (no flush)', () => {
+    const { log } = run([BEAT, svg('one'), ...words('The axis goes in.'), BEAT, svg('two')], 5000);
+    expect(log.filter((x) => x === '<svg>')).toHaveLength(1);
+  });
 });

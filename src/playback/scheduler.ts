@@ -70,6 +70,7 @@ export function lookMs(a: Action): number {
 
 type PendingAction = { action: Action; word: number;
   /** An svg group: the first word of its beat (the `{{beat}}` it came after; legacy: its own word). */ beat?: number;
+  /** An svg group: the first of its own sentences (its beat's; legacy: the words since the group before). */ from?: number;
   /** A board action held past its words (the look): it fires no earlier than this (clock time). */ until?: number };
 
 /**
@@ -103,7 +104,7 @@ export class Scheduler {
       else if (e.action.kind === 'beat') { this.anchorOf(e.action); this.beatStarts.push(this.words.length); } // a boundary: nothing fires
       else {
         const from = this.beatFrom, word = this.anchorOf(e.action);
-        this.acts.push({ action: e.action, word, ...(drawsSvg(e.action) ? { beat: this.tagged ? from : word } : {}) });
+        this.acts.push({ action: e.action, word, ...(drawsSvg(e.action) ? { beat: this.tagged ? from : word, from } : {}) });
       }
     }
     this.tick();
@@ -434,9 +435,10 @@ export class Scheduler {
       return { fireAt: Math.max(this.lastFire, at - lead), at };
     }
     // Waiting on a word that isn't playable yet: once the narration has run dry, flush. Not a board
-    // group: it draws over its beat's words, so it waits for the first of them (flushed into the silence
-    // of a gate still checking them, it drew over a guessed window with nothing said).
-    if (this.started && a.word >= this.released && !drawsSvg(a.action)) {
+    // group whose own sentences aren't playable yet: it draws over them, so it waits for the first
+    // (flushed into the silence of a gate still checking them, it drew over a guessed window with nothing
+    // said). One after its sentences (legacy, trailing) has them out already: held, it drew one beat late.
+    if (this.started && a.word >= this.released && (!drawsSvg(a.action) || (a.from ?? a.word) < this.released)) {
       const flushAt = Math.max(this.clock.endsAt() + FLUSH_MS, a.until ?? -Infinity);
       return { fireAt: Math.max(this.lastFire, flushAt), at: Math.max(now, flushAt) };
     }
