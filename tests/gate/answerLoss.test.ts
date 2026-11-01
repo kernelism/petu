@@ -74,7 +74,7 @@ describe('answer loss (founder lec06, synthetic)', () => {
     expect(r.out).not.toContain('<g id="row"');
     expect(r.out).not.toContain('blending weighs these tiles');
     // What the withheld beat defined is kept, ahead of the beats that follow it.
-    expect(r.out).toMatch(/\{\{svg <g data-defs="" display="none"><g data-const="a=10 b=100 c=10 w=0.25"\/><\/g>\}\}/);
+    expect(r.out).toMatch(/\{\{svg <g data-defs="" display="none"><g data-const="a=10; b=100; c=10; w=0.25"\/><\/g>\}\}/);
     expect(r.out.indexOf('{{svgboard')).toBeLessThan(r.out.indexOf('data-defs'));
     for (const id of ['even', 'mid', 'mixed']) expect(r.out).toContain(`<g id="${id}"`);
   });

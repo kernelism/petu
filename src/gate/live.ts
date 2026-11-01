@@ -15,7 +15,7 @@
 import { BeatSplitter, BEAT_DEFAULTS, NEW_INK, tokenize, units, type Beat, type Tag, type Word } from './segment';
 import { MAX_TAG_CHARS, ScriptParser } from '../script/parser';
 import { isDefsGroup, isSvgTagBody, SVG_TAG_MAX, unescapeSvg, escapeSvg } from '../svgboard/wire';
-import { defsOf } from '../svgboard/defs';
+import { definedNames, defsOf } from '../svgboard/defs';
 import { GateState } from './engine';
 import { checkBeat, namedScene, withSeverity, type Severity } from './verdict';
 import { textNumbers } from './numbers';
@@ -338,13 +338,13 @@ const drawnGroups = (text: string): Tag[] => tokenize(text).filter((t): t is Tag
  * in a dropped sentence and all five drawings were skipped), its constants (`{{const}}`) and its groups'
  * definitions (defs.ts). No words, no ink. Empty when it defined nothing.
  */
-export function remnantOf(text: string): string {
+export function remnantOf(text: string, except: Set<string> = new Set()): string {
   const out: string[] = [];
   for (const t of tokenize(text, { end: true })) {
     if (t.kind !== 'tag') continue;
     if (/^\s*(?:svgboard|const)\b/.test(t.body)) { out.push(`{{${t.body}}}`); continue; }
     if (!isSvgTagBody(t.body.slice(0, 6))) continue;
-    const d = defsOf(unescapeSvg(t.body.replace(/^svg\s*/, '')));
+    const d = defsOf(unescapeSvg(t.body.replace(/^svg\s*/, '')), except);
     if (d) out.push(`{{svg ${escapeSvg(d)}}}`);
   }
   return out.length ? ` ${out.join(' ')} ` : '';
@@ -572,8 +572,10 @@ export class LiveGate {
    * gate's state alike. Checked like any unit; a definition that conflicts with one already out (a repair
    * that defined it again differently) is not sent.
    */
-  private async remnant(u: PreflightUnit, out: Out, signal: AbortSignal, o: { board?: boolean } = {}) {
-    const text = o.board === false ? remnantOf(u.text).replace(/\{\{svgboard\b[^}]*\}\}\s*/g, '') : remnantOf(u.text);
+  private async remnant(u: PreflightUnit, out: Out, signal: AbortSignal, o: { board?: boolean; after?: string } = {}) {
+    // After a repair: only what the repair did not define itself (its own frame or curve stands).
+    const except = new Set(o.after ? drawnGroups(o.after).flatMap((t) => [...definedNames(unescapeSvg(t.body.replace(/^svg\s*/, '')))]) : []);
+    const text = o.board === false ? remnantOf(u.text, except).replace(/\{\{svgboard\b[^}]*\}\}\s*/g, '') : remnantOf(u.text, except);
     if (!text.trim()) return;
     const ru: PreflightUnit = { key: `${u.key}d`, kind: u.kind, text, ...(u.end ? { end: true } : {}) };
     const r = await this.d.preflight.check(ru);
@@ -716,7 +718,7 @@ export class LiveGate {
       this.emitGate(ru, 'pass', 'release', r2, this.now() - t1, { repaired: true });
       this.release(ru, text, out);
       // What the original defined and the repair did not: the beats after it may build on it.
-      await this.remnant(u, out, signal, { board: false });
+      await this.remnant(u, out, signal, { board: false, after: text });
       return;
     }
     this.d.onEvent({ t: 'repair', k: u.key, phase: 'fail', ms: Math.round(this.now() - t0) });

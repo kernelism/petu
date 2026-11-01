@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { GatePreflight, LiveGate, remnantOf } from '../../src/gate/live';
 import type { GateEvent, GateLogEvent } from '../../src/gate/events';
-import { defsOf } from '../../src/svgboard/defs';
+import { definedNames, defsOf } from '../../src/svgboard/defs';
 import { checkGroups, newBoardState } from '../../src/svgboard/check';
 import { mountBoard, prepareGroup } from '../../src/svgboard/render';
 import { parseTag } from '../../src/script/parseTag';
@@ -58,7 +58,7 @@ describe('a withheld beat never cascades', () => {
   it('the remnant holds definitions only: no words, no ink, no id', () => {
     const d = defsOf(RIVER)!;
     expect(d).toMatch(/^<g data-defs="" display="none">/);
-    expect(d).toContain('data-const="W=300 c=1.5 v=2.5 u=sqrt(v^2-c^2)"');
+    expect(d).toContain('data-const="W=300; c=1.5; v=2.5; u=sqrt(v^2-c^2)"');
     expect(d).toContain('data-axes="ax" data-x="0,10" data-y="0,10" data-box="50,50,400,300"');
     expect(d).toContain('<path data-name="d" data-fn="10-x" data-axes="ax" fill="none"/>');
     expect(d).not.toMatch(/<text|id="river"|data-frame|bad/);
@@ -73,6 +73,15 @@ describe('a withheld beat never cascades', () => {
     expect((parseTag(`svg ${d}`) as { defs?: true }).defs).toBe(true);
   });
 
+  it('after a repair, the original\'s definitions leave out what the repair defined itself (its frame and curve stand)', () => {
+    const repaired = '<g id="river" data-const="W=300 c=1.5"><g data-axes="ax" data-x="0,10" data-y="0,10" data-box="50,80,400,280"/><path id="d" data-fn="9-x" data-axes="ax" stroke="#222"/></g>';
+    expect([...definedNames(repaired)].sort()).toEqual(['axes:ax', 'const:c', 'const:w', 'curve:d']);
+    const d = defsOf(RIVER, definedNames(repaired))!;
+    expect(d).not.toMatch(/data-axes="ax" data-x|data-name="d"|W=300|c=1\.5/);
+    expect(d).toContain('data-const="v=2.5; u=sqrt(v^2-c^2)"');
+    expect(remnantOf(`{{svg ${RIVER}}} Words.`, definedNames(repaired))).toContain('v=2.5; u=sqrt(v^2-c^2)');
+  });
+
   it('the board takes a remnant\'s definitions: a later group resolves against them', () => {
     const layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     document.body.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'svg')).appendChild(layer);
@@ -83,6 +92,36 @@ describe('a withheld beat never cascades', () => {
     if (typeof later === 'string') throw new Error(later);
     expect(later.el.querySelector('[data-bad]')).toBeNull();
     expect(later.el.querySelector('text')!.textContent).toBe('crossing 150 s');
+  });
+});
+
+describe('a repaired beat\'s definitions stand', () => {
+  it('the original\'s remnant follows the repair with only what the repair did not define', async () => {
+    const events: GateLogEvent[] = [];
+    let t = 0, ends = 0;
+    const fixed = '{{beat}} {{svg <g id="frame" data-const="a=2"><g data-axes="ax" data-x="0,10" data-y="0,10" data-box="50,80,400,280" data-frame=""/></g>}} The frame holds the curve. ';
+    const gate = new LiveGate({
+      clock: { now: () => t, endsAt: () => ends }, preflight: new GatePreflight({}), headroomMs: 500, minRepairMs: 0,
+      repair: async () => ({ ok: true, text: fixed }), onEvent: (e) => events.push(e),
+      // The repair's deadline never passes here (it answers at once).
+      sleep: (_ms, sig) => new Promise<void>((r) => sig?.addEventListener('abort', () => r(), { once: true })),
+    });
+    const text = [
+      'One two three four five six seven eight nine ten eleven twelve. {{svgboard h=600}} {{beat}} ',
+      '{{svg <g id="title"><text x="40" y="40" font-size="18">Ferry</text></g>}} The ferry crosses the river from bank to bank today. ',
+      '{{beat}} {{svg <g id="frame" data-const="a=2 b=3"><g data-axes="ax" data-x="0,10" data-y="0,10" data-box="50,50,400,300" data-frame=""/><text x="60" y="40" font-size="16" data-val="nosuch">bad {}</text></g>}} The frame holds the curve. ',
+      '{{beat}} {{svg <g id="use"><text x="60" y="420" font-size="16" data-val="a*b" data-fmt="0">product {}</text></g>}} The product is six. ',
+    ].join('');
+    const src = async function* () { gate.handoff(); for (const c of text.match(/[\s\S]{1,29}/g)!) { t += 30; yield c; } };
+    let out = '';
+    for await (const s of gate.wrap(src)(new AbortController().signal)) { out += s; ends = t + 3000 * s.split(/\s+/).length; }
+    expect(events.some((e) => e.t === 'repair' && e.phase === 'ok')).toBe(true);
+    expect(out).toContain('data-box="50,80,400,280"');
+    const defs = /\{\{svg <g data-defs[^}]*\}\}/.exec(out)?.[0] ?? '';
+    expect(defs).toContain('data-const="b=3"');
+    expect(defs).not.toMatch(/data-axes|a=2/);
+    expect(out).toContain('The product is six.');
+    expect(out).toContain('<g id="use">');
   });
 });
 
