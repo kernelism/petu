@@ -1,11 +1,11 @@
-// server/prompt/svgExamples.ts — the svg answer format's few-shot examples (PROMPT_VERSION p6.4).
+// server/prompt/svgExamples.ts — the svg answer format's few-shot examples (PROMPT_VERSION p6.11).
 /**
  * Two invented documents (a river ferry, proofing dough): one a geometric figure built up beat by
  * beat, one a quantity over time read off its own chart. Each script is exactly what the model
- * writes in the svg format (p6.1): a first sentence pointing at the page (no drawing, it plays while
- * the plan is written), the hidden <plan> ending with the BOARD layout (viewBox, regions, groups in
- * teaching order), then beats: the beat's <g id> first (it draws across its sentences; parts with ids
- * draw on the word that names them), then its sentences. Numbers that follow from a formula are
+ * writes in the svg format (p6.11): the hidden <plan> first, ending with the BOARD layout (viewBox, regions,
+ * groups in teaching order), then beats: the beat's <g id> first (it draws across its sentences; parts
+ * with ids draw on the word that names them), then its sentences. The first beat points at the page and
+ * says the answer (p6.1–p6.10 spoke that sentence before the plan: C7, it claimed before the case was decided). Numbers that follow from a formula are
  * formulas (data-const, data-axes/data-fn, data-at, data-val: src/svgboard/data.ts). The board holds
  * the picture, labels and key numbers, never the narration's derivation. Every number is computed (the ferry's 3-4-5 triangle; the dough's doublings),
  * every group id is a word its beat says, and nothing overlaps (rendered and checked by eye;
@@ -34,8 +34,7 @@ t1 60 40–520: Crossing with a current
 t2 170 40–900: A ferry that aims upstream can land straight across from where it started.
 t3 205 40–860: River 300 m wide, current 1.5 m/s, ferry speed in still water 2.5 m/s.
 #g1 figure 520,320 420×380 "ferry"`,
-    script: String.raw`{{highlight p=6 "aims upstream"}} The ferry aims upstream because the water carries it sideways for the whole crossing, so its aim has to cancel that push.
-<plan>
+    script: String.raw`<plan>
 Case: the page's river W = 300 m, current c = 1.5, ferry v = 2.5. The board computes: across u = sqrt(v² − c²), the aim atan(c/u); aimed at B, t0 = W/v and drift c·t0; aimed upstream, t1 = W/u.
 BOARD viewBox="0 0 560 410"
 regions: river (22–314, 39–350) from above, 224 units = 300 m; triangle (330–560, 185–345) 1 m/s = 56 units; time (270–560, 372–400)
@@ -66,7 +65,7 @@ groups: river; drift; triangle; aim; time
 <text x="245" y="288" font-size="18" text-anchor="middle" fill="#222" data-val="c" data-fmt="1">current {} m/s</text>
 </g>
 </g>
-Here is the river from above: 300 metres between the banks, and the current carrying everything downstream at 1.5 metres per second.
+{{highlight p=6 "aims upstream"}} The ferry aims upstream because the water carries it sideways for the whole crossing, so its aim has to cancel that push. Here is the river from above: 300 metres between the banks, and the current carrying everything downstream at 1.5 metres per second.
 <g id="drift">
 <line data-from="A" data-to="pt(rv, c*t0, W)" stroke="#888" stroke-width="2" stroke-dasharray="8 6"/>
 <circle data-name="D" data-at="pt(rv, c*t0, W)" r="4" fill="#888"/>
@@ -120,8 +119,7 @@ t1 80 100–640: Proofing the dough
 t2 140 100–900: The dough doubles every 45 minutes at room temperature: 400 ml becomes 3200 ml
 t3 175 100–700: in just over two hours. Most of the rise comes at the end.
 #g1 figure 100,300 800×420 "bowls"`,
-    script: String.raw`{{highlight p=3 "Most of the rise comes at the end."}} The pace is steady per cell, not per bowl, so the growth piles up at the end.
-<plan>
+    script: String.raw`<plan>
 Case: the page's v0 = 400 ml doubling every T = 45 min: v = v0·2^(t/T), read at T, 2T and 3T; the gains are the steps between them. One cell → 2, 4, 8.
 BOARD viewBox="0 0 560 396"
 regions: cells (22–220, 50–240) one row per 45 min; chart (220–560, 50–336) 0–135 min → x 260–500, 0–3200 ml → y 314–67; brackets (260–500, 336–390)
@@ -140,7 +138,7 @@ groups: yeast; curve; steps; same
 <circle cx="100" cy="228" r="7"/><circle cx="116" cy="228" r="7"/><circle cx="132" cy="228" r="7"/><circle cx="148" cy="228" r="7"/><circle cx="164" cy="228" r="7"/><circle cx="180" cy="228" r="7"/><circle cx="196" cy="228" r="7"/><circle cx="212" cy="228" r="7"/>
 </g>
 </g>
-Every yeast cell splits in two each 45 minutes, so 1 becomes 2, then 4, then 8.
+{{highlight p=3 "Most of the rise comes at the end."}} The pace is steady per cell, not per bowl, so the growth piles up at the end. Every yeast cell splits in two each 45 minutes, so 1 becomes 2, then 4, then 8.
 <g id="curve">
 <g data-axes="ax" data-x="0,3*T" data-y="0,8*v0" data-box="260,67,240,247" data-frame="" data-ticks-x="0,T,2*T,3*T" data-ticks-y="v0,2*v0,4*v0,8*v0" data-unit-x=" min"/>
 <text x="267" y="56" font-size="18" fill="#222">dough volume (ml)</text>

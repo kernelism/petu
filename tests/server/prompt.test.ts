@@ -166,7 +166,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.10');
+    expect(PROMPT_VERSION).toBe('p6.11');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -234,14 +234,16 @@ describe('system prompt (svg, default)', () => {
     expect(s).not.toMatch(/compute yourself|its computed numbers/);
   });
 
-  it('p6.5 (no dead air): the script starts with spoken words, before the plan, after an opening too', () => {
-    expect(s).toMatch(/first characters are spoken words, never the plan or a group/);
-    expect(s).toMatch(/after an opening already spoken, its next sentences/);
+  it('p6.11 (C7, plan before speech): the plan comes first, before any spoken word; p6.5\'s spoken lead-in is gone; the first group is small', () => {
+    expect(s).toMatch(/Plan first: the script's first characters are a short hidden plan \(never shown or spoken\), before any spoken word/);
+    expect(s).not.toMatch(/Start speaking at once|first characters are spoken words|sentences that need no drawing/);
+    expect(s).toMatch(/the first one most of all \(nothing is spoken until it is written\)/);
+    expect(s).toMatch(/Answer first, in your first beat/);
   });
 
   it('states the teacher-at-a-whiteboard brief and the streamed beat format', () => {
     for (const p of [/great teacher at a whiteboard/, /Draw the mechanism, not names/, /ONE concrete case/, /computed by the board \(EXACT DATA\) and said from it/, /reads on its own/, /beats are your budget/,
-      /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 560 H"/, /one unit is about one pixel/, /regions:/, /groups:/, /<g id=/, /drawing first/, /draws across its sentences/, /draws on the word that names it/, /Start speaking at once/, /data-fn=/, /data-val=/, /data-at=/, /data-const=/, /\{\{tween /, /data-ghost/, /data-trace/, /BUDGET line/, /Never write on the board what you say/,
+      /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 560 H"/, /one unit is about one pixel/, /regions:/, /groups:/, /<g id=/, /drawing first/, /draws across its sentences/, /draws on the word that names it/, /Plan first/, /data-fn=/, /data-val=/, /data-at=/, /data-const=/, /\{\{tween /, /data-ghost/, /data-trace/, /BUDGET line/, /Never write on the board what you say/,
       /No scripts, foreignObject/, /font-size 16/, /one accent colour/, /Nothing overlaps/, /inside the viewBox/, /BOARD extend/, /ghost/]) expect(s).toMatch(p);
   });
 
@@ -268,10 +270,9 @@ describe('system prompt (svg, default)', () => {
   describe.skipIf(typeof DOMParser === 'undefined').each(SVG_EXAMPLES.map((e) => [e.title, e] as const))('example: %s', (_t, ex) => {
     it('has a plan ending with the BOARD layout: viewBox, regions, groups in teaching order', () => {
       const plan = /<plan>([\s\S]*?)<\/plan>/.exec(ex.script)?.[1] ?? '';
-      // p6.1: one or two spoken sentences with no drawing come first; they play while the plan is written.
-      const lead = ex.script.slice(0, ex.script.indexOf('<plan>'));
-      expect(lead.replace(/\{\{[^}]*\}\}/g, '').trim().split(/\s+/).length).toBeGreaterThan(8);
-      expect(lead).not.toMatch(/<g\b/);
+      // p6.9 (C7): the plan comes first; nothing is said before it. The first beat points at the page.
+      expect(ex.script.indexOf('<plan>')).toBe(0);
+      expect(beatsOf(ex.script)[0].narration).toMatch(/^\s*\{\{highlight p=\d+ /);
       expect(boardH(plan)).toBeGreaterThan(0);
       expect(plan).toMatch(/\nregions: /);
       const listed = /\ngroups: (.*)/.exec(plan)![1].split(';').map((g) => g.trim().split(/\s/)[0]);

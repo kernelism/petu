@@ -88,6 +88,8 @@ export type AnswerBody = ReturnType<typeof buildRequest>;
 /** What the cache stats key an answer by. */
 export type CacheKey = { model: string; version: string; docHash: string; page: number };
 export type AnswerRecord = { at: string; phase: string; model: string; effort: string; page: number; question: string; script: string; lint: string[]; usd: number; error?: string; /** Why the upstream ended an answer early (its terminal status and reason). */ upstream?: string;
+  /** The scout's opener as spoken before stage 2 (C7: opener-vs-board contradictions are measured from the record). */
+  opener?: string;
   /** The storyboard stage 2 performed (or why it ran on the scout's plan alone), its latency and cost. */
   storyboard?: { model: string; effort: string; version: string; ms: number; usd: number; board?: Storyboard; fallback?: string };
   /** EXPERIMENT (boardfirst): the model's script before the board-first reveal, and what it declared and revealed. */
@@ -155,7 +157,7 @@ export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { con
   if (r.storyboard) tail.push({ type: 'input_text', text: storyboardText(r.storyboard) });
   tail.push(...momentNotes(c).map((text) => ({ type: 'input_text', text })));
   tail.push({ type: 'input_text', text: `QUESTION (the student is looking at page ${c.page}): ${r.question}` });
-  if (c.opener) tail.push({ type: 'input_text', text: openerNote(c.opener) });
+  if (c.opener) tail.push({ type: 'input_text', text: openerNote(c.opener, isSvgMode(cfg.promptVariant)) });
   const input = [
     developer(cfg),
     pageBlock(c, cfg),
@@ -349,9 +351,14 @@ export function momentNotes(c: Pick<AskContext, 'aside' | 'about' | 'check'>): s
 /**
  * Stage 2 continues the scout's opener: the student has already heard it (and seen its marks), so the
  * script picks up at the next sentence, as one continuous explanation.
+ * svg (C7, p6.9): the opener only oriented (scout s2.9; the gate drops its numbers), so stage 2 writes
+ * its plan first while the opener plays, then makes the claims on its case. The opener was said before
+ * any case existed, so where the case contradicts it, the first beat says so in words, once (it cannot
+ * be unsaid; leaving it would be the mismatch C7 is about). `svg` false: the tag prompt's note, unchanged.
  */
-export const openerNote = (opener: string) =>
-  `ALREADY SPOKEN: you have already said the opening below aloud, and its tags have been drawn. Your script continues straight on from its last word, as the next sentence of the same explanation. The student has its claim: never state it again, in any words, not even as a lead-in to your next point. Your script still starts with spoken words, before the plan: one or two sentences that need no drawing and add something the opening did not say (why it holds, in plain words, pointing at the page when that helps). They play while you write the plan; the drawing starts with the first beat after it. Do not repeat, rephrase or summarise the opening, do not answer the question again, and do not mark again what it marked. If the opening already says everything the question needs, output nothing.\nOPENING: ${opener}`;
+export const openerNote = (opener: string, svg = true) => (svg
+  ? `ALREADY SPOKEN: you have already said the opening below aloud, and its tags have been drawn. It only oriented the student: it named the idea and where the explanation is going, before any case was worked. Your script continues from it: the plan first (the student is still hearing the opening while you write it), then your first beat gives the answer on your case. Do not repeat, rephrase or summarise the opening, and do not mark again what it marked. If your worked case contradicts anything the opening said (a number, a result, which is bigger), your first beat corrects it in plain words, once, with what the case shows ("Actually, it lands downstream of the landing, not on it"), then carries on; otherwise never state its claim again, in any words. If the opening already says everything the question needs, output nothing.\nOPENING: ${opener}`
+  : `ALREADY SPOKEN: you have already said the opening below aloud, and its tags have been drawn. Your script continues straight on from its last word, as the next sentence of the same explanation. The student has its claim: never state it again, in any words, not even as a lead-in to your next point. Your script still starts with spoken words, before the plan: one or two sentences that need no drawing and add something the opening did not say (why it holds, in plain words, pointing at the page when that helps). They play while you write the plan; the drawing starts with the first beat after it. Do not repeat, rephrase or summarise the opening, do not answer the question again, and do not mark again what it marked. If the opening already says everything the question needs, output nothing.\nOPENING: ${opener}`);
 
 /** The scout's cache key: one per scout prompt version, shared by every document. */
 export const scoutCacheKey = () => `petu-scout-${SCOUT_VERSION}`;
@@ -557,11 +564,15 @@ const imageDims = (im: { b64: string; w: number; h: number }) => {
 /** The images of an answer request, sized for the worst case. */
 export const askImages = (c: AskContext) => [c.image, ...(c.images ?? []), ...(c.ink?.crop ? [c.ink.crop] : [])].map(imageDims);
 
+/** What every answer record starts with: when, which model, the page, the question, the opener spoken before it. */
+const recordHead = (r: AskRequest, cfg: ModelConfig, d: Deps) => ({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), ...(r.context.opener ? { opener: r.context.opener.slice(0, 2000) } : {}) });
+
 /**
  * One answer: [storyboard →] gate → stream → filters → book. Emits AskEvents; resolves when done.
  * With `story` (a model config) and an opener already playing, the lesson is designed first
  * (`storyboard` event, before `meta`) and stage 2 performs it; any storyboard failure means stage 2
- * runs on the scout's plan alone. Without an opener nothing covers the wait, so there is no storyboard.
+ * runs on the scout's plan alone. Without an opener nothing covers the wait, so there is no storyboard;
+ * in the svg format (the default) there is none either (it is written for the tag prompt: server/env.ts).
  */
 export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: AskEvent) => void, signal: AbortSignal, story?: ModelConfig | null): Promise<void> {
   const reqId = randomUUID();
@@ -569,10 +580,11 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   if (!ep.key) { emit({ t: 'error', code: 'no_key', message: noKeyMessage(ep), retryable: false }); return; }
   if (!PRICES[cfg.model]) { emit({ t: 'error', code: 'bad_request', message: `No price for ${cfg.model}.`, retryable: false }); return; }
   let sb: StoryboardEvent | undefined;
-  if (story && r.context.opener) {
+  // Never in the svg format (server/env.ts: the storyboard contradicts it), whatever the caller passes.
+  if (story && r.context.opener && !isSvgMode(cfg.promptVariant)) {
     sb = await storyboard(r, story, d, signal);
     if (signal.aborted) {
-      try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script: '', lint: [], usd: 0, error: 'aborted', storyboard: storyRecord(sb) }); } catch { /* never fails an answer */ }
+      try { d.log?.({ ...recordHead(r, cfg, d), script: '', lint: [], usd: 0, error: 'aborted', storyboard: storyRecord(sb) }); } catch { /* never fails an answer */ }
       return;
     }
     emit(sb);
@@ -599,7 +611,8 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   if (signal.aborted) up.abort();
   const now0 = d.now ?? (() => performance.now());
   // The svg answer mode (the default): plan → {{svgboard}}, each group → one {{svg}} tag (server/svgBeats.ts).
-  const svgf = isSvgMode(cfg.promptVariant) ? new SvgBeatFilter(now0) : null;
+  // Behind an opener, stage 2's narration waits for its plan (C7: nothing it says before its case is decided).
+  const svgf = isSvgMode(cfg.promptVariant) ? new SvgBeatFilter(now0, { hold: !!r.context.opener }) : null;
   const filter = svgf ?? new ScriptFilter(), lint = new Lint();
   const read = newRead();
   let outChars = 0, ttft = NaN, firstWord = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
@@ -615,7 +628,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const beat = hb > 0 ? setInterval(() => { if (!signal.aborted && quietBeat(firstWord, lastEmit, now(), script, hb)) { lastEmit = now(); emit({ t: 'text', d: ' ' }); } }, Math.min(250, hb)) : null;
   // Every answer leaves a record, a failed one too (the failures are the ones worth reading).
   const record = (usd: number) => {
-    try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.order ? { order: svgf.order } : {}), ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), firstWordMs: Math.round(firstWord), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
+    try { d.log?.({ ...recordHead(r, cfg, d), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.order ? { order: svgf.order } : {}), ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), firstWordMs: Math.round(firstWord), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
   };
   try {
     let res: Response | null = null;
