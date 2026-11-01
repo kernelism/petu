@@ -46,8 +46,8 @@ describe('svg beats: the server filter', () => {
       const a = wire(ex.script, 1000000).out;
       for (const step of [1, 3, 7, 50]) expect(wire(ex.script, step).out).toBe(a);
       const { f } = wire(ex.script, 5);
-      // p6.1: the first sentence (page pointing, no drawing) plays before the board opens; no group before it.
-      expect(a.indexOf('{{svgboard ')).toBeGreaterThan(0);
+      // p6.9 (C7): the plan comes first, so the board opens before any word; no group before it.
+      expect(a.indexOf('{{svgboard ')).toBe(0);
       expect(a.indexOf('{{svgboard ')).toBeLessThan(a.indexOf('{{svg <'));
       expect(a).not.toMatch(/<plan>|BOARD viewBox|```/);
       expect(f.plan).toMatch(/BOARD viewBox/);
@@ -135,7 +135,10 @@ describe('svg beats: the gate splitter keeps a beat\'s group with its sentences'
           const ids = [...u.matchAll(/\{\{svg <g id="([^"]+)"/g)].map((m) => m[1]);
           expect(ids, u.slice(0, 80)).toHaveLength(1);
           const own = beatOfGroup(text, ids[0])!;
-          expect(u, ids[0]).toBe(own.text);
+          // p6.9: with no words before the plan, beat 1 (beatsOf) starts at the board's opening tag, which
+          // the splitter sends in a unit of its own just ahead of it.
+          const board = /^\{\{svgboard [^}]*\}\} /;
+          expect(u, ids[0]).toBe(own.text.replace(board, ''));
           expect(own.words.length, ids[0]).toBeGreaterThan(0);
         }
       }
