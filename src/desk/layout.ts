@@ -203,6 +203,21 @@ export function mostVisiblePage(L: { tops: Float64Array; heights: Float64Array }
   return best;
 }
 
+/**
+ * Where the lane board opens before its answer marks a page (content y): beside `page`, the page the
+ * answer explains (its asked page, Director.ask), when any of it shows in the band [lo, hi], level with
+ * `line` clamped into its visible part; else beside the page under `line`. Was always the page under
+ * `line` (12% down the band), which named another page than the asked one (the most visible) at 26–57%
+ * of scroll positions (diag lane.ts): the board opened beside a page the question was not about.
+ */
+export function laneAnchorAt(L: { tops: Float64Array; heights: Float64Array }, lo: number, hi: number, line: number, page: number): { page: number; y: number } {
+  if (page >= 1 && page <= L.tops.length) {
+    const top = Math.max(lo, L.tops[page - 1]), bot = Math.min(hi, L.tops[page - 1] + L.heights[page - 1]);
+    if (bot > top) return { page, y: Math.min(bot, Math.max(top, line)) };
+  }
+  return { page: Math.max(1, Math.min(L.tops.length, pageAt(L, line))), y: line };
+}
+
 // ------------------------------------------------------------------------------------------------
 // The board: sections stacked top to bottom, each scaled uniformly into the board's width.
 
