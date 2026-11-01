@@ -191,6 +191,7 @@ const w = (text: string): ScriptEvent => ({ type: 'word', text });
 const words = (s: string) => s.split(' ').map(w);
 const svg = (id: string): ScriptEvent => ({ type: 'action', action: { kind: 'svg', id, svg: `<g id="${id}"/>` } as Action });
 const END: ScriptEvent = { type: 'end' };
+const BEAT: ScriptEvent = { type: 'action', action: { kind: 'beat' } };
 
 describe('pace: the scheduler', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
@@ -245,6 +246,21 @@ describe('pace: the scheduler', () => {
     expect(seen[0].at(-1)!.open).toBe(true);
     s.push([svg('two')]);
     expect(s.beatWords().at(-1)!.open).toBeUndefined();
+    s.stop();
+  });
+
+  it('a group waits for its beat\'s first word: never flushed into the silence while the gate holds its words', () => {
+    vi.setSystemTime(0);
+    const fired: [string, number][] = [];
+    const s: Scheduler = new Scheduler(new PacedClock(() => 170, () => Date.now(), () => 100), {
+      onWord: () => {}, onAction: (a) => { if (a.kind === 'svg') fired.push([a.id!, Date.now()]); }, onDone: () => {},
+    }, { leadMs: () => 0 });
+    s.push([...words('Look here.'), BEAT, svg('river')]); // the gate still checking the river beat's words
+    vi.advanceTimersByTime(5000);
+    expect(fired).toEqual([]); // it used to fire at the narration's end + FLUSH_MS, over a guessed 6 s
+    s.push([...words('The river runs east.'), END]);
+    vi.advanceTimersByTime(5000);
+    expect(fired).toEqual([['river', 5000]]);
     s.stop();
   });
 

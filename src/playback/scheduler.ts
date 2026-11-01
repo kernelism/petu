@@ -411,8 +411,10 @@ export class Scheduler {
       const at = Math.max(now, this.clock.endsAt(), a.until ?? -Infinity);
       return { fireAt: Math.max(this.lastFire, at - lead), at };
     }
-    // Waiting on a word that isn't playable yet: once the narration has run dry, flush.
-    if (this.started && a.word >= this.released) {
+    // Waiting on a word that isn't playable yet: once the narration has run dry, flush. Not a board
+    // group: it draws over its beat's words, so it waits for the first of them (flushed into the silence
+    // of a gate still checking them, it drew over a guessed window with nothing said).
+    if (this.started && a.word >= this.released && !drawsSvg(a.action)) {
       const flushAt = Math.max(this.clock.endsAt() + FLUSH_MS, a.until ?? -Infinity);
       return { fireAt: Math.max(this.lastFire, flushAt), at: Math.max(now, flushAt) };
     }
