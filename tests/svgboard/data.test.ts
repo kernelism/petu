@@ -95,7 +95,8 @@ describe('svg data: exact geometry', () => {
 });
 
 import { GateState } from '../../src/gate/engine';
-import { checkNumbers } from '../../src/gate/check';
+import { boardNumbers, checkNumbers } from '../../src/gate/check';
+import { tokenize, type Word } from '../../src/gate/segment';
 import type { RawAction } from '../../src/script/types';
 
 describe('svg data: the gate knows the computed numbers', () => {
@@ -106,7 +107,10 @@ describe('svg data: the gate knows the computed numbers', () => {
     expect(st.consts.pc).toBe(700);
     const say = (w: string) => checkNumbers(w.split(' '), { known: st.values, derived: [], intersections: [] }).flags;
     expect(say('a shortage of 40 flats')).toEqual([]);
-    expect(say('a shortage of 37 flats').length).toBe(1);
+    // Near the board's 40 but not it: the board rule's (drift), no longer a plain number note; far from it, a note.
+    expect(say('a shortage of 37 flats')).toEqual([]);
+    expect(boardNumbers(tokenize('a shortage of 37 flats').filter((t): t is Word => t.kind === 'word'), st.values).flags.map((f) => f.check)).toEqual(['drift']);
+    expect(say('a shortage of 25 flats').length).toBe(1);
     st.apply({ kind: 'tween', sets: [['pc', '600']] } as RawAction, 1);
     // At 600: qd = 120, qs = 40: the shortage is 80.
     expect(say('now 80 flats short')).toEqual([]);

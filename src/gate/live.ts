@@ -218,7 +218,7 @@ export class GatePreflight implements Preflight {
       consts: [...this.consts, ...unitConsts.map((c) => ({ ...c, beat: k }))],
       lines: this.env.lines, scene: namedScene([...this.beats.flat(), ...kept], pageWords),
     });
-    const fixes = numberFixes(beat.words, state.values);
+    const fixes = numberFixes(beat.words, state.values, k);
     const v = withSeverity(v0, this.env.severity ?? 'default');
     if (board?.drift?.length) v.notes.push(...board.drift.splice(0));
     // The svg board: each group parses, its id is new, text clears text and strokes, it stays on the canvas.
