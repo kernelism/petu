@@ -137,6 +137,7 @@ export function checkBeat(i: BeatInput): Verdict {
   // Numbers said against the board's readouts: near and not equal fails; one clear candidate is a fix (live.ts applies it).
   const bn = boardNumbers(beat.words, state.values, k);
   flags.push(...bn.flags);
+  notes.push(...bn.notes);
   if (bn.fixes.length) notes.push(`said as the board's: ${bn.fixes.map((f) => `${f.from} → ${f.to}`).join(', ')}`);
   for (const f of checkOrder(ws, k, i.consts)) (NOTE_CHECKS.has(f.check) ? notes.push(`${f.check}: ${f.detail}`) : flags.push(f));
   notes.push(...num.notes);

@@ -48,7 +48,9 @@ export type DataScope = {
   points: Map<string, DPt>;
   /** Computed values written this pass (data-val), for the gate's number check. */
   values: { v: number; of: string; /** The words the text puts before the number ("SSD = {}" → "SSD"): what the narration calls it. */ label?: string;
-    /** The readout's name (its data-name or id): what `{{val id=…}}` says. */ id?: string; /** The number as the board writes it (fmtValue, data-fmt): what is seen. */ text: string }[];
+    /** The readout's name (its data-name or id): what `{{val id=…}}` says. */ id?: string; /** The number as the board writes it (fmtValue, data-fmt): what is seen. */ text: string;
+    /** Its unit (unitOf: the word after {}, or data-unit): a number said in another unit is not this one. */ unit?: string;
+    /** Its text's own words, unit and filler dropped ("lands {} m downstream" → lands, downstream): words that refer to it. */ words?: string[] }[];
 };
 
 export const newScope = (consts: Record<string, number> = {}): DataScope => ({ consts, axes: new Map(), curves: new Map(), points: new Map(), values: [] });
@@ -355,17 +357,28 @@ export function resolveData(g: Element, sc: DataScope): Problem[] {
 }
 
 /**
- * A dot the model placed by hand on a plot (cx/cy, no data-at) means a point of a curve, and was often a
- * little off it (C1, 2026-10-31: a dot labelled E drawn beside the curves' real crossing, so the picture
- * and its numbers disagreed). Inside a frame, a small circle within reach of exactly one crossing of the
- * frame's named data-fn curves is placed at cross(a,b), else within reach of exactly one such curve at
- * at(c, x=…), written as its data-at (data-snapped keeps what it became): from then on the engine places
- * it, so it follows a tween and the gate checks the point that is drawn. Reach is relative to the frame
- * (8% / 4% of its shorter side). Two candidates: never guessed; marked data-snap-ambiguous for the gate.
- * A dot in a [data-schematic] group, a transformed one, or one off every curve is left as it is. Each dot
- * is decided once (data-snap-done): a later resolve (a tween's frame) never snaps what the first left.
+ * A dot the model placed by hand on a plot (cx/cy, no data-at) beside a crossing of the frame's named
+ * data-fn curves was often that crossing a little off (C1, 2026-10-31: a dot labelled E drawn beside the
+ * curves' real crossing, so the picture and its numbers disagreed). What the dot means decides, not only
+ * where it is (review, numbers-agree: a ceiling's Qd and Qs, each on its curve 14 px from E, both became E;
+ * data points ±10 px about a line lost their residuals; a dot labelled E past the crossing's reach was put
+ * on the demand curve):
+ *  - labelled as a crossing (E, E*, eq, equilibrium…: the short text beside it): within reach of exactly
+ *    one crossing, placed at cross(a,b); within reach of none, marked data-snap-off (the gate fails it);
+ *  - labelled with a curve's name: within reach of that curve, placed on it at at(c, x=…);
+ *  - unlabelled, and on a curve already (within SNAP_ON): a point of that curve, left where it is;
+ *  - unlabelled, off every curve, within reach of exactly one crossing: placed at cross(a,b);
+ *  - unlabelled, near a curve but not on it: left where it is, marked data-snap-near (a note: data with
+ *    a residual looks the same as a point drawn a little off).
+ * A placed dot gets data-at (data-snapped keeps what it became): from then on the engine places it, so it
+ * follows a tween and the gate checks the point that is drawn. Reach is relative to the frame's shorter
+ * side. Two crossings in reach: never guessed; marked data-snap-ambiguous for the gate. A dot in a
+ * [data-schematic] group or a transformed one is left as it is. Each dot is decided once (data-snap-done):
+ * a later resolve (a tween's frame) never snaps what the first left.
  */
-export const SNAP_CROSS = 0.08, SNAP_CURVE = 0.04;
+export const SNAP_CROSS = 0.08, SNAP_CURVE = 0.04, SNAP_ON = 0.01, SNAP_LABEL = 0.08;
+/** A label that names a crossing: E, E1, E*, E′, eq, equilibrium, crossing, intersection. */
+const CROSS_LABEL = /^(e|eq\.?|equilibrium|crossing|intersection)\s*[*′'’₀-₉\d]*$/i;
 /** A point marker: a small circle (or ellipse), r ≤ 8 board units. */
 export const isMarker = (el: Element): boolean => {
   const t = el.nodeName.toLowerCase().replace(/^svg:/, '');
@@ -379,6 +392,10 @@ function snapMarkers(g: Element, sc: DataScope): void {
   // Decided once, on the first resolve: a tween frame never moves a dot the first draw left where it was.
   for (const el of marks) el.setAttribute('data-snap-done', '');
   if (!marks.length || !sc.curves.size) return;
+  // Short hand-written texts (not readouts, not the engine's ticks): the labels a dot may carry.
+  const labels = Array.from(g.querySelectorAll('text')).filter((t) => !t.closest('[data-engine],[data-val]') && !t.querySelector('[data-val]'))
+    .map((t) => ({ s: (t.textContent ?? '').trim(), x: parseFloat(t.getAttribute('x') ?? ''), y: parseFloat(t.getAttribute('y') ?? '') }))
+    .filter((t) => t.s && t.s.length <= 14 && Number.isFinite(t.x) && Number.isFinite(t.y));
   for (const el of marks) {
     let tf = false;
     for (let e: Element | null = el; e && !tf; e = e === g ? null : e.parentElement) tf = !!e.getAttribute('transform');
@@ -391,16 +408,28 @@ function snapMarkers(g: Element, sc: DataScope): void {
     const reach = Math.min(ax.box.w, ax.box.h);
     const names = [...sc.curves.entries()].filter(([k, c]) => c.kind === 'fn' && !k.startsWith('_c') && lc(c.ax ?? '') === lc(ax!.name)).map(([k]) => k);
     const d = (q: { x: number; y: number }) => Math.hypot(q.x - p.x, q.y - p.y);
-    const hits: { at: string; q: DPt }[] = [];
+    const crosses: { at: string; q: DPt }[] = [];
     for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
-      try { const q = point(`cross(${names[i]},${names[j]})`, sc); if (d(q) <= SNAP_CROSS * reach && !hits.some((h) => Math.hypot(h.q.x - q.x, h.q.y - q.y) < 1)) hits.push({ at: `cross(${names[i]},${names[j]})`, q }); } catch { /* they do not cross */ }
+      try { const q = point(`cross(${names[i]},${names[j]})`, sc); if (d(q) <= SNAP_CROSS * reach && !crosses.some((h) => Math.hypot(h.q.x - q.x, h.q.y - q.y) < 1)) crosses.push({ at: `cross(${names[i]},${names[j]})`, q }); } catch { /* they do not cross */ }
     }
-    if (!hits.length) for (const n of names) {
+    // Each curve's nearest point to the dot.
+    const near: { n: string; at: string; q: DPt }[] = [];
+    for (const n of names) {
       try {
-        const c = curve(n, sc);
-        const near = samples(c, 480).reduce<DPt | null>((b, q) => (!b || d(q) < d(b) ? q : b), null);
-        if (near && d(near) <= SNAP_CURVE * reach) hits.push({ at: `at(${n}, x=${+near.dx.toPrecision(6)})`, q: near });
+        const q = samples(curve(n, sc), 480).reduce<DPt | null>((b, s) => (!b || d(s) < d(b) ? s : b), null);
+        if (q && d(q) <= SNAP_CURVE * reach) near.push({ n, at: `at(${n}, x=${+q.dx.toPrecision(6)})`, q });
       } catch { /* a curve that does not resolve */ }
+    }
+    const lab = labels.filter((t) => Math.hypot(t.x - p.x, t.y - p.y) <= SNAP_LABEL * reach).sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0]?.s;
+    const onCurve = near.some((h) => d(h.q) <= SNAP_ON * reach);
+    let hits: { at: string; q: DPt }[] = [];
+    if (lab && CROSS_LABEL.test(lab)) {
+      if (!crosses.length) { el.setAttribute('data-snap-off', lab); continue; }
+      hits = crosses;
+    } else if (lab && names.some((n) => lc(n) === lc(lab))) hits = near.filter((h) => lc(h.n) === lc(lab));
+    else if (!onCurve) {
+      hits = crosses;
+      if (!hits.length && near.length) { el.setAttribute('data-snap-near', near.map((h) => h.at).join(' | ')); continue; }
     }
     if (hits.length > 1) { el.setAttribute('data-snap-ambiguous', hits.map((h) => h.at).join(' | ')); continue; }
     if (!hits.length) continue;
@@ -512,9 +541,9 @@ function resolveOne(el: Element, sc: DataScope): void {
     const v = evalF(src, sc);
     if (!el.hasAttribute('data-tpl')) el.setAttribute('data-tpl', el.textContent ?? '');
     const tpl = el.getAttribute('data-tpl')!;
-    const label = valueLabel(tpl);
+    const label = valueLabel(tpl), unit = valueUnit(tpl, el.getAttribute('data-unit')), words = valueWords(tpl);
     const num = fmtValue(v, el.getAttribute('data-fmt'));
-    sc.values.push({ v, of: nm ?? src, ...(label ? { label } : {}), ...(nm ? { id: nm } : {}), text: num });
+    sc.values.push({ v, of: nm ?? src, ...(label ? { label } : {}), ...(nm ? { id: nm } : {}), text: num, ...(unit ? { unit } : {}), ...(words.length ? { words } : {}) });
     // "{}" in the text's own words takes the number (the words carry the unit); else value + unit.
     const text = tpl.includes('{}') ? tpl.replace('{}', num) : withUnit(num, el.getAttribute('data-unit'));
     if (tag === 'text' || tag === 'tspan') {
@@ -571,3 +600,31 @@ export function valueLabel(tpl: string): string | undefined {
   const words = head.toLowerCase().replace(/[=:≈~]/g, ' ').replace(/[^\p{L}\p{N}\s'-]/gu, ' ').split(/\s+/).filter(Boolean);
   return words.length && words.length <= 4 ? words.join(' ') : undefined;
 }
+
+/**
+ * A unit, from the words right after a number ("175 metres downstream" → m, "2.1 metres a second" → m/s,
+ * "12%" → %): undefined when the next word is not one. Read the same way off a readout's template and off
+ * the narration, so a number said in seconds is never a readout in metres (check.ts boardNumbers).
+ */
+const UNIT: Record<string, string> = Object.fromEntries(Object.entries({
+  s: 's sec secs second seconds', min: 'min mins minute minutes', h: 'h hr hrs hour hours', m: 'm metre metres meter meters',
+  km: 'km kilometre kilometres kilometer kilometers', cm: 'cm centimetre centimetres centimeter centimeters', mm: 'mm millimetre millimetres millimeter millimeters',
+  kg: 'kg kilogram kilograms kilo kilos', '%': '% percent', '°': '° deg degree degrees', $: '$ dollar dollars', 'm/s': 'm/s', 'km/h': 'km/h kph',
+}).flatMap(([u, ws]) => ws.split(' ').map((w) => [w, u])));
+export function unitOf(after: readonly string[]): string | undefined {
+  const t = after.map((w) => w.toLowerCase().replace(/^[("“]+|[)"”,;:.!?]+$/g, ''));
+  if (/^%/.test(t[0] ?? '')) return '%';
+  if (t[0] === 'per' && t[1] === 'cent') return '%';
+  const u = UNIT[t[0] ?? ''];
+  if (!u) return undefined;
+  // "metres a second", "km per hour": a speed.
+  const per = (t[1] === 'a' || t[1] === 'per' || t[1] === 'an') ? UNIT[t[2] ?? ''] : undefined;
+  return (u === 'm' || u === 'km') && (per === 's' || per === 'h') ? `${u}/${per}` : u;
+}
+/** A readout's unit: data-unit, else the word after its {}. */
+export const valueUnit = (tpl: string, dataUnit?: string | null): string | undefined =>
+  dataUnit ? unitOf(dataUnit.split(/\s+/)) : tpl.includes('{}') ? unitOf(tpl.slice(tpl.indexOf('{}') + 2).trim().split(/\s+/)) : undefined;
+const FILLER = new Set(['a', 'an', 'the', 'of', 'at', 'is', 'in', 'on', 'to', 'by', 'for', 'and', 'or', 'it', 'its', 'per', 'now', 'than']);
+/** A readout's own words, lower-cased, its unit and filler dropped: what a sentence about it would say. */
+export const valueWords = (tpl: string): string[] =>
+  [...new Set(tpl.replace('{}', ' ').toLowerCase().replace(/[^\p{L}\s'-]/gu, ' ').split(/\s+/).filter((w) => w && !FILLER.has(w) && !UNIT[w]))].slice(0, 8);

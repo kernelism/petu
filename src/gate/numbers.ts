@@ -20,6 +20,8 @@ export type Mention = {
   spelled: boolean;
   /** A reference, not a quantity: page 4, Figure 2, equation 3, step 2, lecture 9, x1 … */
   ref: boolean;
+  /** Said with a sign word before it ("minus 1.3", "negative 2"), not after a number ("300 minus 20" is arithmetic): value stays the magnitude. */
+  minus?: boolean;
 };
 
 const UNITS: Record<string, number> = { zero: 0, oh: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
@@ -114,7 +116,8 @@ export function mentions(words: readonly string[]): Mention[] {
     const prev = lw[w0 - 1] ?? '';
     const ref = REF_WORDS.has(prev) || /^[a-z]+\d+$/.test(lw[w0] ?? '') || (!spelled && prev === 'p');
     const approx = HEDGES.has(prev) || HEDGES.has(lw[w0 - 2] ?? '') && prev === 'is' || /^~/.test(words[w0] ?? '');
-    out.push({ value, text: words.slice(w0, w1 + 1).join(' '), w0, w1, percent: pct, approx, dp, frac, spelled, ref });
+    const minus = (prev === 'minus' || prev === 'negative') && !(digits(lw[w0 - 2] ?? '') || (lw[w0 - 2] ?? '') in UNITS || (lw[w0 - 2] ?? '') in TENS);
+    out.push({ value, text: words.slice(w0, w1 + 1).join(' '), w0, w1, percent: pct, approx, dp, frac, spelled, ref, ...(minus ? { minus } : {}) });
   }
   return out;
 }
