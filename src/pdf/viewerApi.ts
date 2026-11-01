@@ -23,6 +23,8 @@ export interface ViewerApi {
    * names one. Optional so test doubles need not stub it (callers fall back to currentPage()).
    */
   mostVisiblePage?(): number;
+  /** The tutor's focus page (the indicator's over the scroll position), until the student takes the view; null if none. */
+  focusPage?(): number | null;
   /** Page-space height for the page (1000 * h / w). */
   spaceHeight(page: number): number;
   /** CSS px per page-space unit (pageW / 1000). Pages share one scale. */

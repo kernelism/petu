@@ -13,6 +13,13 @@ describe('askedPage', () => {
     expect(askedPage({ check: 12, visible: 6 })).toBe(12);
     expect(askedPage({ check: 12, mark: 4, visible: 6 })).toBe(12);
   });
+  it('then the tutor\'s focus page (the indicator\'s), over the most visible page; anything the student named wins over it', () => {
+    expect(askedPage({ focus: 7, visible: 8 })).toBe(7);
+    expect(askedPage({ focus: null, visible: 8 })).toBe(8);
+    expect(askedPage({ point: sel(3), check: 12, mark: 4, focus: 7, visible: 8 })).toBe(3);
+    expect(askedPage({ check: 12, focus: 7, visible: 8 })).toBe(12);
+    expect(askedPage({ mark: 4, focus: 7, visible: 8 })).toBe(4);
+  });
   it('then the page of the marks taken with the question; then the most visible page', () => {
     expect(askedPage({ mark: 4, visible: 6 })).toBe(4);
     expect(askedPage({ point: { kind: 'selection', board: true, text: 'x' }, visible: 6 })).toBe(6);

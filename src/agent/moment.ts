@@ -19,10 +19,12 @@ import { readTag, tagsOf } from './context/memory';
  * scout request and its opener filter, the visible listing and image, the ink crop, the director's
  * default page, the trail and memory), never currentPage()/pageRef read again later. In order: what the
  * student pointed at (a selection or circle on a page); for a check reply, the page the check was
- * offered on; the page of the marks taken with it; else the most visible page (`visible`).
+ * offered on; the page of the marks taken with it; the tutor's focus page (`focus`: the page it last
+ * steered to, which the indicator names: a glide that centred ink low on p7 can leave p8 the most
+ * visible, and the question went out about p8 under an indicator saying 7); else the most visible page.
  */
-export function askedPage(o: { point?: Pointed | null; check?: number | null; mark?: number | null; visible: number }): number {
-  return o.point?.page ?? o.check ?? o.mark ?? o.visible;
+export function askedPage(o: { point?: Pointed | null; check?: number | null; mark?: number | null; focus?: number | null; visible: number }): number {
+  return o.point?.page ?? o.check ?? o.mark ?? o.focus ?? o.visible;
 }
 
 /**
