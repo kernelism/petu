@@ -14,7 +14,7 @@ import { RouteChip, upcomingPage, type Route } from './ui/RouteChip';
 import type { PartsView } from './ui/PartsBar';
 import { barMode, closingQuestion } from './ui/barMode';
 import { answerHead, asideHead, clockOf, trailTitle, type TrailHead } from './ui/trail';
-import { aboutContext, asideContext, bboxOf, isLoop, pointedLabel, type Pointed } from './agent/moment';
+import { aboutContext, askedPage, asideContext, bboxOf, checkPageOf, isLoop, pointedLabel, type Pointed } from './agent/moment';
 import { isTyping, playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
 import { PacedClock, type NarrationClock } from './playback/clock';
 import { VoiceClock, fetchVoice, warmVoice, webAudioOut } from './playback/voiceClock';
@@ -452,6 +452,8 @@ export default function App() {
   const [checkOpen, setCheckOpen] = useState(false);
   const checkRef = useRef<string | null>(null);
   checkRef.current = checkOpen ? check : null;
+  /** The page the offered check is about (moment.ts checkPageOf): a reply to it is asked on that page. */
+  const checkPageRef = useRef<number | null>(null);
   /** Dev learner steps open the check through this (they are defined before it). */
   const openCheckRef = useRef<() => void>(() => {});
   /** A new value focuses the ask bar (the check was opened). */
@@ -759,6 +761,8 @@ export default function App() {
     again?: TrailEntry;
     /** The last answer closed on this question; `q` is the student's reply (judged on the board). */
     check?: string;
+    /** The page that check was offered on (checkPageOf): the reply is asked there. */
+    checkPage?: number;
   };
 
   /** Plays one answer. Resolves when it is done, stopped or failed. */
@@ -789,6 +793,10 @@ export default function App() {
     let offered: string | undefined = run.again?.offered;
     // …and the marks drawn since the last question (src/ink/student/marks.ts): sent as text, then notes.
     const taken = run.again ? null : takeMarks();
+    // The one page this question is about (moment.ts askedPage), decided now and handed to every
+    // consumer below. An eval run asks on the page it scrolled to and set (pageRef); a trail replay on its own.
+    const visible = run.rec || run.replay ? pageRef.current : viewerRef.current?.mostVisiblePage?.() ?? pageRef.current;
+    const page = run.again ? run.again.page : askedPage({ point, check: run.check ? run.checkPage : null, mark: taken?.page, visible });
     const aboutText = [point ? aboutContext(point) : '', taken?.context ?? ''].filter(Boolean).join('\n\n');
     const moment = { ...(aboutText ? { about: aboutText } : {}), ...(run.check ? { check: run.check } : {}) };
     // The session trail: this answer's header goes above its first section on the board.
@@ -798,7 +806,7 @@ export default function App() {
     const title = run.again?.title ?? trailTitle('answer', q, aboutTitle([point ? pointedLabel(point) : '', ...(taken?.labels ?? [])].filter(Boolean)));
     // A replay is the same entry played again in place: its header and drawings leave the board and come
     // back as it replays (one entry on the trail and in the session list; the numbering never moves).
-    const entry: TrailEntry = run.again ?? { num: String(++trailN.current), question: q, title, page: pageRef.current, script: '', head: null as unknown as TrailHead, ...(kindCheck ? { check: run.check } : {}) };
+    const entry: TrailEntry = run.again ?? { num: String(++trailN.current), question: q, title, page, script: '', head: null as unknown as TrailHead, ...(kindCheck ? { check: run.check } : {}) };
     // (Desk.headNext: a head already on the board keeps its card until the replay's first section replaces it.)
     if (!run.again) entry.head = answerHead({ num: entry.num, question: title, check: false, onReplay: () => replayRef.current(entry) });
     // Eval runs keep the board as the judge has always seen it (no trail headers).
@@ -820,6 +828,7 @@ export default function App() {
     setSpokenN(0);
     // The old ink fades at the head of the director's queue while the request goes out.
     void director.begin(300);
+    director.ask(page);
     groundingRef.current = undefined;
     const ag = agentRef.current;
     if (toAgent && ag.blocked && !run.replay) { flash(ag.blocked, CAP_CAPTION_MS); settle(); return; }
@@ -845,7 +854,6 @@ export default function App() {
     let drew = false;
     let askErr: AskError | null = null;
     let cutOff: string | null = null;
-    const page = pageRef.current;
     const log = new AnswerLog(q, page, toAgent ? 'agent' : 'script', t0);
     logRef.current = log;
 
@@ -875,7 +883,7 @@ export default function App() {
       return (req, signal) => (gate?.reqId ? makeRepair({ reqId: gate.reqId, ...(phase ? { phase } : {}) })(req, signal) : Promise.resolve({ ok: false, reason: 'refused', detail: 'no reqId' }));
     };
     if (setting !== 'off') {
-      shadow = new ShadowStage({ desk: () => deskRef.current, viewer: () => viewerRef.current, settings: getSettings, grounding: () => groundingRef.current ?? NO_MARKS });
+      shadow = new ShadowStage({ desk: () => deskRef.current, viewer: () => viewerRef.current, settings: getSettings, grounding: () => groundingRef.current ?? NO_MARKS, page });
       if (boardScripts.current.length) void shadow.seed(boardScripts.current);
       // verdict.ts SEVERITY: `default` fails only skipped/unparsable actions, unbound numbers, erasure and
       // labelled references to nothing; &gatecheck=all is the design's table.
@@ -948,7 +956,7 @@ export default function App() {
           question: q, page, ink: () => taken?.strokes ?? [], handlers, onGrounding: (g) => { groundingRef.current = g; },
           onGrounds: (gs) => { for (const g of gs) pageTexts.set(g.page, g.lines.map((l) => l.text).join('\n')); },
           ...(gate ? { released: () => gate!.releasedText() } : {}),
-          moment, history: conv.history, memory: conv.memory,
+          moment, ...(run.check && run.checkPage ? { checkPage: run.checkPage } : {}), history: conv.history, memory: conv.memory,
         })
         : run.again
           ? async function* (signal) {
@@ -1058,6 +1066,8 @@ export default function App() {
           // A check question to offer ("Test yourself", collapsed): the model's hidden one (p6.2), else
           // the spoken question an older or tag-prompt answer closed on.
           setCheck(cutOff == null ? offered ?? closingQuestion(joinWords(spoken)) : null);
+          // Where the check was offered: the last page this answer pointed at as it played.
+          checkPageRef.current = checkPageOf(gate ? gate.releasedText() : entry.script, page);
           setCheckOpen(false);
           speak(spoken, true);
           if (toAgent && spoken.length) conv.history.push(q, spoken, page);
@@ -1111,7 +1121,7 @@ export default function App() {
   const onAsk = useCallback((q: string) => {
     if (asideRef.current || sessionRef.current) { askAsideRef.current(q); return; }
     const c = checkRef.current;
-    void runAnswer(q, c ? { check: c } : {});
+    void runAnswer(q, c ? { check: c, checkPage: checkPageRef.current ?? undefined } : {});
   }, [runAnswer]);
   /** The trail: a header clicked replays its answer from the recorded script (no new call). */
   const replayRef = useRef<(e: TrailEntry) => void>(() => {});
@@ -1298,6 +1308,8 @@ export default function App() {
     const point = pointedRef.current;
     setPointed(null);
     const taken = takeMarks();
+    const page = askedPage({ point, mark: taken.page, visible: viewerRef.current?.mostVisiblePage?.() ?? pageRef.current });
+    dir.ask(page);
     const next: Aside = { question: q, words: [], state: 'thinking', paused: false };
     asideRef.current = next;
     setAside(next);
@@ -1307,7 +1319,7 @@ export default function App() {
     const aboutText = [point ? aboutContext(point) : '', taken.context].filter(Boolean).join('\n\n');
     const moment = { aside: asideContext({ question: cur.question, plan: cur.plan, said, board }), ...(aboutText ? { about: aboutText } : {}) };
     const source: (signal: AbortSignal) => AsyncIterable<string> = cur.toAgent
-      ? agentRef.current.source({ question: q, page: pageRef.current, ink: () => taken.strokes, handlers: {}, onGrounding: (g) => { asideGrounding.current = g; }, moment, history: convRef.current!.history, memory: convRef.current!.memory })
+      ? agentRef.current.source({ question: q, page, ink: () => taken.strokes, handlers: {}, onGrounding: (g) => { asideGrounding.current = g; }, moment, history: convRef.current!.history, memory: convRef.current!.memory })
       : async function* (signal) {
         const script = DEV_SCRIPT?.answers?.[q] ?? asideFallback(q);
         if (DEV_SCRIPT && docRef.current) asideGrounding.current = await devGrounding(docRef.current, script);

@@ -178,6 +178,16 @@ export class Director {
     this.runResolved(a, raw, at, live);
   }
 
+  /**
+   * The page the answer is on: the asked page (App: askedPage, set by ask()), then each page it scrolls
+   * to. A board section without `near=` explains it. Was the reading line's page (currentPage()), which
+   * named another page than the one the question was asked about (a check reply, a selection lower down).
+   */
+  private on: number | null = null;
+  /** The answer's asked page (src/agent/moment.ts askedPage); null: the page in view. */
+  ask(page: number | null): void { this.on = page; }
+  private pageNow(v: ViewerApi): number { return this.on != null && this.on >= 1 && this.on <= v.numPages() ? this.on : v.currentPage(); }
+
   /** The svg board this answer draws into (a section id; numbered across directors, so an aside's never collides). */
   private svgBoard: string | null = null;
   /** The svg board a follow-up's `BOARD extend` draws into (null: none on the board). */
@@ -253,7 +263,7 @@ export class Director {
     const pages: number[] = [];
     if (a.kind === 'connect') for (const e of [a.from, a.to]) if ('quote' in e) pages.push(e.page);
     if ('quote' in a && a.page != null) pages.push(a.page);
-    if (a.kind === 'sketch') pages.push(a.page ?? v.currentPage()); // its body text sizes the section
+    if (a.kind === 'sketch') pages.push(a.page ?? this.pageNow(v)); // its body text sizes the section
     for (const p of pages) if (p >= 1 && p <= v.numPages()) void v.textRuns(p).catch(() => {});
   }
 
@@ -401,8 +411,8 @@ export class Director {
     const v = this.d.viewer();
     if (!v) return 'no viewer';
     if (a.kind === 'sketch') {
-      // The slide the section explains: `near=` when given and in range, else the one in view.
-      const page = a.page != null && a.page >= 1 && a.page <= v.numPages() ? a.page : v.currentPage();
+      // The slide the section explains: `near=` when given and in range, else the page the answer is on.
+      const page = a.page != null && a.page >= 1 && a.page <= v.numPages() ? a.page : this.pageNow(v);
       const body = await this.bodyOf(v, page);
       if (signal.aborted) return;
       // Lands ink in flight only if opening the board moves the view (the split glide, a board scroll).
@@ -415,6 +425,7 @@ export class Director {
       return;
     }
     if (a.page < 1 || a.page > v.numPages()) return 'page out of range';
+    this.on = a.page; // the answer moved on, whether or not the view follows
     if (!desk.following()) return 'student is driving'; // rule 6
     // A journey: the route is shown, the narration holds at the move's word, and ink waits for the arrival.
     const from = v.currentPage();

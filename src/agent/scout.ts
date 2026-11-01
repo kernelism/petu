@@ -35,6 +35,13 @@ export type ScoutRequest = {
   memory?: string;
   /** Per question (uncached, before the question): CANDIDATES and the printed-page note. */
   candidates?: string;
+  /**
+   * The moment it is asked in (per question, uncached), as stage 2 gets it: the open check question this
+   * may reply to and the page it was offered on, and what the student pointed at. Without them the scout
+   * chose the opener and pages for a bare reply ("0.5") from a possibly different page.
+   */
+  check?: { q: string; page: number };
+  about?: string;
 };
 
 /** The scout's verdict. `fallback` says why the visible page alone is used. */

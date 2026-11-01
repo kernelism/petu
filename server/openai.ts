@@ -374,6 +374,9 @@ const PRIOR_CHARS = 600;
 export function buildScoutRequest(r: ScoutRequest, cfg: ModelConfig, prewarm = false) {
   const tail = [`The student is looking at page ${r.page}.`];
   if (r.prior) tail.push(`PREVIOUS QUESTION (page ${r.prior.page}): ${r.prior.q}\nPREVIOUS ANSWER (spoken): ${r.prior.a.length > PRIOR_CHARS ? `${r.prior.a.slice(0, PRIOR_CHARS)}…` : r.prior.a}`);
+  // The moment (C5), per question: what the student pointed at, and the open check this may reply to.
+  if (r.about) tail.push(`POINTED AT: the question is about this.\n${r.about}`);
+  if (r.check) tail.push(`OPEN CHECK QUESTION (page ${r.check.page}): your last answer ended on "${r.check.q}". The student's message below may answer it, or may be a new question of their own. If it answers it, your opener says plainly whether it holds, without working the answer through, and your pages start with page ${r.check.page}, the page the check is about.`);
   tail.push(`QUESTION: ${r.question}`);
   if (r.candidates) tail.splice(tail.length - 1, 0, r.candidates);
   const prefix: unknown[] = [{ type: 'input_text', text: r.digest, ...bp(cfg.explicitCache, '30m') }];

@@ -27,6 +27,15 @@ describe('marks sent with a question', () => {
     expect(t.context).toContain('"demand" on the board (plot #d)');
     expect(t.context).not.toMatch(/points|\[\d/);
     expect(t.strokes.map((s) => s.id)).toEqual([a]);
+    expect(t.page).toBe(2); // the asked page (moment.ts askedPage): the page mark's, not the board note's
+  });
+
+  it('their page is the latest page mark\'s, else the latest page stroke\'s', async () => {
+    await draw({});
+    await draw({ page: 5 });
+    expect(takeMarks(() => true).page).toBe(5);
+    ink.add({ page: 7, tool: 'pen', color: PEN_COLORS[0], points: under }); // still being read: no mark yet
+    expect(takeMarks(() => true).page).toBe(7);
   });
 
   it('after asking, the marks are notes: the next question carries only new ones', async () => {

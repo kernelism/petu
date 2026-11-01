@@ -203,8 +203,12 @@ export interface DeskHost {
   aspect(page: number): number;
   /** Re-lays out the pages for a split state, gliding the column over `ms` (0 = at once). Resolves once committed. */
   setSplit(split: Split, ms: number): Promise<void>;
-  /** Glides scrollTop to `top()` (re-read every frame). Resolves on arrival, abort or the student taking over. */
-  glideTo(top: () => number, maxMs?: number): Promise<void>;
+  /**
+   * Glides scrollTop to `top()` (re-read every frame). Resolves on arrival, abort or the student taking over.
+   * `page`: the glide shows ink on that page (a reveal, a connector's page end, the edge marker): the
+   * viewer takes it as the tutor steering there, so the page in frame (and the next question's) follows.
+   */
+  glideTo(top: () => number, maxMs?: number, page?: number): Promise<void>;
   cancelGlide(): void;
   /** The viewer's own page framing (ViewerApi.scrollToPage semantics). */
   scrollToPage(page: number, y?: number): Promise<void>;
