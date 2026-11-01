@@ -750,6 +750,14 @@ describe('Lessons v3: two stages', () => {
     expect(ev[3]).toMatchObject({ t: 'end', usd: r.usd, cached: 2800, input: 3000 });
   });
 
+  it('scout stream: a check reply\'s verdict on the student\'s own number is spoken; a number of its own is not', async () => {
+    const obj = { opener: 'Yes, 0.5 is right. It lands 180 m downstream. The current sets it.', pages: [3], plan: 'p' };
+    const { f } = fakeFetch([{ chunks: scoutSse(obj, 4) }]);
+    const ev: ScoutEvent[] = [];
+    const r = await scoutStream({ ...sreq, question: 'I got 0.5 for the ratio, is that right?' }, scfg, deps(f), (e) => ev.push(e));
+    expect(r.opener).toBe('Yes, 0.5 is right. The current sets it.');
+  });
+
   it('scout stream: the verdict comes as soon as pages and plan are parsed, before the stream completes', async () => {
     const order: string[] = [];
     const f = (async () => {

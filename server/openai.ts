@@ -419,7 +419,7 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
   const t0 = now();
   const ms = () => Math.round(now() - t0);
   let verdict: ScoutResult | null = null;
-  const gate = new OpenerGate(r.page);
+  const gate = new OpenerGate(r.page, r.question);
   let openerMs: number | undefined;
   const say = (s: string) => {
     if (!s || verdict || signal?.aborted) return;

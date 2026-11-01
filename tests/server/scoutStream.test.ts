@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { OpenerGate, ScoutJson } from '../../server/scoutStream';
+import { OpenerGate, ScoutJson, saysNumber } from '../../server/scoutStream';
 
 /** Feeds `text` to a fresh parser in pieces of `n` characters; returns the string deltas and fields seen. */
 function feed(text: string, n: number) {
@@ -140,6 +140,33 @@ describe('OpenerGate (opener → spoken script)', () => {
       // Counting what the page shows (eval D18) and a concept's name are not results.
       expect(run(['Percent change uses the average of the two values. ']).g.said).toBe('Percent change uses the average of the two values. ');
       expect(run(['It moves two metres. Both fly. ']).g.said).toBe('Both fly. ');
+    });
+
+    it('digits inside a name are not a number: 2D, n minus 1, L1, Section 3, the 1990s (review: the orienting sentence was dropped)', () => {
+      for (const s of [
+        'This is about how a 2D convolution slides its kernel over the image.',
+        'Your question is about why we divide by n minus 1 in the sample variance.',
+        'The n-1 in the denominator is the point here.',
+        'The L1 norm and the L2 norm differ at the corners.',
+        'Section 3 sets up the model this rests on.',
+        'Look at Eq. 4 and Lecture 5 together.',
+        'This idea took off in the 1990s and again in the \'80s revival.',
+        'The 1 minus p term is the chance it fails.',
+      ]) expect(saysNumber(s), s).toBe(false);
+      // Quantities still count, beside the same words.
+      for (const s of ['It takes 5s to cross.', 'Divide by 9 here.', 'It lands 180 m downstream.', 'The 60-degree launch goes higher.', 'Section three wins by 4 points.']) expect(saysNumber(s), s).toBe(true);
+      const { g } = run(['This is about how a 2D convolution slides its kernel over the image. ']);
+      expect(g.said).toBe('This is about how a 2D convolution slides its kernel over the image. ');
+    });
+
+    it('the student\'s own numbers may be said back: an echo of the question, a check reply\'s verdict', () => {
+      expect(saysNumber('Yes, 0.5 is right.', 'is the answer 0.5?')).toBe(false);
+      expect(saysNumber('Yes, 0.5 is right.')).toBe(true);
+      expect(saysNumber('Yes, 0.5 is right, and the range is 35 m.', 'is the answer 0.5?')).toBe(true);
+      expect(saysNumber('You are asking why two waves can cancel.', 'why can two waves cancel each other')).toBe(false);
+      const g = new OpenerGate(3, 'I got 0.5, is that right?');
+      expect(g.push('Yes, 0.5 is right. ')).toBe('Yes, 0.5 is right. ');
+      expect(g.push('It lands 180 m downstream. ')).toBe('');
     });
 
     it('a page number or quoted figure inside a tag is pointing, not a claim', () => {
