@@ -571,4 +571,13 @@ describe('Director: a drawing is never lost', () => {
     expect(desk.addRegion).toHaveBeenCalledWith(expect.objectContaining({ svg: true }), expect.anything());
     expect([...ended.values()].some((t) => t.skipped === 'no svg board')).toBe(false);
   });
+
+  it('an svg group paces over its own beat: the director asks for the words from its beatFrom', async () => {
+    const asked: (number | undefined)[] = [];
+    const build: BuildElement = async () => ({ target: { region: 'svgb' }, bbox: { x: 0, y: 0, w: 10, h: 10 }, draw: async (_s, k) => { k.beat?.(); } });
+    const d = new Director({ viewer: () => fakeViewer(), desk: () => fakeDesk(), settings: () => DEFAULTS, onScrolledTo: () => {}, build, beat: (from) => { asked.push(from); return []; } });
+    d.run({ kind: 'svg', svg: '<g id="river"></g>', id: 'river', beatFrom: 7 } as unknown as RawAction, 0);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(asked).toEqual([7]);
+  });
 });
