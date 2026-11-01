@@ -666,6 +666,18 @@ describe('Lessons v3: two stages', () => {
     expect(n(b)).toBe(4);
   });
 
+  it('scout request, a check reply: the open check and its page, and what was pointed at, before the question (C5)', () => {
+    const b = buildScoutRequest({ ...sreq, page: 12, prior: undefined, check: { q: 'What if the rate doubles?', page: 12 }, about: 'The student selected this text on page 12: "rate"' }, scfg) as any;
+    const tail = b.input[2].content[0].text as string;
+    expect(tail.startsWith('The student is looking at page 12.')).toBe(true);
+    expect(tail).toContain('POINTED AT: the question is about this.\nThe student selected this text on page 12: "rate"');
+    expect(tail).toContain('OPEN CHECK QUESTION (page 12): your last answer ended on "What if the rate doubles?"');
+    expect(tail).toMatch(/may be a new question of their own/);
+    expect(tail.endsWith('QUESTION: How does it work?')).toBe(true);
+    // The cached prefix is untouched: a check reply reads the same digest and listing from cache.
+    expect(b.input.slice(0, 2)).toEqual((buildScoutRequest({ ...sreq, page: 12, prior: undefined }, scfg) as any).input.slice(0, 2));
+  });
+
   it('the scout verdict carries an optional find list (≤ 3 short strings)', () => {
     expect(parseScout('{"opener":"a","pages":[2],"find":["Table 15.5"," appendix  D ","x","y"],"plan":"p"}', 12, 3)).toEqual({ pages: [2], plan: 'p', find: ['Table 15.5', 'appendix D', 'x'] });
     expect(parseScout('{"pages":[2],"find":[],"plan":"p"}', 12, 3)).toEqual({ pages: [2], plan: 'p' });
