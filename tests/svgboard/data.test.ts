@@ -27,6 +27,10 @@ describe('svg data: exact geometry', () => {
   it('a curve with a pole at the end of its domain draws (eval D19: -(a-x)/x from x=0); one with no value anywhere fails', () => {
     const pole = g(`<g data-const="a=60"><g data-axes="el" data-x="0,60" data-y="-6,0" data-box="80,75,270,240"/><path id="el" data-fn="-(a-x)/x" data-axes="el" fill="none"/><circle data-at="at(el, x=30)" r="5"/></g>`);
     expect(resolveData(pole, newScope())).toEqual([]);
+    // data-domain (written by the model in D19/D20) bounds the curve as data-x does.
+    const dom = g(`<g data-const="a=60"><g data-axes="el" data-x="0,60" data-y="-6,0" data-box="80,75,270,240"/><path id="el" data-fn="-(a-x)/x" data-domain="10,50" data-axes="el" fill="none"/></g>`);
+    expect(resolveData(dom, newScope())).toEqual([]);
+    expect(dom.querySelector('path')!.getAttribute('d')).toMatch(/^M\s*125(\.0+)?[ ,]/);
     const none = g(`<g><g data-axes="el" data-x="0,60" data-y="-6,0" data-box="80,75,270,240"/><path id="el" data-fn="sqrt(-1-x)" data-axes="el" fill="none"/><circle data-at="at(el, x=30)" r="5"/></g>`);
     expect(JSON.stringify(resolveData(none, newScope()))).toMatch(/has no value/);
   });

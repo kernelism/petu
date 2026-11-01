@@ -466,7 +466,7 @@ function resolveOne(el: Element, sc: DataScope): void {
   const axName = el.hasAttribute('data-box') ? null : own(el, 'data-axes', sc, el);
   const nm = nameOf(el);
   if (el.hasAttribute('data-fn')) {
-    const spec: CurveSpec = { kind: 'fn', src: el.getAttribute('data-fn')!, ax: axName, dom: el.getAttribute('data-x') };
+    const spec: CurveSpec = { kind: 'fn', src: el.getAttribute('data-fn')!, ax: axName, dom: el.getAttribute('data-x') ?? el.getAttribute('data-domain') };
     const key = lc(nm ?? `_c${sc.curves.size}`);
     sc.curves.set(key, spec);
     try { const c = curve(key, sc); el.setAttribute('d', dOf(clipped(c))); }
