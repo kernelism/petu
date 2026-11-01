@@ -372,24 +372,35 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   o.stop?.addEventListener('abort', onSig);
   const sig = bg.signal;
   const run = async () => { try {
+    /**
+     * The beat's end moved since the plan (more streamed in, it closed, a voice piece came late or the
+     * speed changed): the parts from `ui` on spread over what is left of it. A beat of one word too (it
+     * was planned while open; left at pen speed, it kept the open guess).
+     */
+    const replan = (ui: number) => {
+      if (!paced || !o.beat) return;
+      const nowT = clock.now(), w = o.beat();
+      if (!w.length || Math.abs(nowT + beatEnd(w) - beatTo) <= REPLAN_MS) return;
+      beatTo = nowT + beatEnd(w);
+      const rest = order.slice(ui);
+      const re = paceParts(rest.map(partIn), w, o.slot, beatFrom - nowT);
+      if (re) re.forEach((p, j) => { order[ui + j] = rest[p.i]; rest[p.i].at = nowT - t0 + p.at; budget[ui + j] = p.dur; });
+    };
     for (let ui = 0; ui < order.length; ui++) {
       if (sig.aborted) break;
-      // The beat's end moved since the plan (more streamed in, or it closed): the parts left spread over what is left of it.
-      // A beat of one word too (it was planned while open; left at pen speed, it kept the open guess).
-      if (paced && ui > 0 && o.beat) {
-        const nowT = clock.now(), w = o.beat();
-        if (w.length && Math.abs(nowT + beatEnd(w) - beatTo) > REPLAN_MS) {
-          beatTo = nowT + beatEnd(w);
-          const rest = order.slice(ui);
-          const re = paceParts(rest.map(partIn), w, o.slot, beatFrom - nowT);
-          if (re) re.forEach((p, j) => { order[ui + j] = rest[p.i]; rest[p.i].at = nowT - t0 + p.at; budget[ui + j] = p.dur; });
-        }
+      // A part waiting for its word wakes every REPLAN_MS to re-plan: slept through, it drew at the time
+      // its word had when it went to sleep (2 s early when the voice piece holding that word came late).
+      let first = true;
+      for (;;) {
+        replan(ui);
+        const wait = t0 + order[ui].at - clock.now();
+        if (first && wait > 16) penLift(pen);
+        // (Also while paused at a part's start: it waits for the resume before the board follows it.)
+        await clock.sleep(wait > 16 ? Math.min(wait, REPLAN_MS) : 0, sig);
+        first = false;
+        if (sig.aborted || wait <= REPLAN_MS) break;
       }
       const u = order[ui];
-      const wait = t0 + u.at - clock.now();
-      if (wait > 16) penLift(pen);
-      // (Also while paused at a part's start: it waits for the resume before the board follows it.)
-      await clock.sleep(wait > 16 ? wait : 0, sig);
       if (sig.aborted) break;
       penDown(pen);
       setLive(b, u.el);

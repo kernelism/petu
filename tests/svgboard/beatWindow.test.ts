@@ -80,4 +80,17 @@ describe('an svg group\'s parts stay inside their beat as its words are known', 
     const t = await starts(s.g, 8000);
     expect(Math.max(t.a, t.b, t.c)).toBeLessThan(2500);
   });
+  it('the first part, named in the second voice piece, waits for its word when that piece comes late', async () => {
+    const s = setup('<line data-k="aim" data-say="heading" x1="0" y1="50" x2="400" y2="50"/><line data-k="water" x1="0" y1="0" x2="400" y2="0"/>');
+    // Words 0-4 are the first piece (timed); 5+ the second, estimated at 300 ms each until it loads at
+    // 0.5 s, when it turns out to start 2 s later than estimated (scheduler.beatWords: untimed words follow `last`).
+    const text = 'the ferry leaves the bank. then its heading turns up the river and on to the far side';
+    const t0 = performance.now();
+    const beat = (): BeatWord[] => { const late = performance.now() - t0 >= 500 ? 2000 : 0; return text.split(' ').map((w, i) => { const at = t0 + i * 300 + (i >= 5 ? late : 0); return { text: w, inMs: Math.max(0, at - performance.now()), endMs: Math.max(0, at + 300 - performance.now()) }; }); };
+    void drawGroup(s.b, s.g, 'ferry', { signal: new AbortController().signal, stop: new AbortController().signal, color: '#000', beat });
+    const t = await starts(s.g, 7000);
+    // "heading" is word 7: spoken at 2100 + 2000 = 4100 (it drew at its estimate, 2 s before it was said).
+    expect(Math.abs(t.aim - (7 * 300 + 2000))).toBeLessThanOrEqual(100);
+  });
+
 });
