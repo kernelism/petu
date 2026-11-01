@@ -11,7 +11,7 @@ import { parseEnv } from '../../server/env';
 import { createApi, validateRepair, LIMITS } from '../../server/plugin';
 import { buildRequest, cacheKey, type ModelConfig } from '../../server/openai';
 import { RepairCache, buildRepairRequest, repairBody, REPAIR_TTL_MS, REPAIR_CACHE_MAX } from '../../server/repair';
-import { repairNote, boardReport, REPAIR_VERSION, BOARD_CHARS } from '../../server/prompt/repair';
+import { repairNote, svgRepairNote, boardReport, REPAIR_VERSION, BOARD_CHARS } from '../../server/prompt/repair';
 import { MAX_REPAIRS, REPAIR_MAX_OUTPUT, SVG_REPAIR_MAX_OUTPUT } from '../../server/limits';
 import type { AskRequest, RepairWire } from '../../src/agent/protocol';
 import type { RepairReport } from '../../src/gate/events';
@@ -33,15 +33,23 @@ const ask = (over: Partial<AskRequest> = {}): AskRequest => ({
 });
 const terra: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 3200, fast: false, explicitCache: true };
 
-describe('repairNote r1', () => {
+describe('repairNote r2', () => {
   it('has every part of the contract, in order', () => {
     const n = repairNote(report());
-    const order = ['GATE REPORT (r1). The beat below was NOT shown', 'FAILED BEAT: Notice point Z {{circle on=s at=Z}}', 'PROBLEMS:', '- unknown: point Z is not on the board (fix: create it with {{point on=s id=Z}})',
+    const order = ['GATE REPORT (r2). The beat below was NOT shown', 'FAILED BEAT: Notice point Z {{circle on=s at=Z}}', 'PROBLEMS:', '- unknown: point Z is not on the board (fix: create it with {{point on=s id=Z}})',
       'ON THE BOARD NOW:', 's: a axes; c1 plot "demand"', 'old: 4 elements', 'consts: g=9.8', 'finds: peak', 'LATER BEATS USE: Z',
       'continuing right after "…the curve rises then falls as price grows". Same point, ≤ 22 words.', 'every board number via {{val}}', 'no pointing words and no tags.'];
     let at = -1;
     for (const s of order) { const i = n.indexOf(s); expect(i, s).toBeGreaterThan(at); at = i; }
-    expect(REPAIR_VERSION).toBe('r1');
+    expect(REPAIR_VERSION).toBe('r2');
+  });
+  it('the svg note asks for the order the prompt teaches (the group, then its sentences) and never for words alone', () => {
+    const n = svgRepairNote({ ...report(), beat: '{{beat}} {{svg <g id="eq"><circle cx="5" cy="5" r="3"/></g>}} The curves meet here.' });
+    expect(n).toContain('GATE REPORT (r2-svg)');
+    expect(n).not.toContain('{{beat}}');
+    expect(n).toMatch(/its <g id="…"> group first \(the same id unless the problem is the id\), then the same point in ≤ \d+ spoken words/);
+    expect(n).toMatch(/Keep a drawing: if the group can't be fixed, draw less \(a simpler group\), never words alone/);
+    expect(n).not.toMatch(/say the point plainly with no group/);
   });
   it('the board report is capped', () => {
     const items = Array.from({ length: 200 }, (_, i) => ({ id: `n${i}`, kind: 'node', label: 'a long label for the element' }));
@@ -211,7 +219,7 @@ describe('POST /api/repair', () => {
     expect(entry).toMatchObject({ kind: 'repair', model: 'gpt-6.1-terra', phase: 'dev', estimated: false });
     expect(spend().open ?? {}).toEqual({});
     const rec = records().find((x) => x.kind === 'repair');
-    expect(rec).toMatchObject({ kind: 'repair', reqId, k: 2, text: 'Point {{point on=s id=Z at=4,2}} Z sits here.', version: 'r1' });
+    expect(rec).toMatchObject({ kind: 'repair', reqId, k: 2, text: 'Point {{point on=s id=Z at=4,2}} Z sits here.', version: 'r2' });
     expect(rec.report.later).toEqual(['Z']);
   });
 
