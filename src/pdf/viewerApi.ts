@@ -12,12 +12,15 @@ export type GoReason = 'answer' | 'student' | 'back';
 
 export interface ViewerApi {
   numPages(): number;
-  /** The page under the reading line (35% down): the indicator's when the tutor has no focus page. */
+  /**
+   * The page in frame by the scroll position: the most visible page between the top bar and the dock,
+   * the reading line's (35% down) on a tie (PdfViewer currentPageOf). The indicator's when the tutor
+   * has no focus page. Updated a frame after a scroll.
+   */
   currentPage(): number;
   /**
-   * The page a question is asked about when nothing names one: the most visible page between the top
-   * bar and the dock, the reading line's on a tie (src/desk/layout.ts mostVisiblePage). Optional so
-   * test doubles need not stub it (callers fall back to currentPage()).
+   * The same rule computed now (not a frame late): the page a question is asked about when nothing
+   * names one. Optional so test doubles need not stub it (callers fall back to currentPage()).
    */
   mostVisiblePage?(): number;
   /** Page-space height for the page (1000 * h / w). */

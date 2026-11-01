@@ -4,9 +4,9 @@
 // The viewer side is the real steeredGlide; the steer/shown bookkeeping mirrors PdfViewer's.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Desk, type DeskHost } from '../../src/desk/Desk';
-import { computeLayout, frameFor, pageAt, SAFE_TOP, type Split } from '../../src/desk/layout';
+import { computeLayout, frameFor, SAFE_TOP, type Split } from '../../src/desk/layout';
 import { Director } from '../../src/playback/director';
-import { steeredGlide } from '../../src/pdf/PdfViewer';
+import { currentPageOf, steeredGlide } from '../../src/pdf/PdfViewer';
 import { DEFAULTS } from '../../src/settings/settings';
 import type { ViewerApi } from '../../src/pdf/viewerApi';
 import type { BuildElement } from '../../src/desk/types';
@@ -18,7 +18,7 @@ function viewerHost(W = 1440, H = 900, pages = 20) {
   const s = { top: 0, split: 'none' as Split, focus: null as number | null };
   const scroll = new Set<() => void>();
   const layout = () => computeLayout(frameFor(W, H, s.split, 9 / 16, false).page, aspects, H);
-  const center = () => pageAt(layout(), s.top + 0.35 * H);
+  const center = () => currentPageOf(layout(), s.top, H, 1);
   const steer = (p: number) => { s.focus = p; };
   const move = (top: number) => { s.top = Math.max(0, top); scroll.forEach((f) => f()); };
   const host: DeskHost = {

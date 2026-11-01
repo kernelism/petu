@@ -58,6 +58,17 @@ const dpr = () => Math.min(2, window.devicePixelRatio || 1);
  * the indicator and the next question's page (a check reply) named the page no longer in frame.
  * Steered before the glide, so the student taking over mid-glide (intent) still clears it.
  */
+/**
+ * The page in frame when the tutor has none (the indicator's center, currentPage()): the most visible
+ * page between the top bar and the dock, the 35% line's on a tie. The same rule as the asked page
+ * (ViewerApi.mostVisiblePage), so the indicator never names one page while a question goes out about
+ * another (the 35% line alone disagreed with it at 9–21% of scroll positions, diag/line.ts).
+ * `scrollTop` and `H` in view px; `z` the overview zoom (content = view / z).
+ */
+export function currentPageOf(L: PageLayout, scrollTop: number, H: number, z: number): number {
+  return mostVisiblePage(L, (scrollTop + SAFE_TOP) / z, (scrollTop + H - safeBottom()) / z, (scrollTop + H * CURRENT_LINE) / z);
+}
+
 export const steeredGlide = (steer: (page: number) => void, glide: (top: () => number, maxMs?: number) => Promise<void>): DeskHost['glideTo'] =>
   (top, maxMs, page) => { if (page != null) steer(page); return glide(top, maxMs); };
 
@@ -494,10 +505,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     ioRef.current = io;
     for (const h of slots.current.values()) io.observe(h.el);
 
-    const computeCurrent = () => {
-      const L = layoutRef.current!;
-      return pageAt(L, (el.scrollTop + el.clientHeight * CURRENT_LINE) / ovRef.current.z);
-    };
+    const computeCurrent = () => currentPageOf(layoutRef.current!, el.scrollTop, el.clientHeight, ovRef.current.z);
     const publishCurrent = () => {
       const cur = computeCurrent();
       if (cur === currentRef.current) return;
@@ -693,11 +701,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     const api: ViewerApi = {
       numPages: () => doc.numPages,
       currentPage: () => currentRef.current,
-      mostVisiblePage: () => {
-        const L = layoutRef.current, z = ovRef.current.z;
-        if (!L) return currentRef.current;
-        return mostVisiblePage(L, (el.scrollTop + SAFE_TOP) / z, (el.scrollTop + el.clientHeight - safeBottom()) / z, (el.scrollTop + el.clientHeight * CURRENT_LINE) / z);
-      },
+      mostVisiblePage: () => (layoutRef.current ? computeCurrent() : currentRef.current),
       spaceHeight: (page) => 1000 * (aspectsRef.current?.[clampPage(page) - 1] ?? 1.294),
       scale: () => (layoutRef.current?.pageW ?? 0) / 1000,
       layers: (page) => {
