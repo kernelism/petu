@@ -186,14 +186,16 @@ export class OpenerGate {
       const b = sentence.indexOf('}}', a + 2);
       if (b < 0) { break; } // an unclosed tag at the very end: drop it
       const tag = sentence.slice(a, b + 2);
+      i = b + 2;
       if (this.allowed(tag)) out += tag;
       else {
         this.notes.push(`opener: dropped ${JSON.stringify(tag.slice(0, 40))}`);
         // A dropped mark the sentence used as a word ("The {{highlight p=4 "kernel"}} slides…"): its words stay.
         const w = this.quoteWords(tag, out, sentence.slice(b + 2));
         if (w) out += (out && !/\s$/.test(out) ? ' ' : '') + w;
+        // A dropped pointer between two spaces leaves one ("the  viewing ray" was sent as written).
+        else if (/\s$/.test(this.said + out)) while (sentence[i] === ' ' || sentence[i] === '\t') i++;
       }
-      i = b + 2;
     }
     this.said += out;
     return out;
