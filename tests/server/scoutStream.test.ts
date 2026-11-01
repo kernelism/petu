@@ -157,6 +157,8 @@ describe('OpenerGate (opener → spoken script)', () => {
     it('the first caption word is not later: a clean first clause goes out on the push that completes it', () => {
       const g = new OpenerGate(3);
       expect(g.push('The ferry aims upstream because, ')).toBe('The ferry aims upstream because');
+      // An opener that stops at the clause still ends on a word boundary (no hold at the seam to stage 2).
+      expect(g.end()).toBe(', ');
     });
   });
 });

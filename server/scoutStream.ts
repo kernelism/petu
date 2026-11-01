@@ -184,7 +184,8 @@ export class OpenerGate {
     const rest = this.buf;
     this.buf = '';
     let out = rest.trim() ? this.piece(rest, true) : '';
-    if (this.pend) { out += this.pend.trimEnd(); this.said += this.pend.trimEnd(); this.pend = ''; }
+    // An opener that stopped at a clause: its separator goes out as written (its space closes the last word).
+    if (this.pend) { out += this.pend; this.said += this.pend; this.pend = ''; }
     if (!this.said.trim() && this.first) {
       const s = this.emit(this.first);
       this.first = '';
