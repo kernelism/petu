@@ -141,7 +141,11 @@ function curve(name: string, sc: DataScope): Curve {
   if (c.kind === 'fn') {
     const dom = c.dom ? splitTop(c.dom, ',').map((v) => evalF(v, sc)) : ax ? [ax.x0, ax.x1] : fail(`curve ${name} needs data-x or data-axes`);
     if (dom.length !== 2) fail(`curve ${name}: data-x takes "lo,hi"`);
-    evalF(c.src, sc, { x: dom[0] }); // fails early on a bad formula
+    // Fails early on a bad formula. A pole at an end of the domain (-(a-x)/x from 0: eval D19, 2026-11-01,
+    // the whole elasticity board withheld) is not one: the sampler skips x with no value, so the curve
+    // fails only when no probe across the domain has one (and then with the midpoint's reason).
+    const probe = [0, 0.25, 0.5, 0.75, 1].map((k) => dom[0] + (dom[1] - dom[0]) * k);
+    if (!probe.some((x) => { try { return Number.isFinite(evalF(c.src, sc, { x })); } catch { return false; } })) evalF(c.src, sc, { x: probe[2] });
     return { name, ax, kind: 'fn', f: (x) => { try { return evalF(c.src, sc, { x }); } catch { return NaN; } }, dom: [Math.min(dom[0], dom[1]), Math.max(dom[0], dom[1])] };
   }
   const t = splitTop(c.t, ',').map((v) => evalF(v, sc));
