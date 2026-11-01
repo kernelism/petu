@@ -160,7 +160,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.8');
+    expect(PROMPT_VERSION).toBe('p6.9');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -174,9 +174,10 @@ describe('system prompt (svg, default)', () => {
   });
 
   it('has no tag-DSL card: only page pointing tags', () => {
-    expect(s).not.toMatch(/\bTAGS \(|KIT \(|SCENE \(|\{\{(sketch|scene|let|const|plot|grid|bars|node|val|show|svgboard)\b/);
+    expect(s).not.toMatch(/\bTAGS \(|KIT \(|SCENE \(|\{\{(sketch|scene|let|const|plot|grid|bars|node|show|svgboard)\b/);
     const kinds = new Set([...s.matchAll(/\{\{(\w+)/g)].map((m) => m[1]));
-    for (const k of kinds) expect(['scroll', 'highlight', 'underline', 'circle', 'box', 'tween'], k).toContain(k); // tween: the svg engine's motion (data.ts)
+    // tween: the svg engine's motion (data.ts); val: a board number said by reference (p6.9, engine.ts readouts)
+    for (const k of kinds) expect(['scroll', 'highlight', 'underline', 'circle', 'box', 'tween', 'val'], k).toContain(k);
   });
 
   it('every pointing tag it shows parses', () => {
@@ -218,13 +219,22 @@ describe('system prompt (svg, default)', () => {
     expect(s).toMatch(/"is that complete\?" is answered by finishing, never with a yes or a no/);
   });
 
+  it('p6.9 (numbers): a board number is said by reference; the plan carries givens, not results; points and labels on a plot are the engine\'s', () => {
+    expect(s).toMatch(/a number the board computes is said by reference, never retyped: give its data-val text an id and say \{\{val id=crossing\}\}/);
+    expect(s).toMatch(/<text id="crossing" data-val="W\/u"/);
+    expect(s).toMatch(/its given numbers, and the formulas for what the board will compute from them/);
+    expect(s).toMatch(/every point on a curve is placed by data-at \(cross\(d,s\) where two curves meet/);
+    expect(s).toMatch(/data-schematic/);
+    expect(s).not.toMatch(/compute yourself|its computed numbers/);
+  });
+
   it('p6.5 (no dead air): the script starts with spoken words, before the plan, after an opening too', () => {
     expect(s).toMatch(/first characters are spoken words, never the plan or a group/);
     expect(s).toMatch(/after an opening already spoken, its next sentences/);
   });
 
   it('states the teacher-at-a-whiteboard brief and the streamed beat format', () => {
-    for (const p of [/great teacher at a whiteboard/, /Draw the mechanism, not names/, /ONE concrete case/, /real numbers you compute/, /reads on its own/, /beats are your budget/,
+    for (const p of [/great teacher at a whiteboard/, /Draw the mechanism, not names/, /ONE concrete case/, /computed by the board \(EXACT DATA\) and said from it/, /reads on its own/, /beats are your budget/,
       /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 560 H"/, /one unit is about one pixel/, /regions:/, /groups:/, /<g id=/, /drawing first/, /draws across its sentences/, /draws on the word that names it/, /Start speaking at once/, /data-fn=/, /data-val=/, /data-at=/, /data-const=/, /\{\{tween /, /data-ghost/, /data-trace/, /BUDGET line/, /Never write on the board what you say/,
       /No scripts, foreignObject/, /font-size 16/, /one accent colour/, /Nothing overlaps/, /inside the viewBox/, /BOARD extend/, /ghost/]) expect(s).toMatch(p);
   });
