@@ -166,7 +166,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.12');
+    expect(PROMPT_VERSION).toBe('p6.13');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -244,8 +244,13 @@ describe('system prompt (svg, default)', () => {
 
   it('states the teacher-at-a-whiteboard brief and the streamed beat format', () => {
     for (const p of [/great teacher at a whiteboard/, /Draw the mechanism, not names/, /ONE concrete case/, /computed by the board \(EXACT DATA\) and said from it/, /reads on its own/, /beats are your budget/,
-      /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 560 H"/, /one unit is about one pixel/, /regions:/, /groups:/, /<g id=/, /drawing first/, /draws across its sentences/, /draws on the word that names it/, /Plan first/, /data-fn=/, /data-val=/, /data-at=/, /data-const=/, /\{\{tween /, /data-ghost/, /data-trace/, /BUDGET line/, /Never write on the board what you say/,
+      /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 560 H"/, /one unit is about one pixel/, /regions:/, /groups:/, /<g id=/, /drawing first/, /draws across its sentences/, /draws on the word that names it/, /Plan first/, /data-fn=/, /data-val=/, /data-at=/, /data-const=/, /\{\{tween /, /data-ghost/, /data-trace/, /BUDGET line/, /Never a sentence, never a line of words standing on its own/,
       /No scripts, foreignObject/, /font-size 16/, /one accent colour/, /Nothing overlaps/, /inside the viewBox/, /BOARD extend/, /ghost/]) expect(s).toMatch(p);
+  });
+
+  it('p6.8 (founder: "random lines of text"): board text is labels only, never a sentence or stacked words; one label one element; a case shows its effect', () => {
+    for (const p of [/Text on the board is a label/, /Never a sentence/, /never lines of words stacked under each other/, /the engine removes any it finds/, /one text element on one line/, /the effect shows in the numbers the board will compute/]) expect(s).toMatch(p);
+    expect(s).not.toMatch(/takeaway written once/);
   });
 
   it('p6.2: the narration ends on the takeaway; a check question is optional and hidden (<check>), never spoken', () => {

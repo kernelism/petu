@@ -26,6 +26,11 @@ import { BOARD_W } from '../../src/svgboard/wire.ts';
  * lane's width in screen pixels, so the model's text sizes are what the student reads (16 units ≈ 14 px
  * at 1440; on the 1000-wide canvas they were 8–10 px). The examples are laid out on it. Evidence:
  * docs/superpowers/reference/lane-legibility.md (validated alone as p6.4 against p6.3; p6.5 landed first).
+ * p6.8 (2026-10-31, founder: "random lines of text" beside a figure; a Terra board whose example showed
+ * no aliasing while claiming it): board text is labels only (a name on a drawn thing, a number on what it
+ * measures, the title), never a sentence or stacked lines of words, the takeaway a number or short label
+ * on its thing; each label one element on one line; a case meant to show an effect is worked out first so
+ * the drawn numbers show it. The engine removes any sentence that slips through (src/svgboard/prose.ts).
  * p6.7 (2026-10-31, founder: follow-ups and rhythm): a follow-up that says the answer was not good enough
  * or not complete is about the thread's question in full, every part the earlier answers missed, never the
  * page in view; the hidden plan carries a "parts:" accounting (asked, covered, left) that MEMORY shows the
@@ -59,8 +64,13 @@ import { BOARD_W } from '../../src/svgboard/wire.ts';
  * The examples' first groups are title-sized and their plans shorter (svgExamples.ts): the format asks for
  * a small first group, and the examples' 1–1.6k-char first groups delayed the first word to 5.5–7.8 s
  * after the plan began (median stream rate); now 2.4–2.5 s. The ferry types no "3, 4, 5" (NUMBERS YOU SAY).
+ * p6.13 (2026-11-01): main's p6.8 (board text is labels only, PR #35) and this branch's p6.8–p6.12 were
+ * written in parallel under overlapping versions; p6.13 is the two together. HOW YOU TEACH keeps the
+ * branch's "answer first, in your first beat" and "computed by the board", main's "a case meant to show an
+ * effect is chosen so the effect shows" (now in the board's numbers, not worked out by hand) and main's
+ * labels-only composition paragraph.
  */
-export const PROMPT_VERSION = 'p6.12';
+export const PROMPT_VERSION = 'p6.13';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -215,8 +225,8 @@ Output ONE script in the format below, nothing before or after it. Narration is 
 
 const SVG_TEACH = `HOW YOU TEACH
 Answer first, in your first beat, in plain words, while pointing at the thing asked about on the student's page; the reasoning follows once the student knows where you are going. Follow the PLAN (a first read of the whole document) unless the pages show it is wrong; when an idea is built across several pages, walk them, scrolling to each and saying what it adds.
-Draw the mechanism, not names: the thing itself and how it happens (the forces on it, the quantity changing, the parts moving), never boxes holding words. Carry ONE concrete case through the whole answer, with real numbers: the page's own where it gives them, and everything that follows from them computed by the board (EXACT DATA) and said from it, never worked out in your head; run the idea on it so the student sees the cause produce the effect. When the idea turns on a difference, draw both cases the same way so the difference is seen. When the student holds a wrong idea, run it on the case and let it fail where they can see it.
-Compose the board so that at the end it reads on its own: a clear layout, a short title, every drawn thing labelled, the key computed numbers on what they measure, and the takeaway written once, in the accent colour. The board carries the picture; your voice carries the reasoning. Never write on the board what you say (no derivation steps, no sentences, no list of what happens), unless one equation is itself the picture, and never copy what a page already shows (point at the page instead).
+Draw the mechanism, not names: the thing itself and how it happens (the forces on it, the quantity changing, the parts moving), never boxes holding words. Carry ONE concrete case through the whole answer, with real numbers: the page's own where it gives them, and everything that follows from them computed by the board (EXACT DATA) and said from it, never worked out in your head; run the idea on it so the student sees the cause produce the effect. When the case is there to show an effect (a pattern that vanishes, a value that changes, a limit crossed), choose its givens so the effect shows in the numbers the board will compute; if it doesn't, change the case. When the idea turns on a difference, draw both cases the same way so the difference is seen. When the student holds a wrong idea, run it on the case and let it fail where they can see it.
+Compose the board so that at the end it reads on its own: a clear layout, a short title, every drawn thing labelled, the key computed numbers on what they measure, and the takeaway as the one number or short label that carries it, in the accent colour, on the thing it belongs to. The board carries the picture; your voice carries the reasoning. Text on the board is a label: a name on a drawn thing, a number on what it measures, the title. Never a sentence, never a line of words standing on its own, never lines of words stacked under each other (no derivation steps, no conclusions, no list of what happens): a sentence belongs to your voice, and the engine removes any it finds on the board. One equation may stand when it is itself the picture. Never copy what a page already shows (point at the page instead).
 Say less and let the board carry it. The PLAN's beats are your budget, in order, and the BUDGET line under it gives each beat's words. Its scope sets the length: a narrow question lands in 30–60 seconds; a broad one may take longer. A question with several parts gets every part it asks for, each with its beat, never the first part alone. When the last beat has landed, stop: end on the takeaway, never on a question to the student. No warm-up, no padding, no recap.
 Never invent page content, labels or numbers. Point only with what the listings give you.`;
 
@@ -231,7 +241,7 @@ groups: id; id; … (in teaching order)
 </plan>
 Then the beats. Each beat is its drawing first, one SVG group <g id="…">…</g> in absolute board coordinates, then one to three spoken sentences, always in that order (also when the beat's first sentence is about the page): the group draws across its sentences, part by part, and a part with an id draws on the word that names it (make the id that word). So give the parts you will talk about ids, in the order you say them, and keep a group to what its own sentences say: a long group holds back the words after it, the first one most of all (nothing is spoken until it is written).
 Name each part in plain words as it appears, in the sentence it draws across ("this arrow is the pull of the string", "this line is the price the law allows"), so the student hears what they are watching being drawn.
-SVG: plain elements (path, line, polyline, polygon, rect, circle, ellipse, text, tspan) with inline attributes; arrowheads as small polylines. No scripts, foreignObject, images, links, external references or animation. Ids are short, unique, lowercase (letters, digits, hyphens). Text is at least font-size 16, and that is its real size on screen: give every label the room its words take at that size. Dark ink for what matters, grey for guides and secondary labels, and one accent colour only for what the student should leave with; the engine sets the fonts and the exact colours. Nothing overlaps: text never sits on text or across a line, and everything stays inside the viewBox. A later group may draw on an earlier one on purpose (an arrow onto it, a mark on a part), since the layout was planned up front. Once drawn is drawn: nothing is erased.
+SVG: plain elements (path, line, polyline, polygon, rect, circle, ellipse, text, tspan) with inline attributes; arrowheads as small polylines. No scripts, foreignObject, images, links, external references or animation. Ids are short, unique, lowercase (letters, digits, hyphens). Text is at least font-size 16, and that is its real size on screen: give every label the room its words take at that size, and keep each label one text element on one line, placed where that line fits (never a label broken across two elements). Dark ink for what matters, grey for guides and secondary labels, and one accent colour only for what the student should leave with; the engine sets the fonts and the exact colours. Nothing overlaps: text never sits on text or across a line, and everything stays inside the viewBox. A later group may draw on an earlier one on purpose (an arrow onto it, a mark on a part), since the layout was planned up front. Once drawn is drawn: nothing is erased.
 After the last beat, only when the answer taught something the student can now work out for themselves, add a check question they may open later: <check>one short question that changes one thing about the case</check>. It is never spoken (a check beat in the PLAN goes here, not into the narration); when there is nothing worth checking, leave it out.${SVG_ENGINE_ATTRS ? `\n${SVG_ENGINE_ATTRS}` : ''}`;
 
 const SVG_CONTEXT = `WHAT YOU GET

@@ -571,7 +571,7 @@ const imageDims = (im: { b64: string; w: number; h: number }) => {
 export const askImages = (c: AskContext) => [c.image, ...(c.images ?? []), ...(c.ink?.crop ? [c.ink.crop] : [])].map(imageDims);
 
 /** What every answer record starts with: when, which model, the page, the question, the opener spoken before it. */
-const recordHead = (r: AskRequest, cfg: ModelConfig, d: Deps) => ({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), ...(r.context.opener ? { opener: r.context.opener.slice(0, 2000) } : {}) });
+const recordHead = (r: AskRequest, cfg: ModelConfig, d: Deps) => ({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), ...(r.context.scout ? { pages: r.context.scout.pages, plan: r.context.scout.plan.slice(0, 1200) } : {}), ...(r.context.opener ? { opener: r.context.opener.slice(0, 2000) } : {}) });
 
 /**
  * One answer: [storyboard →] gate → stream → filters → book. Emits AskEvents; resolves when done.
