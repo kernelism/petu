@@ -41,8 +41,12 @@ import { BOARD_W } from '../../src/svgboard/wire.ts';
  * ("compute yourself" made the model compute each number twice, apart, and they drifted); the plan
  * carries the case's givens and what follows from them, not results; on a board with data every point
  * on a curve is a data-at and every number a label shows a data-val (the gate snaps or fails the rest).
+ * p6.10 (2026-10-31, same): the two examples type no computed number or position: the ferry's banks,
+ * points, triangle and arrowheads are placed through frames (pt, mid, data-rotate), its angle and times are
+ * data-val, its narration says them with {{val}}; the dough's times and gains likewise, its cells marked
+ * data-schematic. The examples were the model's habit for hand-typed "37°" and "150 s" (diagnosis C1).
  */
-export const PROMPT_VERSION = 'p6.9';
+export const PROMPT_VERSION = 'p6.10';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no

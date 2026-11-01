@@ -5,6 +5,12 @@ import { SVG_EXAMPLES } from '../../server/prompt/svgExamples';
 import { BOARD_W } from '../../src/svgboard/wire';
 import { parseTag } from '../../src/script/parseTag';
 import { ScriptParser } from '../../src/script/parser';
+import { acceptGroups, checkGroups, newBoardState } from '../../src/svgboard/check';
+import { fmtValue, newScope } from '../../src/svgboard/data';
+import { unescapeSvg } from '../../src/svgboard/wire';
+import { beatsOf as beatsOfWire } from '../../src/svgboard/beat';
+import { boardNumbers, numberFixes } from '../../src/gate/check';
+import { wireOf } from '../../src/demo/svg/index';
 import { ScriptFilter } from '../../server/scriptFilter';
 
 /**
@@ -160,7 +166,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.9');
+    expect(PROMPT_VERSION).toBe('p6.10');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -284,6 +290,8 @@ describe('system prompt (svg, default)', () => {
         expect(doc.querySelector('parsererror'), b.id).toBeNull();
         expect(b.svg).not.toMatch(/<(script|foreignObject|image|animate|a)\b|\bon\w+=|href=/i);
         for (const el of Array.from(doc.querySelectorAll('*'))) {
+          // A shape placed by the engine (data-at: an arrowhead, a cap) is drawn relative to its point; its box is checked resolved below.
+          if (el.hasAttribute('data-at') && !/^(circle|text|rect|ellipse)$/.test(el.nodeName)) continue;
           for (const a of ['x', 'cx', 'x1', 'x2']) { const v = el.getAttribute(a); if (v != null) { expect(Number(v), `${b.id} ${a}`).toBeGreaterThanOrEqual(0); expect(Number(v)).toBeLessThanOrEqual(W); } }
           for (const a of ['y', 'cy', 'y1', 'y2']) { const v = el.getAttribute(a); if (v != null) { expect(Number(v), `${b.id} ${a}`).toBeGreaterThanOrEqual(0); expect(Number(v)).toBeLessThanOrEqual(H); } }
           const pts = el.getAttribute('points');
@@ -293,6 +301,32 @@ describe('system prompt (svg, default)', () => {
         }
         expect(doc.querySelectorAll('text').length + doc.querySelectorAll('[font-size] text').length, b.id).toBeGreaterThan(0); // every group is labelled
       }
+    });
+
+    it('p6.10: grounded: every number and point on the board is the engine\'s, and drawn inside the viewBox', () => {
+      const H = boardH(ex.script), board = newBoardState(BOARD_W, H), sc = newScope();
+      for (const g of wireOf(ex.script).matchAll(/\{\{svg (<g[\s\S]*?)\}\}/g)) {
+        const r = checkGroups([unescapeSvg(g[1])], board, 16, sc);
+        acceptGroups(board, r.geos, r.grow);
+        expect(r.flags, r.geos[0].id).toEqual([]);
+        expect(r.notes.filter((n) => /grounded/.test(n)), r.geos[0].id).toEqual([]);
+        const b = r.geos[0].box!;
+        expect(b.x, r.geos[0].id).toBeGreaterThanOrEqual(0);
+        expect(b.x + b.w, r.geos[0].id).toBeLessThanOrEqual(BOARD_W);
+        expect(b.y + b.h, r.geos[0].id).toBeLessThanOrEqual(H);
+      }
+    });
+
+    it('p6.10: a computed number is said by reference: each {{val}} says what the board shows, and no spoken number is near a readout', () => {
+      const wire = wireOf(ex.script);
+      const p = new ScriptParser();
+      const evs = [...p.push(wire), ...p.end()];
+      const vals = evs.flatMap((e) => (e.type === 'action' && e.action.kind === 'val' ? [e.action] : []));
+      expect(vals.length, 'the example shows {{val}}').toBeGreaterThan(1);
+      const shown = new Set(p.values.values.flatMap((v) => (v.shown != null ? [v.shown] : [])).concat(Object.values(p.values.consts).map((v) => fmtValue(v))));
+      for (const v of vals) { expect(v.said, v.ref).toBeDefined(); expect(shown, v.ref).toContain(v.said); }
+      for (const b of beatsOfWire(wire)) expect(boardNumbers(b.words, p.values.values).flags, b.text).toEqual([]);
+      expect(numberFixes(beatsOfWire(wire).flatMap((b) => b.words), p.values.values)).toEqual([]);
     });
 
     it('each group id is a word its beat says (the engine draws it on that word)', () => {
