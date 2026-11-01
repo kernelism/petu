@@ -2,7 +2,7 @@
 // timing math (src/playback/pace.ts), the scheduler's rest after a drawn beat and the beat's word
 // times on both clocks (paced and voiced).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { beatEnd, beatWindow, labelNames, partWords, OPEN_SPAN_MS, paceParts, splitPart, PART_MIN_MS, PART_MAX_MS, PART_GAP_MS, REST_MS, SPAN_MIN_MS, type BeatWord } from '../../src/playback/pace';
+import { beatEnd, beatWindow, labelNames, partWords, OPEN_SPAN_MS, OPEN_TAIL_MS, paceParts, splitPart, PART_MIN_MS, PART_MAX_MS, PART_GAP_MS, REST_MS, SPAN_MIN_MS, type BeatWord } from '../../src/playback/pace';
 import { PacedClock } from '../../src/playback/clock';
 import { Scheduler, namesWord } from '../../src/playback/scheduler';
 import { VoiceClock, SAMPLE_RATE, type AudioOut, type Speak } from '../../src/playback/voiceClock';
@@ -45,18 +45,24 @@ describe('pace: the window a group draws in', () => {
     expect(beatWindow(w, { k: 1, n: 3 })).toEqual({ from: 1200, to: 2400 });
     expect(beatWindow(w, { k: 2, n: 3 })).toEqual({ from: 2400, to: 3600 });
   });
-  it('a beat still streaming runs at least OPEN_SPAN_MS; once closed, its real end', () => {
+  it('a beat still streaming runs a short tail past its known words; once closed, its real end', () => {
     const w = beat('picture a simplified skater');
     expect(beatEnd(w)).toBe(1200);
     w[w.length - 1].open = true;
-    expect(beatEnd(w)).toBe(OPEN_SPAN_MS);
-    expect(beatWindow(w)).toEqual({ from: 0, to: OPEN_SPAN_MS });
+    expect(beatEnd(w)).toBe(1200 + OPEN_TAIL_MS);
+    expect(beatWindow(w)).toEqual({ from: 0, to: 1200 + OPEN_TAIL_MS });
   });
-  it('a beat still streaming: its guessed end is fixed from when its first word started, not from now', () => {
-    // Re-read 4 s into the beat (its first words spoken, clamped to now): it ends 2 s from now, not 6.
+  it('a beat still streaming is not guessed seconds past its words (the gate holding the next beat)', () => {
+    // Re-read 4 s into the beat (its first words spoken, clamped to now): it ends with its known words,
+    // not at a 6 s guess (2 s from now), and not 6 s from now (the old slide).
     const w: BeatWord[] = [{ text: 'the', inMs: 0, endMs: 0, sinceMs: 4000 }, { text: 'river', inMs: 0, endMs: 300, open: true }];
-    expect(beatEnd(w)).toBe(OPEN_SPAN_MS - 4000);
-    expect(beatEnd([{ ...w[0], sinceMs: undefined }, w[1]])).toBe(OPEN_SPAN_MS); // (the old slide)
+    expect(beatEnd(w)).toBe(300 + OPEN_TAIL_MS);
+    expect(beatEnd([{ ...w[0], sinceMs: undefined }, w[1]])).toBe(300 + OPEN_TAIL_MS);
+    expect(beatEnd([{ text: 'Here.', inMs: 0, endMs: 300, open: true }])).toBe(300 + OPEN_TAIL_MS);
+  });
+  it('a beat still streaming with no word here yet: OPEN_SPAN_MS from when it began', () => {
+    expect(beatEnd([{ text: '', inMs: 0, endMs: 0, open: true }])).toBe(OPEN_SPAN_MS);
+    expect(beatEnd([{ text: '', inMs: 500, endMs: 500, open: true }])).toBe(500 + OPEN_SPAN_MS);
   });
   it('a word with no end time counts a word\'s length', () => {
     expect(beatWindow([{ text: 'a', inMs: 0 }, { text: 'b', inMs: 2000 }]).to).toBe(2300);

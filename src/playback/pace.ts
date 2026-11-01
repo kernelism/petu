@@ -41,22 +41,30 @@ export const WORD_EST_MS = 300;
  */
 export const REPLAN_MS = 400;
 /**
- * A beat still streaming is assumed to run at least this long from its first word (a sentence or two),
- * so its first parts don't all draw in the words known so far; the re-plan corrects it either way.
+ * A beat still streaming whose words are here is assumed to run this much past its last known word (the
+ * next one may be on its way); the re-plan follows it as it grows. With the gate, a beat's words come
+ * whole: it is "open" only because the next {{beat}} waits on the next unit's check.
+ */
+export const OPEN_TAIL_MS = 600;
+/**
+ * A beat still streaming with none of its words here yet (its group fired first: the narration ran dry)
+ * is assumed to run at least this long, so its first parts don't all draw at once; the re-plan corrects it.
  */
 export const OPEN_SPAN_MS = 6000;
 
 /**
  * When the beat's narration ends, ms from now: its last word's end (else its start plus a word); a
- * beat still streaming, at least OPEN_SPAN_MS after its first word started (sinceMs: a guess fixed in
- * time; read from a first word clamped to now, it slid 6 s ahead at every re-plan, and a short beat the
- * gate closed late drew its last parts over the next beat).
+ * beat still streaming, OPEN_TAIL_MS past its last known word (it used to be at least OPEN_SPAN_MS
+ * after its first word: a short beat still open when its group fired, the gate holding the next one,
+ * drew its last parts seconds into the next beat, and a part under way keeps the budget it started
+ * with); with no word known yet, OPEN_SPAN_MS after its first word started (sinceMs).
  */
 export function beatEnd(words: readonly BeatWord[]): number {
   if (!words.length) return 0;
   const last = words[words.length - 1];
   const end = Math.max(last.endMs ?? last.inMs + WORD_EST_MS, last.inMs);
-  return last.open ? Math.max(end, words[0].inMs - (words[0].sinceMs ?? 0) + OPEN_SPAN_MS) : end;
+  if (!last.open) return end;
+  return words.length > 1 || last.text ? end + OPEN_TAIL_MS : Math.max(end, words[0].inMs - (words[0].sinceMs ?? 0) + OPEN_SPAN_MS);
 }
 
 /**
