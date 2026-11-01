@@ -11,7 +11,7 @@ import { animateScrollTo } from './scroll';
 import { prefersReducedMotion } from '../ink/agent/animate';
 import { ink } from '../ink/student/store';
 import { PageSlot, type SlotHandle } from './PageSlot';
-import { computeLayout, dockReserve, frameFor, laneFrame, PAGE_GAP, pageAt, pageFrameTop, SAFE_TOP, safeBottom, setStackBottom, type Frame, type PageLayout, type Split } from '../desk/layout';
+import { computeLayout, dockReserve, frameFor, laneFrame, mostVisiblePage, PAGE_GAP, pageAt, pageFrameTop, SAFE_TOP, safeBottom, setStackBottom, type Frame, type PageLayout, type Split } from '../desk/layout';
 import { ScrollOwner, isScrollKey, wheelTakesOver } from '../desk/follow';
 import { clampOverview, OVERVIEW_FIT, overviewHub, overviewStep, overviewToggle, panLimit, SETTLE_MS, snapOverview, wheelFactor, wheelKind, zoomAbout, zoomBase, type OverviewControl } from './overview';
 import { clampPageZoom, fitColumn, PAGE_ZOOM_MAX, PAGE_ZOOM_MIN, pageZoomStep, panFor, readingOffset, zoomColumn, type Span } from './column';
@@ -683,6 +683,11 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     const api: ViewerApi = {
       numPages: () => doc.numPages,
       currentPage: () => currentRef.current,
+      mostVisiblePage: () => {
+        const L = layoutRef.current, z = ovRef.current.z;
+        if (!L) return currentRef.current;
+        return mostVisiblePage(L, (el.scrollTop + SAFE_TOP) / z, (el.scrollTop + el.clientHeight - safeBottom()) / z, (el.scrollTop + el.clientHeight * CURRENT_LINE) / z);
+      },
       spaceHeight: (page) => 1000 * (aspectsRef.current?.[clampPage(page) - 1] ?? 1.294),
       scale: () => (layoutRef.current?.pageW ?? 0) / 1000,
       layers: (page) => {

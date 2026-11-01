@@ -12,7 +12,14 @@ export type GoReason = 'answer' | 'student' | 'back';
 
 export interface ViewerApi {
   numPages(): number;
+  /** The page under the reading line (35% down): the indicator's when the tutor has no focus page. */
   currentPage(): number;
+  /**
+   * The page a question is asked about when nothing names one: the most visible page between the top
+   * bar and the dock, the reading line's on a tie (src/desk/layout.ts mostVisiblePage). Optional so
+   * test doubles need not stub it (callers fall back to currentPage()).
+   */
+  mostVisiblePage?(): number;
   /** Page-space height for the page (1000 * h / w). */
   spaceHeight(page: number): number;
   /** CSS px per page-space unit (pageW / 1000). Pages share one scale. */
