@@ -37,6 +37,11 @@ describe('{{val}} reads the svg board', () => {
     expect(r.actions.filter((a) => a.kind === 'val').map((a) => (a as { said?: string }).said)).toEqual(['150', '2.0']);
   });
 
+  it('a hyphenated readout id is said (eval D20: id="height-low", {{val id=height-low}} parsed as height_low)', () => {
+    const r = said(`{{svg <g id="paths" data-const="h=12.5"><text id="height-low" x="20" y="40" font-size="16" data-val="h" data-fmt="1">H = {} m</text></g>}} It peaks at {{val id=height-low}} metres.`);
+    expect(r.words).toBe('It peaks at 12.5 metres.');
+  });
+
   it('a readout follows a tween: the next sentence says the new value', () => {
     const r = said(`{{svg ${RIVER}}} Now {{val id=crossing}}. {{tween c=2 dur=2}} Then {{val id=crossing}}.`);
     expect(r.words).toBe(`Now 150. Then ${Math.round(300 / Math.sqrt(2.5 ** 2 - 4))}.`);

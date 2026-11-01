@@ -52,6 +52,12 @@ type PlotSrc = Extract<RawAction, { kind: 'plot' }> & { id?: string; chart?: str
 export const UNBOUND_TEXT = '—';
 
 
+/**
+ * A readout's name as {{val id=…}} reaches it: the tag parsers turn '-' into '_' (eid), so an svg text
+ * id="height-low" must be found as height_low (eval D20, 2026-11-01: four readouts said as unbound).
+ */
+const readoutKey = (id: string) => id.toLowerCase().replace(/-/g, '_');
+
 export class GateState {
   readonly values: Value[] = [];
   /** Named numbers, lowercase (the expression language reads names lowercased). */
@@ -315,7 +321,7 @@ export class GateState {
       const v = field === 'x' ? r.x : field === 'y' ? r.y : field == null ? r.v : NaN;
       return Number.isFinite(v) ? { v } : `${ref}: no such value`;
     }
-    const ro = !idx && !field ? this.readouts.get(id.toLowerCase()) : undefined;
+    const ro = !idx && !field ? this.readouts.get(readoutKey(id)) : undefined;
     if (ro && !this.blocks.has(id)) return { v: ro.v, text: ro.text };
     const b = this.blocks.get(id);
     if (!b && !idx && !field && id.toLowerCase() in this.consts) return { v: this.consts[id.toLowerCase()] };
@@ -442,7 +448,7 @@ export class GateState {
     for (const x of this.svg.values) {
       if (!Number.isFinite(x.v)) continue;
       this.values.push({ v: x.v, source: 'computed', of: x.id ?? 'svg', beat, shown: x.text, ...(x.label ? { label: x.label } : {}), ...(x.unit ? { unit: x.unit } : {}), ...(x.words ? { words: x.words } : {}) });
-      if (x.id) this.readouts.set(x.id.toLowerCase(), { v: x.v, text: x.text });
+      if (x.id) this.readouts.set(readoutKey(x.id), { v: x.v, text: x.text });
     }
   }
 
