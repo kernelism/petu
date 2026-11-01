@@ -19,7 +19,10 @@
  *  data-set="cx: 300+120*cos(th); r: 8*m"        any numeric attribute as a formula (board units)
  *  data-rotate="deg[, cx, cy]"  data-translate="dx, dy"   a transform after the element's own
  *  <text data-val="pi*sqrt(R/g)/60" data-fmt="1" data-unit="min">   computed text; a "{}" in the
- *                                    text's own words is replaced (else the value + unit is the text)
+ *                                    text's own words is replaced (else the value + unit is the text);
+ *                                    with an id it is a readout the narration says as {{val id=…}}
+ *  data-schematic                    a sketch, not a plot: its hand-placed dots and typed numbers are
+ *                                    left alone (snapMarkers, svgboard/check.ts grounded)
  *
  * <point>: `cross(d,s)` · `at(d, x=80)` · `at(d, y=900)` · `at(c, t=1.2)` · `max(f)` · `min(f)` ·
  * `pt(ax, x, y)` (data coords) · `onx(P)` / `ony(P)` (P's foot on the frame's x / y axis) · a named
@@ -359,7 +362,8 @@ export function resolveData(g: Element, sc: DataScope): Problem[] {
  * at(c, x=…), written as its data-at (data-snapped keeps what it became): from then on the engine places
  * it, so it follows a tween and the gate checks the point that is drawn. Reach is relative to the frame
  * (8% / 4% of its shorter side). Two candidates: never guessed; marked data-snap-ambiguous for the gate.
- * A dot in a [data-schematic] group, a transformed one, or one off every curve is left as it is.
+ * A dot in a [data-schematic] group, a transformed one, or one off every curve is left as it is. Each dot
+ * is decided once (data-snap-done): a later resolve (a tween's frame) never snaps what the first left.
  */
 export const SNAP_CROSS = 0.08, SNAP_CURVE = 0.04;
 /** A point marker: a small circle (or ellipse), r ≤ 8 board units. */
@@ -371,10 +375,11 @@ export const isMarker = (el: Element): boolean => {
 /** Placed by the engine: its own data-at / data-set of its centre, or an ancestor's data-at / data-translate. */
 export const enginePlaced = (el: Element): boolean => el.hasAttribute('data-at') || /\bc[xy]\s*:/.test(el.getAttribute('data-set') ?? '') || !!el.parentElement?.closest('[data-at],[data-translate]');
 function snapMarkers(g: Element, sc: DataScope): void {
-  const marks = [g, ...Array.from(g.querySelectorAll('circle,ellipse'))].filter((el) => isMarker(el) && !enginePlaced(el) && !el.closest('[data-schematic],[data-engine],[data-defs]') && !el.hasAttribute('data-bad'));
+  const marks = [g, ...Array.from(g.querySelectorAll('circle,ellipse'))].filter((el) => isMarker(el) && !el.hasAttribute('data-snap-done') && !enginePlaced(el) && !el.closest('[data-schematic],[data-engine],[data-defs]') && !el.hasAttribute('data-bad'));
+  // Decided once, on the first resolve: a tween frame never moves a dot the first draw left where it was.
+  for (const el of marks) el.setAttribute('data-snap-done', '');
   if (!marks.length || !sc.curves.size) return;
   for (const el of marks) {
-    el.removeAttribute('data-snap-ambiguous');
     let tf = false;
     for (let e: Element | null = el; e && !tf; e = e === g ? null : e.parentElement) tf = !!e.getAttribute('transform');
     if (tf) continue;

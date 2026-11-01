@@ -94,3 +94,22 @@ describe('typed numbers on a board with a data model', () => {
     expect(check('<g id="plain"><text x="20" y="40" font-size="16">45 min</text><circle cx="50" cy="50" r="4"/></g>').notes.filter((n) => /grounded/.test(n))).toEqual([]);
   });
 });
+
+describe('a snap is decided once', () => {
+  it('a dot the first resolve left alone stays put when a tween later moves a curve under it', () => {
+    // s = 400 + m*x with m=5; the dot sits on where s would be with m=7, out of reach at first.
+    const src = `<g id="mv" data-const="m=5">${FRAME.replace('400+5*x', '400+m*x')}<circle cx="0" cy="0" r="4"/></g>`;
+    const sc = newScope();
+    resolveData(parseGroup(src.replace('<circle cx="0" cy="0" r="4"/>', '')) as Element, sc);
+    const Q = point('pt(ax, 30, 610)', sc); // on s once m = 7
+    const g = parseGroup(src.replace('cx="0" cy="0"', `cx="${Q.x}" cy="${Q.y}"`)) as Element;
+    const sc2 = newScope();
+    resolveData(g, sc2);
+    const c = g.querySelector('circle')!;
+    expect(c.hasAttribute('data-at')).toBe(false);
+    sc2.consts.m = 7;
+    resolveData(g, sc2);
+    expect(c.hasAttribute('data-at')).toBe(false);
+    expect(+c.getAttribute('cx')!).toBeCloseTo(Q.x, 5);
+  });
+});
