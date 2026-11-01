@@ -956,7 +956,7 @@ export default function App() {
           question: q, page, ink: () => taken?.strokes ?? [], handlers, onGrounding: (g) => { groundingRef.current = g; },
           onGrounds: (gs) => { for (const g of gs) pageTexts.set(g.page, g.lines.map((l) => l.text).join('\n')); },
           ...(gate ? { released: () => gate!.releasedText() } : {}),
-          moment, history: conv.history, memory: conv.memory,
+          moment, ...(run.check && run.checkPage ? { checkPage: run.checkPage } : {}), history: conv.history, memory: conv.memory,
         })
         : run.again
           ? async function* (signal) {

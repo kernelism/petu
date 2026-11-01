@@ -43,8 +43,10 @@ export type AgentAsk = {
   onGrounds?(pages: PageGround[]): void;
   /** The text the live gate released (what played): memory records it rather than the raw stream. */
   released?(): string;
-  /** The moment the question is asked in (an aside, what the student points at, a check reply): sent with stage 2. */
+  /** The moment the question is asked in (an aside, what the student points at, a check reply): sent with stage 2, and (check, about) to the scout. */
   moment?: Pick<AskContext, 'aside' | 'about' | 'check'>;
+  /** The page the open check (moment.check) was offered on (moment.ts checkPageOf). Default: `page`. */
+  checkPage?: number;
   /**
    * The conversation's own history and memory (a saved question keeps its own: src/session/). Default:
    * the document's. Read when asked and written when the answer ends, so a stopped answer's record lands
@@ -138,6 +140,7 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
         page: a.page, digest, pageText: vis.pageText, ...(phase ? { phase } : {}),
         ...(sc0?.section ? { section: sc0.section } : {}), ...(mem ? { memory: mem } : {}),
         ...(sc0?.candidates ? { candidates: sc0.candidates } : {}), ...(sc0?.image ? { image: sc0.image } : {}),
+        ...(a.moment?.check ? { check: { q: a.moment.check, page: a.checkPage ?? a.page } } : {}), ...(a.moment?.about ? { about: a.moment.about } : {}),
       }, signal);
       // The session memory records what this answer taught once it has played (or was stopped).
       let script = '';
