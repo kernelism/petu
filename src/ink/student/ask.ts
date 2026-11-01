@@ -20,7 +20,7 @@ export const EXPLAIN_THIS = 'Explain this.';
  * text with a crop of the page; a stroke still being read goes too). Then a new round starts: these
  * marks stay on the page as notes and are not sent again.
  */
-export function takeMarks(alive: (t: Target) => boolean = targetAlive): { context: string; labels: string[]; strokes: StudentStroke[] } {
+export function takeMarks(alive: (t: Target) => boolean = targetAlive): { context: string; labels: string[]; strokes: StudentStroke[]; page?: number } {
   const st = ink.get();
   const all = marks.all();
   const sent = freshMarks(all, new Set(st.strokes.map((s) => s.id)), st.round, alive);
@@ -28,7 +28,10 @@ export function takeMarks(alive: (t: Target) => boolean = targetAlive): { contex
   const inMark = new Set(all.flatMap((m) => m.strokes));
   const strokes = st.strokes.filter((s) => s.on == null && s.round === st.round && (inSent.has(s.id) || !inMark.has(s.id)));
   ink.nextRound();
-  return { context: marksContext(sent), labels: sent.map(markLabel), strokes };
+  // The page the marks are on (the asked page, src/agent/moment.ts askedPage): the latest page mark's, else the latest page stroke's.
+  const onPage = [...sent].reverse().find((m) => 'page' in m.target)?.target as { page: number } | undefined;
+  const page = onPage?.page ?? strokes.filter((s) => s.page > 0).at(-1)?.page;
+  return { context: marksContext(sent), labels: sent.map(markLabel), strokes, ...(page ? { page } : {}) };
 }
 
 /** A mark's target is still there: a page always is (a new document resets the marks); a board section may have left. */
