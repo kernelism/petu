@@ -115,17 +115,38 @@ function dice(a: string, b: string): number {
   return total ? (2 * inter) / total : 0;
 }
 
-function fuzzy(text: string, q: string): [number, number] | null {
+/** A fuzzy hit must score at least this (Dice on bigrams): below it the words are a paraphrase, not a copy. */
+export const FUZZY_MIN = 0.85;
+
+/**
+ * Words that carry a claim's direction. A fuzzy window that differs from the quote only in one of these
+ * says the opposite ("a larger learning rate" lit "A small learning rate…" at 0.65, diag C8), so a
+ * window whose negations or comparatives are not the quote's is never a hit, however close its letters.
+ */
+const NEGATION = /^(?:not|no|never|none|nor|neither|nothing|without|cannot|.*n't)$/;
+const DIRECTION: Record<string, '+' | '-'> = Object.fromEntries([
+  ...'more most larger large largest bigger big biggest greater greatest higher high highest increase increases increasing rises rise faster fast longer long wider above over max maximum'.split(' ').map((w) => [w, '+']),
+  ...'less least smaller small smallest fewer fewest lesser lower low lowest decrease decreases decreasing falls fall slower slow shorter short narrower below under min minimum'.split(' ').map((w) => [w, '-']),
+]);
+function polarity(s: string): string {
+  const ws = s.split(/[^\p{L}\p{N}']+/u).filter(Boolean);
+  const neg = ws.filter((w) => NEGATION.test(w)).length % 2;
+  const dir = [...new Set(ws.flatMap((w) => DIRECTION[w] ?? []))].sort().join('');
+  return `${neg}${dir}`;
+}
+
+function fuzzy(text: string, q: string): { range: [number, number]; score: number } | null {
   if (q.length < 12) return null; // short quotes are too ambiguous to guess at: a wrong highlight is worse than none
   const words: { s: number; e: number }[] = [];
   for (const m of text.matchAll(/\S+/g)) words.push({ s: m.index!, e: m.index! + m[0].length });
   const n = q.split(' ').length;
-  let best: [number, number] | null = null, bestScore = 0.65;
+  const pq = polarity(q);
+  let best: { range: [number, number]; score: number } | null = null;
   for (let size = Math.max(1, n - 2); size <= n + 2; size++) {
     for (let i = 0; i + size <= words.length; i++) {
       const s = words[i].s, e = words[i + size - 1].e;
       const score = dice(text.slice(s, e), q);
-      if (score > bestScore) { bestScore = score; best = [s, e]; }
+      if (score >= FUZZY_MIN && score > (best?.score ?? 0) && polarity(text.slice(s, e)) === pq) best = { range: [s, e], score };
     }
   }
   return best;
@@ -148,10 +169,14 @@ const isWordChar = (c: string | undefined) => !!c && /[\p{L}\p{N}]/u.test(c);
 
 /**
  * Finds `quote` in the page's text runs. Returns one rect per line, in model coords, or [].
- * Exact matches on word boundaries win; among several, the one nearest `near` (or the first).
+ * Exact matches on word boundaries win; among several, the one nearest `near` (or the first). A
+ * fuzzy hit counts only with `near`: words that are not on the page, with no position to confirm the
+ * guess, light a line the narration does not say (the gate's shadow board is this same call, so the
+ * gate reports it as not found and the tag is stripped or repaired to a mark=#tN).
  */
 export function locateQuote(pageRuns: TextRun[], quote: string, near?: { x: number; y: number }, opts: LocateOpts = {}): PageRect[] {
-  return findQuote(pageRuns, quote, near, opts)?.rects ?? [];
+  const hit = findQuote(pageRuns, quote, near, opts);
+  return hit && (!hit.fuzzy || near) ? hit.rects : [];
 }
 
 /** The quote as the locator normalizes it (superscript markup, hyphens and extra spaces gone). */
@@ -172,8 +197,11 @@ export function rangeRects(ix: PageIndex, range: [number, number], opts: LocateO
   return rectsFor(ix.runs, ix.map, range, opts.measure ?? defaultMeasure());
 }
 
-/** locateQuote, plus where the hit sits in the page index (`range`). */
-export function findQuote(pageRuns: TextRun[], quote: string, near?: { x: number; y: number }, opts: LocateOpts = {}): { rects: PageRect[]; range: [number, number]; index: PageIndex } | null {
+/** A hit: its rects, where it sits in the page index (`range`), and whether it is a guess (`fuzzy`, with its Dice `score`; exact hits score 1). */
+export type QuoteHit = { rects: PageRect[]; range: [number, number]; index: PageIndex; fuzzy: boolean; score: number };
+
+/** locateQuote's search, fuzzy hits included (callers decide whether a guess without `near` counts). */
+export function findQuote(pageRuns: TextRun[], quote: string, near?: { x: number; y: number }, opts: LocateOpts = {}): QuoteHit | null {
   const plain = quote.replace(/\^\(([^()]*)\)/g, '$1').replace(/\^(?=\S)/g, '');
   const q = quoteKey(quote);
   if (!q || !pageRuns.length) return null;
@@ -190,18 +218,19 @@ export function findQuote(pageRuns: TextRun[], quote: string, near?: { x: number
   const whole = hits.filter((i) => !isWordChar(text[i - 1]) && !isWordChar(text[i + q.length]));
   const candidates = (whole.length ? whole : q.length >= 12 ? hits : []).map((i) => [i, i + q.length] as [number, number]);
   if (!candidates.length) candidates.push(...compactHits(text, q));
+  let score = 1;
   if (!candidates.length) {
     const f = fuzzy(text, q);
-    if (f) candidates.push(f);
+    if (f) { candidates.push(f.range); score = f.score; }
   }
   if (!candidates.length) return null;
   if (short && !near && candidates.length !== 1) return null;
-  const results = candidates.map((range) => ({ range, rects: rectsFor(runs, map, range, opts.measure ?? defaultMeasure()) })).filter((r) => r.rects.length);
+  const results = candidates.map((range) => ({ range, rects: rectsFor(runs, map, range, opts.measure ?? defaultMeasure()), index, fuzzy: score < 1, score })).filter((r) => r.rects.length);
   if (!results.length) return null;
-  if (!near) return { ...results[0], index };
+  if (!near) return results[0];
   const dist = (rs: PageRect[]) => Math.hypot(rs[0].x + rs[0].w / 2 - near.x, rs[0].y + rs[0].h / 2 - near.y);
   const best = results.reduce((b, r) => (dist(r.rects) < dist(b.rects) ? r : b));
-  return short && dist(best.rects) > NEAR_MAX ? null : { ...best, index };
+  return short && dist(best.rects) > NEAR_MAX ? null : best;
 }
 
 function rectsFor(runs: TextRun[], map: Slot[], range: [number, number], measure: Measure | null): PageRect[] {

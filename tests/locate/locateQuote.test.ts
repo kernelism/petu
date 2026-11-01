@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { locateQuote, normalizeText, type TextRun } from '../../src/locate/locateQuote';
+import { FUZZY_MIN, findQuote, locateQuote, normalizeText, type TextRun } from '../../src/locate/locateQuote';
 
 const run = (text: string, x: number, y: number, w: number, h = 20): TextRun => ({ text, rect: { x, y, w, h } });
 
@@ -42,8 +42,29 @@ describe('locateQuote', () => {
     expect(locateQuote(runs, 'the first constraint')).toHaveLength(1);
   });
 
-  it('falls back to a fuzzy match', () => {
-    expect(locateQuote(runs, 'its match should lie on the')).not.toHaveLength(0);
+  it('falls back to a fuzzy match only for a near-copy, and only with near=', () => {
+    // A typo or an inflection (Dice >= 0.85) is a copy; a paraphrase (0.7) is not.
+    const typo = findQuote(runs, 'its match must lie on teh epipolar');
+    expect(typo?.fuzzy).toBe(true);
+    expect(typo!.score).toBeGreaterThanOrEqual(FUZZY_MIN);
+    expect(findQuote(runs, 'its match should lie on the')).toBeNull();
+    // A guess with no position is not drawn (the gate's shadow board reports it as not found).
+    expect(locateQuote(runs, 'its match must lie on teh epipolar')).toEqual([]);
+    expect(locateQuote(runs, 'its match must lie on teh epipolar', { x: 300, y: 115 })).toHaveLength(2);
+    // An exact hit reports itself as such.
+    expect(findQuote(runs, 'its match must')).toMatchObject({ fuzzy: false, score: 1 });
+  });
+
+  it('never takes a fuzzy window that flips a negation or a comparative', () => {
+    // Letter-close (Dice 0.95, 0.91, 0.85) but the opposite claim.
+    expect(findQuote(runs, 'its match must not lie on the epipolar')).toBeNull();
+    const lr = [run('A small learning rate makes each step tiny and slow.', 50, 300, 600), run('A small rate does not overshoot the minimum.', 50, 400, 600)];
+    expect(findQuote(lr, 'a large learning rate makes each step tiny')).toBeNull();
+    expect(findQuote(lr, 'a small rate does overshoot the minimum')).toBeNull();
+    // The diag C8 probe: an off-page claim lit its opposite at 0.65.
+    expect(findQuote(lr, 'a larger learning rate makes steps big')).toBeNull();
+    // Same polarity, a typo: still found.
+    expect(findQuote(lr, 'a small rate does not overshot the minimum')?.fuzzy).toBe(true);
   });
 
   it('returns [] when nothing is close', () => {

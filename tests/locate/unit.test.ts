@@ -34,6 +34,13 @@ describe('meaningfulUnit (synthetic paragraphs)', () => {
     resolvable(para, 1, u);
   });
 
+  it('never grows a fuzzy guess made without near= (it would mark a sentence nobody quoted)', () => {
+    expect(meaningfulUnit(para, 'compare teh p-value and the significance')).toBeNull();
+    expect(meaningfulUnit(para, 'compare teh p-value and the significance', { x: 700, y: 110 })?.kind).toBe('sentence');
+    // The opposite claim is no hit at all, near= or not.
+    expect(meaningfulUnit(para, 'A large p-value is evidence', { x: 700, y: 138 })).toBeNull();
+  });
+
   it('keeps a symbol or a short term as quoted', () => {
     expect(meaningfulUnit(para, 'alpha')).toBeNull();
     expect(meaningfulUnit(para, 'significance level')).toBeNull();

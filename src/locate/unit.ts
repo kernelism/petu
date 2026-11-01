@@ -87,7 +87,8 @@ type Ch = { c: string; pos: number; upper: boolean };
 export function meaningfulUnit(pageRuns: TextRun[], quote: string, near?: { x: number; y: number }, opts: LocateOpts = {}): Unit | null {
   if (words(quoteKey(quote)) <= TERM_WORDS) return null;
   const hit = findQuote(pageRuns, quote, near, opts);
-  if (!hit) return null;
+  // A guess without a position is no hit (locateQuote): growing it would mark a sentence nobody quoted.
+  if (!hit || (hit.fuzzy && !near)) return null;
   const ix = hit.index;
   const [hs, he] = hit.range;
   const lines = textLines(pageRuns, opts.aspect ?? 1);

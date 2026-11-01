@@ -309,6 +309,7 @@ describe('Director unit highlights', () => {
   const runs = [
     run('We reject the null when the statistic is extreme. To decide, compare the', 50, 100, 880),
     run('p-value and the significance level alpha. A small p-value is evidence', 50, 128, 860),
+    run('against the null.', 50, 156, 200),
   ];
 
   function make(units?: boolean) {
