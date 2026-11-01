@@ -35,6 +35,25 @@ function linkStore(board: SvgBoard, store: KitStore, region: string): void {
   };
 }
 
+/**
+ * A withheld beat's definitions (defs.ts): its constants, frames, named curves and points join the
+ * board's data at once; nothing is drawn, framed or registered. Kept (hidden) when bound, so a tween
+ * moves what later groups built on them. A string is why it could not be taken.
+ */
+export async function defineSvgGroup(a: SvgAction, env: BuildEnv): Promise<string | void> {
+  if (!a.region) return 'no svg board';
+  const ctx = await env.ctx({ region: a.region });
+  if (typeof ctx === 'string') return ctx;
+  const board = boardIn(ctx.layers.agent);
+  if (!board) return 'no svg board';
+  linkStore(board, kitStore(env.registry), a.region);
+  const s = prepareGroup(board, a.svg, textPx(ctx, 'm'), ctx.scale() * (1000 / board.w));
+  if (typeof s === 'string') return s;
+  s.el.setAttribute('display', 'none');
+  board.root.appendChild(s.el);
+  if (hasBound(s.el)) board.bound.push(s.el);
+}
+
 /** Builds the plan: sanitized and measured now (hidden), drawn on its word. A string is a skip reason. */
 export async function buildSvgGroup(a: SvgAction, env: BuildEnv): Promise<ElementPlan | string> {
   if (!a.region) return 'no svg board';

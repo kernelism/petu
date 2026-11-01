@@ -12,6 +12,7 @@ import { parseGroup } from './sanitize';
 import { newScope, resolveData, type DataScope } from './data';
 import { prepareText } from './polish';
 import { FONT_FIGURE } from './style';
+import { DEFS_ATTR } from './wire';
 import { settle, type Drawn } from './settle';
 
 export type Pt = { x: number; y: number };
@@ -185,6 +186,8 @@ export function groupGeometry(src: string | Element, minFont = 16, scope?: DataS
   if (typeof g === 'string') return { texts: [], segs: [], box: null, error: g };
   // Exact data first (the geometry checked is the geometry drawn), then the text fitting the renderer does.
   const problems = typeof src === 'string' ? resolveData(g, scope ?? newScope()).map((p) => p.detail) : [];
+  // A withheld beat's definitions (defs.ts): its data counts, it draws nothing.
+  if (g.hasAttribute(DEFS_ATTR)) return { texts: [], segs: [], box: null, ...(problems.length ? { problems } : {}) };
   const raw = settleOn ? g.cloneNode(true) as Element : null;
   if (typeof src === 'string') prepareText(g, minFont);
   if (raw && settleOn) { try { settle(g, raw, settleOn.prior, settleOn.w); } catch { /* best-effort, as the renderer */ } }

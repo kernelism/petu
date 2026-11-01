@@ -356,6 +356,8 @@ export const MOVE_KINDS = new Set(['contrast', 'limit', 'beforeafter']);
  * draws it on the first of them still to be spoken in its beat, else where the tag stands.
  */
 export type SvgAction = { kind: 'svg'; id?: string; svg: string; anchor?: string[];
+  /** A withheld beat's definitions (src/svgboard/defs.ts): taken into the board's data, never drawn or timed as a beat. */
+  defs?: true;
   /** Set by the scheduler when it fires: this group is the k-th of n that share one beat's words (they came together). */
   slot?: { k: number; n: number };
   /** The board section it draws in (set by the director when it fires). */ region?: string; /** never set: a group is never on a page */ page?: undefined };

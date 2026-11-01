@@ -1,4 +1,5 @@
 // src/script/parseTag.ts
+import { isDefsGroup } from '../svgboard/wire';
 import { REGION_H, type Compass, type RawEnd, type Pt, type RawAction, type Target, type Weight } from './types';
 import { tokenize, unquote } from './tokenize';
 import { NAME, normName, parsePtArg, worldPt, isBlockRef, isFormula, type PtArg } from './pointExpr';
@@ -425,5 +426,6 @@ function svgGroup(svg: string): RawAction | null {
   const t = svg.trim();
   if (!t.startsWith('<')) return null;
   const id = /^<g\b[^>]*?\bid\s*=\s*["']([^"']+)["']/i.exec(t)?.[1];
+  if (isDefsGroup(t)) return { kind: 'svg', svg: t, defs: true };
   return { kind: 'svg', svg: t, ...(id ? { id, anchor: anchorWords(id) } : {}) };
 }

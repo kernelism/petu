@@ -24,6 +24,10 @@ export const isBeatTagBody = (s: string): boolean => /^\s*beat\s*$/.test(s);
 /** Whether a text uses beat boundaries (the beat wire, 2026-10-31); without them it is read the legacy way. */
 export const hasBeatTags = (text: string): boolean => text.includes(BEAT_TAG);
 
+/** A withheld beat's definitions-only group (src/svgboard/defs.ts). */
+export const DEFS_ATTR = 'data-defs';
+export const isDefsGroup = (svg: string): boolean => /^\s*(?:svg\s*)?<g\b[^>]*\sdata-defs\b/.test(svg);
+
 /** Whether the text right after `{{` opens an svg group tag (`{{svg <…`). */
 export const isSvgTagBody = (s: string): boolean => /^svg\s*</.test(s);
 
