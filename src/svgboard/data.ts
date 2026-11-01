@@ -19,7 +19,10 @@
  *  data-set="cx: 300+120*cos(th); r: 8*m"        any numeric attribute as a formula (board units)
  *  data-rotate="deg[, cx, cy]"  data-translate="dx, dy"   a transform after the element's own
  *  <text data-val="pi*sqrt(R/g)/60" data-fmt="1" data-unit="min">   computed text; a "{}" in the
- *                                    text's own words is replaced (else the value + unit is the text)
+ *                                    text's own words is replaced (else the value + unit is the text);
+ *                                    with an id it is a readout the narration says as {{val id=…}}
+ *  data-schematic                    a sketch, not a plot: its hand-placed dots and typed numbers are
+ *                                    left alone (snapMarkers, svgboard/check.ts grounded)
  *
  * <point>: `cross(d,s)` · `at(d, x=80)` · `at(d, y=900)` · `at(c, t=1.2)` · `max(f)` · `min(f)` ·
  * `pt(ax, x, y)` (data coords) · `onx(P)` / `ony(P)` (P's foot on the frame's x / y axis) · a named
@@ -44,7 +47,8 @@ export type DataScope = {
   curves: Map<string, CurveSpec>;
   points: Map<string, DPt>;
   /** Computed values written this pass (data-val), for the gate's number check. */
-  values: { v: number; of: string; /** The words the text puts before the number ("SSD = {}" → "SSD"): what the narration calls it. */ label?: string }[];
+  values: { v: number; of: string; /** The words the text puts before the number ("SSD = {}" → "SSD"): what the narration calls it. */ label?: string;
+    /** The readout's name (its data-name or id): what `{{val id=…}}` says. */ id?: string; /** The number as the board writes it (fmtValue, data-fmt): what is seen. */ text: string }[];
 };
 
 export const newScope = (consts: Record<string, number> = {}): DataScope => ({ consts, axes: new Map(), curves: new Map(), points: new Map(), values: [] });
@@ -346,7 +350,64 @@ export function resolveData(g: Element, sc: DataScope): Problem[] {
       problems.push({ el, detail: e.message });
     }
   }
+  snapMarkers(g, sc);
   return problems;
+}
+
+/**
+ * A dot the model placed by hand on a plot (cx/cy, no data-at) means a point of a curve, and was often a
+ * little off it (C1, 2026-10-31: a dot labelled E drawn beside the curves' real crossing, so the picture
+ * and its numbers disagreed). Inside a frame, a small circle within reach of exactly one crossing of the
+ * frame's named data-fn curves is placed at cross(a,b), else within reach of exactly one such curve at
+ * at(c, x=…), written as its data-at (data-snapped keeps what it became): from then on the engine places
+ * it, so it follows a tween and the gate checks the point that is drawn. Reach is relative to the frame
+ * (8% / 4% of its shorter side). Two candidates: never guessed; marked data-snap-ambiguous for the gate.
+ * A dot in a [data-schematic] group, a transformed one, or one off every curve is left as it is. Each dot
+ * is decided once (data-snap-done): a later resolve (a tween's frame) never snaps what the first left.
+ */
+export const SNAP_CROSS = 0.08, SNAP_CURVE = 0.04;
+/** A point marker: a small circle (or ellipse), r ≤ 8 board units. */
+export const isMarker = (el: Element): boolean => {
+  const t = el.nodeName.toLowerCase().replace(/^svg:/, '');
+  const r = (k: string) => parseFloat(el.getAttribute(k) ?? '');
+  return t === 'circle' ? r('r') > 0 && r('r') <= 8 : t === 'ellipse' && r('rx') > 0 && r('rx') <= 8 && r('ry') > 0 && r('ry') <= 8;
+};
+/** Placed by the engine: its own data-at / data-set of its centre, or an ancestor's data-at / data-translate. */
+export const enginePlaced = (el: Element): boolean => el.hasAttribute('data-at') || /\bc[xy]\s*:/.test(el.getAttribute('data-set') ?? '') || !!el.parentElement?.closest('[data-at],[data-translate]');
+function snapMarkers(g: Element, sc: DataScope): void {
+  const marks = [g, ...Array.from(g.querySelectorAll('circle,ellipse'))].filter((el) => isMarker(el) && !el.hasAttribute('data-snap-done') && !enginePlaced(el) && !el.closest('[data-schematic],[data-engine],[data-defs]') && !el.hasAttribute('data-bad'));
+  // Decided once, on the first resolve: a tween frame never moves a dot the first draw left where it was.
+  for (const el of marks) el.setAttribute('data-snap-done', '');
+  if (!marks.length || !sc.curves.size) return;
+  for (const el of marks) {
+    let tf = false;
+    for (let e: Element | null = el; e && !tf; e = e === g ? null : e.parentElement) tf = !!e.getAttribute('transform');
+    if (tf) continue;
+    const p = { x: parseFloat(el.getAttribute('cx') ?? ''), y: parseFloat(el.getAttribute('cy') ?? '') };
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+    let ax: Axes | null = null;
+    for (const name of sc.axes.keys()) { try { const a = axesOf(name, sc)!; const b = a.box; if (p.x >= b.x - 2 && p.x <= b.x + b.w + 2 && p.y >= b.y - 2 && p.y <= b.y + b.h + 2) { ax = a; break; } } catch { /* a bad frame snaps nothing */ } }
+    if (!ax) continue;
+    const reach = Math.min(ax.box.w, ax.box.h);
+    const names = [...sc.curves.entries()].filter(([k, c]) => c.kind === 'fn' && !k.startsWith('_c') && lc(c.ax ?? '') === lc(ax!.name)).map(([k]) => k);
+    const d = (q: { x: number; y: number }) => Math.hypot(q.x - p.x, q.y - p.y);
+    const hits: { at: string; q: DPt }[] = [];
+    for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
+      try { const q = point(`cross(${names[i]},${names[j]})`, sc); if (d(q) <= SNAP_CROSS * reach && !hits.some((h) => Math.hypot(h.q.x - q.x, h.q.y - q.y) < 1)) hits.push({ at: `cross(${names[i]},${names[j]})`, q }); } catch { /* they do not cross */ }
+    }
+    if (!hits.length) for (const n of names) {
+      try {
+        const c = curve(n, sc);
+        const near = samples(c, 480).reduce<DPt | null>((b, q) => (!b || d(q) < d(b) ? q : b), null);
+        if (near && d(near) <= SNAP_CURVE * reach) hits.push({ at: `at(${n}, x=${+near.dx.toPrecision(6)})`, q: near });
+      } catch { /* a curve that does not resolve */ }
+    }
+    if (hits.length > 1) { el.setAttribute('data-snap-ambiguous', hits.map((h) => h.at).join(' | ')); continue; }
+    if (!hits.length) continue;
+    el.setAttribute('data-at', hits[0].at);
+    el.setAttribute('data-snapped', hits[0].at);
+    try { resolveOne(el, sc); } catch { el.removeAttribute('data-at'); el.removeAttribute('data-snapped'); }
+  }
 }
 
 function nameOf(el: Element): string | null { return el.getAttribute('data-name') ?? el.getAttribute('data-svg-id') ?? el.getAttribute('id'); }
@@ -452,8 +513,8 @@ function resolveOne(el: Element, sc: DataScope): void {
     if (!el.hasAttribute('data-tpl')) el.setAttribute('data-tpl', el.textContent ?? '');
     const tpl = el.getAttribute('data-tpl')!;
     const label = valueLabel(tpl);
-    sc.values.push({ v, of: nm ?? src, ...(label ? { label } : {}) });
     const num = fmtValue(v, el.getAttribute('data-fmt'));
+    sc.values.push({ v, of: nm ?? src, ...(label ? { label } : {}), ...(nm ? { id: nm } : {}), text: num });
     // "{}" in the text's own words takes the number (the words carry the unit); else value + unit.
     const text = tpl.includes('{}') ? tpl.replace('{}', num) : withUnit(num, el.getAttribute('data-unit'));
     if (tag === 'text' || tag === 'tspan') {

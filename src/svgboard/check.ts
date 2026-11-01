@@ -9,7 +9,7 @@
  * crossing it only notes (the renderer's paper halo keeps it legible).
  */
 import { parseGroup } from './sanitize';
-import { newScope, resolveData, type DataScope } from './data';
+import { enginePlaced, hasData, isMarker, newScope, resolveData, type DataScope } from './data';
 import { prepareText } from './polish';
 import { FONT_FIGURE } from './style';
 import { DEFS_ATTR } from './wire';
@@ -20,7 +20,8 @@ export type Box = { x: number; y: number; w: number; h: number };
 export type TextBox = Box & { text: string; fs: number; group: string; /** The <text> it came from (polish.ts nudges it). */ el?: Element; m?: M;
   /** The curves its data-at point lies on (cross(d,s) → d, s): it labels that point, so touching them is by design. */ on?: string[] };
 export type Seg = { a: Pt; b: Pt; group: string; /** Part of a tiny shape (a dot, a tick): never counts as crossing text. */ tiny?: boolean; /** The named data curve it is part of (data-fn / data-param). */ curve?: string };
-export type GroupGeo = { id?: string; texts: TextBox[]; segs: Seg[]; box: Box | null; error?: string; /** Data attributes that did not resolve (the element is not drawn). */ problems?: string[] };
+export type GroupGeo = { id?: string; texts: TextBox[]; segs: Seg[]; box: Box | null; error?: string; /** Data attributes that did not resolve (the element is not drawn). */ problems?: string[];
+  /** What the grounded rule found (grounded below): flags fail the beat, notes are logged. */ ground?: Grounded };
 export type SvgFlag = { check: 'svg'; detail: string };
 
 export type M = [number, number, number, number, number, number];
@@ -185,9 +186,11 @@ export function groupGeometry(src: string | Element, minFont = 16, scope?: DataS
   const g = typeof src === 'string' ? parseGroup(src) : src;
   if (typeof g === 'string') return { texts: [], segs: [], box: null, error: g };
   // Exact data first (the geometry checked is the geometry drawn), then the text fitting the renderer does.
-  const problems = typeof src === 'string' ? resolveData(g, scope ?? newScope()).map((p) => p.detail) : [];
+  const sc = scope ?? newScope(), v0 = sc.values.length;
+  const problems = typeof src === 'string' ? resolveData(g, sc).map((p) => p.detail) : [];
   // A withheld beat's definitions (defs.ts): its data counts, it draws nothing.
   if (g.hasAttribute(DEFS_ATTR)) return { texts: [], segs: [], box: null, ...(problems.length ? { problems } : {}) };
+  const ground = typeof src === 'string' ? grounded(g, sc, sc.values.slice(v0)) : undefined;
   const raw = settleOn ? g.cloneNode(true) as Element : null;
   if (typeof src === 'string') prepareText(g, minFont);
   if (raw && settleOn) { try { settle(g, raw, settleOn.prior, settleOn.w); } catch { /* best-effort, as the renderer */ } }
@@ -259,7 +262,85 @@ export function groupGeometry(src: string | Element, minFont = 16, scope?: DataS
   walk(g, I);
   const fin = pts.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
   const box = fin.length ? (() => { const x = Math.min(...fin.map((p) => p.x)), y = Math.min(...fin.map((p) => p.y)); return { x, y, w: Math.max(...fin.map((p) => p.x)) - x, h: Math.max(...fin.map((p) => p.y)) - y }; })() : null;
-  return { ...(id ? { id } : {}), texts, segs, box, ...(problems.length ? { problems } : {}) };
+  return { ...(id ? { id } : {}), texts, segs, box, ...(problems.length ? { problems } : {}), ...(ground && (ground.notes.length || ground.flags.length) ? { ground } : {}) };
+}
+
+// ------------------------------------------------------------------------------------------------
+// Grounded: on a board with a data model, numbers and points come from the engine (C1, 2026-10-31).
+
+export type Grounded = { flags: string[]; notes: string[] };
+/** How close (relative) a typed number beside a readout must be to read as that readout, typed wrong. */
+export const GROUND_NEAR = 0.15;
+/** How far (board units, about three lines of text) a typed label may be from a readout to be "beside" it. */
+export const GROUND_BESIDE = 64;
+/** Words before a number that make it a reference, not a quantity ("step 2", "image 3"). */
+const REF = /(?:^|\s)(?:page|p\.|step|steps|figure|fig\.?|image|images|eq\.?|equation|case|part|row|column|layer|stage|level)\s*$/i;
+
+/**
+ * The quantities typed into a text: its own words, not what a data-val writes (a readout's template
+ * counts: "crossing {} s, not 120 s" types 120). Exempt by rule: digits after a letter (names: E1, x2, P′1),
+ * small whole numbers ≤ 12 (counts, factors, "×2"), years, references ("step 2").
+ */
+export function typedNumbers(el: Element): { v: number; dp: number; text: string }[] {
+  const parts: string[] = [];
+  const walk = (e: Element) => {
+    if (e.hasAttribute('data-val')) { parts.push((e.getAttribute('data-tpl') ?? '').replace('{}', ' ')); return; }
+    for (const n of Array.from(e.childNodes)) if (n.nodeType === 3) parts.push(n.textContent ?? ''); else if (n.nodeType === 1) walk(n as Element);
+  };
+  walk(el);
+  const s = parts.join(' ');
+  const out: { v: number; dp: number; text: string }[] = [];
+  for (const m of s.matchAll(/(?<![\p{L}_\d.,′'])[−-]?\d+(?:,\d{3})*(?:\.\d+)?/gu)) {
+    const t = m[0].replace(/^−/, '-'), v = Number(t.replace(/,/g, '')), dp = (t.split('.')[1] ?? '').length;
+    if (!Number.isFinite(v) || (dp === 0 && Math.abs(v) <= 12) || (dp === 0 && v >= 1900 && v <= 2100) || REF.test(s.slice(0, m.index))) continue;
+    out.push({ v, dp, text: m[0] });
+  }
+  return out;
+}
+
+/**
+ * On a board that has a data model (this group uses data-*, or the board has constants), a number typed
+ * by hand and a dot placed by hand are the model's own arithmetic beside the engine's, and that is where
+ * the board contradicted itself (C1: "depth 8" on a dot at depth 6, "150 s" typed beside a computed one).
+ *  - a point marker (r ≤ 8) must be engine-placed (data-at, or data-set of its centre, or inside a data-at
+ *    group); a hand dot next to a curve or crossing was already placed on it (data.ts snapMarkers): a note;
+ *    one between two candidates is a flag (never guessed); any other hand dot is a note;
+ *  - a text with a typed quantity (typedNumbers) is a note: write it as data-val;
+ *  - a typed quantity beside a readout (the same text, or within GROUND_BESIDE) that is within GROUND_NEAR of
+ *    it but not equal at the coarser precision is a flag: the board would show two numbers for one thing.
+ * Exempt: [data-schematic] parts (a sketch, not a plot), the engine's own ticks (data-engine), letter
+ * labels and names, counts ≤ 12. Ungrounded parts only note until the prompt teaches the rule and the
+ * corpus is measured again (60/101 dots and most digit labels were hand-made before it).
+ */
+export function grounded(g: Element, sc: DataScope, readouts: DataScope['values']): Grounded {
+  const flags: string[] = [], notes: string[] = [];
+  if (!hasData(g) && !Object.keys(sc.consts).length) return { flags, notes };
+  const name = g.getAttribute('id') ? `group ${g.getAttribute('id')}` : 'a group';
+  const free = (e: Element) => !e.closest('[data-schematic],[data-engine]');
+  for (const el of [g, ...Array.from(g.querySelectorAll('circle,ellipse'))].filter((e) => isMarker(e) && free(e))) {
+    const at = `(${el.getAttribute('cx') ?? '?'}, ${el.getAttribute('cy') ?? '?'})`;
+    if (el.hasAttribute('data-snap-ambiguous')) flags.push(`${name}: the dot at ${at} sits between ${el.getAttribute('data-snap-ambiguous')}: place it with data-at`);
+    else if (el.hasAttribute('data-snapped')) notes.push(`${name}: a hand-placed dot was put on ${el.getAttribute('data-snapped')}`);
+    else if (!enginePlaced(el)) notes.push(`${name}: the dot at ${at} is placed by hand: place it with data-at`);
+  }
+  // Each readout with the text that shows it (resolveData writes them in document order).
+  const vals = Array.from(g.querySelectorAll('[data-val]:not([data-bad])'));
+  const at = (e: Element) => { const t = e.closest('text') ?? e; return { x: num(t.getAttribute('x')), y: num(t.getAttribute('y')), t }; };
+  const shown = vals.length === readouts.length ? readouts.map((r, i) => ({ ...r, ...at(vals[i]) })).filter((r) => Number.isFinite(r.v)) : [];
+  for (const el of Array.from(g.querySelectorAll('text')).filter(free)) {
+    const p = at(el);
+    // Beside: the same text, or one within GROUND_BESIDE units (a label typed next to the readout).
+    const beside = shown.filter((r) => r.t === el || Math.hypot(r.x - p.x, r.y - p.y) <= GROUND_BESIDE);
+    for (const n of typedNumbers(el)) {
+      const off = beside.find((r) => {
+        const dp = Math.min(n.dp, (r.text.replace(/,/g, '').split('.')[1] ?? '').length);
+        return Math.abs(n.v - r.v) > 0.5 * 10 ** -dp + 1e-9 && Math.abs(n.v - r.v) <= GROUND_NEAR * Math.abs(r.v);
+      });
+      if (off) flags.push(`${name}: "${n.text}" is typed beside the readout ${off.text}${off.label ? ` (${off.label})` : ''} it contradicts: write it as data-val`);
+      else notes.push(`${name}: "${n.text}" is typed by hand: write it as data-val`);
+    }
+  }
+  return { flags, notes };
 }
 
 export const overlapArea = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
@@ -305,6 +386,8 @@ export function checkGroups(srcs: string[], board: BoardState, minFont = 16, sco
     if (g.error) { flags.push({ check: 'svg', detail: `${name}: ${g.error}` }); continue; }
     // A data attribute that does not resolve: that element is never drawn (fix the formula or drop it).
     for (const p of g.problems ?? []) flags.push({ check: 'svg', detail: `${name}: ${p}` });
+    for (const f of g.ground?.flags ?? []) flags.push({ check: 'svg', detail: f });
+    for (const n of g.ground?.notes ?? []) notes.push(`svg grounded: ${n}`);
     if (g.id) { if (ids.has(g.id)) flags.push({ check: 'svg', detail: `id "${g.id}" is used twice` }); ids.add(g.id); }
     if (g.box) {
       const b = g.box, tol = 2;

@@ -5,6 +5,12 @@ import { SVG_EXAMPLES } from '../../server/prompt/svgExamples';
 import { BOARD_W } from '../../src/svgboard/wire';
 import { parseTag } from '../../src/script/parseTag';
 import { ScriptParser } from '../../src/script/parser';
+import { acceptGroups, checkGroups, newBoardState } from '../../src/svgboard/check';
+import { fmtValue, newScope } from '../../src/svgboard/data';
+import { unescapeSvg } from '../../src/svgboard/wire';
+import { beatsOf as beatsOfWire } from '../../src/svgboard/beat';
+import { boardNumbers, numberFixes } from '../../src/gate/check';
+import { wireOf } from '../../src/demo/svg/index';
 import { ScriptFilter } from '../../server/scriptFilter';
 
 /**
@@ -160,7 +166,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.8');
+    expect(PROMPT_VERSION).toBe('p6.10');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -174,9 +180,10 @@ describe('system prompt (svg, default)', () => {
   });
 
   it('has no tag-DSL card: only page pointing tags', () => {
-    expect(s).not.toMatch(/\bTAGS \(|KIT \(|SCENE \(|\{\{(sketch|scene|let|const|plot|grid|bars|node|val|show|svgboard)\b/);
+    expect(s).not.toMatch(/\bTAGS \(|KIT \(|SCENE \(|\{\{(sketch|scene|let|const|plot|grid|bars|node|show|svgboard)\b/);
     const kinds = new Set([...s.matchAll(/\{\{(\w+)/g)].map((m) => m[1]));
-    for (const k of kinds) expect(['scroll', 'highlight', 'underline', 'circle', 'box', 'tween'], k).toContain(k); // tween: the svg engine's motion (data.ts)
+    // tween: the svg engine's motion (data.ts); val: a board number said by reference (p6.9, engine.ts readouts)
+    for (const k of kinds) expect(['scroll', 'highlight', 'underline', 'circle', 'box', 'tween', 'val'], k).toContain(k);
   });
 
   it('every pointing tag it shows parses', () => {
@@ -218,13 +225,22 @@ describe('system prompt (svg, default)', () => {
     expect(s).toMatch(/"is that complete\?" is answered by finishing, never with a yes or a no/);
   });
 
+  it('p6.9 (numbers): a board number is said by reference; the plan carries givens, not results; points and labels on a plot are the engine\'s', () => {
+    expect(s).toMatch(/a number the board computes is said by reference, never retyped: give its data-val text an id and say \{\{val id=crossing\}\}/);
+    expect(s).toMatch(/<text id="crossing" data-val="W\/u"/);
+    expect(s).toMatch(/its given numbers, and the formulas for what the board will compute from them/);
+    expect(s).toMatch(/every point on a curve is placed by data-at \(cross\(d,s\) where two curves meet/);
+    expect(s).toMatch(/data-schematic/);
+    expect(s).not.toMatch(/compute yourself|its computed numbers/);
+  });
+
   it('p6.5 (no dead air): the script starts with spoken words, before the plan, after an opening too', () => {
     expect(s).toMatch(/first characters are spoken words, never the plan or a group/);
     expect(s).toMatch(/after an opening already spoken, its next sentences/);
   });
 
   it('states the teacher-at-a-whiteboard brief and the streamed beat format', () => {
-    for (const p of [/great teacher at a whiteboard/, /Draw the mechanism, not names/, /ONE concrete case/, /real numbers you compute/, /reads on its own/, /beats are your budget/,
+    for (const p of [/great teacher at a whiteboard/, /Draw the mechanism, not names/, /ONE concrete case/, /computed by the board \(EXACT DATA\) and said from it/, /reads on its own/, /beats are your budget/,
       /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 560 H"/, /one unit is about one pixel/, /regions:/, /groups:/, /<g id=/, /drawing first/, /draws across its sentences/, /draws on the word that names it/, /Start speaking at once/, /data-fn=/, /data-val=/, /data-at=/, /data-const=/, /\{\{tween /, /data-ghost/, /data-trace/, /BUDGET line/, /Never write on the board what you say/,
       /No scripts, foreignObject/, /font-size 16/, /one accent colour/, /Nothing overlaps/, /inside the viewBox/, /BOARD extend/, /ghost/]) expect(s).toMatch(p);
   });
@@ -274,6 +290,8 @@ describe('system prompt (svg, default)', () => {
         expect(doc.querySelector('parsererror'), b.id).toBeNull();
         expect(b.svg).not.toMatch(/<(script|foreignObject|image|animate|a)\b|\bon\w+=|href=/i);
         for (const el of Array.from(doc.querySelectorAll('*'))) {
+          // A shape placed by the engine (data-at: an arrowhead, a cap) is drawn relative to its point; its box is checked resolved below.
+          if (el.hasAttribute('data-at') && !/^(circle|text|rect|ellipse)$/.test(el.nodeName)) continue;
           for (const a of ['x', 'cx', 'x1', 'x2']) { const v = el.getAttribute(a); if (v != null) { expect(Number(v), `${b.id} ${a}`).toBeGreaterThanOrEqual(0); expect(Number(v)).toBeLessThanOrEqual(W); } }
           for (const a of ['y', 'cy', 'y1', 'y2']) { const v = el.getAttribute(a); if (v != null) { expect(Number(v), `${b.id} ${a}`).toBeGreaterThanOrEqual(0); expect(Number(v)).toBeLessThanOrEqual(H); } }
           const pts = el.getAttribute('points');
@@ -283,6 +301,32 @@ describe('system prompt (svg, default)', () => {
         }
         expect(doc.querySelectorAll('text').length + doc.querySelectorAll('[font-size] text').length, b.id).toBeGreaterThan(0); // every group is labelled
       }
+    });
+
+    it('p6.10: grounded: every number and point on the board is the engine\'s, and drawn inside the viewBox', () => {
+      const H = boardH(ex.script), board = newBoardState(BOARD_W, H), sc = newScope();
+      for (const g of wireOf(ex.script).matchAll(/\{\{svg (<g[\s\S]*?)\}\}/g)) {
+        const r = checkGroups([unescapeSvg(g[1])], board, 16, sc);
+        acceptGroups(board, r.geos, r.grow);
+        expect(r.flags, r.geos[0].id).toEqual([]);
+        expect(r.notes.filter((n) => /grounded/.test(n)), r.geos[0].id).toEqual([]);
+        const b = r.geos[0].box!;
+        expect(b.x, r.geos[0].id).toBeGreaterThanOrEqual(0);
+        expect(b.x + b.w, r.geos[0].id).toBeLessThanOrEqual(BOARD_W);
+        expect(b.y + b.h, r.geos[0].id).toBeLessThanOrEqual(H);
+      }
+    });
+
+    it('p6.10: a computed number is said by reference: each {{val}} says what the board shows, and no spoken number is near a readout', () => {
+      const wire = wireOf(ex.script);
+      const p = new ScriptParser();
+      const evs = [...p.push(wire), ...p.end()];
+      const vals = evs.flatMap((e) => (e.type === 'action' && e.action.kind === 'val' ? [e.action] : []));
+      expect(vals.length, 'the example shows {{val}}').toBeGreaterThan(1);
+      const shown = new Set(p.values.values.flatMap((v) => (v.shown != null ? [v.shown] : [])).concat(Object.values(p.values.consts).map((v) => fmtValue(v))));
+      for (const v of vals) { expect(v.said, v.ref).toBeDefined(); expect(shown, v.ref).toContain(v.said); }
+      for (const b of beatsOfWire(wire)) expect(boardNumbers(b.words, p.values.values).flags, b.text).toEqual([]);
+      expect(numberFixes(beatsOfWire(wire).flatMap((b) => b.words), p.values.values)).toEqual([]);
     });
 
     it('each group id is a word its beat says (the engine draws it on that word)', () => {

@@ -8,6 +8,8 @@
  * display none): its constants, frames, named curves and named points, in document order. The board
  * (element.ts defineSvgGroup) and the gate's state (engine.ts svgGroup) take them like any group's data;
  * neither draws, measures nor registers it. Its ids are not kept (a later group may still use them).
+ * Named readouts (a data-val text with an id) are definitions too: a later sentence says one by name
+ * ({{val id=t}}, engine.ts readouts), so it must still resolve when the beat that drew it was withheld.
  */
 import { parseGroup } from './sanitize';
 import { constDefs } from './data';
@@ -18,11 +20,12 @@ export { DEFS_ATTR, isDefsGroup };
 const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 const attrs = (o: Record<string, string | null | undefined>) => Object.entries(o).filter(([, v]) => v != null).map(([k, v]) => ` ${k}="${esc(v!)}"`).join('');
 
-/** Every definition a group makes, in document order: constants, frames, named curves and named points. */
-function definitions(src: string): { kind: 'const' | 'axes' | 'curve' | 'point'; name: string; el: string }[] | null {
+/** Every definition a group makes, in document order: constants, frames, named curves, named points and named readouts. */
+type Def = { kind: 'const' | 'axes' | 'curve' | 'point' | 'val'; name: string; el: string };
+function definitions(src: string): Def[] | null {
   const g = parseGroup(src);
   if (typeof g === 'string') return null;
-  const out: { kind: 'const' | 'axes' | 'curve' | 'point'; name: string; el: string }[] = [];
+  const out: Def[] = [];
   for (const el of [g, ...Array.from(g.querySelectorAll('*'))]) {
     const a = (k: string) => el.getAttribute(k);
     // The frame a curve inside an axes group uses by default (data.ts inheritAxes).
@@ -33,6 +36,7 @@ function definitions(src: string): { kind: 'const' | 'axes' | 'curve' | 'point';
     if (a('data-axes') != null && a('data-box') != null) out.push({ kind: 'axes', name: a('data-axes')!, el: `<g${attrs({ 'data-axes': a('data-axes'), 'data-x': a('data-x'), 'data-y': a('data-y'), 'data-box': a('data-box') })}/>` });
     if (name && (a('data-fn') != null || a('data-param') != null)) out.push({ kind: 'curve', name, el: `<path${attrs({ 'data-name': name, 'data-fn': a('data-fn'), 'data-param': a('data-param'), 'data-t': a('data-t'), 'data-x': a('data-x'), 'data-axes': ax })} fill="none"/>` });
     if (name && a('data-at') != null) out.push({ kind: 'point', name, el: `<circle${attrs({ 'data-name': name, 'data-at': a('data-at') })} r="0"/>` });
+    if (name && a('data-val') != null && /^(text|tspan)$/i.test(el.nodeName)) out.push({ kind: 'val', name, el: `<text${attrs({ 'data-name': name, 'data-val': a('data-val'), 'data-fmt': a('data-fmt') })}/>` });
   }
   return out;
 }
