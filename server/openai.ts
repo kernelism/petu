@@ -88,6 +88,8 @@ export type AnswerBody = ReturnType<typeof buildRequest>;
 /** What the cache stats key an answer by. */
 export type CacheKey = { model: string; version: string; docHash: string; page: number };
 export type AnswerRecord = { at: string; phase: string; model: string; effort: string; page: number; question: string; script: string; lint: string[]; usd: number; error?: string; /** Why the upstream ended an answer early (its terminal status and reason). */ upstream?: string;
+  /** The scout's opener as spoken before stage 2 (C7: opener-vs-board contradictions are measured from the record). */
+  opener?: string;
   /** The storyboard stage 2 performed (or why it ran on the scout's plan alone), its latency and cost. */
   storyboard?: { model: string; effort: string; version: string; ms: number; usd: number; board?: Storyboard; fallback?: string };
   /** EXPERIMENT (boardfirst): the model's script before the board-first reveal, and what it declared and revealed. */
@@ -562,6 +564,9 @@ const imageDims = (im: { b64: string; w: number; h: number }) => {
 /** The images of an answer request, sized for the worst case. */
 export const askImages = (c: AskContext) => [c.image, ...(c.images ?? []), ...(c.ink?.crop ? [c.ink.crop] : [])].map(imageDims);
 
+/** What every answer record starts with: when, which model, the page, the question, the opener spoken before it. */
+const recordHead = (r: AskRequest, cfg: ModelConfig, d: Deps) => ({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), ...(r.context.opener ? { opener: r.context.opener.slice(0, 2000) } : {}) });
+
 /**
  * One answer: [storyboard →] gate → stream → filters → book. Emits AskEvents; resolves when done.
  * With `story` (a model config) and an opener already playing, the lesson is designed first
@@ -577,7 +582,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   if (story && r.context.opener) {
     sb = await storyboard(r, story, d, signal);
     if (signal.aborted) {
-      try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script: '', lint: [], usd: 0, error: 'aborted', storyboard: storyRecord(sb) }); } catch { /* never fails an answer */ }
+      try { d.log?.({ ...recordHead(r, cfg, d), script: '', lint: [], usd: 0, error: 'aborted', storyboard: storyRecord(sb) }); } catch { /* never fails an answer */ }
       return;
     }
     emit(sb);
@@ -621,7 +626,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const beat = hb > 0 ? setInterval(() => { if (!signal.aborted && quietBeat(firstWord, lastEmit, now(), script, hb)) { lastEmit = now(); emit({ t: 'text', d: ' ' }); } }, Math.min(250, hb)) : null;
   // Every answer leaves a record, a failed one too (the failures are the ones worth reading).
   const record = (usd: number) => {
-    try { d.log?.({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.order ? { order: svgf.order } : {}), ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), firstWordMs: Math.round(firstWord), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
+    try { d.log?.({ ...recordHead(r, cfg, d), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.order ? { order: svgf.order } : {}), ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), firstWordMs: Math.round(firstWord), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
   };
   try {
     let res: Response | null = null;

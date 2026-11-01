@@ -303,6 +303,15 @@ describe('ask', () => {
     const free = await texts();
     expect(free[0]).toBe('It holds because ');
   });
+  it('C7: the answer record carries the opener spoken before stage 2 (none without one)', async () => {
+    const body = () => fakeFetch([{ chunks: okBody(['<plan>\nBOARD viewBox="0 0 1000 600"\n</plan>', 'It is. ']) }]).f;
+    const recs: AnswerRecord[] = [];
+    await run(req({ context: { ...context, opener: '{{highlight p=2 "disparity"}} Disparity is about depth.' } }), deps(body(), { log: (r) => recs.push(r) }));
+    await run(req(), deps(body(), { log: (r) => recs.push(r) }));
+    expect(recs[0].opener).toBe('{{highlight p=2 "disparity"}} Disparity is about depth.');
+    expect(recs[0].script).toMatch(/^\{\{svgboard h=600\}\}/);
+    expect(recs[1]).not.toHaveProperty('opener');
+  });
   it('a failed answer leaves a record too, with its error code and no cost', async () => {
     const { f } = fakeFetch([{ status: 400, text: 'bad' }]);
     const recs: AnswerRecord[] = [];
