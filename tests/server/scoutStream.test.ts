@@ -100,6 +100,12 @@ describe('OpenerGate (opener → spoken script)', () => {
     expect(run(['{{highlight p=7 "Osmosis"}} This page explains it. ']).g.said.trim()).toBe('This page explains it.');
   });
 
+  it('a dropped long quote the sentence lacks is spoken', () => {
+    // D19's shape, quoting another page: the dangling "The" gets its words, the stop kept.
+    expect(run(['The {{highlight p=9 "slope is constant; P/Q is not."}} Elasticity changes because it measures percentage changes. ']).g.said)
+      .toBe('The slope is constant; P/Q is not. Elasticity changes because it measures percentage changes. ');
+  });
+
   it('drops an unclosed tag at the end', () => {
     expect(run(['Look here {{highlight p=3 "unfinish']).g.said).toBe('Look here ');
   });

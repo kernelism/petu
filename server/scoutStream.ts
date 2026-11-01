@@ -12,7 +12,7 @@
 // of markdown and TeX like the answer's.
 import { clean } from './scriptFilter';
 import { parseTag } from '../src/script/parseTag';
-import { clauseAfter, lookahead, markQuote, needsWords, quoteSpoken, sentenceTail } from '../src/script/quoteWords';
+import { clauseAfter, lookahead, markQuote, sentenceTail, spokenAt } from '../src/script/quoteWords';
 
 type State = 'start' | 'key' | 'colon' | 'value' | 'string' | 'raw' | 'after' | 'done';
 
@@ -205,7 +205,7 @@ export class OpenerGate {
     if (!q) return '';
     const before = sentenceTail((this.said + out).replace(/\{\{[^}]*\}\}/g, ' ').split(/\s+/).filter(Boolean));
     const clause = clauseAfter(rest, true, lookahead(q)) ?? rest;
-    return needsWords(before, q, clause) ? quoteSpoken(q, before.length === 0) : '';
+    return spokenAt(before, q, clause) ?? '';
   }
 
   private allowed(tag: string): boolean {
