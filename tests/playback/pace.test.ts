@@ -88,6 +88,11 @@ describe('pace: each part draws across its share of the words', () => {
     expect(paceParts([part()], [])).toBeNull();
     expect(paceParts([], beat('a b c'))).toBeNull();
   });
+  it('a re-plan paces a beat that turned out to be one word (the group is already paced)', () => {
+    // Started 400 ms ago; its one word is said 1000..1300 from now: the parts left spread up to its end.
+    const t = paceParts([part(), part()], [{ text: 'Here.', inMs: 1000, endMs: 1300 }], undefined, -400)!;
+    expect(t.map((x) => x.at)).toEqual([0, 650]);
+  });
 
   it('spreads the parts over the beat, each drawing until the next starts (less a pen lift)', () => {
     // 4 parts over a 6 s beat (20 words at 300 ms): one every 1.5 s, each drawing 1.42 s.

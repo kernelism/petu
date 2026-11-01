@@ -70,4 +70,14 @@ describe('an svg group\'s parts stay inside their beat as its words are known', 
     expect(Math.max(t.a, t.b, t.c)).toBeLessThan(1600);
   });
 
+  it('a beat guessed while none of its words were here, which turns out to be one word, stops pacing over the guess', async () => {
+    const s = setup('<line data-k="a" x1="0" y1="0" x2="400" y2="0"/><line data-k="b" x1="0" y1="50" x2="400" y2="50"/><line data-k="c" x1="0" y1="90" x2="400" y2="90"/>');
+    const t0 = performance.now();
+    // Fired before its words (the narration ran dry): planned over OPEN_SPAN_MS. Its one word comes at
+    // 300 ms and is said 1000..1300; by the next part it is over.
+    const beat = (): BeatWord[] => { const el = performance.now() - t0; return el < 300 ? [{ text: '', inMs: 0, endMs: 0, open: true }] : [{ text: 'Here.', inMs: Math.max(0, 1000 - el), endMs: Math.max(0, 1300 - el) }]; };
+    void drawGroup(s.b, s.g, 'mark', { signal: new AbortController().signal, stop: new AbortController().signal, color: '#000', beat });
+    const t = await starts(s.g, 8000);
+    expect(Math.max(t.a, t.b, t.c)).toBeLessThan(2500);
+  });
 });

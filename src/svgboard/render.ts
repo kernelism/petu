@@ -375,9 +375,10 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
     for (let ui = 0; ui < order.length; ui++) {
       if (sig.aborted) break;
       // The beat's end moved since the plan (more streamed in, or it closed): the parts left spread over what is left of it.
+      // A beat of one word too (it was planned while open; left at pen speed, it kept the open guess).
       if (paced && ui > 0 && o.beat) {
         const nowT = clock.now(), w = o.beat();
-        if (w.length >= 2 && Math.abs(nowT + beatEnd(w) - beatTo) > REPLAN_MS) {
+        if (w.length && Math.abs(nowT + beatEnd(w) - beatTo) > REPLAN_MS) {
           beatTo = nowT + beatEnd(w);
           const rest = order.slice(ui);
           const re = paceParts(rest.map(partIn), w, o.slot, beatFrom - nowT);

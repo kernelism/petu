@@ -164,7 +164,8 @@ export function paceParts(parts: readonly PartIn[], words: readonly BeatWord[], 
   // Its beat is over (closed, every word said: a forward seek's skipped group, one held past its words):
   // what is left lands at once, in the group's order. Spread over SPAN_MIN_MS from now, it drew over the next beat.
   if (!words[words.length - 1].open && beatEnd(words) <= 0) return parts.map((_, i) => ({ i, at: 0, dur: 0 }));
-  if (words.length < 2 && !words[0].open) return null;
+  // A re-plan (`start`) paces whatever the beat turned out to be, one word too: it is already paced.
+  if (words.length < 2 && !words[0].open && start == null) return null;
   const win = beatWindow(words, slot, start);
   // Re-planned mid-beat (`start` in the past): what is left of the window, from now.
   const from = Math.max(0, win.from), to = Math.max(from + 1, win.to);
