@@ -2,7 +2,7 @@
 // layout.ts) over a beat whose actions are applied to the engine state here. One implementation for
 // the offline gate (scripts/gate-beats/gateRun.ts) and the live gate's preflight (src/gate/live.ts).
 import { svgTextWords } from '../svgboard/check';
-import { checkDeixis, checkDirections, checkErasure, checkCounts, checkGeometry, checkNamed, checkNumbers, checkOrder, checkTags, checkThresholds, checkUnbound, derivedValues, type Flag, type NamedScene, type Verdict } from './check';
+import { boardNumbers, checkDeixis, checkDirections, checkErasure, checkCounts, checkGeometry, checkNamed, checkNumbers, checkOrder, checkTags, checkThresholds, checkUnbound, derivedValues, type Flag, type NamedScene, type Verdict } from './check';
 import { checkLayout, checkPageText, type El, type LayoutFlag, type Rect } from './layout';
 import type { GateState } from './engine';
 import type { Beat, Tag } from './segment';
@@ -14,14 +14,16 @@ import type { RawAction } from '../script/types';
  * erasing released ink (erasure), a labelled reference to nothing drawn (named). A number typed that
  * equals the engine's value (unbound) only notes: the student hears the number the board shows, so
  * the sentence does not mislead (founder lec06, 2026-10-31: every sentence that said a computed value
- * right was dropped, most of the answer). Deixis, the number family, geometry and every layout check note until
+ * right was dropped, most of the answer). A number said close to an svg readout but not it (drift, check.ts
+ * boardNumbers) fails: it is not a right number said unbound but a wrong one beside the board's, and the
+ * one-candidate case is rewritten before it can fail (live.ts). Deixis, the number family, geometry and every layout check note until
  * their precision on the recorded corpus is measured (gate-beats: 19% false flags on clean beats).
  * `design` is the design's table (2026-10-29 §3; `&gatecheck=all`).
  */
 export type Severity = 'default' | 'design';
 export const SEVERITY: Record<Severity, Record<Flag['check'], 'fail' | 'note'>> = {
-  default: { tag: 'fail', unbound: 'note', erasure: 'fail', named: 'fail', deixis: 'note', number: 'note', threshold: 'note', direction: 'note', geometry: 'note', layout: 'note', order: 'note', svg: 'fail' },
-  design: { tag: 'fail', unbound: 'fail', erasure: 'fail', named: 'fail', deixis: 'fail', number: 'fail', threshold: 'fail', direction: 'fail', geometry: 'fail', layout: 'fail', order: 'note', svg: 'fail' },
+  default: { tag: 'fail', unbound: 'note', erasure: 'fail', named: 'fail', deixis: 'note', number: 'note', threshold: 'note', direction: 'note', geometry: 'note', layout: 'note', order: 'note', svg: 'fail', drift: 'fail' },
+  design: { tag: 'fail', unbound: 'fail', erasure: 'fail', named: 'fail', deixis: 'fail', number: 'fail', threshold: 'fail', direction: 'fail', geometry: 'fail', layout: 'fail', order: 'note', svg: 'fail', drift: 'fail' },
 };
 
 /** A verdict under a severity: flags whose check only notes move to the notes. */
@@ -132,6 +134,11 @@ export function checkBeat(i: BeatInput): Verdict {
   const num = checkNumbers(ws, { known: state.values, derived: derivedValues([...core, ...inter], i.pageVals), intersections: inter, pageImage: beat.tags.some((t) => /\bmark=#[eig]\d/.test(t.body)) });
   flags.push(...num.flags, ...checkThresholds(ws, state, k), ...checkDirections(ws, state, k));
   flags.push(...checkUnbound(ws, state.values));
+  // Numbers said against the board's readouts: near and not equal fails; one clear candidate is a fix (live.ts applies it).
+  const bn = boardNumbers(beat.words, state.values, k);
+  flags.push(...bn.flags);
+  notes.push(...bn.notes);
+  if (bn.fixes.length) notes.push(`said as the board's: ${bn.fixes.map((f) => `${f.from} → ${f.to}`).join(', ')}`);
   for (const f of checkOrder(ws, k, i.consts)) (NOTE_CHECKS.has(f.check) ? notes.push(`${f.check}: ${f.detail}`) : flags.push(f));
   notes.push(...num.notes);
   flags.push(...checkDeixis(beat, 8, new Set(skipped.keys())));

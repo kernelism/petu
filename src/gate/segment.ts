@@ -8,7 +8,7 @@
 // quotes; a newline, a second `{{` or MAX_TAG_CHARS fails it and its text is narration.
 import { ABBREV, endsSentence as endsSpoken } from '../playback/clock';
 import { MAX_TAG_CHARS } from '../script/parser';
-import { cutTagBody, isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
+import { BEAT_TAG, cutTagBody, isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
 import { parseTag } from '../script/parseTag';
 import type { RawAction } from '../script/types';
 
@@ -170,7 +170,7 @@ export function beats(script: string, opts: BeatOpts = {}): Beat[] {
 // Incremental: the live gate's splitter.
 
 /** A closed unit of the stream: its raw text (exactly as streamed, leading whitespace included). */
-export type SplitUnit = { text: string; words: number; sentences: number; kind: 'sentence' | 'beat' };
+export type SplitUnit = { text: string; words: number; sentences: number; kind: 'sentence' | 'beat'; /** A whole svg beat (src/svgboard/beat.ts): released or withheld as one, a beat boundary before it. */ beat?: true };
 type Sent = { raw: string; u: Unit; para: boolean };
 
 /**
@@ -180,12 +180,21 @@ type Sent = { raw: string; u: Unit; para: boolean };
  * beats equal `beats(text, { tail: false })` (sentences: `units(text)`) at any chunk boundaries.
  * A sentence closes once its last word is followed by whitespace (or a line break ends it); a
  * partial word or an unclosed tag waits for more text.
+ *
+ * The svg board's beats (src/svgboard/beat.ts, THE RULE): from the first `{{beat}}` on (the filter writes
+ * it as the board opens), a unit is one whole beat in either mode, never a sentence of it: the text from
+ * one `{{beat}}` to the next, closed the moment the next one arrives (the filter writes it when the next
+ * group opens, so a beat never waits for the next group to be written). A beat with no words yet runs on
+ * into the next. The opener before it is cut as above (it never holds a group). A stream with no
+ * `{{beat}}` (recorded before the beat wire, 2026-10-31) is cut as above throughout: a group rides with the sentence before it.
  */
 export class BeatSplitter {
   private buf = '';
   private cur: Sent[] = [];
   private first = true;
   private o: Required<BeatOpts>;
+  /** Past the first `{{beat}}`: units are beats. */
+  private spans = false;
   constructor(private m: 'sentence' | 'beat' = 'beat', opts: BeatOpts = {}) { this.o = { ...BEAT_DEFAULTS, ...opts }; }
 
   get mode(): 'sentence' | 'beat' { return this.m; }
@@ -199,11 +208,48 @@ export class BeatSplitter {
   /** Text not yet closed into a unit (the gate's look-ahead: later ids it names). */
   pending(): string { return this.cur.map((s) => s.raw).join('') + this.buf; }
 
-  push(chunk: string): SplitUnit[] { this.buf += chunk; return this.take(false); }
+  push(chunk: string): SplitUnit[] { this.buf += chunk; return this.spans ? this.takeBeats(false) : this.open(false); }
   /** The stream ended: the rest is one or more units. */
-  end(): SplitUnit[] { const out = this.take(true); out.push(...this.flush()); return out; }
-  /** Everything buffered as units now, whole sentences or not (the opener's text is complete as sent). */
-  close(): SplitUnit[] { return this.end(); }
+  end(): SplitUnit[] { if (this.spans) return this.takeBeats(true); const out = this.open(true); if (this.spans) return out; out.push(...this.flush()); return out; }
+
+  /** Before the board: sentences (or hybrid beats) up to the board's opening, then beats. */
+  private open(final: boolean): SplitUnit[] {
+    const at = this.boardAt();
+    if (at < 0) return this.take(final);
+    const rest = this.buf.slice(at);
+    this.buf = this.buf.slice(0, at);
+    // The opener's text is complete at the board's opening: all of it goes out (nothing waits on what follows).
+    const out = this.buf.trim() || this.cur.length ? [...this.take(true), ...this.flush()] : [];
+    if (this.buf) { const ws = this.buf; this.buf = ''; if (out.length) out[out.length - 1] = { ...out[out.length - 1], text: out[out.length - 1].text + ws }; else out.push({ text: ws, words: 0, sentences: 0, kind: this.m }); }
+    this.buf = rest;
+    this.spans = true;
+    return [...out, ...this.takeBeats(final)];
+  }
+
+  /** Where the beats start in the buffer: the first `{{beat}}` (the filter writes it as the board opens); -1 not yet. */
+  private boardAt(): number { return this.buf.indexOf(BEAT_TAG); }
+
+  /** Beats: the text up to the next boundary is one unit once it has words; at the end the rest is one. */
+  private takeBeats(final: boolean): SplitUnit[] {
+    const out: SplitUnit[] = [];
+    for (let from = 1; ;) {
+      const cut = this.buf.indexOf(BEAT_TAG, from);
+      if (cut < 0) break;
+      const text = this.buf.slice(0, cut);
+      const us = units(text, tokenize(text, { end: false }));
+      const words = us.reduce((n, u) => n + u.words.length, 0);
+      if (!words) { from = cut + 1; continue; } // no words yet: the beat runs on into the next
+      out.push({ text, words, sentences: us.filter((u) => u.words.length).length, kind: this.m, beat: true });
+      this.buf = this.buf.slice(cut);
+      from = 1;
+    }
+    if (final && this.buf) {
+      const us = units(this.buf, tokenize(this.buf, { end: true }));
+      out.push({ text: this.buf, words: us.reduce((n, u) => n + u.words.length, 0), sentences: us.filter((u) => u.words.length).length, kind: this.m, beat: true });
+      this.buf = '';
+    }
+    return out;
+  }
 
   private flush(): SplitUnit[] {
     if (!this.cur.length) return [];

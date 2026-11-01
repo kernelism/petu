@@ -5,7 +5,7 @@
 import type { RepairReport } from '../../src/gate/events';
 import { rawSvgScript } from '../../src/svgboard/wire';
 
-export const REPAIR_VERSION = 'r1';
+export const REPAIR_VERSION = 'r2';
 /** The scene report (ON THE BOARD NOW) is cut at this many characters. */
 export const BOARD_CHARS = 1500;
 
@@ -28,7 +28,7 @@ export function boardReport(r: Pick<RepairReport, 'board' | 'consts' | 'finds'>,
 /** One line per problem: `check: detail` (+ the fix hint). */
 const problemLine = (p: RepairReport['problems'][number]) => `- ${p.check}: ${p.detail}${p.hint ? ` (fix: ${p.hint})` : ''}`;
 
-/** The note the model repairs from (r1). */
+/** The note the model repairs from (r1; r2 changed only the svg note). */
 export function repairNote(r: RepairReport): string {
   return [
     `GATE REPORT (${REPAIR_VERSION}). The beat below was NOT shown: none of it was said or drawn.`,
@@ -44,8 +44,11 @@ export function repairNote(r: RepairReport): string {
 }
 
 /**
- * The svg answer mode's note (r1-svg): the failed beat as the model wrote it (raw <g> groups), the
+ * The svg answer mode's note (r2-svg): the failed beat as the model wrote it (raw <g> groups), the
  * problems the gate found, and the board's groups so far; the replacement is a beat in the same format.
+ * r2: the beat's group first, then its sentences (the order the prompt teaches, p6.8; r1 asked for the
+ * words first), and a beat that drew keeps a drawing: the gate never releases its words without one
+ * (src/gate/live.ts), so a plain-words replacement would be withheld anyway.
  */
 export function svgRepairNote(r: RepairReport): string {
   return [
@@ -53,8 +56,8 @@ export function svgRepairNote(r: RepairReport): string {
     `FAILED BEAT:\n${rawSvgScript(r.beat).trim()}`,
     `PROBLEMS:\n${r.problems.length ? r.problems.map(problemLine).join('\n') : '- (none listed)'}`,
     `ON THE BOARD NOW:\n${boardReport(r)}`,
-    `WRITE only the replacement beat, continuing right after "…${r.tail}": the same point in ≤ ${r.maxWords} spoken words, then its <g id="…"> group (the same id unless the problem is the id).`,
-    'Fix every problem: move or shorten text so no text overlaps text or crosses a line, keep everything inside the BOARD viewBox, use an id not on the board.',
-    "Never redraw or erase earlier groups; don't repeat what was said. If it can't be drawn cleanly, say the point plainly with no group.",
+    `WRITE only the replacement beat, continuing right after "…${r.tail}": its <g id="…"> group first (the same id unless the problem is the id), then the same point in ≤ ${r.maxWords} spoken words.`,
+    'Fix every problem: write every formula with the constants and names on the board, move or shorten text so no text overlaps text or crosses a line, keep everything inside the BOARD viewBox, use an id not on the board.',
+    "Never redraw or erase earlier groups; don't repeat what was said. Keep a drawing: if the group can't be fixed, draw less (a simpler group), never words alone.",
   ].join('\n');
 }

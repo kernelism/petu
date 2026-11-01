@@ -154,7 +154,11 @@ export class ShadowStage implements ShadowBoard {
   private pendingLayout: RawAction[] = [];
   private chain: Promise<unknown> = Promise.resolve();
 
-  constructor(o: { desk: () => DeskApi | null; viewer: () => ViewerApi | null; settings: () => Settings; grounding?: () => Grounding }) {
+  /** The answer's asked page: the shadow's sections default to it as the live director's do. */
+  private page: number | null;
+
+  constructor(o: { desk: () => DeskApi | null; viewer: () => ViewerApi | null; settings: () => Settings; grounding?: () => Grounding; page?: number }) {
+    this.page = o.page ?? null;
     this.host = hiddenHost(o.desk()?.metrics?.().boardPx ?? 666);
     this.desk = new ShadowDesk(this.host, o.desk);
     this.viewer = shadowViewer(o.viewer, this.host);
@@ -163,6 +167,7 @@ export class ShadowStage implements ShadowBoard {
       onScrolledTo: () => {}, grounding: o.grounding, instant: true,
       onTiming: (t) => this.onTiming(t),
     });
+    this.director.ask(this.page);
     this.noWaits();
   }
 
@@ -255,6 +260,7 @@ export class ShadowStage implements ShadowBoard {
         this.desk.forgetIds();
         this.noWaits();
       }
+      this.director.ask(this.page); // the seed's scrolls moved it
       await this.runAll(accepted, REBUILD_ACTION_MS);
     };
     const p = this.chain.then(run, run);

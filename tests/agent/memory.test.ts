@@ -65,6 +65,17 @@ describe('MEMORY block', () => {
     expect(m.last()?.question).toBe('simpler');
   });
 
+  it('records the hidden check (done.check, never spoken) with the page it was offered on (C5)', () => {
+    const m = new SessionMemory();
+    const script = '{{scroll p=6}} The setup. {{highlight p=12 "the rate"}} The rate doubles here.';
+    m.add(recordOf({ question: 'Why does it overshoot?', page: 12, pages: [6, 12], plan: '', script, check: 'What if the rate halves?', checkPage: 12 }));
+    expect(m.last()?.check).toBe('What if the rate halves?');
+    expect(m.text()).toContain('  asked (on p12): What if the rate halves?');
+    // Without done.check, the spoken closing question is still taken, with no page.
+    m.add(recordOf({ question: 'q', page: 4, pages: [4], plan: '', script: SCRIPT }));
+    expect(m.text()).toContain('  asked: What happens to the top speed when the substrate is huge?');
+  });
+
   it('a thread keeps its question: a complaint about a derailed follow-up is still on the first question; the parts line carries what was covered and left', () => {
     const m = new SessionMemory();
     m.add(recordOf({ question: 'explain every filter here', page: 1, pages: [4, 22, 33], plan: 'Five filters.', script: 'Box, then median.',

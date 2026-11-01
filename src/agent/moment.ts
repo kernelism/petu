@@ -12,6 +12,36 @@ export type Pointed =
   | { kind: 'circle'; page: number; bbox: { x: number; y: number; w: number; h: number }; text: string }
   | { kind: 'circle'; page?: undefined; board: true; elements: string[]; text: string };
 
+import { readTag, tagsOf } from './context/memory';
+
+/**
+ * The one page a question is about, decided when it is sent (C5). Every consumer gets this value (the
+ * scout request and its opener filter, the visible listing and image, the ink crop, the director's
+ * default page, the trail and memory), never currentPage()/pageRef read again later. In order: what the
+ * student pointed at (a selection or circle on a page); for a check reply, the page the check was
+ * offered on; the page of the marks taken with it; the tutor's focus page (`focus`: the page it last
+ * steered to, which the indicator names: a glide that centred ink low on p7 can leave p8 the most
+ * visible, and the question went out about p8 under an indicator saying 7); else the most visible page.
+ */
+export function askedPage(o: { point?: Pointed | null; check?: number | null; mark?: number | null; focus?: number | null; visible: number }): number {
+  return o.point?.page ?? o.check ?? o.mark ?? o.focus ?? o.visible;
+}
+
+/**
+ * The page a check question is about: the last page its answer pointed at or scrolled to (the page in
+ * frame when it was offered), else the page the answer was asked on. A reply to it is asked on that
+ * page, wherever the student has scrolled since (a reply about p12 went out with p6: recorded a28).
+ */
+export function checkPageOf(script: string, asked: number): number {
+  let page = asked;
+  for (const t of tagsOf(script)) {
+    if (/^\s*svg\b/.test(t.inner)) continue;
+    const g = readTag(t.inner), p = Number(g.args.p);
+    if (g.args.p != null && g.args.on == null && Number.isInteger(p) && p >= 1) page = p;
+  }
+  return page;
+}
+
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
 const words = (s: string) => s.replace(/\s+/g, ' ').trim();
 

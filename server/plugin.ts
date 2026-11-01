@@ -438,7 +438,8 @@ export function validateScout(b: any): string | null {
   if (!isStr(b.digest) || !b.digest || b.digest.length > LIMITS.docText) return 'digest must be a string of at most 120,000 characters';
   if (b.pageText != null && (!isStr(b.pageText) || b.pageText.length > LIMITS.pageText)) return 'pageText must be a string of at most 60,000 characters';
   if (b.prior != null && !(isStr(b.prior.q) && isStr(b.prior.a) && isInt(b.prior.page) && b.prior.q.length <= 2000 && b.prior.a.length <= 20_000)) return 'prior must be { q, a, page }';
-  for (const k of ['section', 'memory', 'candidates'] as const) if (b[k] != null && (!isStr(b[k]) || b[k].length > LIMITS[k])) return `${k} must be a string of at most ${LIMITS[k].toLocaleString('en-US')} characters`;
+  for (const k of ['section', 'memory', 'candidates', 'about'] as const) if (b[k] != null && (!isStr(b[k]) || b[k].length > LIMITS[k])) return `${k} must be a string of at most ${LIMITS[k].toLocaleString('en-US')} characters`;
+  if (b.check != null && !(isStr(b.check.q) && b.check.q.length <= LIMITS.check && isInt(b.check.page) && b.check.page >= 1 && b.check.page <= b.numPages)) return `check must be { q (at most ${LIMITS.check.toLocaleString('en-US')} characters), page }`;
   if (b.image != null && !isImage(b.image)) return 'image must be { b64, w, h }';
   return null;
 }

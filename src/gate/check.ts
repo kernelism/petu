@@ -13,12 +13,13 @@ import { mentions, matches, type Mention } from './numbers';
 import type { Beat, Tag, Word } from './segment';
 import { NEW_INK } from './segment';
 import type { GateState, Value } from './engine';
+import { unitOf } from '../svgboard/data';
 
-export type CheckKind = 'number' | 'threshold' | 'direction' | 'deixis' | 'layout' | 'geometry' | 'erasure' | 'tag' | 'unbound' | 'order' | 'named' | 'svg';
+export type CheckKind = 'number' | 'threshold' | 'direction' | 'deixis' | 'layout' | 'geometry' | 'erasure' | 'tag' | 'unbound' | 'order' | 'named' | 'svg' | 'drift';
 export type Flag = { check: CheckKind; detail: string };
 export type Verdict = { ok: boolean; flags: Flag[]; notes: string[] };
 
-export const NUMBER_FAMILY = new Set<CheckKind>(['number', 'threshold', 'direction']);
+export const NUMBER_FAMILY = new Set<CheckKind>(['number', 'threshold', 'direction', 'drift']);
 
 // ------------------------------------------------------------------------------------------------
 // (a) numbers
@@ -54,6 +55,8 @@ export function checkNumbers(words: readonly string[], ctx: NumberCtx): { flags:
     if (m.ref || isSmallCount(m) || isYear(m)) continue;
     const direct = ctx.known.find((k) => matches(m, k.v)) ?? (ctx.intersections.some((v) => matches(m, v)) ? { source: 'computed', of: 'plot intersection' } as Value : undefined);
     if (direct) continue;
+    // Close to a number the board shows: boardNumbers rewrites or fails it. Never "one step from known values".
+    if (nearBoard(m, ctx.known)) continue;
     if (ctx.derived.some((v) => matches(m, v))) { notes.push(`"${m.text}" is one step from known values`); continue; }
     if (ctx.pageImage) { notes.push(`"${m.text}" unverifiable: the beat points at a page equation/image with no text layer`); continue; }
     const near = ctx.known.reduce<Value | null>((best, k) => (best == null || Math.abs(k.v - m.value) < Math.abs(best.v - m.value) ? k : best), null);
@@ -275,7 +278,8 @@ export function checkTags(beat: Beat, skipped: Map<Tag, string>): Flag[] {
   const flags: Flag[] = [];
   for (const t of beat.tags) {
     if (!t.action) flags.push({ check: 'tag', detail: `malformed {{${t.body.slice(0, 60)}}}` });
-    else if (skipped.has(t)) flags.push({ check: 'tag', detail: `${t.action.kind} skipped: ${skipped.get(t)}` });
+    // A quote the page does not have (or only a guess at it): the repair is told the fix, a line's mark.
+    else if (skipped.has(t)) flags.push({ check: 'tag', detail: `${t.action.kind} skipped: ${skipped.get(t)}${skipped.get(t) === 'quote not found' ? ' (copy the words exactly from one listed line, or mark the line: mark=#tN)' : ''}` });
   }
   return flags;
 }
@@ -354,6 +358,134 @@ export function checkCounts(words: readonly string[], scene: NamedScene): Flag[]
 /** A spoken number to replace with the engine's value: offsets in the beat's text. */
 export type NumberFix = { start: number; end: number; from: string; to: string; of: string };
 
+// ------------------------------------------------------------------------------------------------
+// Numbers said against the svg board (C4, 2026-10-31).
+
+/** A number this close to a board readout (relative) is that readout, said right or said wrong. */
+export const BOARD_FIX = 0.05, BOARD_NEAR = 0.15;
+/** Mentions the board rule reads: quantities (no fraction, page reference or year). Counts and percents are read only of a readout the words refer to. */
+const boardMention = (m: Mention) => !(m.ref || m.frac || isYear(m));
+const boardVals = (known: readonly Value[]) => known.filter((k) => k.shown != null);
+/** Read by magnitude ("an elasticity of 1.3" for −1.5, like matches); a sign said ("minus 1.5") against a positive readout is that readout said wrong. */
+const rel = (m: Mention, v: number) => Math.abs(Math.abs(m.value) - Math.abs(v)) / Math.max(Math.abs(v), 1e-12) - 1e-9;
+const wrongSign = (m: Mention, v: number) => (m.minus || m.value < 0) && v > 0;
+/** The mention's rounding unit by its last significant digit ("about 11300" → 100): a hedged number is that round. */
+const sigUnit = (m: Mention) => {
+  if (m.dp > 0) return 10 ** -m.dp;
+  const z = /0*$/.exec(String(Math.abs(Math.round(m.value))))![0].length;
+  return 10 ** (Math.round(m.value) === 0 ? 0 : z);
+};
+/**
+ * Said as the board shows it: equal at the coarser of the two precisions ("2" for a board's 2.0 and 2.04;
+ * "2.1" is not 2.0). A hedged number may be rounder ("about 11300" for 11,316).
+ */
+export function boardEqual(m: Mention, k: Value): boolean {
+  const dp = Math.min(m.dp, (k.shown!.replace(/,/g, '').split('.')[1] ?? '').length);
+  const unit = m.approx ? Math.max(sigUnit(m), 10 ** -dp) : 10 ** -dp;
+  return Math.abs(Math.abs(m.value) - Math.abs(k.v)) <= 0.5 * unit + 1e-9 && !wrongSign(m, k.v);
+}
+/** A percent said is only ever a percent readout ("14 percent" is not a 13 s crossing). */
+const kindOk = (m: Mention, k: Value) => !m.percent || k.unit === '%';
+/**
+ * Within BOARD_NEAR of a board value (by value: what checkNumbers leaves to boardNumbers), not equal to it,
+ * and the page's, question's or a literal's own number neither.
+ */
+/** The page's, question's or a literal's own number: matches, but a hedged one only at its own last digit ("about 92.9" is not a constant 100, which matches' 10% would allow). */
+const own = (m: Mention, v: number) => !wrongSign(m, v) && (m.approx ? Math.abs(m.value - v) <= 0.5 * sigUnit(m) + 1e-9 : matches(m, v));
+function nearBoard(m: Mention, known: readonly Value[]): boolean {
+  const board = boardVals(known).filter((k) => kindOk(m, k));
+  if (!board.length || !boardMention(m) || isSmallCount(m) || board.some((k) => boardEqual(m, k))) return false;
+  if (known.some((k) => k.shown == null && own(m, k.v))) return false;
+  return board.some((k) => rel(m, k.v) <= BOARD_NEAR);
+}
+
+/**
+ * Another case, not the board's (review, numbers-agree): a modal or counterfactual ("would", "had the river
+ * been"), an alternative ("instead", "with a slower boat", "than"), or another setup ("on a 310 metre river").
+ */
+const ELSEWHERE = new Set(['would', 'could', 'might', 'if', 'had', 'unless', 'instead', 'otherwise', 'rather', 'than', 'versus', 'vs', 'compared', 'suppose', 'supposing', 'imagine', 'whereas', 'unlike', 'alternatively', 'hypothetically', 'slower', 'faster', 'wider', 'narrower', 'another', 'itd', 'theyd', 'youd']);
+function elsewhere(ws: readonly string[], c0: number, c1: number, ms: readonly Mention[]): boolean {
+  for (let i = c0; i <= c1; i++) {
+    const w = lc(ws[i]);
+    if (ELSEWHERE.has(w)) return true;
+    // "on a 310 metre river", "for a 2 m/s boat": a number that sets up another case.
+    if (/^(on|for|with)$/.test(w) && /^(a|an)$/.test(lc(ws[i + 1] ?? '')) && ms.some((n) => n.w0 === i + 2 || n.w0 === i + 3)) return true;
+  }
+  return false;
+}
+/** Readout word r is said as w: the same word, or one the other's stem ("crossing" / "cross", "lands" / "land"). */
+const sameWord = (w: string, r: string) => w === r || Math.min(w.length, r.length) >= 4 && (w.startsWith(r) || r.startsWith(w));
+const idWords = (k: Value) => (k.of !== 'svg' && /^[a-z][\w-]*$/i.test(k.of) ? k.of.toLowerCase().split(/[-_]/).filter((w) => w.length > 1) : []);
+/** REFER_SPAN words either side, inside the clause: how near a readout's word must be to the number to name it. */
+const REFER_SPAN = 6;
+
+/**
+ * Spoken numbers held to the svg board's readouts (data-val, engine.ts readouts). In svg mode a number
+ * the board computes is said by reference ({{val id=t}}, the board's own text), so a literal close to a
+ * readout and said OF it is that readout said wrong (diagnosis C4: "the crossing takes 160 seconds"
+ * beside a board's 150 was released with a note). Said of it (review, numbers-agree: a value-only rule
+ * rewrote "had the river been 310 metres wide, … 155 seconds" to 150, and "175 seconds with a slower boat"
+ * to the 180 m drift): the readout was drawn this beat; the clause names it near the number (its text's
+ * words or id, within REFER_SPAN, or its label right before) or says its unit; and the clause is not about
+ * another case (elsewhere). A number in another unit than the readout's is never it.
+ *  - equal to a readout at the coarser precision, or the page's, the question's or a literal's own
+ *    number (matches): fine — the lec06 rule stands, a number said right never fails;
+ *  - said of exactly one readout within BOARD_FIX, or of the one whose label the words name right before
+ *    it within BOARD_NEAR ("crossing is 160"): a fix, said as the board writes it;
+ *  - said of one within BOARD_NEAR (or of two within BOARD_FIX, or spelled out): a `drift` flag, which
+ *    fails the beat (a repair says it by reference);
+ *  - close to a readout but not said of it: a note (it may be right; nothing rewrites or withholds it).
+ * Small integers and percents are read only when said of a readout (a count beside a price of 7 is a count).
+ * Numbers far from every readout are checkNumbers' as before; kit mode (no readouts) is unchanged.
+ */
+export function boardNumbers(words: readonly Word[], known: readonly Value[], beat?: number): { fixes: NumberFix[]; flags: Flag[]; notes: string[] } {
+  const fixes: NumberFix[] = [], flags: Flag[] = [], notes: string[] = [];
+  const board = boardVals(known);
+  if (!board.length) return { fixes, flags, notes };
+  const ws = words.map((w) => w.text), ms = mentions(ws), cls = clauses(ws);
+  for (const m of ms) {
+    if (!boardMention(m) || board.some((k) => kindOk(m, k) && boardEqual(m, k)) || known.some((k) => k.shown == null && own(m, k.v))) continue;
+    const said = unitOf(m.percent ? ['%'] : ws.slice(m.w1 + 1, m.w1 + 4));
+    const close = board.filter((k) => kindOk(m, k) && rel(m, k.v) <= BOARD_NEAR && !(said && k.unit && said !== k.unit));
+    if (!close.length) {
+      // checkNumbers left it here (nearBoard is by value); a readout near in value but in another unit is not
+      // its value, so it gets the note a number far from every value gets.
+      const other = board.find((k) => kindOk(m, k) && rel(m, k.v) <= BOARD_NEAR);
+      if (other && !isSmallCount(m)) notes.push(`"${m.text}" matches no value on the board in its unit (${said} vs ${other.shown}${other.unit ? ` ${other.unit}` : ''})`);
+      continue;
+    }
+    const [c0, c1] = cls.find(([a, b]) => m.w0 >= a && m.w0 <= b) ?? [0, ws.length - 1];
+    const span = ws.slice(Math.max(c0, m.w0 - REFER_SPAN), Math.min(c1, m.w1 + REFER_SPAN) + 1).map(lc);
+    const named = (k: Value) => !!k.label && namedBefore(words, m.w0, k.label);
+    const refers = (k: Value) => (beat == null || k.beat === beat) && (!!said && said === k.unit || named(k) || [...(k.words ?? []), ...idWords(k)].some((r) => span.some((w) => sameWord(w, r))));
+    const of = elsewhere(ws, c0, c1, ms) ? [] : close.filter(refers);
+    const dedupe = (ks: Value[]) => [...new Map(ks.map((k) => [k.shown!, k])).values()];
+    if (!of.length) {
+      const k = close.reduce((a, b) => (rel(m, b.v) < rel(m, a.v) ? b : a));
+      if (!isSmallCount(m)) notes.push(`"${m.text}" is close to the board's ${k.shown}${k.label ? ` (${k.label})` : ''} but not said of it: left as said`);
+      continue;
+    }
+    const fix5 = dedupe(of.filter((k) => rel(m, k.v) <= BOARD_FIX));
+    const cands = fix5.length ? fix5 : dedupe(of.filter(named));
+    const say = (k: Value) => (k.of !== 'svg' ? ` (say {{val id=${k.of}}})` : '');
+    if (cands.length === 1 && !m.spelled && !wrongSign(m, cands[0].v)) {
+      const k = cands[0];
+      for (let w = m.w0; w <= m.w1; w++) {
+        const d = /[−-]?\d+(?:,\d{3})*(?:\.\d+)?/.exec(words[w].text);
+        if (!d) continue;
+        const start = words[w].start + d.index;
+        // A sign said as a word ("minus 1.3") or left unsaid (a magnitude) stays so: only the digits change.
+        fixes.push({ start, end: start + d[0].length, from: d[0], to: /^[−-]/.test(d[0]) ? k.shown! : k.shown!.replace(/^[−-]/, ''), of: k.of });
+        break;
+      }
+      continue;
+    }
+    const k = cands[0] ?? of.reduce((a, b) => (rel(m, b.v) < rel(m, a.v) ? b : a));
+    flags.push({ check: 'drift', detail: `"${m.text}" is close to the board's ${k.shown}${k.label ? ` (${k.label})` : ''} but not it${cands.length > 1 ? ` (and to ${cands.slice(1).map((c) => c.shown).join(', ')})` : ''}: say the board's number${say(k)}` });
+  }
+  return { fixes, flags, notes };
+}
+
 /**
  * Spoken numbers the board contradicts (founder lec06, 2026-10-31: "numbers said don't match numbers
  * drawn": the narration said "about 92.9", the board computed 91.8). A hedged number ("about",
@@ -377,23 +509,21 @@ export function namedBefore(words: readonly Word[], w0: number, label: string): 
   return false;
 }
 
-export function numberFixes(words: readonly Word[], known: readonly Value[]): NumberFix[] {
-  const out: NumberFix[] = [];
+export function numberFixes(words: readonly Word[], known: readonly Value[], beat?: number): NumberFix[] {
+  const out: NumberFix[] = boardNumbers(words, known, beat).fixes;
   // A number matches when it is the value rounded at its own last significant digit ("about 11300" for 11316).
-  const unit = (m: Mention) => {
-    if (m.dp > 0) return 10 ** -m.dp;
-    const z = /0*$/.exec(String(Math.abs(Math.round(m.value))))![0].length;
-    return 10 ** (Math.round(m.value) === 0 ? 0 : z);
-  };
-  const exact = (m: Mention, v: number) => Math.abs(m.value - v) <= 0.5 * unit(m) + 1e-9;
+  const exact = (m: Mention, v: number) => Math.abs(m.value - v) <= 0.5 * sigUnit(m) + 1e-9;
   for (const m of mentions(words.map((w) => w.text))) {
     if (m.ref || m.spelled || m.frac || m.percent || isYear(m)) continue;
     if (known.some((k) => exact(m, k.v))) continue;
+    // The board's rule owns a number near a readout (fixed above, or failed as drift).
+    if (nearBoard(m, known)) continue;
     // A plain number said of a readout the board names ("SSD is 155" beside "SSD = 149", the 149 computed
     // by the engine): the words right before it name the readout, so it is that number, said wrong
     // (founder lec09, 2026-10-31). Other plain numbers may be a page's own (a page outside the context).
-    const named = m.approx ? [] : known.filter((k) => k.source === 'computed' && k.label && namedBefore(words, m.w0, k.label));
-    const comp = named.length ? named : m.approx ? known.filter((k) => k.source === 'computed' && Math.abs(k.v - m.value) <= 0.05 * Math.abs(k.v)) : [];
+    // A board readout (shown) is boardNumbers' alone: it asks whether the words are said of it.
+    const named = m.approx ? [] : known.filter((k) => k.source === 'computed' && k.shown == null && k.label && namedBefore(words, m.w0, k.label));
+    const comp = named.length ? named : m.approx ? known.filter((k) => k.source === 'computed' && k.shown == null && Math.abs(k.v - m.value) <= 0.05 * Math.abs(k.v)) : [];
     if (!comp.length) continue;
     const best = comp.reduce((a, b) => (Math.abs(b.v - m.value) < Math.abs(a.v - m.value) ? b : a));
     const to = best.v.toFixed(m.dp);

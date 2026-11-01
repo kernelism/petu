@@ -11,7 +11,7 @@ import { animateScrollTo } from './scroll';
 import { prefersReducedMotion } from '../ink/agent/animate';
 import { ink } from '../ink/student/store';
 import { PageSlot, type SlotHandle } from './PageSlot';
-import { computeLayout, dockReserve, frameFor, laneFrame, PAGE_GAP, pageAt, pageFrameTop, SAFE_TOP, safeBottom, setStackBottom, type Frame, type PageLayout, type Split } from '../desk/layout';
+import { computeLayout, dockReserve, frameFor, laneFrame, mostVisiblePage, PAGE_GAP, pageAt, pageFrameTop, SAFE_TOP, safeBottom, setStackBottom, type Frame, type PageLayout, type Split } from '../desk/layout';
 import { ScrollOwner, isScrollKey, wheelTakesOver } from '../desk/follow';
 import { clampOverview, OVERVIEW_FIT, overviewHub, overviewStep, overviewToggle, panLimit, SETTLE_MS, snapOverview, wheelFactor, wheelKind, zoomAbout, zoomBase, type OverviewControl } from './overview';
 import { clampPageZoom, fitColumn, PAGE_ZOOM_MAX, PAGE_ZOOM_MIN, pageZoomStep, panFor, readingOffset, zoomColumn, type Span } from './column';
@@ -50,6 +50,27 @@ const JUMP_CUT_PAGES = 3;
 const PINCH_RATE = 0.01;
 
 const dpr = () => Math.min(2, window.devicePixelRatio || 1);
+
+/**
+ * DeskHost.glideTo as the viewer runs it. A glide that shows page ink (Desk.reveal, frameBoth,
+ * showEdge pass the page) is the tutor steering there, as scrollToPage is: the focus page follows.
+ * Without it the focus stayed on the last {{scroll}} page while the desk had glided to another, and
+ * the indicator and the next question's page (a check reply) named the page no longer in frame.
+ * Steered before the glide, so the student taking over mid-glide (intent) still clears it.
+ */
+/**
+ * The page in frame when the tutor has none (the indicator's center, currentPage()): the most visible
+ * page between the top bar and the dock, the 35% line's on a tie. The same rule as the asked page
+ * (ViewerApi.mostVisiblePage), so the indicator never names one page while a question goes out about
+ * another (the 35% line alone disagreed with it at 9–21% of scroll positions, diag/line.ts).
+ * `scrollTop` and `H` in view px; `z` the overview zoom (content = view / z).
+ */
+export function currentPageOf(L: PageLayout, scrollTop: number, H: number, z: number): number {
+  return mostVisiblePage(L, (scrollTop + SAFE_TOP) / z, (scrollTop + H - safeBottom()) / z, (scrollTop + H * CURRENT_LINE) / z);
+}
+
+export const steeredGlide = (steer: (page: number) => void, glide: (top: () => number, maxMs?: number) => Promise<void>): DeskHost['glideTo'] =>
+  (top, maxMs, page) => { if (page != null) steer(page); return glide(top, maxMs); };
 
 // ---------------------------------------------------------------------------------------------
 // Layout: absolute tops computed in JS (src/desk/layout.ts), so scroll math never reads the DOM.
@@ -484,10 +505,7 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     ioRef.current = io;
     for (const h of slots.current.values()) io.observe(h.el);
 
-    const computeCurrent = () => {
-      const L = layoutRef.current!;
-      return pageAt(L, (el.scrollTop + el.clientHeight * CURRENT_LINE) / ovRef.current.z);
-    };
+    const computeCurrent = () => currentPageOf(layoutRef.current!, el.scrollTop, el.clientHeight, ovRef.current.z);
     const publishCurrent = () => {
       const cur = computeCurrent();
       if (cur === currentRef.current) return;
@@ -683,6 +701,8 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
     const api: ViewerApi = {
       numPages: () => doc.numPages,
       currentPage: () => currentRef.current,
+      mostVisiblePage: () => (layoutRef.current ? computeCurrent() : currentRef.current),
+      focusPage: () => focusRef.current,
       spaceHeight: (page) => 1000 * (aspectsRef.current?.[clampPage(page) - 1] ?? 1.294),
       scale: () => (layoutRef.current?.pageW ?? 0) / 1000,
       layers: (page) => {
@@ -840,13 +860,13 @@ function ViewerInner({ doc, onReady, onPageChange, renderOverlay }: Props) {
       maxScroll: () => Math.max(0, (layoutRef.current?.total ?? 0) - el.clientHeight),
       aspect: (page) => aspectsRef.current?.[clampPage(page) - 1] ?? 1.294,
       setSplit,
-      glideTo: async (top, maxMs) => {
+      glideTo: steeredGlide((page) => steer(clampPage(page)), async (top, maxMs) => {
         leaveOverview();
         glide?.abort();
         const ctrl = (glide = new AbortController());
         try { await animateScrollTo(el, top, { signal: ctrl.signal, maxMs, owner }); }
         finally { if (glide === ctrl) glide = null; publishCurrent(); }
-      },
+      }),
       cancelGlide: () => glide?.abort(),
       scrollToPage: (page, y) => api.scrollToPage(page, y),
       onLayout: (cb) => { layoutSubs.current.add(cb); return () => { layoutSubs.current.delete(cb); }; },

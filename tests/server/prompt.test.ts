@@ -5,6 +5,12 @@ import { SVG_EXAMPLES } from '../../server/prompt/svgExamples';
 import { BOARD_W } from '../../src/svgboard/wire';
 import { parseTag } from '../../src/script/parseTag';
 import { ScriptParser } from '../../src/script/parser';
+import { acceptGroups, checkGroups, newBoardState } from '../../src/svgboard/check';
+import { fmtValue, newScope } from '../../src/svgboard/data';
+import { unescapeSvg } from '../../src/svgboard/wire';
+import { beatsOf as beatsOfWire } from '../../src/svgboard/beat';
+import { boardNumbers, numberFixes } from '../../src/gate/check';
+import { wireOf } from '../../src/demo/svg/index';
 import { ScriptFilter } from '../../server/scriptFilter';
 
 /**
@@ -160,7 +166,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.8');
+    expect(PROMPT_VERSION).toBe('p6.13');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -174,9 +180,10 @@ describe('system prompt (svg, default)', () => {
   });
 
   it('has no tag-DSL card: only page pointing tags', () => {
-    expect(s).not.toMatch(/\bTAGS \(|KIT \(|SCENE \(|\{\{(sketch|scene|let|const|plot|grid|bars|node|val|show|svgboard)\b/);
+    expect(s).not.toMatch(/\bTAGS \(|KIT \(|SCENE \(|\{\{(sketch|scene|let|const|plot|grid|bars|node|show|svgboard)\b/);
     const kinds = new Set([...s.matchAll(/\{\{(\w+)/g)].map((m) => m[1]));
-    for (const k of kinds) expect(['scroll', 'highlight', 'underline', 'circle', 'box', 'tween'], k).toContain(k); // tween: the svg engine's motion (data.ts)
+    // tween: the svg engine's motion (data.ts); val: a board number said by reference (p6.9, engine.ts readouts)
+    for (const k of kinds) expect(['scroll', 'highlight', 'underline', 'circle', 'box', 'tween', 'val'], k).toContain(k);
   });
 
   it('every pointing tag it shows parses', () => {
@@ -203,29 +210,46 @@ describe('system prompt (svg, default)', () => {
     expect(s).toMatch(/Name each part in plain words as it appears, in the sentence it draws across/);
   });
 
+  it('p6.8 (one beat order): the group first, then its sentences, also after a page sentence; no exception left', () => {
+    expect(s).toMatch(/Each beat is its drawing first, one SVG group <g id="…">…<\/g> in absolute board coordinates, then one to three spoken sentences, always in that order \(also when the beat's first sentence is about the page\)/);
+    expect(s).not.toMatch(/puts its group after that sentence/);
+  });
+
   it('p6.6 (follow-ups and rhythm): the plan accounts for the question\'s parts; a page sentence marks one thing and names it; a complaint is about the thread\'s question in full', () => {
     expect(s).toMatch(/parts: what the question asks for, each part named; covered here: …; left: …/);
     expect(s).toMatch(/A question with several parts gets every part it asks for, each with its beat, never the first part alone/);
     expect(s).toMatch(/marks the one thing it is about and names it in that same sentence \(a highlighted phrase: say its words\)/);
     expect(s).toMatch(/one page mark in a sentence/);
-    expect(s).toMatch(/a beat whose first sentence is about the page puts its group after that sentence/);
+    expect(s).toMatch(/the board waits on its own: the beat's group still comes first/);
     expect(s).toMatch(/the subject is the question their thread is on \(MEMORY names it\), in full/);
     expect(s).toMatch(/"is that complete\?" is answered by finishing, never with a yes or a no/);
   });
 
-  it('p6.5 (no dead air): the script starts with spoken words, before the plan, after an opening too', () => {
-    expect(s).toMatch(/first characters are spoken words, never the plan or a group/);
-    expect(s).toMatch(/after an opening already spoken, its next sentences/);
+  it('p6.9 (numbers): a board number is said by reference; the plan carries givens, not results; points and labels on a plot are the engine\'s', () => {
+    expect(s).toMatch(/a number the board computes is said by reference, never retyped: give its data-val text an id and say \{\{val id=crossing\}\}/);
+    expect(s).toMatch(/<text id="crossing" data-val="W\/u"/);
+    expect(s).toMatch(/its given numbers, and the formulas for what the board will compute from them/);
+    expect(s).toMatch(/every point on a curve is placed by data-at \(cross\(d,s\) where two curves meet/);
+    expect(s).toMatch(/data-schematic/);
+    expect(s).not.toMatch(/compute yourself|its computed numbers/);
+  });
+
+  it('p6.11 (C7, plan before speech): the plan comes first, before any spoken word; p6.5\'s spoken lead-in is gone; the first group is small', () => {
+    expect(s).toMatch(/Plan first: the script's first characters are a short hidden plan \(never shown or spoken\), before any spoken word/);
+    expect(s).not.toMatch(/Start speaking at once|first characters are spoken words|sentences that need no drawing/);
+    expect(s).toMatch(/the first one most of all \(nothing is spoken until it is written\)/);
+    expect(s).toMatch(/Answer first, in your first beat/);
+    expect(s).toMatch(/Off-topic \(nothing to do with the document\): one friendly sentence, no plan and no drawing \(with an empty answer, the only scripts that do not start with a plan\)/);
   });
 
   it('states the teacher-at-a-whiteboard brief and the streamed beat format', () => {
-    for (const p of [/great teacher at a whiteboard/, /Draw the mechanism, not names/, /ONE concrete case/, /real numbers you compute/, /reads on its own/, /beats are your budget/,
-      /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 560 H"/, /one unit is about one pixel/, /regions:/, /groups:/, /<g id=/, /drawing first/, /draws across its sentences/, /draws on the word that names it/, /Start speaking at once/, /data-fn=/, /data-val=/, /data-at=/, /data-const=/, /\{\{tween /, /data-ghost/, /data-trace/, /BUDGET line/, /Never a sentence, never a line of words standing on its own/,
+    for (const p of [/great teacher at a whiteboard/, /Draw the mechanism, not names/, /ONE concrete case/, /computed by the board \(EXACT DATA\) and said from it/, /reads on its own/, /beats are your budget/,
+      /Never invent page content/, /<plan>/, /BOARD viewBox="0 0 560 H"/, /one unit is about one pixel/, /regions:/, /groups:/, /<g id=/, /drawing first/, /draws across its sentences/, /draws on the word that names it/, /Plan first/, /data-fn=/, /data-val=/, /data-at=/, /data-const=/, /\{\{tween /, /data-ghost/, /data-trace/, /BUDGET line/, /Never a sentence, never a line of words standing on its own/,
       /No scripts, foreignObject/, /font-size 16/, /one accent colour/, /Nothing overlaps/, /inside the viewBox/, /BOARD extend/, /ghost/]) expect(s).toMatch(p);
   });
 
   it('p6.8 (founder: "random lines of text"): board text is labels only, never a sentence or stacked words; one label one element; a case shows its effect', () => {
-    for (const p of [/Text on the board is a label/, /Never a sentence/, /never lines of words stacked under each other/, /the engine removes any it finds/, /one text element on one line/, /make sure the effect shows in the numbers/]) expect(s).toMatch(p);
+    for (const p of [/Text on the board is a label/, /Never a sentence/, /never lines of words stacked under each other/, /the engine removes any it finds/, /one text element on one line/, /the effect shows in the numbers the board will compute/]) expect(s).toMatch(p);
     expect(s).not.toMatch(/takeaway written once/);
   });
 
@@ -252,10 +276,9 @@ describe('system prompt (svg, default)', () => {
   describe.skipIf(typeof DOMParser === 'undefined').each(SVG_EXAMPLES.map((e) => [e.title, e] as const))('example: %s', (_t, ex) => {
     it('has a plan ending with the BOARD layout: viewBox, regions, groups in teaching order', () => {
       const plan = /<plan>([\s\S]*?)<\/plan>/.exec(ex.script)?.[1] ?? '';
-      // p6.1: one or two spoken sentences with no drawing come first; they play while the plan is written.
-      const lead = ex.script.slice(0, ex.script.indexOf('<plan>'));
-      expect(lead.replace(/\{\{[^}]*\}\}/g, '').trim().split(/\s+/).length).toBeGreaterThan(8);
-      expect(lead).not.toMatch(/<g\b/);
+      // p6.11 (C7): the plan comes first; nothing is said before it. The first beat points at the page.
+      expect(ex.script.indexOf('<plan>')).toBe(0);
+      expect(beatsOf(ex.script)[0].narration).toMatch(/^\s*\{\{highlight p=\d+ /);
       expect(boardH(plan)).toBeGreaterThan(0);
       expect(plan).toMatch(/\nregions: /);
       const listed = /\ngroups: (.*)/.exec(plan)![1].split(';').map((g) => g.trim().split(/\s/)[0]);
@@ -274,6 +297,8 @@ describe('system prompt (svg, default)', () => {
         expect(doc.querySelector('parsererror'), b.id).toBeNull();
         expect(b.svg).not.toMatch(/<(script|foreignObject|image|animate|a)\b|\bon\w+=|href=/i);
         for (const el of Array.from(doc.querySelectorAll('*'))) {
+          // A shape placed by the engine (data-at: an arrowhead, a cap) is drawn relative to its point; its box is checked resolved below.
+          if (el.hasAttribute('data-at') && !/^(circle|text|rect|ellipse)$/.test(el.nodeName)) continue;
           for (const a of ['x', 'cx', 'x1', 'x2']) { const v = el.getAttribute(a); if (v != null) { expect(Number(v), `${b.id} ${a}`).toBeGreaterThanOrEqual(0); expect(Number(v)).toBeLessThanOrEqual(W); } }
           for (const a of ['y', 'cy', 'y1', 'y2']) { const v = el.getAttribute(a); if (v != null) { expect(Number(v), `${b.id} ${a}`).toBeGreaterThanOrEqual(0); expect(Number(v)).toBeLessThanOrEqual(H); } }
           const pts = el.getAttribute('points');
@@ -282,6 +307,51 @@ describe('system prompt (svg, default)', () => {
           if (fs) expect(Number(fs), b.id).toBeGreaterThanOrEqual(16);
         }
         expect(doc.querySelectorAll('text').length + doc.querySelectorAll('[font-size] text').length, b.id).toBeGreaterThan(0); // every group is labelled
+      }
+    });
+
+    it('p6.10: grounded: every number and point on the board is the engine\'s, and drawn inside the viewBox', () => {
+      const H = boardH(ex.script), board = newBoardState(BOARD_W, H), sc = newScope();
+      for (const g of wireOf(ex.script).matchAll(/\{\{svg (<g[\s\S]*?)\}\}/g)) {
+        const r = checkGroups([unescapeSvg(g[1])], board, 16, sc);
+        acceptGroups(board, r.geos, r.grow);
+        expect(r.flags, r.geos[0].id).toEqual([]);
+        expect(r.notes.filter((n) => /grounded/.test(n)), r.geos[0].id).toEqual([]);
+        const b = r.geos[0].box!;
+        expect(b.x, r.geos[0].id).toBeGreaterThanOrEqual(0);
+        expect(b.x + b.w, r.geos[0].id).toBeLessThanOrEqual(BOARD_W);
+        expect(b.y + b.h, r.geos[0].id).toBeLessThanOrEqual(H);
+      }
+    });
+
+    it('p6.10: a computed number is said by reference: each {{val}} says what the board shows, and no spoken number is near a readout', () => {
+      const wire = wireOf(ex.script);
+      const p = new ScriptParser();
+      const evs = [...p.push(wire), ...p.end()];
+      const vals = evs.flatMap((e) => (e.type === 'action' && e.action.kind === 'val' ? [e.action] : []));
+      expect(vals.length, 'the example shows {{val}}').toBeGreaterThan(1);
+      const shown = new Set(p.values.values.flatMap((v) => (v.shown != null ? [v.shown] : [])).concat(Object.values(p.values.consts).map((v) => fmtValue(v))));
+      for (const v of vals) { expect(v.said, v.ref).toBeDefined(); expect(shown, v.ref).toContain(v.said); }
+      for (const b of beatsOfWire(wire)) expect(boardNumbers(b.words, p.values.values).flags, b.text).toEqual([]);
+      expect(numberFixes(beatsOfWire(wire).flatMap((b) => b.words), p.values.values)).toEqual([]);
+    });
+
+    it('p6.12: the first group is frame- or title-sized (nothing is spoken until it is written); the heavy drawing comes in a later beat', () => {
+      const bs = beatsOf(ex.script);
+      expect(bs[0].svg.length, bs[0].id).toBeLessThanOrEqual(400);
+      expect(Math.max(...bs.slice(1).map((b) => b.svg.length))).toBeGreaterThan(2 * bs[0].svg.length);
+      // The plan is a few compact lines (it is written before the first word too).
+      expect((/<plan>([\s\S]*?)<\/plan>/.exec(ex.script)![1]).length).toBeLessThanOrEqual(400);
+    });
+
+    it('p6.12 (NUMBERS YOU SAY): the narration types only the page\'s and the question\'s numbers, or a count its schematic group draws', () => {
+      const own = `${ex.listing} ${ex.question}`;
+      for (const b of beatsOf(ex.script)) {
+        const said = b.narration.replace(/\{\{[^}]*\}\}/g, ' ').replace(/<check>[\s\S]*?<\/check>/, ' ');
+        for (const m of said.matchAll(/\d+(?:\.\d+)?/g)) {
+          if (new RegExp(`(^|[^\\d.])${m[0].replace('.', '\\.')}(?![\\d.]\\d)`).test(own)) continue;
+          expect(/data-schematic/.test(b.svg) && Number(m[0]) <= 8, `${b.id}: "${m[0]}" is neither the page's, the question's nor a drawn count`).toBe(true);
+        }
       }
     });
 

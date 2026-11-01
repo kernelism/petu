@@ -15,13 +15,15 @@ import { blockPart } from '../script/pointExpr';
 import type { FindAction, KitSource, MoveAction, RawAction, ValAction } from '../script/types';
 import { Figures, type Grounding } from '../geometry/resolve';
 import { curveOf, read, yAt, type Curve, type FitData, type Reading } from '../values/readout';
-import { sayNumber } from '../values/say';
+import { sayNumber, spokenOf } from '../values/say';
 import { latestCharts } from '../agent/context/charts';
 import { newScope, resolveData, type DataScope } from '../svgboard/data';
 import { parseGroup } from '../svgboard/sanitize';
 
 export type ValueSource = 'page' | 'question' | 'literal' | 'const' | 'computed' | 'derived';
-export type Value = { v: number; source: ValueSource; /** block id, page, const name… */ of: string; beat: number; /** An svg readout's own words for the number (data.ts valueLabel). */ label?: string; row?: { table: string; r: number; cells: number[] } };
+export type Value = { v: number; source: ValueSource; /** block id, page, const name, an svg readout's id (else 'svg')… */ of: string; beat: number; /** An svg readout's own words for the number (data.ts valueLabel). */ label?: string; row?: { table: string; r: number; cells: number[] };
+  /** An svg board readout (data-val): the number as the board writes it. Spoken numbers are held to these (check.ts boardNumbers). */ shown?: string;
+  /** An svg readout's unit and its text's words (data.ts valueUnit, valueWords): what ties a spoken number to it. */ unit?: string; words?: string[] };
 
 type Block = {
   id: string; kind: string; vals?: number[][]; full?: number[][]; src?: KitSource; tab?: { heads: string[] }; computedCols?: Set<number>; region?: string;
@@ -50,6 +52,12 @@ type PlotSrc = Extract<RawAction, { kind: 'plot' }> & { id?: string; chart?: str
 export const UNBOUND_TEXT = '—';
 
 
+/**
+ * A readout's name as {{val id=…}} reaches it: the tag parsers turn '-' into '_' (eid), so an svg text
+ * id="height-low" must be found as height_low (eval D20, 2026-11-01: four readouts said as unbound).
+ */
+const readoutKey = (id: string) => id.toLowerCase().replace(/-/g, '_');
+
 export class GateState {
   readonly values: Value[] = [];
   /** Named numbers, lowercase (the expression language reads names lowercased). */
@@ -69,6 +77,14 @@ export class GateState {
   readonly figures: Figures;
   /** The svg board's exact data (src/svgboard/data.ts): its constants are this state's, its data-val numbers are computed values. */
   readonly svg: DataScope = newScope();
+  /**
+   * The svg board's readouts by name (lowercase data-name or id of a data-val text), as last resolved:
+   * `{{val id=t}}` says one exactly as the board writes it, so the word heard and the number seen are one
+   * (C4, 2026-10-31: the narration computed its numbers apart from the board's, and drifted).
+   */
+  readonly readouts = new Map<string, { v: number; text: string }>();
+  /** Constants a later definition tried to change (the first value stands): `k=5 (it is 2)`. */
+  readonly redefined: string[] = [];
   private svgGroups: Element[] = [];
   /** The id of the last shape or block apply() created (anonymous ones get `_n`). */
   lastId: string | undefined;
@@ -101,6 +117,8 @@ export class GateState {
           const v = f ? f({}) : NaN;
           // A constant written as a number is the model's own literal; one written as a formula (T=2*v/g) is computed.
           const lit = /^[-−+]?\d*\.?\d+$/.test(src.trim());
+          // A name already defined keeps its value (as on the board: KitStore.defineConsts); the gate flags it.
+          if (k.toLowerCase() in this.consts && this.consts[k.toLowerCase()] !== v) { this.redefined.push(`${k}=${src} (it is ${+this.consts[k.toLowerCase()].toPrecision(6)})`); continue; }
           if (Number.isFinite(v)) {
             const key = k.toLowerCase();
             this.consts[key] = v; this.declared.set(key, beat); this.addValues([v], lit ? 'const' : 'computed', k, beat);
@@ -131,6 +149,7 @@ export class GateState {
       case 'beforeafter': return this.move(a, beat);
       case 'tween': return this.tween(a, beat);
       case 'svg': return this.svgGroup(a.svg, beat);
+      case 'beat': return;
     }
     if (a.kind === 'grid' || a.kind === 'bars' || a.kind === 'table' || a.kind === 'calc' || a.kind === 'scatter' || a.kind === 'fit' || a.kind === 'shares' || a.kind === 'tokens') return this.kit(a, beat);
     if ('ref' in a) return this.verb(a, beat);
@@ -292,7 +311,7 @@ export class GateState {
    * The engine's value for a {{val}} reference: a readout (E, E.x, E.y), a constant, a calc's result,
    * a one-value block, or a part (v[2], g[1,2], t[3].c / t[3].price). A string says why not.
    */
-  value(ref: string): { v: number; dp?: number } | string {
+  value(ref: string): { v: number; dp?: number; /** An svg readout's board text. */ text?: string } | string {
     const m = /^([^.[]+)(\[[^\]]+\])?(?:\.(.+))?$/.exec(ref);
     if (!m) return `bad reference ${ref}`;
     const [, id, idx, field] = m;
@@ -302,6 +321,8 @@ export class GateState {
       const v = field === 'x' ? r.x : field === 'y' ? r.y : field == null ? r.v : NaN;
       return Number.isFinite(v) ? { v } : `${ref}: no such value`;
     }
+    const ro = !idx && !field ? this.readouts.get(readoutKey(id)) : undefined;
+    if (ro && !this.blocks.has(id)) return { v: ro.v, text: ro.text };
     const b = this.blocks.get(id);
     if (!b && !idx && !field && id.toLowerCase() in this.consts) return { v: this.consts[id.toLowerCase()] };
     if (!b) return `unknown ${id}`;
@@ -342,7 +363,10 @@ export class GateState {
    */
   say(a: ValAction): { said: string; spoken: string } | null {
     const r = this.value(a.ref);
-    return typeof r === 'string' ? null : sayNumber(r.v, { fmt: a.fmt ?? r.dp, as: a.as });
+    if (typeof r === 'string') return null;
+    // An svg readout is said as the board writes it (its data-fmt), unless the tag asks for a format.
+    if (r.text != null && a.fmt == null && a.as == null) return { said: r.text, spoken: spokenOf(r.text) };
+    return sayNumber(r.v, { fmt: a.fmt ?? r.dp, as: a.as });
   }
 
   /** {{contrast}} → the copy it draws: the same plot on the same axes, or the same block beside it, with one constant changed. */
@@ -405,7 +429,7 @@ export class GateState {
     this.svg.define = (defs) => { this.apply({ kind: 'const', defs } as RawAction, beat); };
     this.svg.values.length = 0;
     const probs = resolveData(g, this.svg);
-    for (const x of this.svg.values) if (Number.isFinite(x.v)) this.values.push({ v: x.v, source: 'computed', of: 'svg', beat, ...(x.label ? { label: x.label } : {}) });
+    this.takeReadouts(beat);
     if (this.svg.values.length || g.querySelector('[data-at],[data-fn],[data-param],[data-between]')) this.svgGroups.push(g);
     return probs.length ? probs.map((p) => p.detail).join('; ') : undefined;
   }
@@ -416,7 +440,16 @@ export class GateState {
     this.svg.consts = this.consts;
     this.svg.values.length = 0;
     for (const g of this.svgGroups) resolveData(g, this.svg);
-    for (const x of this.svg.values) if (Number.isFinite(x.v)) this.values.push({ v: x.v, source: 'computed', of: 'svg', beat, ...(x.label ? { label: x.label } : {}) });
+    this.takeReadouts(beat);
+  }
+
+  /** The readouts the last resolve wrote: computed values the narration may say, and by name, what {{val}} reads. */
+  private takeReadouts(beat: number): void {
+    for (const x of this.svg.values) {
+      if (!Number.isFinite(x.v)) continue;
+      this.values.push({ v: x.v, source: 'computed', of: x.id ?? 'svg', beat, shown: x.text, ...(x.label ? { label: x.label } : {}), ...(x.unit ? { unit: x.unit } : {}), ...(x.words ? { words: x.words } : {}) });
+      if (x.id) this.readouts.set(readoutKey(x.id), { v: x.v, text: x.text });
+    }
   }
 
   /** limit / beforeafter: the constant takes its new value; every plot, readout and computed block follows. */

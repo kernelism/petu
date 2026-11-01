@@ -11,7 +11,7 @@
 import { penDown, penLift, penTo } from '../ink/agent/penCursor';
 import { prefersReducedMotion, strokeDurationMs, ease } from '../ink/agent/animate';
 import { sanitizeGroup, type Sanitized } from './sanitize';
-import { beatEnd, partWords, paceParts, splitPart, REPLAN_MS, type BeatWord, type Slot } from '../playback/pace';
+import { beatEnd, labelNames, partWords, paceParts, splitPart, REPLAN_MS, type BeatWord, type Slot } from '../playback/pace';
 import { INK, type Palette } from './style';
 import { isBound, newScope, resolveData, type DataScope } from './data';
 import { prepareText } from './polish';
@@ -22,8 +22,11 @@ import { holdFades, InkTime, type Paused } from '../playback/inkTime';
 import type { SRect } from '../geometry/space';
 
 const NS = 'http://www.w3.org/2000/svg';
-/** No group takes longer than this to draw (strokes are compressed to fit). */
-export const GROUP_MAX_MS = 3200;
+/**
+ * No group takes longer than this to draw at pen speed (strokes are compressed to fit). Under the
+ * director's ACTION_TIMEOUT_MS (3 s): at 3.2 s its timeout landed the last 200 ms of every long group at once.
+ */
+export const GROUP_MAX_MS = 2600;
 const TEXT_FADE_MS = 240;
 const FILL_FADE_MS = 220;
 
@@ -215,10 +218,11 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.max(0,
 type Step = { el: SVGElement; kind: 'trace' | 'fade'; len: number; px: number };
 
 /** A part of a group drawn as one: a top-level child (a nested group is one part). */
-type Unit = { el: Element; steps: Step[]; cat: number; words: string[]; at: number };
+type Unit = { el: Element; steps: Step[]; cat: number; names: { words: string[]; label?: string[] }; at: number };
 
 /**
- * Pen order of a part: frames and axes, then lines and curves, then points, then labels, then large
+ * Pen order of a part, at pen speed only (no beat to pace by; paced, the group's own order and its
+ * words decide): frames and axes, then lines and curves, then points, then labels, then large
  * fills (a wash lands under what it shades once the strokes are there).
  */
 function categoryOf(el: Element): number {
@@ -235,20 +239,25 @@ function categoryOf(el: Element): number {
   return 1;
 }
 
-/** Words a part answers to in the narration: its id's words (partWords), else its text's first words. */
-function wordsOf(el: Element, ns: string, groupId?: string): string[] {
+/**
+ * The words a part answers to in the narration (pace.ts PartIn): its `data-say` when it has one (the
+ * author's words for it, numbers included), else its id's words (partWords), with its label's numbers and
+ * words (labelNames, data-val readouts resolved by now) for when the id's words aren't said.
+ */
+function wordsOf(el: Element, ns: string, groupId?: string): { words: string[]; label?: string[] } {
+  const say = el.getAttribute('data-say');
+  if (say?.trim()) return { words: labelNames(say, true) };
   const id = (el.getAttribute('data-name') ?? el.getAttribute('id') ?? '').replace(new RegExp(`^${ns.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-`), '');
-  const fromId = partWords(id, groupId);
-  if (fromId.length) return fromId;
   const t = el.nodeName.toLowerCase() === 'text' || el.nodeName.toLowerCase() === 'g' ? (el.textContent ?? '') : '';
-  return t.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4).slice(0, 2);
+  return { words: partWords(id, groupId), label: labelNames(t) };
 }
 
 /**
  * Appends `g` (a replaced id's old group fades to a ghost first) and draws it part by part. With the
  * beat's narration (`beat`: its words and when each is spoken) the drawing is paced to the speech
- * (src/playback/pace.ts): the parts are spread across the beat in pen order, a part the narration names
- * (its id, its label's words) starts on that word, and each draws across its share of the words, not
+ * (src/playback/pace.ts): a part the narration names (its data-say, its id, its label's words and
+ * numbers) starts on that word, the others draw next to their named neighbours in the group's order,
+ * and each draws across its share of the words, not
  * at pen speed; `slot`: this group shares the beat with others that came with it. Without a beat they
  * follow one another at pen speed (≤ GROUP_MAX_MS). `speed` ≤ 1 compresses (backlog); `signal`
  * aborted → the final state at once; `paused`: while it holds, nothing moves (no stroke, fade or new
@@ -291,7 +300,7 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   for (const c of Array.from(g.children)) {
     const leaves = (isLeaf(c) ? [c] : Array.from(c.querySelectorAll(`${SHAPES},text`)).filter(isLeaf)) as SVGElement[];
     if (!leaves.length) continue;
-    units.push({ el: c, steps: leaves.map(stepOf), cat: categoryOf(c), words: wordsOf(c, b.ns, id), at: 0 });
+    units.push({ el: c, steps: leaves.map(stepOf), cat: categoryOf(c), names: wordsOf(c, b.ns, id), at: 0 });
   }
   const steps = units.flatMap((u) => u.steps);
   // Hide everything, then reveal in order.
@@ -316,7 +325,7 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   // Paced whenever the beat is known, even a little behind its word (a backlog `speed` < 1): the beat's
   // times are from now, so the drawing catches up with the words by itself.
   const words = o.beat?.() ?? [];
-  const partIn = (u: Unit) => ({ cat: u.cat, words: u.words, naturalMs: u.steps.reduce((a, s) => a + natural(s), 0) });
+  const partIn = (u: Unit) => ({ ...u.names, naturalMs: u.steps.reduce((a, s) => a + natural(s), 0) });
   // Every time below is on the ink's own clock: it stands still while the answer is paused.
   const clock = new InkTime(o.paused, (held) => holdFades(g, held));
   const plannedAt = clock.now();
@@ -351,31 +360,47 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   /** When the last fade started lands (ink time). */
   let fadesTo = 0;
   const t0 = clock.now();
-  // Paced over the beat, the drawing outlives the director's step (it resolves once under way): from
-  // then on only a stop (a new answer, the student's stop) ends it, landing everything at once.
+  // Paced over the beat, the drawing outlives the director's step (it resolves once under way), and only
+  // a stop (a new answer, the student's stop) ends it, landing everything at once. The step's own signal
+  // (the director's land() before the view moves, its step timeout) no longer does, even in the step's
+  // first moments: a scroll or a reveal then landed the whole group at once, skipping every part still
+  // to come in its beat. At pen speed (or with no stop to end it) the step's signal still lands it.
   const bg = new AbortController();
   const onSig = () => bg.abort();
-  o.signal.addEventListener('abort', onSig);
+  const own = paced && !!o.stop;
+  if (!own) o.signal.addEventListener('abort', onSig);
   o.stop?.addEventListener('abort', onSig);
   const sig = bg.signal;
   const run = async () => { try {
+    /**
+     * The beat's end moved since the plan (more streamed in, it closed, a voice piece came late or the
+     * speed changed): the parts from `ui` on spread over what is left of it. A beat of one word too (it
+     * was planned while open; left at pen speed, it kept the open guess).
+     */
+    const replan = (ui: number) => {
+      if (!paced || !o.beat) return;
+      const nowT = clock.now(), w = o.beat();
+      if (!w.length || Math.abs(nowT + beatEnd(w) - beatTo) <= REPLAN_MS) return;
+      beatTo = nowT + beatEnd(w);
+      const rest = order.slice(ui);
+      const re = paceParts(rest.map(partIn), w, o.slot, beatFrom - nowT);
+      if (re) re.forEach((p, j) => { order[ui + j] = rest[p.i]; rest[p.i].at = nowT - t0 + p.at; budget[ui + j] = p.dur; });
+    };
     for (let ui = 0; ui < order.length; ui++) {
       if (sig.aborted) break;
-      // The beat's end moved since the plan (more streamed in, or it closed): the parts left spread over what is left of it.
-      if (paced && ui > 0 && o.beat) {
-        const nowT = clock.now(), w = o.beat();
-        if (w.length >= 2 && Math.abs(nowT + beatEnd(w) - beatTo) > REPLAN_MS) {
-          beatTo = nowT + beatEnd(w);
-          const rest = order.slice(ui);
-          const re = paceParts(rest.map(partIn), w, o.slot, beatFrom - nowT);
-          if (re) re.forEach((p, j) => { order[ui + j] = rest[p.i]; rest[p.i].at = nowT - t0 + p.at; budget[ui + j] = p.dur; });
-        }
+      // A part waiting for its word wakes every REPLAN_MS to re-plan: slept through, it drew at the time
+      // its word had when it went to sleep (2 s early when the voice piece holding that word came late).
+      let first = true;
+      for (;;) {
+        replan(ui);
+        const wait = t0 + order[ui].at - clock.now();
+        if (first && wait > 16) penLift(pen);
+        // (Also while paused at a part's start: it waits for the resume before the board follows it.)
+        await clock.sleep(wait > 16 ? Math.min(wait, REPLAN_MS) : 0, sig);
+        first = false;
+        if (sig.aborted || wait <= REPLAN_MS) break;
       }
       const u = order[ui];
-      const wait = t0 + u.at - clock.now();
-      if (wait > 16) penLift(pen);
-      // (Also while paused at a part's start: it waits for the resume before the board follows it.)
-      await clock.sleep(wait > 16 ? wait : 0, sig);
       if (sig.aborted) break;
       penDown(pen);
       setLive(b, u.el);
@@ -416,7 +441,9 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   if (!sig.aborted) await clock.sleep(Math.max(Math.min(FILL_FADE_MS, TEXT_FADE_MS), fadesTo - clock.now()), sig);
   clock.release(); };
   const done = run();
-  if (paced && o.stop) await Promise.race([done, sleep(Math.min(1500, ACTION_STEP_MS))]);
+  // The step hands back early when its signal asks (land() waits for it), the drawing goes on.
+  const asked = new Promise<void>((r) => { if (o.signal.aborted) r(); else o.signal.addEventListener('abort', () => r(), { once: true }); });
+  if (own) await Promise.race([done, sleep(Math.min(1500, ACTION_STEP_MS)), asked]);
   else await done;
   o.signal.removeEventListener('abort', onSig);
 }

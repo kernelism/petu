@@ -24,6 +24,17 @@ describe('svg data: exact geometry', () => {
     expect(constDefs('a=1; b = a+2')).toEqual([['a', '1'], ['b', 'a+2']]);
   });
 
+  it('a curve with a pole at the end of its domain draws (eval D19: -(a-x)/x from x=0); one with no value anywhere fails', () => {
+    const pole = g(`<g data-const="a=60"><g data-axes="el" data-x="0,60" data-y="-6,0" data-box="80,75,270,240"/><path id="el" data-fn="-(a-x)/x" data-axes="el" fill="none"/><circle data-at="at(el, x=30)" r="5"/></g>`);
+    expect(resolveData(pole, newScope())).toEqual([]);
+    // data-domain (written by the model in D19/D20) bounds the curve as data-x does.
+    const dom = g(`<g data-const="a=60"><g data-axes="el" data-x="0,60" data-y="-6,0" data-box="80,75,270,240"/><path id="el" data-fn="-(a-x)/x" data-domain="10,50" data-axes="el" fill="none"/></g>`);
+    expect(resolveData(dom, newScope())).toEqual([]);
+    expect(dom.querySelector('path')!.getAttribute('d')).toMatch(/^M\s*125(\.0+)?[ ,]/);
+    const none = g(`<g><g data-axes="el" data-x="0,60" data-y="-6,0" data-box="80,75,270,240"/><path id="el" data-fn="sqrt(-1-x)" data-axes="el" fill="none"/><circle data-at="at(el, x=30)" r="5"/></g>`);
+    expect(JSON.stringify(resolveData(none, newScope()))).toMatch(/has no value/);
+  });
+
   it('places the equilibrium exactly on the crossing, and the shortage from the curves', () => {
     const el = g(MARKET), sc = newScope();
     expect(resolveData(el, sc)).toEqual([]);
@@ -83,18 +94,20 @@ describe('svg data: exact geometry', () => {
     expect(fmtValue(63700)).toBe('63,700');
   });
 
-  it('the gate sees resolved geometry: a curve through earlier text is caught', () => {
+  it('the gate sees resolved geometry: a curve through earlier text is caught (a note: layout never withholds a beat)', () => {
     const board = newBoardState();
     const a = checkGroups([`<g id="ax" data-axes="ax" data-x="0,10" data-y="0,10" data-box="100,100,400,400"><text x="290" y="305" font-size="20">label</text></g>`], board, 16);
     expect(a.flags).toEqual([]);
     board.texts.push(...a.geos[0].texts);
     const b = checkGroups([`<g id="c"><path data-fn="x" data-axes="ax" stroke="#000" fill="none"/></g>`], board, 16, a.scope);
-    expect(b.flags.map((f) => f.detail).join()).toMatch(/crosses text "label"/);
+    expect(b.flags).toEqual([]);
+    expect(b.notes.join()).toMatch(/crosses text "label"/);
   });
 });
 
 import { GateState } from '../../src/gate/engine';
-import { checkNumbers } from '../../src/gate/check';
+import { boardNumbers, checkNumbers } from '../../src/gate/check';
+import { tokenize, type Word } from '../../src/gate/segment';
 import type { RawAction } from '../../src/script/types';
 
 describe('svg data: the gate knows the computed numbers', () => {
@@ -105,7 +118,10 @@ describe('svg data: the gate knows the computed numbers', () => {
     expect(st.consts.pc).toBe(700);
     const say = (w: string) => checkNumbers(w.split(' '), { known: st.values, derived: [], intersections: [] }).flags;
     expect(say('a shortage of 40 flats')).toEqual([]);
-    expect(say('a shortage of 37 flats').length).toBe(1);
+    // Near the board's 40 but not it: the board rule's (drift), no longer a plain number note; far from it, a note.
+    expect(say('a shortage of 37 flats')).toEqual([]);
+    expect(boardNumbers(tokenize('a shortage of 37 flats').filter((t): t is Word => t.kind === 'word'), st.values).flags.map((f) => f.check)).toEqual(['drift']);
+    expect(say('a shortage of 25 flats').length).toBe(1);
     st.apply({ kind: 'tween', sets: [['pc', '600']] } as RawAction, 1);
     // At 600: qd = 120, qs = 40: the shortage is 80.
     expect(say('now 80 flats short')).toEqual([]);

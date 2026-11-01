@@ -10,9 +10,20 @@
 // `OpenerGate` turns the opener's characters into spoken script: whole sentences only (the first one
 // plays as soon as it is complete), tags restricted to pointing at the visible page, narration cleaned
 // of markdown and TeX like the answer's.
+//
+// C7 (2026-10-31, "what it says and what it draws don't match"): the opener plays before any plan or
+// board exists, from a scout that does not reason, so it may orient but must not claim what the worked
+// case decides. Its numbers were the claims stage 2 later contradicted ("the 60-degree launch…", "30 and
+// 60 degrees land at the same spot", eval D20). So a sentence whose narration holds a number (digits, or
+// a cardinal in words) is not spoken. Decided per released piece, never by waiting (the first caption
+// word must not get later): a sentence numeric from its first piece is dropped whole; one whose later
+// clause turns numeric is cut there and closed with a full stop (a released clause holds back its
+// trailing ", " until the next piece decides, so a cut never leaves a dangling comma). If every sentence
+// was numeric, the first is spoken after all at the end: silence is worse, and stage 2 is told to
+// correct the opener when its case disagrees (openerNote).
 import { clean } from './scriptFilter';
 import { parseTag } from '../src/script/parseTag';
-import { clauseAfter, lookahead, markQuote, needsWords, quoteSpoken, sentenceTail } from '../src/script/quoteWords';
+import { clauseAfter, lookahead, markQuote, sentenceTail, spokenAt } from '../src/script/quoteWords';
 
 type State = 'start' | 'key' | 'colon' | 'value' | 'string' | 'raw' | 'after' | 'done';
 
@@ -127,25 +138,71 @@ export class ScoutJson {
 export const OPENER_TAGS = new Set(['highlight', 'underline', 'circle', 'box', 'arrow', 'line']);
 /** A clause shorter than this waits for more ("So," alone is not worth a release). */
 const MIN_CLAUSE = 16;
+/**
+ * A number in spoken words: digits or a cardinal. Left out: "one" (a pronoun in orienting speech: "the
+ * one on the right"), ordinals ("first"), "half" ("the second half of the proof"), "percent" (a concept's
+ * name: "percent change") and a cardinal after a determiner ("the two values", "these three cases":
+ * counting what the page shows, not a result).
+ */
+const NUMBER = /\d+(?:\.\d+)?|\b(?:zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds?|thousands?|millions?|billions?|twice|thrice)\b/giu;
+/** What a number names rather than claims, by the words before it: "Section 3", "Eq. 4", "Lecture 5", "step 2", "the two values", "n minus 1". */
+const NAME_BEFORE = /(?:\b(?:sections?|sec|chapters?|ch|figures?|fig|equations?|eqn?|tables?|theorems?|lemmas?|lectures?|slides?|pages?|pp?|steps?|parts?|problems?|exercises?|examples?|questions?|hw|homework|weeks?|lines?|rows?|columns?|layers?|stages?|phases?|cases?|appendix|algorithms?|definitions?|propositions?|corollary|rules?)\.?\s*|\b\p{L}\s*(?:minus|plus|times|over|[-+−×*/])\s*)$/iu;
+/** …and by what follows it: "2D", "3D" (a name's letter), "1 minus p". */
+const NAME_AFTER = /^(?:\p{Lu}|\s*(?:minus|plus|[-+−])\s*\p{L}(?!\p{L}))/u;
+/** An era, not a quantity: "the 1990s", "the '80s" (not "5s", five seconds). */
+const decade = (n: string, before: string, after: string) => /^'?s\b/.test(after) && (/^\d{3}0$/.test(n) || (/^\d0$/.test(n) && /'$/.test(before)));
+const DETERMINER = /\b(?:the|these|those|its|their|all|both)\s+$/i;
+/**
+ * Whether spoken script (tags aside: a page number or a quoted phrase is pointing, not a claim) says a
+ * number. Not one: digits inside a name ("CO2", "L1", "2D", "Section 3", "n minus 1", "the 1990s"), and
+ * any number the student said themselves (`own`: the question): echoing their own words orients, and
+ * a check reply's verdict ("Yes, 0.5 is right.") is about their number, not a result the case decides.
+ */
+export const saysNumber = (s: string, own = ''): boolean => {
+  const said = s.replace(/\{\{[^}]*\}\}?/g, ' ');
+  const theirs = new Set([...own.matchAll(NUMBER)].map((m) => m[0].toLowerCase()));
+  for (const m of said.matchAll(NUMBER)) {
+    const before = said.slice(0, m.index), after = said.slice(m.index + m[0].length);
+    const digits = /\d/.test(m[0]);
+    if (digits && /[\p{L}_]$/u.test(before)) continue; // CO2, L1, x2
+    if (digits && /\d[.,]$/.test(before)) continue; // the tail of a number already seen
+    if (NAME_BEFORE.test(before) || (!digits && DETERMINER.test(before))) continue;
+    if (digits && (NAME_AFTER.test(after) || decade(m[0], before, after))) continue;
+    if (theirs.has(m[0].toLowerCase())) continue;
+    return true;
+  }
+  return false;
+};
 
 /**
  * Splits the opener into whole sentences or clauses as its characters arrive (`push` returns what
  * this delta completed, `end` the rest). Inside a sentence, a tag that does not point at the
- * visible page (another page, the board, a scroll) is dropped and noted; narration is cleaned.
+ * visible page (another page, the board, a scroll) is dropped and noted; narration is cleaned; a
+ * sentence that says a number is dropped or cut (see the header).
  */
 export class OpenerGate {
   private buf = '';
   /** Everything emitted so far: exactly what the student will hear and see. */
   said = '';
   notes: string[] = [];
-  constructor(private visible: number) {}
+  /** A released clause's trailing separator (", "), sent with the next piece of its sentence. */
+  private pend = '';
+  /** Part of the current sentence has been released. */
+  private started = false;
+  /** The rest of the current sentence is being dropped. */
+  private skip = false;
+  /** The first dropped sentence (raw), spoken at the end only if nothing else was. */
+  private first = '';
+  private firstOpen = false;
+  /** `own`: the student's question (the numbers in it are theirs to hear back). */
+  constructor(private visible: number, private own = '') {}
 
   push(d: string): string {
     this.buf += d;
     let out = '';
-    for (let cut = this.boundary(); cut > 0; cut = this.boundary()) {
-      out += this.emit(this.buf.slice(0, cut));
-      this.buf = this.buf.slice(cut);
+    for (let b = this.boundary(); b.cut > 0; b = this.boundary()) {
+      out += this.piece(this.buf.slice(0, b.cut), b.end);
+      this.buf = this.buf.slice(b.cut);
     }
     return out;
   }
@@ -153,15 +210,51 @@ export class OpenerGate {
   end(): string {
     const rest = this.buf;
     this.buf = '';
-    return rest.trim() ? this.emit(rest) : '';
+    let out = rest.trim() ? this.piece(rest, true) : '';
+    // An opener that stopped at a clause: its separator goes out as written (its space closes the last word).
+    if (this.pend) { out += this.pend; this.said += this.pend; this.pend = ''; }
+    if (!this.said.trim() && this.first) {
+      const s = this.emit(this.first);
+      this.first = '';
+      this.notes.push('opener: every sentence said a number; the first is spoken anyway');
+      this.said += s;
+      out += s;
+    }
+    return out;
+  }
+
+  /** One released piece: a whole sentence (`end`) or a clause of one. */
+  private piece(text: string, end: boolean): string {
+    if (this.skip) {
+      if (this.firstOpen) this.first += text;
+      if (end) { this.skip = false; this.firstOpen = false; }
+      return '';
+    }
+    const sep = end ? null : /[,;:]\s+$/.exec(text);
+    const body = sep ? text.slice(0, sep.index) : text;
+    const said = this.emit(body);
+    if (saysNumber(said, this.own)) {
+      this.notes.push(`opener: dropped a number ${JSON.stringify(text.trim().slice(0, 60))}`);
+      this.skip = !end;
+      this.pend = '';
+      if (this.started) { this.started = false; this.said += '. '; return '. '; }
+      if (!this.said.trim() && !this.first) { this.first = text; this.firstOpen = !end; }
+      return '';
+    }
+    const out = this.pend + said;
+    this.pend = sep ? sep[0] : '';
+    this.started = !end;
+    this.said += out;
+    return out;
   }
 
   /**
-   * The end of the first complete sentence or clause in the buffer (outside tags), or 0. A clause
-   * (after , ; : and a space, at least MIN_CLAUSE characters) is let through too: the model writes
-   * far faster than the narration is spoken, so the rest of the sentence is in long before it is due.
+   * The first complete sentence or clause in the buffer (outside tags): its end and whether it ends a
+   * sentence, or cut 0. A clause (after , ; : and a space, at least MIN_CLAUSE characters) is let
+   * through too: the model writes far faster than the narration is spoken, so the rest of the sentence
+   * is in long before it is due.
    */
-  private boundary(): number {
+  private boundary(): { cut: number; end: boolean } {
     let inTag = false;
     for (let i = 0; i < this.buf.length; i++) {
       if (!inTag && this.buf.startsWith('{{', i)) { inTag = true; i++; continue; }
@@ -170,10 +263,10 @@ export class OpenerGate {
       const next = this.buf[i + 1];
       if (next === undefined) break; // the next character decides
       if (!/\s/.test(next)) continue;
-      if ('.!?'.includes(c) && !/\b(e\.g|i\.e|cf|vs|etc|Fig|Eq)\.$/i.test(this.buf.slice(Math.max(0, i - 4), i + 1))) return i + 2;
-      if (',;:'.includes(c) && i + 1 >= MIN_CLAUSE) return i + 2;
+      if ('.!?'.includes(c) && !/\b(e\.g|i\.e|cf|vs|etc|Fig|Eq)\.$/i.test(this.buf.slice(Math.max(0, i - 4), i + 1))) return { cut: i + 2, end: true };
+      if (',;:'.includes(c) && i + 1 >= MIN_CLAUSE) return { cut: i + 2, end: false };
     }
-    return 0;
+    return { cut: 0, end: false };
   }
 
   private emit(sentence: string): string {
@@ -186,16 +279,17 @@ export class OpenerGate {
       const b = sentence.indexOf('}}', a + 2);
       if (b < 0) { break; } // an unclosed tag at the very end: drop it
       const tag = sentence.slice(a, b + 2);
+      i = b + 2;
       if (this.allowed(tag)) out += tag;
       else {
         this.notes.push(`opener: dropped ${JSON.stringify(tag.slice(0, 40))}`);
         // A dropped mark the sentence used as a word ("The {{highlight p=4 "kernel"}} slides…"): its words stay.
         const w = this.quoteWords(tag, out, sentence.slice(b + 2));
         if (w) out += (out && !/\s$/.test(out) ? ' ' : '') + w;
+        // A dropped pointer between two spaces leaves one ("the  viewing ray" was sent as written).
+        else if (/\s$/.test(this.said + out)) while (sentence[i] === ' ' || sentence[i] === '\t') i++;
       }
-      i = b + 2;
     }
-    this.said += out;
     return out;
   }
 
@@ -205,7 +299,7 @@ export class OpenerGate {
     if (!q) return '';
     const before = sentenceTail((this.said + out).replace(/\{\{[^}]*\}\}/g, ' ').split(/\s+/).filter(Boolean));
     const clause = clauseAfter(rest, true, lookahead(q)) ?? rest;
-    return needsWords(before, q, clause) ? quoteSpoken(q, before.length === 0) : '';
+    return spokenAt(before, q, clause) ?? '';
   }
 
   private allowed(tag: string): boolean {

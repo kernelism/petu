@@ -4,17 +4,21 @@
 //
 // A beat's group draws across the narration span it is tied to: the beat's words as the active clock
 // times them (the estimated reading pace, or the real audio when a voice is on). Each part of the group
-// gets a share of that span: a part the narration names draws from the word that names it, the others
-// are spread over the span in pen order, and each draws across its share, from a sensible minimum (a
-// short span still reads as drawing, not a blink) to a cap (a long span does not crawl). Several groups
+// gets a share of that span: a part the narration names draws from the word that names it (its id, its
+// data-say, its label's words and numbers: paceParts), the others go next to their named neighbours in the
+// group's order, and each draws across its share, from a sensible minimum (a short span still reads as
+// drawing, not a blink); an unnamed one up to a cap (a long span does not crawl). Several groups
 // in one beat (no words between them) split its span in turn. After a group's beat the narration rests
 // a moment before the next sentence (REST_MS, applied by the scheduler).
+import { mentions, tolerance, type Mention } from '../gate/numbers';
 import { namesWord } from './scheduler';
 
 /** A beat word: how soon it is spoken (ms from now) and, when known, when it ends. */
 export type BeatWord = { text: string; inMs: number; endMs?: number;
   /** On the last word: the beat is still streaming (its end isn't known yet). */
-  open?: boolean };
+  open?: boolean;
+  /** On the first word, once spoken (its inMs is then 0): how long ago it started. */
+  sinceMs?: number };
 /** The k-th (0-based) of n groups that share one beat's words. */
 export type Slot = { k: number; n: number };
 
@@ -37,20 +41,30 @@ export const WORD_EST_MS = 300;
  */
 export const REPLAN_MS = 400;
 /**
- * A beat still streaming is assumed to run at least this long from its first word (a sentence or two),
- * so its first parts don't all draw in the words known so far; the re-plan corrects it either way.
+ * A beat still streaming whose words are here is assumed to run this much past its last known word (the
+ * next one may be on its way); the re-plan follows it as it grows. With the gate, a beat's words come
+ * whole: it is "open" only because the next {{beat}} waits on the next unit's check.
+ */
+export const OPEN_TAIL_MS = 600;
+/**
+ * A beat still streaming with none of its words here yet (its group fired first: the narration ran dry)
+ * is assumed to run at least this long, so its first parts don't all draw at once; the re-plan corrects it.
  */
 export const OPEN_SPAN_MS = 6000;
 
 /**
  * When the beat's narration ends, ms from now: its last word's end (else its start plus a word); a
- * beat still streaming, at least OPEN_SPAN_MS after its first word.
+ * beat still streaming, OPEN_TAIL_MS past its last known word (it used to be at least OPEN_SPAN_MS
+ * after its first word: a short beat still open when its group fired, the gate holding the next one,
+ * drew its last parts seconds into the next beat, and a part under way keeps the budget it started
+ * with); with no word known yet, OPEN_SPAN_MS after its first word started (sinceMs).
  */
 export function beatEnd(words: readonly BeatWord[]): number {
   if (!words.length) return 0;
   const last = words[words.length - 1];
   const end = Math.max(last.endMs ?? last.inMs + WORD_EST_MS, last.inMs);
-  return last.open ? Math.max(end, words[0].inMs + OPEN_SPAN_MS) : end;
+  if (!last.open) return end;
+  return words.length > 1 || last.text ? end + OPEN_TAIL_MS : Math.max(end, words[0].inMs - (words[0].sinceMs ?? 0) + OPEN_SPAN_MS);
 }
 
 /**
@@ -82,43 +96,125 @@ export function partWords(id: string, groupId?: string): string[] {
   return own.length ? own : all.filter((w) => w.length >= 3);
 }
 
-/** A part to schedule: its pen category (lower draws first), the words that name it, its natural pen time. */
-export type PartIn = { cat: number; words: readonly string[]; naturalMs: number };
+/**
+ * A part to schedule: the words that name it (`words`: its data-say, else its id's words) and, when none
+ * of those is said in its beat, its label's (`label`: labelNames). A name is a word (namesWord) or a
+ * number as written ("37", "2.5"), which matches the number said however it is said ("37°", "thirty-seven",
+ * "two point five") to the label's precision. `naturalMs`: its pen time.
+ */
+export type PartIn = { words: readonly string[]; label?: readonly string[]; naturalMs: number };
 /** When a part starts (ms from now) and how long it draws, by its index in the input. */
 export type PartTime = { i: number; at: number; dur: number };
 
+const NUM = /[−-]?\d+(?:,\d{3})*(?:\.\d+)?%?/g;
+/** A name that is a number as written: its value and the half-unit of its last written place. */
+function numName(t: string): { v: number; tol: number } | null {
+  if (!/^[−-]?\d+(?:,\d{3})*(?:\.\d+)?%?$/.test(t)) return null;
+  const s = t.replace(/[,%]/g, '').replace('−', '-');
+  return { v: Number(s), tol: 0.5 * 10 ** -(s.split('.')[1]?.length ?? 0) + 1e-9 };
+}
+/** The names a text gives (a label's text, or a data-say): its numbers as written, then its words (2+ letters for a data-say; a label's first three of 4+). */
+export function labelNames(text: string, say = false): string[] {
+  const nums = text.match(NUM) ?? [];
+  const words = text.replace(NUM, ' ').toLowerCase().split(/[^a-z]+/).filter((w) => w.length >= (say ? 2 : 4));
+  return [...nums, ...(say ? words : words.slice(0, 3))];
+}
+/**
+ * The numbers said in a beat (src/gate/numbers.ts: "37", "37°", "thirty-seven", "two point five"), without
+ * references ("page 4") and without a bare spelled one or two (a word, far more often than a number).
+ */
+function spokenNumbers(words: readonly BeatWord[]): Mention[] {
+  return mentions(words.map((w) => w.text.replace(/°/g, ''))).filter((m) => !m.ref && !(m.spelled && !m.frac && m.dp === 0 && m.value < 3));
+}
+/** The first word in [lo, hi) a name says (its first word and its last, for a number said in several). */
+function named(names: readonly string[], words: readonly BeatWord[], said: readonly Mention[], ok: (k: number) => boolean): { w0: number; w1: number } | null {
+  if (!names.length) return null;
+  const nums = names.map(numName).filter((x): x is { v: number; tol: number } => !!x);
+  const plain = names.filter((n) => !numName(n));
+  let best: { w0: number; w1: number } | null = null;
+  if (plain.length) for (let k = 0; k < words.length; k++) if (ok(k) && namesWord(words[k].text, plain)) { best = { w0: k, w1: k }; break; }
+  for (const m of said) {
+    if (best && m.w0 >= best.w0) break;
+    if (ok(m.w0) && nums.some((n) => Math.abs(m.value - n.v) <= Math.min(n.tol, tolerance(m, n.v)))) { best = { w0: m.w0, w1: m.w1 }; break; }
+  }
+  return best;
+}
+
 /**
  * The schedule of a group's parts over its beat, in drawing order, or null when the beat gives
- * nothing to pace by (fewer than two words and not still streaming: the caller draws at pen speed). `start`: when the beat
+ * nothing to pace by (fewer than two words and not still streaming: the caller draws at pen speed); a
+ * beat already over: every part at once. `start`: when the beat
  * began (ms from now; a re-plan once more of the beat has streamed in: the parts left are spread over
  * what is left of the window).
  *
- * Pen order (category, then the group's own order) spreads the parts evenly over the window; a part
- * whose words the narration says inside the window starts on that word instead. Each part draws over
- * its share, up to the next part's start, less a pen lift, clamped to [min, PART_MAX_MS], where min
- * is PART_MIN_MS unless the window is too short to give every part that much (then an equal share).
+ * The words are the part's contract (founder 2026-10-31, "what it says and what it draws don't match"):
+ * a part named in the window (PartIn) starts on its first naming word, even one already spoken (it
+ * draws now), and draws until the next part starts, at least through its naming words, never cut short
+ * by PART_MAX_MS (the narration is still on it). An unnamed part goes with its nearest named neighbour in
+ * the group's own order (a tie: the one before it): those after a named part draw right after it, those
+ * before one right up to it; the ones before every named part (a figure's strokes ahead of its labels)
+ * from the window's start, up to the first part named. Each draws over an even share of its gap, at most
+ * PART_MAX_MS (a long gap does not crawl), and never into the named part after it: a named part keeps its
+ * word whatever is before it. Nothing named: the parts spread evenly over the window in the group's order,
+ * each at least min (PART_MIN_MS unless the window is too short to give every part that much). Pen
+ * category is not an order: the group's order is the author's.
  */
 export function paceParts(parts: readonly PartIn[], words: readonly BeatWord[], slot?: Slot, start?: number): PartTime[] | null {
-  if (!parts.length || (words.length < 2 && !words[words.length - 1]?.open)) return null;
+  if (!parts.length || !words.length) return null;
+  // Its beat is over (closed, every word said: a forward seek's skipped group, one held past its words):
+  // what is left lands at once, in the group's order. Spread over SPAN_MIN_MS from now, it drew over the next beat.
+  if (!words[words.length - 1].open && beatEnd(words) <= 0) return parts.map((_, i) => ({ i, at: 0, dur: 0 }));
+  // A re-plan (`start`) paces whatever the beat turned out to be, one word too: it is already paced.
+  if (words.length < 2 && !words[0].open && start == null) return null;
   const win = beatWindow(words, slot, start);
   // Re-planned mid-beat (`start` in the past): what is left of the window, from now.
   const from = Math.max(0, win.from), to = Math.max(from + 1, win.to);
   const span = to - from;
   const n = parts.length;
-  const order = parts.map((p, i) => ({ p, i })).sort((a, z) => a.p.cat - z.p.cat || a.i - z.i);
-  const at = order.map((x, j) => {
-    let t = from + (j / n) * span;
-    if (x.p.words.length) {
-      const w = words.find((y) => y.inMs >= from - 1 && y.inMs < to && namesWord(y.text, x.p.words));
-      if (w) t = w.inMs;
-    }
-    return { i: x.i, at: t };
-  });
-  at.sort((a, z) => a.at - z.at);
   const min = Math.min(PART_MIN_MS, Math.max(120, span / n - PART_GAP_MS));
+  const unnamedDur = (len: number) => Math.max(min, Math.min(PART_MAX_MS, len - PART_GAP_MS));
+  const said = spokenNumbers(words);
+  const ok = (k: number) => words[k].inMs >= from - 1 && words[k].inMs < to;
+  const hits = parts.map((p) => {
+    const h = named(p.words, words, said, ok) ?? named(p.label ?? [], words, said, ok);
+    if (!h) return null;
+    const w1 = words[h.w1];
+    return { at: Math.max(from, words[h.w0].inMs), until: Math.min(to, w1.endMs ?? w1.inMs + WORD_EST_MS) };
+  });
+  const at: { i: number; at: number; dur?: number }[] = [];
+  const heads = parts.map((_, i) => i).filter((i) => hits[i]).sort((a, z) => hits[a]!.at - hits[z]!.at || a - z);
+  if (!heads.length) {
+    for (let i = 0; i < n; i++) at.push({ i, at: from + (i / n) * span, dur: unnamedDur(span / n) });
+  } else {
+    const after = parts.map((): number[] => []), before = parts.map((): number[] => []), lead: number[] = [];
+    for (let i = 0; i < n; i++) {
+      if (hits[i]) continue;
+      let p = i - 1, q = i + 1;
+      while (p >= 0 && !hits[p]) p--;
+      while (q < n && !hits[q]) q++;
+      if (p < 0) lead.push(i);
+      else if (q >= n || i - p <= q - i) after[p].push(i);
+      else before[q].push(i);
+    }
+    // Gap by gap: a named part (none before the first), its after-parts, the next one's before-parts.
+    for (let k = 0; k <= heads.length; k++) {
+      const h = k ? heads[k - 1] : -1, nx = k < heads.length ? heads[k] : -1;
+      const a = h >= 0 ? hits[h]!.at : from, b = nx >= 0 ? hits[nx]!.at : to;
+      const A = h >= 0 ? after[h] : lead, B = nx >= 0 ? before[nx] : [];
+      if (h >= 0) at.push({ i: h, at: a });
+      if (!A.length && !B.length) continue;
+      const lo = h >= 0 ? Math.min(b, Math.max(a + (b - a) / (1 + A.length + B.length), hits[h]!.until)) : a;
+      // In the gap: a part never runs into the named one after it (that one keeps its word).
+      const len = (b - lo) / (A.length + B.length), d = Math.max(120, Math.min(PART_MAX_MS, len - PART_GAP_MS)), step = Math.min(len, d + PART_GAP_MS);
+      A.forEach((i, j) => at.push({ i, at: lo + j * step, dur: d }));
+      B.forEach((i, j) => at.push({ i, at: b - (B.length - j) * step, dur: d }));
+    }
+  }
+  at.sort((x, z) => x.at - z.at || x.i - z.i);
   return at.map((x, j) => {
-    const next = j + 1 < at.length ? at[j + 1].at : to;
-    const dur = Math.max(min, Math.min(PART_MAX_MS, next - x.at - PART_GAP_MS));
+    // A named part draws until the next one starts (less a pen lift): the narration is still on it. Two
+    // named on near words: the first is quick, the second keeps its word.
+    const dur = x.dur ?? Math.max(120, (j + 1 < at.length ? at[j + 1].at : to) - x.at - PART_GAP_MS);
     return { i: x.i, at: Math.round(x.at), dur: Math.round(dur) };
   });
 }

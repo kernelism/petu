@@ -9,8 +9,11 @@
  *  2. wrap: a label of several words breaks into two lines at its middle word (a row keeps its places);
  *  3. a longer nudge (up to 2 em).
  * A text is never set smaller: its size is its tier in the board's hierarchy (grammar.ts).
- * Only collisions the raise created count (pairs that were clear at the model's own sizes and places),
- * so a model's deliberate composition (a label on its curve, behind the paper halo) is left alone.
+ * Within a group only collisions the raise created count (pairs that were clear at the model's own sizes
+ * and places), so a model's deliberate composition (a label on its curve, behind the paper halo) is left
+ * alone. Against earlier groups and the canvas edge every collision counts: the model could not see where
+ * the board put them, and the gate no longer withholds a beat for its layout (check.ts checkGroups), so a
+ * label run into an earlier group's text or line, or off the canvas, is moved here instead.
  * Pure over the parsed XML; geometry is the gate's (check.ts groupGeometry: measured widths in a
  * browser, estimates elsewhere). Texts placed by data (`data-at`) or under rotation are not moved.
  */
@@ -39,7 +42,7 @@ function shift(el: Element, dx: number, dy: number): void {
   }
 }
 
-/** What a group's text `i` runs into: indexes of texts (same group, `t…`), earlier groups (`p…`), strokes (`s`), canvas edge (`e`). */
+/** What a group's text `i` runs into: indexes of texts (same group, `t…`), earlier groups (`p…`), its group's strokes (`s`), earlier groups' strokes (`q`), canvas edge (`e`). */
 type Hits = Set<string>;
 
 /**
@@ -54,7 +57,8 @@ export function settle(g: Element, raw: Element, prior: Drawn, w: number): numbe
   const geoOf = (root: Element) => { try { return groupGeometry(root, 0); } catch { return null; } };
   const rawGeo = geoOf(raw);
   if (!rawGeo) return 0;
-  const segsOf = (geo: { segs: Seg[] }) => geo.segs.filter((s) => !s.tiny).concat(prior.segs.filter((s) => !s.tiny));
+  const segsOf = (geo: { segs: Seg[] }) => geo.segs.filter((s) => !s.tiny);
+  const priorSegs = prior.segs.filter((s) => !s.tiny);
   /** Every collision of text i, given each text's boxes (several lines per text). */
   const hitsOf = (boxes: TextBox[][], segs: Seg[], i: number): Hits => {
     const out: Hits = new Set();
@@ -62,6 +66,7 @@ export function settle(g: Element, raw: Element, prior: Drawn, w: number): numbe
       boxes.forEach((bs, j) => { if (j !== i && bs.some((b) => textsHit(a, b))) out.add(`t${j}`); });
       prior.texts.forEach((p, j) => { if (textsHit(a, p)) out.add(`p${j}`); });
       if (segs.some((s) => segHitsBox(s.a, s.b, core(a)))) out.add('s');
+      if (priorSegs.some((s) => !(s.curve && a.on?.includes(s.curve)) && segHitsBox(s.a, s.b, core(a)))) out.add('q');
       if (a.x < -1 || a.x + a.w > w + 1 || a.y < -1) out.add('e');
     }
     return out;
@@ -69,7 +74,7 @@ export function settle(g: Element, raw: Element, prior: Drawn, w: number): numbe
   const byEl = (geo: { texts: TextBox[] }, list: Element[]) => list.map((el) => geo.texts.filter((t) => t.el === el));
   const rawBoxes = byEl(rawGeo, rawEls), rawSegs = segsOf(rawGeo);
   const before = rawEls.map((_, i) => hitsOf(rawBoxes, rawSegs, i));
-  const fresh = (h: Hits, i: number) => [...h].filter((k) => !before[i]?.has(k));
+  const fresh = (h: Hits, i: number) => [...h].filter((k) => k[0] === 'p' || k === 'q' || k === 'e' || !before[i]?.has(k));
   let left = 0;
   for (let pass = 0; pass < 2; pass++) {
     for (let i = 0; i < els.length; i++) {

@@ -285,6 +285,33 @@ describe('ask', () => {
     expect(recs).toHaveLength(1);
     expect(recs[0]).toMatchObject({ question: 'Why does disparity shrink?', page: 2, script: 'Look {{grid on=s id=g vals=1,2;3}} here.', lint: ['malformed (dropped): {{grid on=s id=g vals=1,2;3}}'] });
   });
+  it('C7: behind an opener, stage 2 speaks nothing before its plan closes (svg); with none it speaks at once', async () => {
+    const parts = ['It holds because ', 'the push never stops. ', '<plan>\ncase\nBOARD viewBox="0 0 1000 600"\ngroups: a\n</plan>', '<g id="a"><text x="1" y="20" font-size="16">a</text></g>', ' The a.'];
+    const chunks = [
+      sse({ type: 'response.output_item.added', item: { id: 'm1', type: 'message', phase: 'final_answer' } }),
+      ...textEvents('m1', parts),
+      sse({ type: 'response.completed', response: { status: 'completed', usage } }),
+    ];
+    const texts = async (opener?: string) => {
+      const { f } = fakeFetch([{ chunks }]);
+      const out: AskEvent[] = [];
+      await run(req(opener ? { context: { ...context, opener } } : {}), deps(f), (e) => out.push(e));
+      return out.flatMap((e) => (e.t === 'text' ? [e.d] : []));
+    };
+    const held = await texts('Elasticity is about percentages.');
+    expect(held[0]).toMatch(/^It holds because the push never stops\. \{\{svgboard h=600\}\}/);
+    const free = await texts();
+    expect(free[0]).toBe('It holds because ');
+  });
+  it('C7: the answer record carries the opener spoken before stage 2 (none without one)', async () => {
+    const body = () => fakeFetch([{ chunks: okBody(['<plan>\nBOARD viewBox="0 0 1000 600"\n</plan>', 'It is. ']) }]).f;
+    const recs: AnswerRecord[] = [];
+    await run(req({ context: { ...context, opener: '{{highlight p=2 "disparity"}} Disparity is about depth.' } }), deps(body(), { log: (r) => recs.push(r) }));
+    await run(req(), deps(body(), { log: (r) => recs.push(r) }));
+    expect(recs[0].opener).toBe('{{highlight p=2 "disparity"}} Disparity is about depth.');
+    expect(recs[0].script).toMatch(/^\{\{svgboard h=600\}\}/);
+    expect(recs[1]).not.toHaveProperty('opener');
+  });
   it('a failed answer leaves a record too, with its error code and no cost', async () => {
     const { f } = fakeFetch([{ status: 400, text: 'bad' }]);
     const recs: AnswerRecord[] = [];
@@ -621,6 +648,14 @@ describe('Lessons v3: two stages', () => {
     expect(relationNote('new-topic')).not.toMatch(/finish/);
   });
 
+  it('scout s2.9 (C7): the opener orients and makes no claim the worked case decides, no numbers', () => {
+    expect(SCOUT_SYSTEM).not.toMatch(/Answer the question in plain words straight away/);
+    expect(SCOUT_SYSTEM).toMatch(/OPENER: [^\n]*Orient the student/);
+    expect(SCOUT_SYSTEM).toMatch(/Make no claim that the worked case decides: no numbers, in digits or in words/);
+    expect(SCOUT_SYSTEM).toMatch(/a sentence with a number in it is not spoken/);
+    expect(SCOUT_SYSTEM).toMatch(/a fact the pages state, not a number/);
+  });
+
   const sreq = { question: 'How does it work?', docName: 'd.pdf', docHash: 'h', numPages: 12, page: 3, digest: 'DECK d.pdf\np1: a', prior: { q: 'before?', a: 'x'.repeat(2000), page: 2 },
     pageText: 'PAGE 3 (visible; 16:9 slide; image attached)\nt1 60 40–300: Three' };
   const scfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600, fast: false, explicitCache: true };
@@ -666,6 +701,18 @@ describe('Lessons v3: two stages', () => {
     expect(n(b)).toBe(4);
   });
 
+  it('scout request, a check reply: the open check and its page, and what was pointed at, before the question (C5)', () => {
+    const b = buildScoutRequest({ ...sreq, page: 12, prior: undefined, check: { q: 'What if the rate doubles?', page: 12 }, about: 'The student selected this text on page 12: "rate"' }, scfg) as any;
+    const tail = b.input[2].content[0].text as string;
+    expect(tail.startsWith('The student is looking at page 12.')).toBe(true);
+    expect(tail).toContain('POINTED AT: the question is about this.\nThe student selected this text on page 12: "rate"');
+    expect(tail).toContain('OPEN CHECK QUESTION (page 12): your last answer ended on "What if the rate doubles?"');
+    expect(tail).toMatch(/may be a new question of their own/);
+    expect(tail.endsWith('QUESTION: How does it work?')).toBe(true);
+    // The cached prefix is untouched: a check reply reads the same digest and listing from cache.
+    expect(b.input.slice(0, 2)).toEqual((buildScoutRequest({ ...sreq, page: 12, prior: undefined }, scfg) as any).input.slice(0, 2));
+  });
+
   it('the scout verdict carries an optional find list (≤ 3 short strings)', () => {
     expect(parseScout('{"opener":"a","pages":[2],"find":["Table 15.5"," appendix  D ","x","y"],"plan":"p"}', 12, 3)).toEqual({ pages: [2], plan: 'p', find: ['Table 15.5', 'appendix D', 'x'] });
     expect(parseScout('{"pages":[2],"find":[],"plan":"p"}', 12, 3)).toEqual({ pages: [2], plan: 'p' });
@@ -701,6 +748,14 @@ describe('Lessons v3: two stages', () => {
     expect(e).toEqual([expect.objectContaining({ kind: 'scout', phase: 'dev', usd: r.usd, estimated: false })]);
     expect(r.usd).toBeCloseTo(costUsd('gpt-6.1-terra', susage), 9);
     expect(ev[3]).toMatchObject({ t: 'end', usd: r.usd, cached: 2800, input: 3000 });
+  });
+
+  it('scout stream: a check reply\'s verdict on the student\'s own number is spoken; a number of its own is not', async () => {
+    const obj = { opener: 'Yes, 0.5 is right. It lands 180 m downstream. The current sets it.', pages: [3], plan: 'p' };
+    const { f } = fakeFetch([{ chunks: scoutSse(obj, 4) }]);
+    const ev: ScoutEvent[] = [];
+    const r = await scoutStream({ ...sreq, question: 'I got 0.5 for the ratio, is that right?' }, scfg, deps(f), (e) => ev.push(e));
+    expect(r.opener).toBe('Yes, 0.5 is right. The current sets it.');
   });
 
   it('scout stream: the verdict comes as soon as pages and plan are parsed, before the stream completes', async () => {
@@ -798,11 +853,21 @@ describe('Lessons v3: two stages', () => {
     expect(tail.at(-2).text).toMatch(/^QUESTION/);
     expect(tail.at(-1).text).toBe(openerNote('{{circle p=2 mark=#d1}} It is the best line.'));
     expect(tail.at(-1).text).toMatch(/^ALREADY SPOKEN:.*Do not repeat.*\nOPENING: \{\{circle p=2 mark=#d1\}\} It is the best line\.$/s);
-    // p6.5: speaking comes first even after an opener, so the plan's writing time is covered.
-    expect(tail.at(-1).text).toMatch(/starts with spoken words, before the plan/);
-    // it continues from where the opener stopped: never its claim again, a first sentence that adds something
-    expect(tail.at(-1).text).toMatch(/never state it again, in any words/);
-    expect(tail.at(-1).text).toMatch(/one or two sentences that need no drawing and add something the opening did not say \(why it holds/);
+    // p6.11 (C7): the plan first while the opener plays; no spoken lead-in before it.
+    expect(tail.at(-1).text).toMatch(/the plan first \(the student is still hearing the opening while you write it\)/);
+    expect(tail.at(-1).text).not.toMatch(/before the plan|sentences that need no drawing/);
+    // The opener spoke before any case existed: a contradiction is corrected in words, once; otherwise never restated.
+    expect(tail.at(-1).text).toMatch(/If your worked case contradicts anything the opening said[^.]*, your first beat corrects it in plain words, once/);
+    expect(tail.at(-1).text).toMatch(/otherwise never state its claim again, in any words/);
+    // The tag prompt keeps its own note (spoken lead-in, no correction rule).
+    const tags = buildRequest(req({ context: { ...multi, opener: 'It is.' } }), { ...cfg, promptVariant: 'tags' }) as any;
+    expect(tags.input.at(-1).content.at(-1).text).toBe(openerNote('It is.', false));
+    expect(openerNote('It is.', false)).toMatch(/starts with spoken words, before the plan/);
+    expect(openerNote('It is.', false)).not.toMatch(/corrects it/);
+    // p6.12: the scout's opener (s2.9) orients in both formats, so the tag lead-in gives the answer; it is never told the student already has it.
+    expect(openerNote('It is.', false)).toMatch(/It only oriented the student[^.]*stated no result/);
+    expect(openerNote('It is.', false)).toMatch(/answer the question in plain words/);
+    expect(openerNote('It is.', false)).not.toMatch(/has its claim|never state it again|do not answer the question again/);
     // The cached prefix is unchanged by the opener.
     expect(b.input.slice(0, 2)).toEqual((buildRequest(req({ context: multi }), cfg) as any).input.slice(0, 2));
   });

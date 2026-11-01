@@ -1,5 +1,7 @@
 // src/playback/director.ts
 import { mountBoard } from '../svgboard/render';
+import { defineSvgGroup } from '../svgboard/element';
+import { isDefsGroup } from '../svgboard/wire';
 import { REGION_H, REGION_W, targetOf, type Action, type InkAction, type LayoutAction, type RawAction, type Target } from '../script/types';
 import { Figures, type Grounding } from '../geometry/resolve';
 import type { ViewerApi } from '../pdf/viewerApi';
@@ -80,8 +82,11 @@ type Deps = {
   hold?(at: number, ms: number): void;
   /** Words of the answer said before `at` (an action's word time): a move before the first word frames the answer, it isn't a journey. Default: some. */
   spoken?(at: number): number;
-  /** The narration of the current beat with word times (Scheduler.beatWords): an svg group paces its parts to it. */
-  beat?(): { text: string; inMs: number; endMs?: number }[];
+  /**
+   * The narration of a beat with word times (Scheduler.beatWords): an svg group paces its parts to it.
+   * `from`: its beat's first word (SvgAction.beatFrom), so it reads its own beat, never the next.
+   */
+  beat?(from?: number): { text: string; inMs: number; endMs?: number }[];
   /** Whether the answer is paused (AnswerSession.isPaused): its ink in flight stands still until it resumes. */
   paused?(): boolean;
   /** Highlights and underlines grow to meaningful units (src/locate/unit.ts). Default on. */
@@ -155,8 +160,10 @@ export class Director {
       }
       if (!this.svgBoard) { this.report({ action: raw as Action, firedAt: at, queuedAt: now(), startedAt: now(), endedAt: now() }, { skipped: 'no svg board' }); return; }
       raw = { ...raw, region: this.svgBoard };
+      // A withheld beat's definitions (src/svgboard/defs.ts): taken into the board's data, never drawn.
+      if (isDefsGroup(raw.svg)) { const env = this.env(); if (env) void defineSvgGroup(raw, env).then((r) => { if (r) console.warn('[director] svg definitions not taken:', r); }); return; }
     }
-    if (raw.kind === 'let') return; // definitions were taken when it was parsed (prefetch)
+    if (raw.kind === 'let' || raw.kind === 'beat') return; // definitions were taken when it was parsed (prefetch); a beat boundary is the scheduler's
     if (raw.kind === 'const') { if (!this.seen.has(raw)) kitStore(this.registry).defineConsts(raw.defs); return; }
     if (raw.kind === 'find') { if (!this.seen.has(raw)) { this.figures.note(raw); kitStore(this.registry).finds.set(raw.id, raw); } return; }
     // A bound number is a word, not ink: the parser said it. Unresolved, the caption shows a dash: recorded as a skip.
@@ -170,6 +177,16 @@ export class Director {
     const a = (isInk ? raw : this.figures.resolve(raw)) as Action;
     this.runResolved(a, raw, at, live);
   }
+
+  /**
+   * The page the answer is on: the asked page (App: askedPage, set by ask()), then each page it scrolls
+   * to. A board section without `near=` explains it. Was the reading line's page (currentPage()), which
+   * named another page than the one the question was asked about (a check reply, a selection lower down).
+   */
+  private on: number | null = null;
+  /** The answer's asked page (src/agent/moment.ts askedPage); null: the page in view. */
+  ask(page: number | null): void { this.on = page; }
+  private pageNow(v: ViewerApi): number { return this.on != null && this.on >= 1 && this.on <= v.numPages() ? this.on : v.currentPage(); }
 
   /** The svg board this answer draws into (a section id; numbered across directors, so an aside's never collides). */
   private svgBoard: string | null = null;
@@ -231,7 +248,7 @@ export class Director {
 
   /** As soon as an action is parsed: takes its point definitions (lookahead), warms caches (text runs, KaTeX). */
   prefetch(raw: RawAction): void {
-    if (raw.kind === 'svg') return;
+    if (raw.kind === 'svg' || raw.kind === 'beat') return;
     this.seen.add(raw);
     if (raw.kind === 'sketch') this.declared.add(raw.id);
     if (raw.kind === 'const') { kitStore(this.registry).defineConsts(raw.defs); return; }
@@ -246,7 +263,7 @@ export class Director {
     const pages: number[] = [];
     if (a.kind === 'connect') for (const e of [a.from, a.to]) if ('quote' in e) pages.push(e.page);
     if ('quote' in a && a.page != null) pages.push(a.page);
-    if (a.kind === 'sketch') pages.push(a.page ?? v.currentPage()); // its body text sizes the section
+    if (a.kind === 'sketch') pages.push(a.page ?? this.pageNow(v)); // its body text sizes the section
     for (const p of pages) if (p >= 1 && p <= v.numPages()) void v.textRuns(p).catch(() => {});
   }
 
@@ -394,8 +411,8 @@ export class Director {
     const v = this.d.viewer();
     if (!v) return 'no viewer';
     if (a.kind === 'sketch') {
-      // The slide the section explains: `near=` when given and in range, else the one in view.
-      const page = a.page != null && a.page >= 1 && a.page <= v.numPages() ? a.page : v.currentPage();
+      // The slide the section explains: `near=` when given and in range, else the page the answer is on.
+      const page = a.page != null && a.page >= 1 && a.page <= v.numPages() ? a.page : this.pageNow(v);
       const body = await this.bodyOf(v, page);
       if (signal.aborted) return;
       // Lands ink in flight only if opening the board moves the view (the split glide, a board scroll).
@@ -408,6 +425,7 @@ export class Director {
       return;
     }
     if (a.page < 1 || a.page > v.numPages()) return 'page out of range';
+    this.on = a.page; // the answer moved on, whether or not the view follows
     if (!desk.following()) return 'student is driving'; // rule 6
     // A journey: the route is shown, the narration holds at the move's word, and ink waits for the arrival.
     const from = v.currentPage();
@@ -621,7 +639,7 @@ export class Director {
     const p = plan;
     desk.noteInk?.(p.target, p.bbox, p.el);
     // Ink after a journey's arrival is not behind: the narration held for it.
-    const k: Pace = { ...backlog(now() - Math.max(word, dep?.arrivedAt ?? -Infinity)), ...(a.kind === 'svg' && this.d.beat ? { beat: this.d.beat, stop: signal, ...(a.slot ? { slot: a.slot } : {}) } : {}), ...(this.d.paused && !this.d.instant ? { paused: this.paused } : {}) };
+    const k: Pace = { ...backlog(now() - Math.max(word, dep?.arrivedAt ?? -Infinity)), ...(a.kind === 'svg' && this.d.beat ? { beat: () => this.d.beat!(a.beatFrom), stop: signal, ...(a.slot ? { slot: a.slot } : {}) } : {}), ...(this.d.paused && !this.d.instant ? { paused: this.paused } : {}) };
     this.report(t, { startedAt: now() });
     const own = new AbortController();
     if (this.d.instant) own.abort(); // final state at once (an aborted draw completes immediately)

@@ -72,6 +72,21 @@ export function mathPx(ctx: TargetCtx, size: 's' | 'm' | 'l'): number {
 export const encloseRect = (w: number, h: number) => ({ rx: Math.max(12, w / Math.SQRT2 + 4), ry: Math.max(12, h / Math.SQRT2 + 4) });
 
 const isRegion = (t: Target) => t.region != null;
+
+/**
+ * Where the reading is on each page: the centre of the last mark resolved there (script coords). A
+ * quote with several exact hits and no near= lights the one closest to it, not the first in reading
+ * order (diag C8: "gradient descent" lit the page title while the narration was on the body line).
+ * Kept beside the registry, so it is cleared with it; the shadow board rebuilds it from the same actions.
+ */
+const readingAt = (env: BuildEnv) => env.registry.ext('reading', () => { const at = new Map<number, { x: number; y: number }>(); return { at, clear: () => at.clear() }; }).at;
+/** The quote's rects (script coords) on the target, preferring the reading position on a page; a hit moves it. */
+function locateRead(runs: Parameters<typeof locateQuote>[0], quote: string, near: { x: number; y: number } | undefined, ctx: TargetCtx, env: BuildEnv) {
+  const page = ctx.target.page, read = page != null ? readingAt(env) : null;
+  const rs = locateQuote(runs, quote, near, { aspect: ctx.h / 1000, ...(read?.has(page!) ? { prefer: read.get(page!) } : {}) });
+  if (read && rs.length) read.set(page!, { x: rs[0].x + rs[0].w / 2, y: rs[0].y + rs[0].h / 2 });
+  return rs;
+}
 const where = (t: Target) => (t.region != null ? `region ${t.region}` : `page ${t.page}`);
 
 /** Resolves one ink action into a plan (see ElementPlan). Strings are skip reasons. */
@@ -276,7 +291,7 @@ async function writeLines(g: SVGGElement, at: SPt, lines: string[], box: SRect, 
 async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<ElementPlan | string> {
   const r = env.rng();
   const P = (p: SPt) => ctx.toSpace(p);
-  const anchorRects = async (quote: string, near?: SPt) => locateQuote(await ctx.runs(), quote, near, { aspect: ctx.h / 1000 }).map((x) => ctx.rectToSpace(x));
+  const anchorRects = async (quote: string, near?: SPt) => locateRead(await ctx.runs(), quote, near, ctx, env).map((x) => ctx.rectToSpace(x));
   const px = (n: number) => n / Math.max(ctx.scale(), 1e-3);
   const DOT_PX = tokenNum('--ink-dot-r');
   await fontsFor('text' in a ? a.text : undefined, a.kind === 'axes' ? a.xLabel : undefined, a.kind === 'axes' ? a.yLabel : undefined);
@@ -307,9 +322,11 @@ async function draw(a: DrawAction, ctx: TargetCtx, env: BuildEnv): Promise<Eleme
         if (!rects.length) { console.warn('[desk] anchor not found', a.quote, where(ctx.target)); return 'anchor not found'; }
         box = union(rects);
       } else if (a.kind === 'circle') {
+        if (!isRegion(ctx.target)) readingAt(env).set(ctx.target.page!, a.at);
         const c = P(a.at);
         box = { x: c.x - a.rx, y: c.y - a.ry, w: a.rx * 2, h: a.ry * 2 };
       } else {
+        if (!isRegion(ctx.target)) readingAt(env).set(ctx.target.page!, { x: a.at.x + a.w / 2, y: a.at.y + a.h / 2 });
         const p = P(a.at);
         box = { x: p.x, y: p.y, w: a.w, h: isRegion(ctx.target) ? a.h : (a.h * ctx.h) / 1000 };
       }
@@ -634,7 +651,7 @@ async function pageNote(a: Extract<DrawAction, { kind: 'annot' }>, ctx: TargetCt
   let target: SRect;
   if (a.rect) target = ctx.rectToSpace(a.rect);
   else if (a.quote) {
-    const rs = locateQuote(runs, a.quote, a.near, { aspect: ctx.h / 1000 }).map((x) => ctx.rectToSpace(x));
+    const rs = locateRead(runs, a.quote, a.near, ctx, env).map((x) => ctx.rectToSpace(x));
     if (!rs.length) return 'quote not found';
     target = union(rs);
   } else if (a.at) { const c = ctx.toSpace(a.at); target = { x: c.x - 2, y: c.y - 2, w: 4, h: 4 }; }

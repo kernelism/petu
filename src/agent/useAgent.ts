@@ -12,6 +12,7 @@ import { AskError, askStream, capLine, capNotice, getSpend, scoutLive, spendBloc
 import type { ScoutResult } from './scout';
 import { History } from './history';
 import { SessionMemory, recordOf } from './context/memory';
+import { checkPageOf } from './moment';
 import type { Storyboard } from './storyboard';
 import { Prewarm } from './prewarm';
 import { getSettings } from '../settings/settings';
@@ -43,8 +44,10 @@ export type AgentAsk = {
   onGrounds?(pages: PageGround[]): void;
   /** The text the live gate released (what played): memory records it rather than the raw stream. */
   released?(): string;
-  /** The moment the question is asked in (an aside, what the student points at, a check reply): sent with stage 2. */
+  /** The moment the question is asked in (an aside, what the student points at, a check reply): sent with stage 2, and (check, about) to the scout. */
   moment?: Pick<AskContext, 'aside' | 'about' | 'check'>;
+  /** The page the open check (moment.check) was offered on (moment.ts checkPageOf). Default: `page`. */
+  checkPage?: number;
   /**
    * The conversation's own history and memory (a saved question keeps its own: src/session/). Default:
    * the document's. Read when asked and written when the answer ends, so a stopped answer's record lands
@@ -138,6 +141,7 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
         page: a.page, digest, pageText: vis.pageText, ...(phase ? { phase } : {}),
         ...(sc0?.section ? { section: sc0.section } : {}), ...(mem ? { memory: mem } : {}),
         ...(sc0?.candidates ? { candidates: sc0.candidates } : {}), ...(sc0?.image ? { image: sc0.image } : {}),
+        ...(a.moment?.check ? { check: { q: a.moment.check, page: a.checkPage ?? a.page } } : {}), ...(a.moment?.about ? { about: a.moment.about } : {}),
       }, signal);
       // The session memory records what this answer taught once it has played (or was stopped).
       let script = '';
@@ -147,7 +151,9 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
       let story: Storyboard | undefined;
       // The answer's own plan (done.plan): the svg board's layout, kept for a follow-up that extends it.
       let answerPlan = '';
-      const handlers: AskHandlers = { ...a.handlers, onStoryboard: (e) => { if (e.board) story = e.board; a.handlers.onStoryboard?.(e); }, onDone: (e) => { answerPlan = e.plan ?? ''; a.handlers.onDone?.(e); } };
+      /** The hidden check it ended on (done.check): memory records it with its page. */
+      let check = '';
+      const handlers: AskHandlers = { ...a.handlers, onStoryboard: (e) => { if (e.board) story = e.board; a.handlers.onStoryboard?.(e); }, onDone: (e) => { answerPlan = e.plan ?? ''; check = e.check ?? ''; a.handlers.onDone?.(e); } };
       const stream = twoStage({
         live, visible: vis.ground, handlers, since, ...(sc0 ? { ctx: sc0.info } : {}),
         build: async (sc) => {
@@ -168,7 +174,7 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
       } finally {
         // What played, not what was streamed: a unit the gate dropped was never said or drawn.
         const said = a.released ? a.released() : script;
-        if (said.trim()) M.add(recordOf({ question: a.question, page: a.page, pages: taught, plan, script: said, ...(answerPlan ? { answerPlan } : {}), ...(relation ? { relation } : {}), ...(story ? { storyboard: story } : {}), ...(signal.aborted ? { stopped: true } : {}) }));
+        if (said.trim()) M.add(recordOf({ question: a.question, page: a.page, pages: taught, plan, script: said, ...(answerPlan ? { answerPlan } : {}), ...(check ? { check, checkPage: checkPageOf(said, a.page) } : {}), ...(relation ? { relation } : {}), ...(story ? { storyboard: story } : {}), ...(signal.aborted ? { stopped: true } : {}) }));
       }
     } finally {
       inFlight.current--;

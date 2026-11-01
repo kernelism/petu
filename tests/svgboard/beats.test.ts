@@ -2,15 +2,18 @@
 // The svg answer mode end to end, offline: the model's raw beats (the prompt's own examples) → the
 // server filter (wire tags) → the parser, the gate's splitter and checks, the scheduler's anchoring.
 import { describe, expect, it } from 'vitest';
-import { SvgBeatFilter, boardOf } from '../../server/svgBeats';
+import { HOLD_MAX, SvgBeatFilter, boardOf } from '../../server/svgBeats';
+import { spoken } from '../../server/openai';
+import { WORDS_PER_SEC } from '../../src/agent/pacing';
 import { SVG_EXAMPLES } from '../../server/prompt/svgExamples';
 import { ScriptParser } from '../../src/script/parser';
 import { BeatSplitter, tokenize, units } from '../../src/gate/segment';
 import { newScope } from '../../src/svgboard/data';
-import { checkGroups, groupGeometry, newBoardState, acceptGroups, pathPolys, segHitsBox } from '../../src/svgboard/check';
+import { checkGroups, groupGeometry, newBoardState, acceptGroups, overlapArea, pathPolys, segHitsBox } from '../../src/svgboard/check';
 import { namesWord } from '../../src/playback/scheduler';
 import { anchorWords } from '../../src/script/parseTag';
 import { BOARD_W, completeSvg, rawSvgScript } from '../../src/svgboard/wire';
+import { beatOfGroup } from '../../src/svgboard/beat';
 import type { RawAction } from '../../src/script/types';
 
 const wire = (raw: string, step: number) => {
@@ -43,8 +46,8 @@ describe('svg beats: the server filter', () => {
       const a = wire(ex.script, 1000000).out;
       for (const step of [1, 3, 7, 50]) expect(wire(ex.script, step).out).toBe(a);
       const { f } = wire(ex.script, 5);
-      // p6.1: the first sentence (page pointing, no drawing) plays before the board opens; no group before it.
-      expect(a.indexOf('{{svgboard ')).toBeGreaterThan(0);
+      // p6.11 (C7): the plan comes first, so the board opens before any word; no group before it.
+      expect(a.indexOf('{{svgboard ')).toBe(0);
       expect(a.indexOf('{{svgboard ')).toBeLessThan(a.indexOf('{{svg <'));
       expect(a).not.toMatch(/<plan>|BOARD viewBox|```/);
       expect(f.plan).toMatch(/BOARD viewBox/);
@@ -126,16 +129,22 @@ describe('svg beats: the gate splitter keeps a beat\'s group with its sentences'
         for (let i = 0; i < text.length; i += step) out.push(...s.push(text.slice(i, i + step)).map((u) => u.text));
         out.push(...s.end().map((u) => u.text));
         expect(out.join('')).toBe(text);
-        // A unit that starts with a group is that group alone (its sentences went out before it).
-        for (const u of out.slice(1)) if (u.trimStart().startsWith('{{svg <')) expect(u.replace(/\{\{svg <[^}]*\}\}/g, '').trim()).toBe('');
-        // p6.1: a beat's group comes before its sentences, so a group is never released after them (the
-        // splitter may send it with the sentence before; the scheduler paces it across its own beat's words).
-        const at = (id: string) => out.join('').indexOf(`<g id="${id}"`);
-        expect(at('drift')).toBeLessThan(out.join('').indexOf('Point it straight'));
+        // Each unit holding a group holds exactly that group's beat: the group and its own sentences (the
+        // filter's {{beat}} boundaries; before them a unit paired one beat's words with the next beat's group).
+        for (const u of out.filter((x) => x.includes('{{svg <'))) {
+          const ids = [...u.matchAll(/\{\{svg <g id="([^"]+)"/g)].map((m) => m[1]);
+          expect(ids, u.slice(0, 80)).toHaveLength(1);
+          const own = beatOfGroup(text, ids[0])!;
+          // p6.11: with no words before the plan, beat 1 (beatsOf) starts at the board's opening tag, which
+          // the splitter sends in a unit of its own just ahead of it.
+          const board = /^\{\{svgboard [^}]*\}\} /;
+          expect(u, ids[0]).toBe(own.text.replace(board, ''));
+          expect(own.words.length, ids[0]).toBeGreaterThan(0);
+        }
       }
     });
   }
-  it('a sentence never waits for its group; the group goes out alone as soon as it closes', () => {
+  it('a stream with no {{beat}} (recorded before the beat wire, 2026-10-31): a sentence never waits for its group; the group goes out alone as soon as it closes', () => {
     const s = new BeatSplitter('sentence');
     expect(s.push('{{svgboard h=700}} The arm swings out.')).toEqual([]);
     expect(s.push(' ')).toHaveLength(1);
@@ -143,13 +152,22 @@ describe('svg beats: the gate splitter keeps a beat\'s group with its sentences'
     const u = s.push(' stroke="#000"/></g>}}');
     expect(u.map((x) => x.text)).toEqual([' \n{{svg <g id="arm"><line x1="0" y1="0" x2="9" y2="9" stroke="#000"/></g>}}']);
   });
+  it('a tagged beat closes the moment the next {{beat}} arrives, before the next group is written', () => {
+    const s = new BeatSplitter('sentence');
+    // The opener ends at the first {{beat}} (the filter writes it right after the board's tag): it goes out whole.
+    expect(s.push('It swings. {{svgboard h=700}} {{beat}} {{svg <g id="arm"><line x1="0" y1="0" x2="9" y2="9" stroke="#000"/></g>}} The arm swings out. It stops.').map((x) => x.text)).toEqual(['It swings. {{svgboard h=700}} ']);
+    expect(s.push(' \n')).toEqual([]);
+    expect(s.push('{{beat}} {{svg <g id="stop"><line x1="0" y1="0"').map((x) => x.text)).toEqual(['{{beat}} {{svg <g id="arm"><line x1="0" y1="0" x2="9" y2="9" stroke="#000"/></g>}} The arm swings out. It stops. \n']);
+  });
 });
 
 describe('svg checks', () => {
   const G = (body: string) => `<g id="t">${body}</g>`;
-  it('flags text on text, text across a line, out of the canvas, a reused id and bad XML', () => {
+  it('fails only a reused id and bad XML; text on text, text across a line, out of the canvas only note (layout is fixed, never a withheld beat)', () => {
     const b = newBoardState(1000, 700);
-    expect(checkGroups([G('<text x="100" y="100" font-size="20">first label</text><text x="110" y="104" font-size="20">second label</text>')], b).flags[0].detail).toMatch(/overlaps/);
+    const over = checkGroups([G('<text x="100" y="100" font-size="20">first label</text><text x="110" y="104" font-size="20">second label</text>')], b);
+    expect(over.flags).toEqual([]);
+    expect(over.notes[0]).toMatch(/overlaps/);
     // Across groups a crossing fails; within one group the label is nudged off its own line (polish.ts)…
     const own = checkGroups([G('<line x1="50" y1="94" x2="400" y2="94" stroke="#000"/><text x="100" y="100" font-size="20">crossed</text>')], b);
     expect(own.flags).toEqual([]);
@@ -161,10 +179,32 @@ describe('svg checks', () => {
     expect(boxed.notes[0]).toMatch(/crosses text/);
     const b2 = newBoardState();
     acceptGroups(b2, checkGroups(['<g id="lab"><text x="100" y="100" font-size="20">crossed</text></g>'], b2).geos);
-    expect(checkGroups(['<g id="ray"><line x1="50" y1="94" x2="400" y2="94" stroke="#000"/></g>'], b2).flags[0].detail).toMatch(/a line of ray crosses text "crossed" \(lab\)/);
-    expect(checkGroups([G('<text x="980" y="100" font-size="20">far right</text>')], b).flags[0].detail).toMatch(/outside/);
+    const ray = checkGroups(['<g id="ray"><line x1="50" y1="94" x2="400" y2="94" stroke="#000"/></g>'], b2);
+    expect(ray.flags).toEqual([]);
+    expect(ray.notes[0]).toMatch(/a line of ray crosses text "crossed" \(lab\)/);
+    // A label run off the canvas is nudged back in (settle.ts) before it is measured.
+    const far = checkGroups([G('<text x="980" y="100" font-size="20">far right</text>')], b);
+    expect(far.flags).toEqual([]);
+    expect(far.geos[0].texts[0].x + far.geos[0].texts[0].w).toBeLessThanOrEqual(1000);
+    const wide = checkGroups([G('<rect x="900" y="100" width="300" height="40" stroke="#000"/>')], b);
+    expect(wide.flags).toEqual([]);
+    expect(wide.notes[0]).toMatch(/outside/);
     expect(checkGroups([G('<circle cx="10" cy="10" r="5" stroke="#000"/>'), G('<circle cx="40" cy="10" r="5"/>')], b).flags[0].detail).toMatch(/twice/);
     expect(checkGroups(['<g id="x"><line x1="0" y1="0"></g>'], b).flags[0].detail).toMatch(/parse/);
+  });
+  it('a label the model put on an earlier group\'s line or text is moved off it (settle.ts), not only one the raise pushed there', () => {
+    const b = newBoardState(1000, 700);
+    acceptGroups(b, checkGroups(['<g id="axis"><line x1="50" y1="100" x2="400" y2="100" stroke="#000"/><text x="450" y="300" font-size="20">old note</text></g>'], b).geos);
+    const r = checkGroups(['<g id="lab"><text x="100" y="106" font-size="20">on the line</text><text x="455" y="304" font-size="20">on the note</text></g>'], b);
+    expect(r.flags).toEqual([]);
+    expect(r.notes).toEqual([]);
+    const [line, note] = r.geos[0].texts;
+    expect(segHitsBox({ x: 50, y: 100 }, { x: 400, y: 100 }, { x: line.x, y: line.y + line.h * 0.22, w: line.w, h: line.h * 0.56 })).toBe(false);
+    // Both moved from where the model put them (on an empty board they stay).
+    const raw = checkGroups(['<g id="lab"><text x="100" y="106" font-size="20">on the line</text><text x="455" y="304" font-size="20">on the note</text></g>'], newBoardState(1000, 700)).geos[0].texts;
+    expect([line.x, line.y]).not.toEqual([raw[0].x, raw[0].y]);
+    expect([note.x, note.y]).not.toEqual([raw[1].x, raw[1].y]);
+    expect(overlapArea(note, b.texts.find((t) => t.text === 'old note')!)).toBeLessThan(overlapArea(raw[1], b.texts.find((t) => t.text === 'old note')!));
   });
   it('passes a label beside a line, and lets the bottom grow a little', () => {
     const b = newBoardState(1000, 700);
@@ -177,7 +217,12 @@ describe('svg checks', () => {
     const b = newBoardState();
     const src = G('<text x="100" y="100" font-size="10">aaaa</text><text x="125" y="100" font-size="10">bbbb</text>');
     expect(checkGroups([src], b, 10).flags).toEqual([]);
-    expect(checkGroups([src], b, 22).flags.length).toBeGreaterThan(0);
+    // Raised to 22 the two run together; the gate nudges them apart as the renderer will (settle.ts).
+    const raised = checkGroups([src], b, 22);
+    expect(raised.flags).toEqual([]);
+    expect(raised.notes.filter((n) => /overlaps/.test(n))).toEqual([]);
+    const [t0, t1] = raised.geos[0].texts;
+    expect(overlapArea(t0, t1)).toBe(0);
     // A list (one line under the other) is restacked when raised: its lines no longer collide.
     const list = G('<text x="100" y="100" font-size="10">aaaa</text><text x="100" y="116" font-size="10">bbbb</text>');
     const r = checkGroups([list], newBoardState(), 22);
@@ -285,7 +330,7 @@ describe('svg demos (gallery scenes)', () => {
   });
 });
 
-describe('p6.1: the first sentence before the plan', () => {
+describe('p6.1: the first sentence before the plan (no opener: nothing to hold behind)', () => {
   it('passes the sentence through at once, with a boundary, and lifts the plan after it', async () => {
     const { SvgBeatFilter } = await import('../../server/svgBeats');
     const f = new SvgBeatFilter(() => 0);
@@ -298,3 +343,99 @@ describe('p6.1: the first sentence before the plan', () => {
     expect(f.plan).toMatch(/BOARD viewBox/);
   });
 });
+
+describe('a label at a data-at point is not crossing its own curves (a32: "E1" beside its cross() dot)', () => {
+  it('the curves through the point are exempt; any other line across the label still notes', () => {
+    const b = newBoardState(560, 600);
+    const curves = checkGroups(['<g id="curves"><g data-axes="ax" data-x="0,40" data-y="0,12" data-box="60,60,400,300"/><path id="demand" data-fn="12-x/5" data-axes="ax" stroke="#222" fill="none"/><path id="supply" data-fn="2+x/5" data-axes="ax" stroke="#222" fill="none"/></g>'], b);
+    expect(curves.flags).toEqual([]);
+    acceptGroups(b, curves.geos);
+    const eq = checkGroups(['<g id="equilibrium"><circle data-at="cross(demand,supply)" r="4" fill="#222"/><text data-at="cross(demand,supply)" font-size="16" text-anchor="middle">E1 here</text></g>'], b, 16, curves.scope);
+    expect(eq.flags).toEqual([]);
+    expect(eq.notes.filter((n) => /crosses text "E1 here"/.test(n))).toEqual([]);
+    // E1 sits at (310, 185) on the board; a later rule drawn through it is a real crossing (it notes).
+    acceptGroups(b, eq.geos);
+    const later = checkGroups(['<g id="rule"><line x1="60" y1="181" x2="560" y2="181" stroke="#222"/></g>'], b, 16, curves.scope);
+    expect(later.flags).toEqual([]);
+    expect(later.notes.join()).toMatch(/a line of rule crosses text "E1 here"/);
+  });
+});
+
+// C7: behind an opener, stage 2 says nothing before its plan has decided the case and its numbers.
+describe('plan before speech: narration before the plan is held until it closes (hold)', () => {
+  const PLAN = '<plan>\ncase: 300 m, 1.5, 2.5\nBOARD viewBox="0 0 1000 600"\ngroups: axes\n</plan>\n';
+  const GROUP = '<g id="axes"><line x1="0" y1="0" x2="10" y2="10"/></g>';
+  const held = (raw: string, step: number, o: { hold?: boolean; opened?: boolean } = { hold: true }) => {
+    const f = new SvgBeatFilter(() => 0, o);
+    const outs: string[] = [];
+    for (let i = 0; i < raw.length; i += step) outs.push(f.push(raw.slice(i, i + step)));
+    outs.push(f.end());
+    return { outs, out: outs.join(''), f };
+  };
+
+  it('nothing goes out before the plan closes; then the held words, ahead of the board and outside beat 1', () => {
+    const pre = '{{highlight p=2 "x"}} It holds because the push never stops.';
+    const raw = `${pre}${PLAN}${GROUP} These axes, the case.`;
+    const ref = held(raw, 1e6).out;
+    for (const step of [1, 4, 9, 50]) {
+      const { outs, out } = held(raw, step);
+      expect(out, String(step)).toBe(ref);
+      // Every push before the one that closes the plan sent nothing.
+      const closes = Math.ceil((raw.indexOf('</plan>') + '</plan>'.length) / step);
+      expect(outs.slice(0, closes - 1).join(''), String(step)).toBe('');
+    }
+    expect(ref.startsWith(`${pre} {{svgboard h=600}} {{beat}} `)).toBe(true);
+    // The held sentence is not read as the board's first sentences (no trailing order from it).
+    expect(held(raw, 3).f.order).toBe('lead');
+  });
+
+  it('without hold (no opener) the sentence still plays at once', () => {
+    const { outs } = held(`It holds because the push never stops. ${PLAN}${GROUP} These axes.`, 10, {});
+    expect(outs[0]).toBe('It holds b');
+  });
+
+  it('a plan-first stream is unchanged by the hold', () => {
+    const raw = `${PLAN}${GROUP} These axes, the case.`;
+    expect(held(raw, 7).out).toBe(held(raw, 7, {}).out);
+  });
+
+  it('the hold ends at a group with no plan, at the end, and past HOLD_MAX; a repair stream is never held', () => {
+    expect(held(`The push never stops. ${GROUP} These axes.`, 5).out).toBe(held(`The push never stops. ${GROUP} These axes.`, 5, {}).out);
+    expect(held("That's outside these pages, but ask me anything about them.", 6).out).toBe("That's outside these pages, but ask me anything about them.");
+    const long = 'The push never stops and the boat keeps drifting. '.repeat(10);
+    const r = held(long, 10);
+    expect(r.outs.slice(0, Math.ceil((HOLD_MAX + 1) / 10)).join('')).toMatch(/^The push never stops/);
+    expect(r.out).toBe(long);
+    expect(held('The repair says this. <g id="a"><text x="1" y="20" font-size="16">a</text></g>', 4, { hold: true, opened: true }).outs[0]).toBe('The ');
+  });
+
+  // The hold's cost, measured: a p6.1-style stream (sentences before the plan) at the slowest stage-2
+  // rate recorded (146 chars/s; median 256, .petu/answers.jsonl svg answers) and the prompt's own plans.
+  // The hold delays stage 2's first word by the time to write the rest of the preamble and the plan;
+  // that must fit inside the opener still playing, here the shortest recorded orienting opener (eval
+  // D19, 12 words at WORDS_PER_SEC).
+  it('the added latency is the plan\'s writing time, within the opener\'s duration', () => {
+    const RATE = 146 / 1000; // chars per ms
+    const opener = 'The {{highlight p=9 "slope is constant; P/Q is not."}} Elasticity changes because it measures percentage changes, not just the slope.';
+    const words = opener.replace(/\{\{[^}]*\}\}/g, ' ').split(/\s+/).filter(Boolean).length;
+    expect(words).toBe(12);
+    const openerMs = words / WORDS_PER_SEC * 1000; // 5.0 s
+    const pre = 'It holds because the water pushes the whole way across. So the aim has to cancel that push.';
+    for (const ex of SVG_EXAMPLES) {
+      const plan = /<plan>[\s\S]*?<\/plan>/.exec(ex.script)![0];
+      const body = ex.script.slice(ex.script.indexOf('</plan>') + '</plan>'.length);
+      const raw = `${pre}\n${plan}${body}`;
+      const firstWordMs = (hold: boolean) => {
+        let t = 0, at = NaN;
+        const f = new SvgBeatFilter(() => t, { hold });
+        for (let i = 0; i < raw.length && Number.isNaN(at); i += 8) { t = (i + 8) / RATE; if (spoken(f.push(raw.slice(i, i + 8)))) at = t; }
+        return at;
+      };
+      const added = firstWordMs(true) - firstWordMs(false);
+      expect(added, ex.title).toBeGreaterThan(0);
+      expect(added, ex.title).toBeCloseTo((pre.length + 1 + plan.length) / RATE, -2);
+      expect(added, ex.title).toBeLessThan(openerMs);
+    }
+  });
+});
+

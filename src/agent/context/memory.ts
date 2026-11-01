@@ -10,6 +10,7 @@
 // its end reads the earlier turns from cache. Past FULL_TURNS entries the oldest half is rolled into
 // one short line each (the only time the block's prefix changes).
 import { svgTextWords } from '../../svgboard/check';
+import { beatsOf } from '../../svgboard/beat';
 import type { Storyboard } from '../storyboard';
 
 /** How a question stands to the answer before it (the scout decides; see server/prompt/scout.ts). */
@@ -42,7 +43,10 @@ export type TurnRecord = {
   /** Later changes to drawn things (set, move, contrast…), in order. */
   changes: string[];
   claims: string[];
+  /** The check question it ended on: the hidden <check> (done.check), else a spoken closing question. */
   check?: string;
+  /** The page the check is about (moment.ts checkPageOf): a reply to it is asked there. */
+  checkPage?: number;
   /** The student stopped it part-way. */
   stopped?: boolean;
   /** The svg board: its BOARD layout from the answer's plan (canvas, regions, groups), for a follow-up that extends it. */
@@ -113,12 +117,16 @@ const DATA_KEYS = ['fn', 'vals', 'of', 'op', 'pts', 'x', 'y', 'map', 'zip', 'ove
 /** The board an answer's script left, as data. */
 export function boardOf(script: string): Pick<TurnRecord, 'sections' | 'things' | 'constants' | 'changes'> {
   const sections: BoardSection[] = [], things: BoardThing[] = [], constants: string[] = [], changes: string[] = [];
+  let beats: ReturnType<typeof beatsOf> | null = null;
   for (const t of tagsOf(script)) {
     // The svg board: its section, and each group by id with the words written in it.
     if (/^\s*svg\s*</.test(t.inner)) {
       const id = /^\s*svg\s*<g\b[^>]*?\bid="([^"]+)"/.exec(t.inner)?.[1];
       const words = svgTextWords(t.inner).join(' ');
-      const after = sentences(narrationOf(script.slice(Math.max(0, t.start - 300), t.start))).slice(-1)[0] ?? '';
+      // What it stood for: the first sentence of its own beat (src/svgboard/beat.ts), whatever order the model wrote.
+      beats ??= beatsOf(script);
+      const own = beats.find((b) => t.start >= b.start && t.start < b.end);
+      const after = own ? sentences(narrationOf(own.text))[0] ?? '' : '';
       if (things.length < MAX_THINGS) things.push({ kind: 'svg group', ...(id ? { id } : {}), ...(words ? { label: clip(words, 60) } : {}), ...(after ? { means: clip(after.split(' ').slice(0, MEANS_WORDS).join(' '), 80) } : {}) });
       continue;
     }
@@ -184,15 +192,19 @@ export function partsOf(plan: string): string | undefined {
 }
 
 /** A finished answer → its record. */
-export function recordOf(t: { question: string; page: number; pages: number[]; plan: string; script: string; relation?: Relation; storyboard?: Storyboard; stopped?: boolean; answerPlan?: string }): TurnRecord {
+export function recordOf(t: { question: string; page: number; pages: number[]; plan: string; script: string; relation?: Relation; storyboard?: Storyboard; stopped?: boolean; answerPlan?: string; check?: string; checkPage?: number }): TurnRecord {
   const layout = layoutOf(t.answerPlan ?? '');
   const parts = partsOf(t.answerPlan ?? '');
+  // The hidden check is never spoken: claimsOf only finds a spoken closing question, so a reply to the
+  // check came with no record of what was asked (C5). done.check, with its page, wins.
+  const check = t.check ? clip(t.check, CLAIM_CHARS) : undefined;
   return {
     ...(layout ? { layout } : {}),
     ...(parts ? { parts } : {}),
     question: t.question, page: t.page, pages: [...new Set([t.page, ...t.pages])],
     ...(t.relation ? { relation: t.relation } : {}),
     plan: planOf(t.plan, t.storyboard), ...boardOf(t.script), ...claimsOf(t.script),
+    ...(check ? { check, ...(t.checkPage ? { checkPage: t.checkPage } : {}) } : {}),
     ...(t.stopped ? { stopped: true } : {}),
   };
 }
@@ -218,7 +230,7 @@ export function entryText(n: number, r: TurnRecord, root?: number): string {
   if (r.constants.length) lines.push(`  constants: ${r.constants.join(' ')}`);
   if (r.changes.length) lines.push(`  changed: ${r.changes.join('; ')}`);
   if (r.claims.length) lines.push(`  said: ${r.claims.join(' | ')}`);
-  if (r.check) lines.push(`  asked: ${r.check}`);
+  if (r.check) lines.push(`  asked${r.checkPage ? ` (on p${r.checkPage})` : ''}: ${r.check}`);
   return lines.join('\n');
 }
 

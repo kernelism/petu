@@ -2,7 +2,7 @@ import type { RawAction, ScriptEvent, ValAction } from './types';
 import { parseTag } from './parseTag';
 import { GateState, UNBOUND_TEXT } from '../gate/engine';
 import { cutTagBody, isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
-import { clauseAfter, endsSentence, lookahead, markQuote, needsWords, quoteSpoken, sentenceTail } from './quoteWords';
+import { clauseAfter, endsSentence, lookahead, markQuote, sentenceTail, spokenAt } from './quoteWords';
 
 const words = (s: string): ScriptEvent[] =>
   s.split(/\s+/).filter(Boolean).map((text) => ({ type: 'word', text }));
@@ -136,8 +136,9 @@ export class ScriptParser {
     const clause = clauseAfter(this.buf, final, lookahead(q.text));
     if (clause == null) return false;
     this.quote = null;
-    if (!needsWords(q.before, q.text, clause)) return true;
-    const ws = quoteSpoken(q.text, q.before.length === 0).split(' ').filter(Boolean);
+    const say = spokenAt(q.before, q.text, clause);
+    if (say == null) return true;
+    const ws = say.split(' ').filter(Boolean);
     // Punctuation touching the tag ("}}, which") or standing alone after it ("}} , so") ends the last word.
     const m = /^\s*[,.;:!?…]+["'”’)\]]*(?=\s|$)/.exec(this.buf);
     if (m && ws.length) { ws[ws.length - 1] += m[0].trim(); this.buf = this.buf.slice(m[0].length); }

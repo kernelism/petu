@@ -187,6 +187,37 @@ export function pageAt(L: { tops: Float64Array }, y: number): number {
   return lo + 1;
 }
 
+/**
+ * The page a question is about when nothing names one: the page with the most height inside the band
+ * [lo, hi] (content y: the window between the top bar and the dock), the page under content-y `line`
+ * on a tie. The reading line alone named a page with a third less on screen than its neighbour at
+ * ~7% of scroll positions on 16:9 decks (a half-scrolled-off slide asked about).
+ */
+export function mostVisiblePage(L: { tops: Float64Array; heights: Float64Array }, lo: number, hi: number, line: number): number {
+  const at = pageAt(L, line);
+  let best = at, bestH = Math.min(hi, L.tops[at - 1] + L.heights[at - 1]) - Math.max(lo, L.tops[at - 1]);
+  for (let i = pageAt(L, lo) - 1; i < L.tops.length && L.tops[i] < hi; i++) {
+    const h = Math.min(hi, L.tops[i] + L.heights[i]) - Math.max(lo, L.tops[i]);
+    if (h > bestH + 0.5) { best = i + 1; bestH = h; }
+  }
+  return best;
+}
+
+/**
+ * Where the lane board opens before its answer marks a page (content y): beside `page`, the page the
+ * answer explains (its asked page, Director.ask), when any of it shows in the band [lo, hi], level with
+ * `line` clamped into its visible part; else beside the page under `line`. Was always the page under
+ * `line` (12% down the band), which named another page than the asked one (the most visible) at 26–57%
+ * of scroll positions (diag lane.ts): the board opened beside a page the question was not about.
+ */
+export function laneAnchorAt(L: { tops: Float64Array; heights: Float64Array }, lo: number, hi: number, line: number, page: number): { page: number; y: number } {
+  if (page >= 1 && page <= L.tops.length) {
+    const top = Math.max(lo, L.tops[page - 1]), bot = Math.min(hi, L.tops[page - 1] + L.heights[page - 1]);
+    if (bot > top) return { page, y: Math.min(bot, Math.max(top, line)) };
+  }
+  return { page: Math.max(1, Math.min(L.tops.length, pageAt(L, line))), y: line };
+}
+
 // ------------------------------------------------------------------------------------------------
 // The board: sections stacked top to bottom, each scaled uniformly into the board's width.
 

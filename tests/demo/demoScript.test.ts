@@ -25,6 +25,7 @@ const em = (as: Action[]) => as.filter((a) => 'em' in a && a.em).map((a) => a.ki
 const VERBATIM = new Set(['tunnel', 'live-econ', 'live-calc', 'live-calc-zoom']);
 // ex- and svg- scripts are verbatim model output (prompt examples, the svgboard experiment's answers):
 // tests/server/examples.test.ts and tests/svgboard/beats.test.ts hold them to their own format's rules.
+const noBeats = (s: string) => s.replace(/\{\{beat\}\}\s*/g, '');
 const ALL = [DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, ...Object.entries(SCRIPTS).filter(([k]) => !k.startsWith('ex-') && !k.startsWith('svg-') && !VERBATIM.has(k)).map(([, x]) => x.script)];
 /** A simulated session's later answers (asides, follow-ups, check replies). */
 const ANSWERS = Object.values(SCRIPTS).flatMap((x) => Object.values(x.answers ?? {}));
@@ -143,10 +144,11 @@ describe('every script', () => {
   });
   it("a session's later answers parse with no warnings and never stack tags", () => {
     expect(ANSWERS.length).toBeGreaterThan(4);
-    for (const s of ANSWERS) { parseAll(s); expect(s).not.toMatch(/\}\}\s*\{\{/); }
+    // {{beat}} (a beat boundary, src/svgboard/beat.ts) fires nothing: it never stacks ink on a word.
+    for (const s of ANSWERS) { parseAll(s); expect(noBeats(s)).not.toMatch(/\}\}\s*\{\{/); }
   });
   it('never stacks two tags on one word', () => {
-    for (const s of ALL) expect(s).not.toMatch(/\}\}\s*\{\{/);
+    for (const s of ALL) expect(noBeats(s)).not.toMatch(/\}\}\s*\{\{/);
   });
   it('only draws into declared regions (no cap on how many)', () => {
     for (const s of ALL) {
