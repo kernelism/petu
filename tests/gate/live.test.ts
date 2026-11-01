@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GatePreflight, LiveGate, type Preflight, type PreflightResult, type PreflightUnit, type ShadowBoard } from '../../src/gate/live';
+import { GatePreflight, LiveGate, QUOTE_UNSAID, type Preflight, type PreflightResult, type PreflightUnit, type ShadowBoard } from '../../src/gate/live';
 import { parseFaults } from '../../src/gate/faults';
 import { SvgBeatFilter } from '../../server/svgBeats';
 import type { GateEvent, GateLogEvent, RepairFn, RepairEvent } from '../../src/gate/events';
@@ -340,6 +340,38 @@ describe('GatePreflight', () => {
     expect(r.flags.map((f) => f.detail)).toContain('circle skipped: unknown region');
     p.reject(u);
     expect(rebuilt).toEqual([0]);
+  });
+});
+
+describe('live gate: page pointing matches the words (diag C8)', () => {
+  const D19 = 'The {{highlight p=9 "slope is constant; P/Q is not."}} Elasticity changes because it measures percentage changes. ';
+  const A7 = 'Page 3 starts with the {{highlight p=3 "A point x in image 1 back-projects to a ray in 3D"}} viewing ray: the first pixel fixes a direction. ';
+
+  it('flags a long quote mark whose words the sentence may not say; not one it speaks or one that points', async () => {
+    const p = new GatePreflight();
+    const r = await p.check({ key: 'o0', kind: 'opener', text: A7 });
+    expect(r.tags[0].skipped).toBe(QUOTE_UNSAID);
+    expect(r.flags.map((f) => f.check)).toEqual(['tag']);
+    for (const text of [D19, 'Here, the {{highlight p=8 "Midpoint method"}} uses the average. ', 'Start with {{highlight p=2 "The demand curve slopes downward"}} demand: buyers want fewer. '])
+      expect((await p.check({ key: 'o0', kind: 'opener', text })).flags, text).toEqual([]);
+    // The sentence so far counts, across released units: the quote said before the tag is no stand-in.
+    p.accept({ key: 'o0', kind: 'opener', text: 'A point x in image 1 back-projects to a ray in 3D, ' });
+    expect((await p.check({ key: 'o1', kind: 'opener', text: 'so the {{highlight p=3 "a point x in image 1 back-projects to a ray in 3D"}} viewing ray matters. ' })).flags).toEqual([]);
+  });
+
+  it('strips such a mark: the words play as the parser speaks them, without the unsaid highlight', async () => {
+    const h = harness({ preflight: new GatePreflight() });
+    await h.play([A7, { handoff: true }, 'Done. ']);
+    expect(h.out.join('')).toBe('Page 3 starts with the viewing ray: the first pixel fixes a direction. Done. ');
+    expect(h.gates()[0]).toMatchObject({ result: 'strip', stripped: [expect.stringContaining('highlight p=3')] });
+  });
+
+  it('a stripped mark the sentence used as a word leaves its words in the narration', async () => {
+    // The page does not have the quote (the shadow board says so): stripping only the tag would say "Here, the uses…".
+    const board: ShadowBoard = { apply: (as) => ({ skipped: new Map(as.filter((a) => a.kind === 'highlight').map((a) => [a, 'quote not found'])) }), rebuild: () => {} };
+    const h = harness({ preflight: new GatePreflight({ board }) });
+    await h.play(['Ordinary percent change uses the start. Here, the {{highlight p=8 "Midpoint method"}} uses the average instead. ', { handoff: true }, D19, 'Then {{highlight p=9 "a pointer"}} look. ']);
+    expect(h.out.join('')).toBe('Ordinary percent change uses the start. Here, the Midpoint method uses the average instead. The slope is constant; P/Q is not. Elasticity changes because it measures percentage changes. Then look. ');
   });
 });
 

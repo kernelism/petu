@@ -277,7 +277,8 @@ export function checkTags(beat: Beat, skipped: Map<Tag, string>): Flag[] {
   const flags: Flag[] = [];
   for (const t of beat.tags) {
     if (!t.action) flags.push({ check: 'tag', detail: `malformed {{${t.body.slice(0, 60)}}}` });
-    else if (skipped.has(t)) flags.push({ check: 'tag', detail: `${t.action.kind} skipped: ${skipped.get(t)}` });
+    // A quote the page does not have (or only a guess at it): the repair is told the fix, a line's mark.
+    else if (skipped.has(t)) flags.push({ check: 'tag', detail: `${t.action.kind} skipped: ${skipped.get(t)}${skipped.get(t) === 'quote not found' ? ' (copy the words exactly from one listed line, or mark the line: mark=#tN)' : ''}` });
   }
   return flags;
 }

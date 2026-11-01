@@ -23,7 +23,7 @@
 // correct the opener when its case disagrees (openerNote).
 import { clean } from './scriptFilter';
 import { parseTag } from '../src/script/parseTag';
-import { clauseAfter, lookahead, markQuote, needsWords, quoteSpoken, sentenceTail } from '../src/script/quoteWords';
+import { clauseAfter, lookahead, markQuote, sentenceTail, spokenAt } from '../src/script/quoteWords';
 
 type State = 'start' | 'key' | 'colon' | 'value' | 'string' | 'raw' | 'after' | 'done';
 
@@ -252,14 +252,16 @@ export class OpenerGate {
       const b = sentence.indexOf('}}', a + 2);
       if (b < 0) { break; } // an unclosed tag at the very end: drop it
       const tag = sentence.slice(a, b + 2);
+      i = b + 2;
       if (this.allowed(tag)) out += tag;
       else {
         this.notes.push(`opener: dropped ${JSON.stringify(tag.slice(0, 40))}`);
         // A dropped mark the sentence used as a word ("The {{highlight p=4 "kernel"}} slides…"): its words stay.
         const w = this.quoteWords(tag, out, sentence.slice(b + 2));
         if (w) out += (out && !/\s$/.test(out) ? ' ' : '') + w;
+        // A dropped pointer between two spaces leaves one ("the  viewing ray" was sent as written).
+        else if (/\s$/.test(this.said + out)) while (sentence[i] === ' ' || sentence[i] === '\t') i++;
       }
-      i = b + 2;
     }
     return out;
   }
@@ -270,7 +272,7 @@ export class OpenerGate {
     if (!q) return '';
     const before = sentenceTail((this.said + out).replace(/\{\{[^}]*\}\}/g, ' ').split(/\s+/).filter(Boolean));
     const clause = clauseAfter(rest, true, lookahead(q)) ?? rest;
-    return needsWords(before, q, clause) ? quoteSpoken(q, before.length === 0) : '';
+    return spokenAt(before, q, clause) ?? '';
   }
 
   private allowed(tag: string): boolean {

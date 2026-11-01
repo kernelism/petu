@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ScriptParser } from '../../src/script/parser';
 import type { ScriptEvent } from '../../src/script/types';
-import { clauseAfter, needsWords } from '../../src/script/quoteWords';
+import { clauseAfter, needsWords, quoteRole } from '../../src/script/quoteWords';
 
 // Synthetic scripts (no course text): a quote tag the model uses as a word of its sentence is spoken
 // at the tag, so the mark lands as its words are said; a tag that only points speaks nothing.
@@ -71,6 +71,31 @@ describe('quote words: nothing doubled, pointers stay silent', () => {
     expect(said('The {{highlight p=2 "the price they receive after the tax"}} gap is ten.')).toBe('The gap is ten.');
   });
 
+  it('a long quote is spoken only where the sentence certainly lacks it (diag C8, D19)', () => {
+    // D19 (eval 2026-10-30, p6.1): heard as "The Elasticity changes…". The quote ends a sentence and a new one follows.
+    expect(said('The {{highlight p=9 "slope is constant; P/Q is not."}} Elasticity changes because it measures percentage changes.'))
+      .toBe('The slope is constant; P/Q is not. Elasticity changes because it measures percentage changes.');
+    // Nothing of the clause follows the tag: the slot is empty.
+    expect(said('Look at the {{highlight p=2 "price they receive after the tax"}}.')).toBe('Look at the price they receive after the tax.');
+    expect(said('The gap is set by the {{highlight p=2 "price they receive after the tax"}}, so it is ten.')).toBe('The gap is set by the price they receive after the tax, so it is ten.');
+    // A capitalised word after a quote that does not end a sentence may be a name continuing it: not spoken.
+    expect(said('Use the {{highlight p=2 "integral of the signal over time"}} Fourier transform.')).toBe('Use the Fourier transform.');
+  });
+
+  it('quoteRole: said, speak, pointer, unclear', () => {
+    const long = 'the price they receive after the tax';
+    expect(quoteRole(['The'], long, ' gap is ten.')).toBe('unclear');
+    expect(quoteRole(['The'], long, '.')).toBe('speak');
+    expect(quoteRole(['The'], 'slope is constant; P/Q is not.', ' Elasticity changes')).toBe('speak');
+    expect(quoteRole(['The'], 'slope is constant; P/Q is not', ' Elasticity changes')).toBe('unclear');
+    expect(quoteRole([], long, ' changes the gap')).toBe('unclear');
+    expect(quoteRole([], long, ' The gap')).toBe('pointer');
+    expect(quoteRole(['Look', 'here'], long, ' and see.')).toBe('pointer');
+    expect(quoteRole(['The'], long, ' the gap')).toBe('pointer');
+    expect(quoteRole(['The'], long, ' price they receive after the tax is lower.')).toBe('said');
+    expect(quoteRole(['The'], 'price ceiling', ' caps rent')).toBe('speak');
+  });
+
   it('marks without a quote, and quotes on the board, are untouched', () => {
     expect(said('The {{circle p=4 mark=#d3}} point moves.')).toBe('The point moves.');
     expect(said('The {{note p=4 "short words" annotate=#e2}} rule holds.')).toBe('The rule holds.');
@@ -80,6 +105,13 @@ describe('quote words: nothing doubled, pointers stay silent', () => {
 describe('quote words: streaming', () => {
   const S = '{{highlight p=1 "photosynthesis"}} turns light into sugar. The {{highlight p=2 "price ceiling"}}, a cap, binds. The {{underline p=2 "tax"}} tax splits. Friction takes the {{highlight p=5 "energy"}}';
   const want = ['<highlight>', 'Photosynthesis', 'turns', 'light', 'into', 'sugar.', 'The', '<highlight>', 'price', 'ceiling,', 'a', 'cap,', 'binds.', 'The', '<underline>', 'tax', 'splits.', 'Friction', 'takes', 'the', '<highlight>', 'energy'];
+
+  it('a spoken long quote is independent of chunk boundaries too', () => {
+    const D = 'The {{highlight p=9 "slope is constant; P/Q is not."}} Elasticity changes along the line.';
+    const w = summary(run([D]));
+    expect(w).toEqual(['The', '<highlight>', 'slope', 'is', 'constant;', 'P/Q', 'is', 'not.', 'Elasticity', 'changes', 'along', 'the', 'line.']);
+    for (let i = 1; i < D.length; i++) expect(summary(run([D.slice(0, i), D.slice(i)]))).toEqual(w);
+  });
 
   it('is independent of chunk boundaries (every split point, and 1-char streaming)', () => {
     expect(summary(run([S]))).toEqual(want);

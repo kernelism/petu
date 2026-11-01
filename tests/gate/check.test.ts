@@ -97,6 +97,10 @@ describe('deixis, geometry, erasure, tags', () => {
     const skipped = new Map([[b.tags[0], 'unknown id']]);
     expect(checkTags(b, skipped).map((f) => f.detail)).toEqual(['fade skipped: unknown id', 'malformed {{nonsense}}']);
   });
+  it('tells the repair how to point at a quote the page does not have', () => {
+    const [b] = beats('The {{highlight p=2 "price celing"}} binds.', { rule: 'para' });
+    expect(checkTags(b, new Map([[b.tags[0], 'quote not found']])).map((f) => f.detail)).toEqual([expect.stringMatching(/^highlight skipped: quote not found \(.*mark=#tN\)$/)]);
+  });
 });
 
 describe('layout', () => {
