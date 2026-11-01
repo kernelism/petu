@@ -85,9 +85,19 @@ describe('typed numbers on a board with a data model', () => {
     expect(ok.notes.filter((n) => /typed by hand/.test(n))).toHaveLength(2);
   });
 
-  it('a readout\'s own template counts: "crossing {} s, not 160 s" beside 150 contradicts', () => {
-    const r = check('<g id="t" data-const="W=300 u=2"><text x="20" y="40" font-size="16" data-val="W/u" data-fmt="0">crossing {} s, not 160 s</text></g>');
+  it('a readout\'s own template counts: "crossing {} s (160 s)" beside 150 contradicts', () => {
+    const r = check('<g id="t" data-const="W=300 u=2"><text x="20" y="40" font-size="16" data-val="W/u" data-fmt="0">crossing {} s (160 s)</text></g>');
     expect(r.flags.map((f) => f.detail).join()).toMatch(/"160" is typed beside the readout 150/);
+  });
+
+  it('a contrast label (was, before, not, old) beside a readout is a note, not a contradiction', () => {
+    for (const t of ['was 140 s', 'before: 140 s', 'not 140 s', 'old 140 s']) {
+      const r = check(`<g id="c" data-const="W=300 v=2.5"><text x="600" y="100" font-size="16" data-val="300/(v-0.5)" data-fmt="0">now {} s</text><text x="600" y="130" font-size="16">${t}</text></g>`);
+      expect(r.flags, t).toEqual([]);
+      expect(r.notes.join(), t).toMatch(/"140" is typed by hand/);
+    }
+    const r = check('<g id="t" data-const="W=300 u=2"><text x="20" y="40" font-size="16" data-val="W/u" data-fmt="0">crossing {} s, not 160 s</text></g>');
+    expect(r.flags).toEqual([]);
   });
 
   it('exempt: names (E1, x2), counts ≤ 12, references, years, the engine\'s ticks, schematic parts, a board with no data', () => {
