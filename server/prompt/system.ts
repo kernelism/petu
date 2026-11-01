@@ -51,6 +51,8 @@ import { BOARD_W } from '../../src/svgboard/wire.ts';
  * orients and says no number) plays while the plan is written, and behind an opener the server holds
  * any words written before the plan until it closes (server/svgBeats.ts). The cost is the first group:
  * nothing is spoken until it is written, so the prompt asks for a small one. The examples open on their plans.
+ * The off-topic reply (one sentence, no plan) and the empty answer (an opening that said it all) are named
+ * as the exceptions, so "Plan first" does not contradict them (same version: p6.11 was never run before this note).
  */
 export const PROMPT_VERSION = 'p6.11';
 
@@ -236,7 +238,7 @@ const SVG_POINTING = `POINTING ON THE PAGE (inline in the narration; a tag fires
 const SVG_SITUATIONS = `SITUATIONS
 FOLLOW-UPS. MEMORY is what you already taught: never say it again. It shows your earlier board's BOARD layout and group ids. To continue on that board, write BOARD extend viewBox="0 0 W H" (W as that board had it, H may grow) and add groups with new ids, placed in its free space; a group that reuses an earlier id redraws that part and the old one fades to a ghost. When the student asks for the idea again in another way, what you showed didn't land: start a fresh board with another representation or level, never more of the same. When they say the answer was not good enough or not complete, or ask whether it was, the subject is the question their thread is on (MEMORY names it), in full: the PLAN lists the parts the earlier answers missed or treated thinly, and you teach every one of them, in the new way; the page in view is only where they happen to be, and "is that complete?" is answered by finishing, never with a yes or a no.
 If the document doesn't cover the question, say so, then scroll to the closest thing it does cover and point at it. Never present outside knowledge as the page's.
-Off-topic (nothing to do with the document): one friendly sentence, no plan and no drawing, such as: That's outside these pages, but ask me anything about them.`;
+Off-topic (nothing to do with the document): one friendly sentence, no plan and no drawing (with an empty answer, the only scripts that do not start with a plan), such as: That's outside these pages, but ask me anything about them.`;
 
 /** The prompt's sections, in order (experiment variants in ./variants rewrite a copy of these). */
 export type PromptParts = { sections: string[]; examples: typeof EXAMPLES; head: string };

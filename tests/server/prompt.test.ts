@@ -239,6 +239,7 @@ describe('system prompt (svg, default)', () => {
     expect(s).not.toMatch(/Start speaking at once|first characters are spoken words|sentences that need no drawing/);
     expect(s).toMatch(/the first one most of all \(nothing is spoken until it is written\)/);
     expect(s).toMatch(/Answer first, in your first beat/);
+    expect(s).toMatch(/Off-topic \(nothing to do with the document\): one friendly sentence, no plan and no drawing \(with an empty answer, the only scripts that do not start with a plan\)/);
   });
 
   it('states the teacher-at-a-whiteboard brief and the streamed beat format', () => {
