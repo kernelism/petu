@@ -87,9 +87,15 @@ async function startServer(env: Record<string, string>): Promise<{ base: string;
   throw new Error('dev server did not come up (is Lane S in place? GET /api/spend)');
 }
 
+/** Resolves once no board part holds the live accent (render.ts LIVE_SETTLE_MS 1400 after the last group),
+ *  or after `ms`: a fixed wait shot the last group still violet beside the takeaway (q2:D18, D19). */
+export const liveSettledScript = (ms: number) => `new Promise((r) => { const t0 = Date.now();
+  const tick = () => !document.querySelector('[data-live]') || Date.now() - t0 > ${ms} ? r() : setTimeout(tick, 50); tick(); })`;
+
 /** After a turn: the settled final state, and the whole board when the layout has one (stitched strips). */
 export async function captureEnd(chrome: Chrome, qdir: string, prefix: string): Promise<void> {
-  await sleep(700); // trailing ink and layout settle
+  await chrome.eval(liveSettledScript(4000));
+  await sleep(700); // trailing ink, the accent's 420 ms colour fade (desk.css) and layout settle
   writeFileSync(join(qdir, `${prefix}final.png`), await chrome.shot());
   const probe = await chrome.eval<{ x: number; y: number; w: number; h: number; scrollHeight: number; clientHeight: number; scrollTop: number } | null>(boardProbeScript);
   if (!probe) return;

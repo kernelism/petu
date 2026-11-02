@@ -1,9 +1,31 @@
 import { describe, it, expect } from 'vitest';
-import { testUsesOf, jpegDims, missingDecks } from '../../scripts/eval/run';
+import { testUsesOf, jpegDims, missingDecks, captureEnd, liveSettledScript } from '../../scripts/eval/run';
+import type { Chrome } from '../../scripts/eval/cdp';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { pathOfSrc, deckUrlPath, deckIdOfFile, deckPath } from '../../scripts/eval/decks';
 import { existsSync, readFileSync } from 'node:fs';
 
 describe('runner helpers', () => {
+  it('the final shot waits for the last group to lose the live accent, so the judge sees it at rest beside the takeaway', async () => {
+    // The page: one part keeps data-live for 900 ms (past the old fixed 700; render.ts LIVE_SETTLE_MS is 1400).
+    const t0 = Date.now();
+    const document = { querySelector: (s: string) => (s === '[data-live]' && Date.now() - t0 < 900 ? {} : null) };
+    const live = () => document.querySelector('[data-live]');
+    const page = (js: string) => new Function('document', `return ${js}`)(document);
+    const log: string[] = [];
+    const chrome = {
+      eval: async (js: string) => { log.push(`eval live=${!!live()}`); return js.includes('[data-live]') ? page(js) : null; },
+      shot: async () => { log.push(`shot live=${!!live()}`); return Buffer.from([]); },
+    } as unknown as Chrome;
+    await captureEnd(chrome, mkdtempSync(join(tmpdir(), 'petu-end-')), '');
+    expect(log.filter((l) => l.startsWith('shot'))).toEqual(['shot live=false']);
+    // A part that never settles cannot hang the run.
+    const s = Date.now();
+    await new Function('document', `return ${liveSettledScript(100)}`)({ querySelector: () => ({}) });
+    expect(Date.now() - s).toBeLessThan(1000);
+  });
   it('names each missing deck once with its questions, so a run fails fast instead of waiting on a page that never opens', () => {
     const find = (d: string) => { if (d === 'econ') return '/x/econ.pdf'; throw new Error(`deck ${d} (${d}.pdf) not found in /a`); };
     expect(missingDecks([{ id: 'D1', deck: 'lec06' }, { id: 'D2', deck: 'econ' }, { id: 'D3', deck: 'lec06' }], find)).toEqual(['deck lec06 (lec06.pdf) not found in /a (D1,D3)']);
