@@ -14,8 +14,12 @@
  * alone. Against earlier groups and the canvas edge every collision counts: the model could not see where
  * the board put them, and the gate no longer withholds a beat for its layout (check.ts checkGroups), so a
  * label run into an earlier group's text or line, or off the canvas, is moved here instead.
+ * A text placed by data (its own `data-at`) is as blind: the engine computed its point, so every collision
+ * counts, its own group's too (D19: "P 10, Q 10" at dx=-12 dy=-12, up-left of a point on a falling demand
+ * line, sat across it). It moves by dx/dy, never x/y (a re-resolve or tween rewrites those and keeps the
+ * nudge), and only by nudges (a wrap's tspans would take x and drop the offset).
  * Pure over the parsed XML; geometry is the gate's (check.ts groupGeometry: measured widths in a
- * browser, estimates elsewhere). Texts placed by data (`data-at`) or under rotation are not moved.
+ * browser, estimates elsewhere). Texts inside a data-at group or under rotation are not moved.
  */
 import { core, groupGeometry, I, mul, overlapArea, parseTransform, segHitsBox, type Box, type M, type Seg, type TextBox } from './check';
 import { inkBox } from './grammar';
@@ -33,11 +37,14 @@ const AIR = 0.08;
 const airBox = (t: TextBox): Box => { const b = inkBox(t), a = AIR * t.fs; return { x: b.x - a, y: b.y - a / 2, w: b.w + 2 * a, h: b.h + a }; };
 const textsHit = (a: TextBox, b: TextBox) => overlapArea(airBox(a), airBox(b)) > 0;
 
-/** Moves a text (and its absolutely placed tspans) by (dx, dy). */
+/** Moves a text (and its absolutely placed tspans) by (dx, dy): through x/y, or its dx/dy when data places it. */
 function shift(el: Element, dx: number, dy: number): void {
-  for (const [k, d] of [['x', dx], ['y', dy]] as const) {
+  const by = el.hasAttribute('data-at');
+  for (const [k0, d] of [['x', dx], ['y', dy]] as const) {
     if (!d) continue;
+    const k = by ? `d${k0}` : k0;
     el.setAttribute(k, r2(num(el.getAttribute(k)?.split(/[\s,]+/)[0]) + d));
+    if (by) continue;
     for (const s of Array.from(el.children)) if (s.hasAttribute(k)) s.setAttribute(k, r2(num(s.getAttribute(k)) + d));
   }
 }
@@ -59,14 +66,19 @@ export function settle(g: Element, raw: Element, prior: Drawn, w: number): numbe
   if (!rawGeo) return 0;
   const segsOf = (geo: { segs: Seg[] }) => geo.segs.filter((s) => !s.tiny);
   const priorSegs = prior.segs.filter((s) => !s.tiny);
+  /** Placed by data: the model could not see where (see above), so every hit counts. */
+  const blind = els.map((el) => el.hasAttribute('data-at'));
   /** Every collision of text i, given each text's boxes (several lines per text). */
   const hitsOf = (boxes: TextBox[][], segs: Seg[], i: number): Hits => {
     const out: Hits = new Set();
     for (const a of boxes[i]) {
+      // A blind text keeps its air from strokes too: core()'s slack is for the model's own composition (D19's
+      // first nudge, by core, left "P 10, Q 10" touching its line).
+      const c = blind[i] ? airBox(a) : core(a);
       boxes.forEach((bs, j) => { if (j !== i && bs.some((b) => textsHit(a, b))) out.add(`t${j}`); });
       prior.texts.forEach((p, j) => { if (textsHit(a, p)) out.add(`p${j}`); });
-      if (segs.some((s) => segHitsBox(s.a, s.b, core(a)))) out.add('s');
-      if (priorSegs.some((s) => !(s.curve && a.on?.includes(s.curve)) && segHitsBox(s.a, s.b, core(a)))) out.add('q');
+      if (segs.some((s) => segHitsBox(s.a, s.b, c))) out.add('s');
+      if (priorSegs.some((s) => !(s.curve && a.on?.includes(s.curve)) && segHitsBox(s.a, s.b, c))) out.add('q');
       if (a.x < -1 || a.x + a.w > w + 1 || a.y < -1) out.add('e');
     }
     return out;
@@ -74,7 +86,7 @@ export function settle(g: Element, raw: Element, prior: Drawn, w: number): numbe
   const byEl = (geo: { texts: TextBox[] }, list: Element[]) => list.map((el) => geo.texts.filter((t) => t.el === el));
   const rawBoxes = byEl(rawGeo, rawEls), rawSegs = segsOf(rawGeo);
   const before = rawEls.map((_, i) => hitsOf(rawBoxes, rawSegs, i));
-  const fresh = (h: Hits, i: number) => [...h].filter((k) => k[0] === 'p' || k === 'q' || k === 'e' || !before[i]?.has(k));
+  const fresh = (h: Hits, i: number) => [...h].filter((k) => blind[i] || k[0] === 'p' || k === 'q' || k === 'e' || !before[i]?.has(k));
   let left = 0;
   for (let pass = 0; pass < 2; pass++) {
     for (let i = 0; i < els.length; i++) {
@@ -83,7 +95,8 @@ export function settle(g: Element, raw: Element, prior: Drawn, w: number): numbe
       const boxes = byEl(geo, els), segs = segsOf(geo);
       if (!boxes[i]?.length || !fresh(hitsOf(boxes, segs, i), i).length) continue;
       const el = els[i];
-      if (el.hasAttribute('data-at') || el.closest('[data-at]') || !isShift(matOf(el, g))) continue;
+      // A blind text with placed lines stays (its dx moves only the first line).
+      if ((blind[i] ? el.querySelector('[x],[y]') : el.closest('[data-at]')) || !isShift(matOf(el, g))) continue;
       if (place(el, i)) continue;
       if (pass === 1) left++;
     }
@@ -119,7 +132,7 @@ export function settle(g: Element, raw: Element, prior: Drawn, w: number): numbe
     if (tryHere(0.5)) return true;
     const words = (el.textContent ?? '').replace(/\s+/g, ' ').trim().split(' ');
     const snapshot = el.cloneNode(true) as Element;
-    if (!el.children.length && words.length >= 2) {
+    if (!el.children.length && words.length >= 2 && !el.hasAttribute('data-at')) {
       // Two lines, broken at the word that best halves it.
       let best = 1, bd = Infinity;
       const len = (a: string[]) => a.join(' ').length;
