@@ -242,13 +242,19 @@ function categoryOf(el: Element): number {
 /**
  * The words a part answers to in the narration (pace.ts PartIn): its `data-say` when it has one (the
  * author's words for it, numbers included), else its id's words (partWords), with its label's numbers and
- * words (labelNames, data-val readouts resolved by now) for when the id's words aren't said.
+ * words (labelNames, data-val readouts resolved by now) for when the id's words aren't said. A frame
+ * (axes with engine L or ticks, data.ts drawFrame) answers to its id only: its texts are tick values,
+ * round numbers the narration says all the time ("at a price of 10"), and named by one it drew after the
+ * curves on it (D20: the frame last, on "30" in the closing sentence). Unnamed, it leads from the beat's start.
+ * Texts are read one by one: engine ticks have no space between them ("0 m10 m20 m" read 051015).
  */
-function wordsOf(el: Element, ns: string, groupId?: string): { words: string[]; label?: string[] } {
+export function partNames(el: Element, ns: string, groupId?: string): { words: string[]; label?: string[] } {
   const say = el.getAttribute('data-say');
   if (say?.trim()) return { words: labelNames(say, true) };
   const id = (el.getAttribute('data-name') ?? el.getAttribute('id') ?? '').replace(new RegExp(`^${ns.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-`), '');
-  const t = el.nodeName.toLowerCase() === 'text' || el.nodeName.toLowerCase() === 'g' ? (el.textContent ?? '') : '';
+  if (el.hasAttribute('data-axes') && (el.hasAttribute('data-frame') || el.hasAttribute('data-ticks-x') || el.hasAttribute('data-ticks-y'))) return { words: partWords(id, groupId) };
+  const tag = el.nodeName.toLowerCase();
+  const t = tag === 'text' ? (el.textContent ?? '') : tag === 'g' ? Array.from(el.querySelectorAll('text'), (x) => x.textContent ?? '').join(' ') : '';
   return { words: partWords(id, groupId), label: labelNames(t) };
 }
 
@@ -300,7 +306,7 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   for (const c of Array.from(g.children)) {
     const leaves = (isLeaf(c) ? [c] : Array.from(c.querySelectorAll(`${SHAPES},text`)).filter(isLeaf)) as SVGElement[];
     if (!leaves.length) continue;
-    units.push({ el: c, steps: leaves.map(stepOf), cat: categoryOf(c), names: wordsOf(c, b.ns, id), at: 0 });
+    units.push({ el: c, steps: leaves.map(stepOf), cat: categoryOf(c), names: partNames(c, b.ns, id), at: 0 });
   }
   const steps = units.flatMap((u) => u.steps);
   // Hide everything, then reveal in order.
