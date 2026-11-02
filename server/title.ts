@@ -58,7 +58,7 @@ export async function makeTitle(i: TitleInput, d: Deps, cache: TitleCache): Prom
   if (hit) return { status: 200, body: { title: hit, usd: 0, cached: true } };
   if (!d.key) return { status: 503, body: { error: 'no OPENAI_API_KEY', code: 'no_key' } };
   const body = titleRequest(i);
-  const r = await callJson(body, TITLE_MODEL, estimateInputTokens(body, []), TITLE_MAX_OUTPUT, false, 'title', d, { ep: endpointOf(TITLE_MODEL, d), timeoutMs: 15_000 });
+  const r = await callJson(body, TITLE_MODEL, estimateInputTokens(body, []), TITLE_MAX_OUTPUT, 'title', d, { ep: endpointOf(TITLE_MODEL, d), timeoutMs: 15_000 });
   if (!r.ok) return { status: r.code === 'cap' ? 402 : 502, body: { error: r.message, code: r.code } };
   const title = cleanTitle(outputText(r.json));
   if (!title) return { status: 502, body: { error: 'no usable title', code: 'upstream' } };

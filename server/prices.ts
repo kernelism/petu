@@ -50,7 +50,7 @@ export type Usage = {
 };
 
 /** Cost of one response from its usage. Unknown models throw (the ledger must never guess low). */
-export function costUsd(model: string, u: Usage, writeTtl: '30m' | '12h' = '12h', fast = false): number {
+export function costUsd(model: string, u: Usage, writeTtl: '30m' | '12h' = '12h'): number {
   const p = priceFor(model, u.input_tokens);
   const cached = u.input_tokens_details?.cached_tokens ?? 0;
   const written = u.input_tokens_details?.cache_write_tokens ?? 0;
@@ -59,13 +59,11 @@ export function costUsd(model: string, u: Usage, writeTtl: '30m' | '12h' = '12h'
   const split = u.input_tokens_details?.cache_write_tokens_details;
   const w12 = split ? split.ttl_12h_tokens ?? 0 : writeTtl === '12h' ? written : 0;
   const w30 = split ? Math.max(0, written - w12) : written - w12;
-  const usd = (plain * p.in + cached * p.cached + w12 * p.write12h + w30 * p.write30m + u.output_tokens * p.out) / 1e6;
-  return fast ? usd * 2 : usd;
+  return (plain * p.in + cached * p.cached + w12 * p.write12h + w30 * p.write30m + u.output_tokens * p.out) / 1e6;
 }
 
 /** Worst case before sending: every input token written at the 12h rate, the full output budget. */
-export function worstCaseUsd(model: string, inputTokens: number, maxOutput: number, fast = false): number {
+export function worstCaseUsd(model: string, inputTokens: number, maxOutput: number): number {
   const p = priceFor(model, inputTokens);
-  const usd = (inputTokens * p.write12h + maxOutput * p.out) / 1e6;
-  return fast ? usd * 2 : usd;
+  return (inputTokens * p.write12h + maxOutput * p.out) / 1e6;
 }

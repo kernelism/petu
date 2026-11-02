@@ -67,11 +67,11 @@ const report: RepairReport = { beat: 'Notice Z.', problems: [{ check: 'unknown',
 
 describe('answer quality mapping', () => {
   it('standard (or absent) is the server model; best is Opus at effort low with the standard prompt; anything else is refused', () => {
-    const e = env({ PETU_PAGE_DETAIL: 'low' });
+    const e = env({ PETU_EXPLICIT_CACHE: '0' });
     expect(answerConfig(e, undefined)).toEqual({ cfg: e.model });
     expect(answerConfig(e, 'standard')).toEqual({ cfg: e.model });
     expect(e.model).toMatchObject({ model: 'gpt-6.1-terra', effort: 'none' });
-    expect(answerConfig(e, 'best')).toEqual({ cfg: { ...e.model, model: BEST_MODEL, effort: BEST_EFFORT, maxOutput: DEFAULT_MAX_OUTPUT_REASONING, fast: false } });
+    expect(answerConfig(e, 'best')).toEqual({ cfg: { ...e.model, model: BEST_MODEL, effort: BEST_EFFORT, maxOutput: DEFAULT_MAX_OUTPUT_REASONING } });
     expect([BEST_MODEL, BEST_EFFORT]).toEqual(['claude-opus-5-5', 'low']);
     for (const q of ['claude-opus-5-5', 'gpt-6.1-sol', 'Best', '', 1, {}, ['best']]) {
       expect(answerConfig(e, q), JSON.stringify(q)).toHaveProperty('error');

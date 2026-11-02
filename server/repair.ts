@@ -88,7 +88,7 @@ export async function repair(w: RepairWire, cfg: ModelConfig | null, d: RepairDe
   if (entry.repairs >= MAX_REPAIRS) return refuse(429, 'too_many', `At most ${MAX_REPAIRS} repairs per answer.`);
   // A model that cannot turn thinking off (Opus, Answer quality "Best") repairs at low, its floor.
   const effort = cfg.effort === 'none' && ANTHROPIC_NO_NONE.has(entry.cfg.model) ? 'low' : cfg.effort;
-  const rc: ModelConfig = { ...cfg, model: entry.cfg.model, effort, fast: entry.cfg.fast, maxOutput: SVG_REPAIR_MAX_OUTPUT };
+  const rc: ModelConfig = { ...cfg, model: entry.cfg.model, effort, maxOutput: SVG_REPAIR_MAX_OUTPUT };
   const ep = endpointOf(rc.model, d);
   if (!ep.key) return refuse(503, 'no_key', 'No key for the answer model.');
   if (!PRICES[rc.model]) return refuse(400, 'bad_request', `No price for ${rc.model}.`);
@@ -96,7 +96,7 @@ export async function repair(w: RepairWire, cfg: ModelConfig | null, d: RepairDe
   const est = estimateFor(ep, body, entry.images);
   const cachedGuess = d.cache?.expectedCached(entry.ck, est) ?? 0;
   const id = randomUUID();
-  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(rc.model, est, rc.maxOutput, rc.fast), { kind: 'repair', model: rc.model, estUsd: costUsd(rc.model, estimatedUsage(est, cachedGuess, rc.maxOutput), '12h', rc.fast) });
+  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(rc.model, est, rc.maxOutput), { kind: 'repair', model: rc.model, estUsd: costUsd(rc.model, estimatedUsage(est, cachedGuess, rc.maxOutput), '12h') });
   if (refused) return refuse(402, 'cap', capHint(refused.code, refused.message, d.phase));
   entry.repairs++;
 
@@ -139,7 +139,7 @@ export async function repair(w: RepairWire, cfg: ModelConfig | null, d: RepairDe
   else {
     if (read.usage) d.cache?.observe(entry.ck, read.usage, systemTokensLow());
     const u: Usage = read.usage ?? estimatedUsage(est, cachedGuess, Math.ceil(Math.max(read.rawChars, text.length) / 3.2) || REPAIR_MAX_OUTPUT);
-    usd = costUsd(rc.model, u, '12h', rc.fast);
+    usd = costUsd(rc.model, u, '12h');
     d.ledger.settle({ id, phase: d.phase, kind: 'repair', model: rc.model, usd, estimated: !read.usage, tokens: tokens(u) });
   }
   try { d.log?.({ kind: 'repair', at: new Date().toISOString(), reqId: w.reqId, k: w.k, report: w.report, text, usd, ms, version: REPAIR_VERSION, model: rc.model, effort: rc.effort, ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}) }); } catch { /* never fails a repair */ }

@@ -37,7 +37,8 @@ const EFFORTS: Effort[] = ['none', 'low', 'medium', 'high'];
  * latency gate (Enter → first caption word p50 1.27s / p90 2.21s over 58 answers; gate 1.4s / 2.5s).
  * luna-none missed p90 (2.62s) and scored lowest; terra-low (p90 4.5s), sol-low (p50 3.9s) and
  * astra-low (p90 8.7s) are too slow for one streamed pass. Fast mode gave no first-word gain (warm
- * A/B: 2.09s vs 1.24s/1.42s), and verbosity low lost 0.25 judge points on the answers it changed.
+ * A/B: 2.09s vs 1.24s/1.42s), and verbosity low lost 0.25 judge points on the answers it changed:
+ * neither is sent (their knobs PETU_FAST, PETU_SCOUT_FAST and PETU_VERBOSITY were removed 2026-11-01).
  */
 export const DEFAULT_MODEL = 'gpt-6.1-terra';
 /**
@@ -108,7 +109,6 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   const effort = oneOf('PETU_EFFORT', EFFORTS, DEFAULT_EFFORT);
   if (effort === 'none' && NO_NONE.has(model)) throw new Error(`petu: ${model} does not accept reasoning effort none; set PETU_EFFORT=low`);
   if (effort === 'none' && ANTHROPIC_NO_NONE.has(model)) throw new Error(`petu: ${model} cannot turn thinking off; set PETU_EFFORT=low`);
-  const verbosity = str('PETU_VERBOSITY') == null ? undefined : oneOf('PETU_VERBOSITY', ['low', 'medium'] as const, 'low');
   // Lessons v3: an answer may walk several pages and build a figure across them.
   const maxOutput = Math.round(num('PETU_MAX_OUTPUT', effort === 'none' ? DEFAULT_MAX_OUTPUT : DEFAULT_MAX_OUTPUT_REASONING));
   if (maxOutput < 1) throw new Error('petu: PETU_MAX_OUTPUT must be ≥ 1');
@@ -139,15 +139,15 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
     .map((s) => s.trim()).filter(Boolean).map(expand);
 
   const anthropicKey = anthropicKeyOf(opts.fileEnv);
-  const answer: ModelConfig = { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) };
+  const answer: ModelConfig = { model, effort, maxOutput, explicitCache };
   return {
     key: get('OPENAI_API_KEY')?.trim() ?? '',
     anthropicKey,
     speechmaticsKey: get('SPEECHMATICS_API_KEY')?.trim() ?? '',
     model: answer,
     best: anthropicKey ? bestConfig(answer, DEFAULT_MAX_OUTPUT_REASONING) : null,
-    scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, fast: str('PETU_SCOUT_FAST') === '1', explicitCache },
-    repair: repairOn ? { model, effort: repairEffort, maxOutput: REPAIR_MAX_OUTPUT, fast: str('PETU_FAST') === '1', explicitCache } : null,
+    scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, explicitCache },
+    repair: repairOn ? { model, effort: repairEffort, maxOutput: REPAIR_MAX_OUTPUT, explicitCache } : null,
     phase, caps,
     priorUsd: num('PETU_PRIOR_USD', 0.0076),
     pdfDirs,

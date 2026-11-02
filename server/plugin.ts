@@ -285,7 +285,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   function routeSpend(req: IncomingMessage, res: ServerResponse) {
     if (req.method !== 'GET') return json(res, 405, { error: 'GET only' });
     const s = ledger.summary();
-    const worst = worstCaseUsd(env.model.model, TYPICAL_INPUT_TOKENS, env.model.maxOutput, env.model.fast) + worstCaseUsd(env.scout.model, TYPICAL_SCOUT_TOKENS, env.scout.maxOutput, env.scout.fast);
+    const worst = worstCaseUsd(env.model.model, TYPICAL_INPUT_TOKENS, env.model.maxOutput) + worstCaseUsd(env.scout.model, TYPICAL_SCOUT_TOKENS, env.scout.maxOutput);
     const refusal = ledger.check(env.phase, worst);
     // Which keys the server has (booleans only), so a runner can refuse a config before spending on scouts.
     return json(res, 200, { ...s, phase: env.phase, phaseCapUsd: env.caps.phaseUsd?.[env.phase], model: env.model.model, keys: { openai: !!env.key, anthropic: !!env.anthropicKey }, best: !!env.best, ...(refusal ? { blocked: refusal.message, blockedCode: refusal.code } : {}) });

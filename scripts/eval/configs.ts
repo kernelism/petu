@@ -9,9 +9,6 @@ export type Config = {
   effort: 'none' | 'low' | 'medium';
   /** PETU_MAX_OUTPUT for the run (thinking models spend part of it before the first word). Default: the server's 3200. */
   maxOutput?: number;
-  fast?: boolean;
-  /** text.verbosity for the model, when it accepts one (server reads PETU_VERBOSITY). */
-  verbosity?: 'low';
   /** Restrict to these question ids (cost control). */
   only?: string[];
   /** Judge by default? (timing-only configs say no.) */
@@ -19,7 +16,6 @@ export type Config = {
 };
 
 const D1_6 = ['D1', 'D2', 'D3', 'D4', 'D5', 'D6'];
-const TEN = ['D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9', 'D10'];
 
 export const CONFIGS: Record<string, Config> = {
   'luna-none': { name: 'luna-none', model: 'gpt-6-luna', effort: 'none' },
@@ -29,8 +25,6 @@ export const CONFIGS: Record<string, Config> = {
   'sol-low': { name: 'sol-low', model: 'gpt-6.1-sol', effort: 'low' },
   'sol-medium': { name: 'sol-medium', model: 'gpt-6.1-sol', effort: 'medium', maxOutput: 6000 },
   'astra-low': { name: 'astra-low', model: 'gpt-6-astra', effort: 'low', only: D1_6 },
-  'terra-none-fast': { name: 'terra-none-fast', model: 'gpt-6.1-terra', effort: 'none', fast: true, only: TEN, judge: false },
-  'terra-none-verbosity-low': { name: 'terra-none-verbosity-low', model: 'gpt-6.1-terra', effort: 'none', verbosity: 'low' },
   // Anthropic (server/anthropic.ts; needs PETU_ANTHROPIC_KEY). One per current model, chosen for the
   // first word: Opus 5.5 cannot turn thinking off, so its lowest effort; Sonnet 5.5 and Haiku 5.5 with
   // thinking off (no thinking before the first text token). claude-sonnet-low is the thinking variant.
@@ -42,8 +36,7 @@ export const CONFIGS: Record<string, Config> = {
 };
 
 export function configEnv(c: Config, phase: string): Record<string, string> {
-  const env: Record<string, string> = { PETU_MODEL: c.model, PETU_EFFORT: c.effort, PETU_PHASE: phase, PETU_FAST: c.fast ? '1' : '0' };
-  if (c.verbosity) env.PETU_VERBOSITY = c.verbosity;
+  const env: Record<string, string> = { PETU_MODEL: c.model, PETU_EFFORT: c.effort, PETU_PHASE: phase };
   if (c.maxOutput) env.PETU_MAX_OUTPUT = String(c.maxOutput);
   return env;
 }
@@ -74,11 +67,11 @@ export function expectedAnswerUsd(c: Config): number {
   const stage2 = (input * TYPICAL_CACHED_SHARE * p.cached + input * (1 - TYPICAL_CACHED_SHARE) * Math.max(p.in, p.write30m) + TYPICAL_OUTPUT[c.effort] * p.out) / 1e6;
   const s = PRICES[SCOUT_MODEL];
   const scout = (SCOUT_INPUT_TOKENS * 0.5 * s.cached + SCOUT_INPUT_TOKENS * 0.5 * s.write30m + 250 * s.out) / 1e6;
-  return (c.fast ? stage2 * 2 : stage2) + scout;
+  return stage2 + scout;
 }
 /** The ledger's worst case for one answer (stage 2 at its own output budget + scout), USD. */
 export const worstAnswerUsd = (c: Config): number =>
-  worstCaseUsd(c.model, Math.ceil(ASSUMED_INPUT_TOKENS * inputFactor(c)), maxOutputOf(c), !!c.fast) + worstCaseUsd(SCOUT_MODEL, SCOUT_INPUT_TOKENS, SCOUT_MAX_OUTPUT);
+  worstCaseUsd(c.model, Math.ceil(ASSUMED_INPUT_TOKENS * inputFactor(c)), maxOutputOf(c)) + worstCaseUsd(SCOUT_MODEL, SCOUT_INPUT_TOKENS, SCOUT_MAX_OUTPUT);
 /** One r3 judgement: expected (~16k in, mostly uncached; ~800 out) and worst (the server's 1600-token budget). */
 export const expectedJudgeUsd = (): number => { const p = PRICES['gpt-6.1-sol']; return (JUDGE_INPUT_TOKENS_R3 * p.in + 800 * p.out) / 1e6; };
 export const worstJudgeUsd = (): number => worstCaseUsd('gpt-6.1-sol', JUDGE_INPUT_TOKENS_R3, JUDGE_MAX_OUTPUT);
@@ -98,7 +91,7 @@ export const SCOUT_MODEL = 'gpt-6.1-terra';
 export const SCOUT_INPUT_TOKENS = 8000;
 
 /** One live-gate repair at worst: stage 2's input again (the prefix, released text and note) + REPAIR_MAX_OUTPUT. */
-export const worstRepairUsd = (c: Config): number => worstCaseUsd(c.model, Math.ceil(ASSUMED_INPUT_TOKENS * inputFactor(c)), REPAIR_MAX_OUTPUT, !!c.fast);
+export const worstRepairUsd = (c: Config): number => worstCaseUsd(c.model, Math.ceil(ASSUMED_INPUT_TOKENS * inputFactor(c)), REPAIR_MAX_OUTPUT);
 /**
  * What the preflight sets aside per answer for repairs: 0.3 × the worst case of MAX_REPAIRS repairs
  * (design §8; most units pass, and the ledger still reserves every repair at its own worst case).
@@ -107,6 +100,6 @@ export const REPAIR_SHARE = 0.3;
 export const plannedRepairUsd = (c: Config): number => REPAIR_SHARE * MAX_REPAIRS * worstRepairUsd(c);
 
 export function plannedWorstUsd(c: Config, answers: number, judged: number, rubric: 'r2' | 'r3' = 'r2', repairs = false): number {
-  return answers * (worstCaseUsd(c.model, ASSUMED_INPUT_TOKENS, ASSUMED_MAX_OUTPUT, !!c.fast) + worstCaseUsd(SCOUT_MODEL, SCOUT_INPUT_TOKENS, SCOUT_MAX_OUTPUT) + (repairs ? plannedRepairUsd(c) : 0)) +
+  return answers * (worstCaseUsd(c.model, ASSUMED_INPUT_TOKENS, ASSUMED_MAX_OUTPUT) + worstCaseUsd(SCOUT_MODEL, SCOUT_INPUT_TOKENS, SCOUT_MAX_OUTPUT) + (repairs ? plannedRepairUsd(c) : 0)) +
     judged * worstCaseUsd('gpt-6.1-sol', rubric === 'r3' ? JUDGE_INPUT_TOKENS_R3 : JUDGE_INPUT_TOKENS, JUDGE_MAX_OUTPUT);
 }

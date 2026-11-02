@@ -13,15 +13,12 @@
 //    Prewarm: same prefix with `prompt_cache_options.prewarm: true`, no output generated.
 //  - Reasoning (guides/reasoning): `reasoning.effort` ∈ none | minimal | low | medium | high | xhigh | max,
 //    model-dependent. gpt-6.1-sol and gpt-6-astra REJECT `none` (400) — server/env.ts refuses that config.
-//  - Fast mode (guides/fast-mode): `service_tier: 'fast'` (Priority processing was renamed Fast mode
-//    on 2026-07-30; 'priority' is still accepted). Fast prices are exactly 2× Standard (prices.ts).
 //  - Streaming events: `response.output_item.added` (item.id, item.type, message item.phase
 //    commentary | final_answer), `response.output_text.delta` (item_id, delta), `response.completed`,
 //    `response.incomplete` (response.incomplete_details.reason), `response.failed`
 //    (response.error.message), `error` (message).
-//  - `text.verbosity`: gpt-6.1-terra accepts "low" (P1 bake-off), but it stays opt-in (PETU_VERBOSITY), off
-//    by default: it lost 0.25 judge points on the answers it changed and it re-writes the system cache.
-//  - Fast mode stays off (PETU_FAST=0): no first-word gain in the P1 A/B, at 2× the price.
+//  - `text.verbosity` and Fast mode (`service_tier: 'fast'`) are not sent: the P1 bake-off rejected
+//    both (verbosity low lost 0.25 judge points; fast gave no first-word gain at 2× the price).
 //  - Structured output: `text.format: { type: 'json_schema', name, schema, strict: true }`.
 // Cache key (P0 smoke: a per-document key gave the 12h system block 0% cache on every new PDF):
 // `prompt_cache_key` is per prompt version, shared by every document, so all answers route to the
@@ -52,10 +49,7 @@ import { CacheStats, estimatedUsage } from './cacheStats';
 import { ANTHROPIC_URL, AnthropicEvents, NO_ANTHROPIC_KEY, anthropicHeaders, anthropicInput, isAnthropicModel, normalizeUsage, toAnthropicRequest, type AnthropicUsage } from './anthropic';
 
 export type Effort = 'none' | 'low' | 'medium' | 'high';
-export type ModelConfig = { model: string; effort: Effort; maxOutput: number; fast: boolean; verbosity?: 'low' | 'medium'; explicitCache: boolean;
-  /** Vision detail for the scout's other pages (the visible page is always high). Default high. */
-  pageDetail?: 'low' | 'high';
-};
+export type ModelConfig = { model: string; effort: Effort; maxOutput: number; explicitCache: boolean };
 export type Deps = {
   key: string; ledger: Ledger; phase: Phase; fetch: typeof fetch;
   /** PETU_ANTHROPIC_KEY (server/env.ts): used only when the answer model is a Claude model (server/anthropic.ts). */
@@ -157,8 +151,6 @@ export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { con
   return {
     ...common(cfg), input, stream: !prewarm,
     ...(cfg.explicitCache ? { prompt_cache_options: { mode: 'explicit', ...(prewarm ? { prewarm: true } : {}) } } : {}),
-    ...(cfg.fast ? { service_tier: 'fast' } : {}),
-    ...(cfg.verbosity ? { text: { verbosity: cfg.verbosity } } : {}),
     metadata: { prompt: PROMPT_VERSION },
   };
 }
@@ -184,7 +176,7 @@ function groundingTail(c: AskContext, cfg: ModelConfig): unknown[] {
   if (c.pagesText) tail.push({ type: 'input_text', text: c.pagesText });
   for (const im of c.images ?? []) {
     tail.push({ type: 'input_text', text: `IMAGE of page ${im.page}:` });
-    tail.push({ type: 'input_image', image_url: img(im.b64), detail: cfg.pageDetail ?? 'high' });
+    tail.push({ type: 'input_image', image_url: img(im.b64), detail: 'high' });
   }
   if (c.scout) {
     const order = c.scout.pages.join(', ');
@@ -279,7 +271,6 @@ export function buildScoutRequest(r: ScoutRequest, cfg: ModelConfig, prewarm = f
       ...(prewarm ? [] : [{ role: 'user', content: [{ type: 'input_text', text: tail.join('\n') }] }]),
     ],
     stream: !prewarm,
-    ...(cfg.fast ? { service_tier: 'fast' } : {}),
     text: { format: { type: 'json_schema', name: 'scout', schema: SCOUT_SCHEMA, strict: true } },
     ...(cfg.explicitCache ? { prompt_cache_options: { mode: 'explicit', ...(prewarm ? { prewarm: true } : {}) } } : {}),
     metadata: { prompt: SCOUT_VERSION },
@@ -325,7 +316,7 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
   const body = buildScoutRequest(r, cfg);
   const est = estimateInputTokens(body, r.image ? [{ w: 512, h: 512 }] : []);
   const id = randomUUID();
-  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput, cfg.fast), { kind: 'scout', model: cfg.model });
+  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput), { kind: 'scout', model: cfg.model });
   if (refused) { decide(fallbackScout(r.page, 'cap')); return finish(0); }
 
   const T = { ...TIMEOUTS, ...d.timeouts };
@@ -386,7 +377,7 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
   }
   if (!sent) { d.ledger.release(id); return finish(0); }
   const u: Usage = usage ?? estimatedUsage(est, 0, Math.ceil(outChars / 3.2) || cfg.maxOutput);
-  const usd = costUsd(cfg.model, u, '12h', cfg.fast);
+  const usd = costUsd(cfg.model, u, '12h');
   d.ledger.settle({ id, phase: d.phase, kind: 'scout', model: cfg.model, usd, estimated: !usage, tokens: tokens(u) });
   return finish(usd, usage);
 }
@@ -402,7 +393,7 @@ export async function prewarmScout(r: Pick<ScoutRequest, 'digest' | 'docHash' | 
   if (!d.key) return { ok: false, usd: 0, reason: 'no key' };
   if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };
   const body = buildScoutRequest({ ...r, question: '' }, cfg, true);
-  const res = await callJson(body, cfg.model, estimateInputTokens(body, []), cfg.maxOutput, cfg.fast, 'prewarm', d);
+  const res = await callJson(body, cfg.model, estimateInputTokens(body, []), cfg.maxOutput, 'prewarm', d);
   return res.ok ? { ok: true, usd: res.usd } : { ok: false, usd: res.usd, reason: res.message };
 }
 
@@ -466,8 +457,8 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const ck: CacheKey = { model: cfg.model, version: PROMPT_VERSION, docHash: r.context.docHash, page: r.context.page };
   try { d.onBody?.(reqId, oa, cfg, ck, images); } catch { /* the repair cache never fails an answer */ }
   const cachedGuess = d.cache?.expectedCached(ck, est) ?? 0;
-  const estUsd = costUsd(cfg.model, estimatedUsage(est, cachedGuess, cfg.maxOutput), '12h', cfg.fast);
-  const refused = d.ledger.reserve(reqId, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput, cfg.fast), { kind: 'answer', model: cfg.model, estUsd });
+  const estUsd = costUsd(cfg.model, estimatedUsage(est, cachedGuess, cfg.maxOutput), '12h');
+  const refused = d.ledger.reserve(reqId, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput), { kind: 'answer', model: cfg.model, estUsd });
   if (refused) { emit({ t: 'error', code: 'cap', message: capHint(refused.code, refused.message, d.phase), retryable: false }); return; }
   emit({ t: 'meta', reqId, model: cfg.model, effort: cfg.effort });
 
@@ -560,7 +551,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   if (!sent) { d.ledger.release(reqId); record(0); return; }
   if (usage) d.cache?.observe(ck, usage, systemTokensLow());
   const u: Usage = usage ?? estimatedUsage(est, cachedGuess, Math.ceil(Math.max(read.rawChars, outChars) / 3.2));
-  const usd = costUsd(cfg.model, u, '12h', cfg.fast);
+  const usd = costUsd(cfg.model, u, '12h');
   d.ledger.settle({ id: reqId, phase: d.phase, kind: 'answer', model: cfg.model, usd, estimated, tokens: tokens(u) });
   record(usd);
   if (signal.aborted) return;
@@ -653,7 +644,7 @@ export async function prewarm(context: AskContext, cfg: ModelConfig, d: Deps): P
   if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };
   const body = buildAnswerRequest({ question: '', history: [], context }, cfg, true);
   // An Anthropic prewarm generates nothing (max_tokens 0): reserve no output.
-  const r = await callJson(body, cfg.model, estimateFor(ep, body, askImages(context)), ep.anthropic ? 0 : cfg.maxOutput, cfg.fast, 'prewarm', d, { ep });
+  const r = await callJson(body, cfg.model, estimateFor(ep, body, askImages(context)), ep.anthropic ? 0 : cfg.maxOutput, 'prewarm', d, { ep });
   if (r.ok && r.json?.usage) d.cache?.observe({ model: cfg.model, version: PROMPT_VERSION, docHash: context.docHash, page: context.page }, r.json.usage, systemTokensLow());
   return r.ok ? { ok: true, usd: r.usd } : { ok: false, usd: r.usd, reason: r.message };
 }
@@ -672,7 +663,7 @@ export async function prewarmSystem(cfg: ModelConfig, d: Deps): Promise<PrewarmR
   if (d.cache?.systemFresh(k, ep.anthropic ? 55 * 60_000 : undefined)) return { ok: true, usd: 0, reason: 'cached' };
   const oa = buildSystemPrewarm(cfg);
   const body = ep.anthropic ? toAnthropicRequest(oa as never, cfg, true) : oa;
-  const r = await callJson(body, cfg.model, estimateFor(ep, body, []), ep.anthropic ? 0 : cfg.maxOutput, cfg.fast, 'prewarm', d, { ep });
+  const r = await callJson(body, cfg.model, estimateFor(ep, body, []), ep.anthropic ? 0 : cfg.maxOutput, 'prewarm', d, { ep });
   if (r.ok) {
     const u = r.json?.usage as Usage | undefined;
     const t = u ? (u.input_tokens_details?.cached_tokens ?? 0) + (u.input_tokens_details?.cache_write_tokens ?? 0) : 0;
@@ -699,7 +690,7 @@ export async function judge(j: JudgeRequest, d: Deps): Promise<JudgeResult> {
     text: { format: { type: 'json_schema', name: j.name ?? 'judgement', schema: j.schema, strict: true } },
   };
   const images = j.content.flatMap((p) => (p.type === 'input_image' ? [imageDims(p)] : []));
-  const r = await callJson(body, JUDGE_MODEL, estimateInputTokens(body, images), JUDGE_MAX_OUTPUT, false, 'judge', d);
+  const r = await callJson(body, JUDGE_MODEL, estimateInputTokens(body, images), JUDGE_MAX_OUTPUT, 'judge', d);
   if (!r.ok) return { ok: false, code: r.code, message: r.message, usd: r.usd };
   const text = outputText(r.json);
   try { return { ok: true, output: JSON.parse(text), usd: r.usd }; } catch { return { ok: false, code: 'upstream', message: `judge returned non-JSON: ${text.slice(0, 120)}`, usd: r.usd }; }
@@ -709,9 +700,9 @@ export type CallResult = { ok: true; json: any; usd: number } | { ok: false; cod
 
 /** A non-streamed call: reserve the worst case → POST (one retry on 429/5xx/network) → book usage. */
 type CallOpts = { timeoutMs?: number; retry?: boolean; signal?: AbortSignal; ep?: Endpoint };
-export async function callJson(body: unknown, model: string, est: number, maxOutput: number, fast: boolean, kind: 'prewarm' | 'judge' | 'scout' | 'title', d: Deps, o: CallOpts = {}): Promise<CallResult> {
+export async function callJson(body: unknown, model: string, est: number, maxOutput: number, kind: 'prewarm' | 'judge' | 'scout' | 'title', d: Deps, o: CallOpts = {}): Promise<CallResult> {
   const id = randomUUID();
-  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(model, est, maxOutput, fast), { kind, model });
+  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(model, est, maxOutput), { kind, model });
   if (refused) return { ok: false, code: 'cap', message: capHint(refused.code, refused.message, d.phase), usd: 0 };
   const sleep = d.sleep ?? sleepDefault;
   const T = { ...TIMEOUTS, ...d.timeouts };
@@ -731,7 +722,7 @@ export async function callJson(body: unknown, model: string, est: number, maxOut
         const u = json.usage as Usage | undefined;
         const estimated = !u;
         const usage: Usage = u ?? { input_tokens: est, output_tokens: maxOutput, input_tokens_details: { cache_write_tokens: est } };
-        const usd = costUsd(model, usage, '12h', fast);
+        const usd = costUsd(model, usage, '12h');
         d.ledger.settle({ id, phase: d.phase, kind, model, usd, estimated, tokens: tokens(usage) });
         return { ok: true, json, usd };
       }
@@ -741,13 +732,13 @@ export async function callJson(body: unknown, model: string, est: number, maxOut
       // A network error or timeout after sending may still bill: the last try is booked below at its
       // worst case; a first try that a retry follows is booked now, on its own.
       last = { ok: false, code: 'network', message: scrub(String(e), ep.key).slice(0, 200), usd: 0 };
-      if (attempt < attempts - 1) d.ledger.settle({ id: `${id}:a0`, phase: d.phase, kind, model, usd: worstCaseUsd(model, est, maxOutput, fast), estimated: true });
+      if (attempt < attempts - 1) d.ledger.settle({ id: `${id}:a0`, phase: d.phase, kind, model, usd: worstCaseUsd(model, est, maxOutput), estimated: true });
       else reached = true;
     }
     if (attempt < attempts - 1) await sleep(500 + Math.random() * 300);
   }
   if (reached) {
-    const usd = worstCaseUsd(model, est, maxOutput, fast);
+    const usd = worstCaseUsd(model, est, maxOutput);
     d.ledger.settle({ id, phase: d.phase, kind, model, usd, estimated: true });
     return { ...last, usd };
   }
