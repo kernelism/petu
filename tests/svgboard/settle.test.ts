@@ -4,7 +4,7 @@
 // instead of shrinking, and never onto a text or stroke it was clear of. A board drawn on the p6.4
 // canvas (560 wide, units ≈ screen px) keeps its own sizes.
 import { describe, expect, it } from 'vitest';
-import { mountBoard, prepareGroup, type SvgBoard } from '../../src/svgboard/render';
+import { mountBoard, prepareGroup, refreshData, type SvgBoard } from '../../src/svgboard/render';
 import { core, groupGeometry, overlapArea, segHitsBox, type TextBox } from '../../src/svgboard/check';
 import { inkBox, LEGIBLE_PX, RAISE_MAX } from '../../src/svgboard/grammar';
 import { BOARD_W } from '../../src/svgboard/wire';
@@ -59,6 +59,25 @@ describe('the legibility floor and its safety net', () => {
     const src = '<g id="curve"><path d="M50 300 L450 100" fill="none" stroke="#222"/><text x="240" y="208" font-size="28">on the line</text></g>';
     draw(b, [src]);
     expect(b.root.querySelector('text')!.getAttribute('x')).toBe('240');
+  });
+
+  it('a label placed by data up-left of its point on a falling line is nudged off the line through dx/dy (a re-resolve keeps it)', () => {
+    // D19: "P 10, Q 10" at pt(hi,qh,ph) dx=-12 dy=-12, end-anchored, sat across its own demand line. The
+    // model cannot see where the engine puts it, so every hit counts; x/y stay the point's.
+    const b = board(1000, 400);
+    const src = `<g id="dem" data-const="ph=5"><g data-axes="hi" data-x="0,20" data-y="0,10" data-box="100,100,400,200"/>
+      <path data-fn="10-x/2" data-axes="hi" fill="none" stroke="#222" stroke-width="3"/>
+      <circle data-at="pt(hi,10,ph)" r="5" fill="#222"/><text data-at="pt(hi,10,ph)" dx="-12" dy="-12" text-anchor="end" font-size="17">P 10, Q 10</text></g>`;
+    const { texts, segs } = draw(b, [src]);
+    const t = texts.find((x) => x.text === 'P 10, Q 10')!, el = b.root.querySelector('text[data-at]')!;
+    expect(segs.some((s) => segHitsBox(s.a, s.b, inkBox(t)))).toBe(false); // clear, not just off core()'s slack
+    expect([el.getAttribute('x'), el.getAttribute('y')]).toEqual(['300', '200']);
+    expect([el.getAttribute('dx'), el.getAttribute('dy')]).not.toEqual(['-12', '-12']);
+    const moved = [el.getAttribute('dx'), el.getAttribute('dy')];
+    // A tween's frame (ph 5 → 4) re-resolves x/y from the data; the nudge rides along on dx/dy.
+    const g = b.root.querySelector('g[data-const]') as SVGGElement;
+    b.scope.consts.ph = 4; b.bound.push(g); refreshData(b);
+    expect([el.getAttribute('x'), el.getAttribute('y'), el.getAttribute('dx'), el.getAttribute('dy')]).toEqual(['300', '220', ...moved]);
   });
 
   it(`on the p6.4 canvas (${BOARD_W} wide) the model's 16–20 unit labels keep their ratio, raised by one factor of at most RAISE_MAX`, () => {
