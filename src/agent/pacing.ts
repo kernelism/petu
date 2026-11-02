@@ -112,13 +112,11 @@ export function budgetOf(plan: string | undefined, opener = ''): Budget | null {
 }
 
 /**
- * The line stage 2 reads after the PLAN: its beat count and words per beat. `check`: 'hidden' (the svg
- * prompt, p6.2: the narration ends on the takeaway; a check question, if any, is written hidden, never
- * spoken) or 'spoken' (the tag prompt: the answer ends on its check question).
+ * The line stage 2 reads after the PLAN: its beat count and words per beat (p6.2: the narration ends on
+ * the takeaway; a check question, if any, is written hidden, never spoken).
  */
-export function budgetNote(b: Budget | null, check: 'hidden' | 'spoken' = 'hidden'): string {
+export function budgetNote(b: Budget | null): string {
   if (!b) return '';
   const teach = Math.max(1, b.beats - 1);
-  if (check === 'hidden') return `BUDGET (${b.scope} question): after the opening, ${teach} teaching beat${teach === 1 ? '' : 's'} of about ${b.wordsPerBeat} spoken words each, ending on the takeaway: about ${b.words} words, ${Math.round(b.seconds)} seconds with the opening. Fit the whole plan into it; when the takeaway has landed, stop.`;
-  return `BUDGET (${b.scope} question): after the opening, ${teach} teaching beat${teach === 1 ? '' : 's'} of about ${b.wordsPerBeat} spoken words each, then the check question: about ${b.words} words, ${Math.round(b.seconds)} seconds with the opening. Fit the whole plan into it; when the check question has been asked, stop.`;
+  return `BUDGET (${b.scope} question): after the opening, ${teach} teaching beat${teach === 1 ? '' : 's'} of about ${b.wordsPerBeat} spoken words each, ending on the takeaway: about ${b.words} words, ${Math.round(b.seconds)} seconds with the opening. Fit the whole plan into it; when the takeaway has landed, stop.`;
 }

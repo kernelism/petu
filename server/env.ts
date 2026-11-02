@@ -15,7 +15,6 @@ import { HARD_STOP_USD } from '../src/agent/protocol';
 import type { Caps, Phase } from './ledger';
 import type { Effort, ModelConfig } from './openai';
 import { ANTHROPIC_NO_NONE, isAnthropicModel } from './anthropic';
-import { VARIANT_NAMES } from './prompt/variants/index';
 import { bestConfig } from './quality';
 
 /** The $80 hard stop (prior spike spend included; $40 until 2026-10-28, $60 until 2026-10-31). PETU_TOTAL_CAP_USD may only lower it. */
@@ -120,9 +119,6 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   const scoutEffort = oneOf('PETU_SCOUT_EFFORT', EFFORTS, 'none');
   if (scoutEffort === 'none' && NO_NONE.has(scoutModel)) throw new Error(`petu: ${scoutModel} does not accept reasoning effort none; set PETU_SCOUT_EFFORT=low`);
   const explicitCache = str('PETU_EXPLICIT_CACHE') !== '0';
-  // EXPERIMENT: a stage-2 prompt variant (server/prompt/variants); unset = the default prompt, unchanged.
-  const promptVariant = str('PETU_PROMPT_VARIANT');
-  if (promptVariant && !VARIANT_NAMES.includes(promptVariant)) throw new Error(`petu: PETU_PROMPT_VARIANT must be one of ${VARIANT_NAMES.join(' | ')} (got "${promptVariant}")`);
   const repairOn = oneOf('PETU_REPAIR', ['on', 'off'] as const, 'on') === 'on';
   // A repair has only REPAIR_MAX_OUTPUT tokens: above low, reasoning could spend all of them before any text.
   const repairEffort = oneOf('PETU_REPAIR_EFFORT', EFFORTS, effort === 'none' || effort === 'low' ? effort : 'low');
@@ -143,7 +139,7 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
     .map((s) => s.trim()).filter(Boolean).map(expand);
 
   const anthropicKey = anthropicKeyOf(opts.fileEnv);
-  const answer: ModelConfig = { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(promptVariant ? { promptVariant } : {}), ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) };
+  const answer: ModelConfig = { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) };
   return {
     key: get('OPENAI_API_KEY')?.trim() ?? '',
     anthropicKey,

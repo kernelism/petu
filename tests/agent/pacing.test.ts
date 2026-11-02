@@ -58,10 +58,7 @@ describe('pacing: the plan read as a length budget', () => {
   });
 
   it("stage 2's note names the beat count and words per beat", () => {
-    // The tag prompt ends on its spoken check question.
-    const note = budgetNote(budgetOf(GRAVITY), 'spoken');
-    expect(note).toMatch(/^BUDGET \(narrow question\): after the opening, 3 teaching beats of about \d+ spoken words each, then the check question/);
-    // The svg prompt (p6.2, the default): the narration ends on the takeaway; a check is hidden, never spoken.
+    // p6.2: the narration ends on the takeaway; a check is hidden, never spoken.
     const svg = budgetNote(budgetOf(GRAVITY));
     expect(svg).toMatch(/^BUDGET \(narrow question\): after the opening, 3 teaching beats of about \d+ spoken words each, ending on the takeaway/);
     expect(svg).not.toMatch(/check question|\?/);

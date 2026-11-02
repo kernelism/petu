@@ -42,8 +42,7 @@ import type { Ledger, Phase } from './ledger';
 import { SseParser, ResponseEvents } from './sse';
 import { ScriptFilter } from './scriptFilter';
 import { Lint } from './lint';
-import { systemPrompt, PROMPT_VERSION, promptVersionOf, isSvgMode } from './prompt/system';
-import { BoardFirst } from './boardFirst';
+import { systemPrompt, PROMPT_VERSION } from './prompt/system';
 import { SvgBeatFilter } from './svgBeats';
 import { SCOUT_SYSTEM, SCOUT_VERSION } from './prompt/scout';
 import { SCOUT_SCHEMA, fallbackScout, parseScout, type ScoutEvent, type ScoutRequest, type ScoutResult } from '../src/agent/scout';
@@ -56,8 +55,7 @@ export type Effort = 'none' | 'low' | 'medium' | 'high';
 export type ModelConfig = { model: string; effort: Effort; maxOutput: number; fast: boolean; verbosity?: 'low' | 'medium'; explicitCache: boolean;
   /** Vision detail for the scout's other pages (the visible page is always high). Default high. */
   pageDetail?: 'low' | 'high';
-  /** EXPERIMENT (PETU_PROMPT_VARIANT): a prompt variant from server/prompt/variants; absent = the default prompt. */
-  promptVariant?: string };
+};
 export type Deps = {
   key: string; ledger: Ledger; phase: Phase; fetch: typeof fetch;
   /** PETU_ANTHROPIC_KEY (server/env.ts): used only when the answer model is a Claude model (server/anthropic.ts). */
@@ -86,8 +84,6 @@ export type CacheKey = { model: string; version: string; docHash: string; page: 
 export type AnswerRecord = { at: string; phase: string; model: string; effort: string; page: number; question: string; script: string; lint: string[]; usd: number; error?: string; /** Why the upstream ended an answer early (its terminal status and reason). */ upstream?: string;
   /** The scout's opener as spoken before stage 2 (C7: opener-vs-board contradictions are measured from the record). */
   opener?: string;
-  /** EXPERIMENT (boardfirst): the model's script before the board-first reveal, and what it declared and revealed. */
-  raw?: string; boardFirst?: { declared: number; revealed: number; hidden: string[]; immediate: number; noId: number };
   /** The svg answer mode: the groups sent, the board opened, what the filter dropped, timings (ms from the request). */
   svg?: { groups: string[]; board: unknown; notes: string[]; /** The beat order the filter read (src/svgboard/beat.ts). */ order?: 'lead' | 'trail'; check?: string; firstGroupMs: number; ttftMs: number; /** Stage 2's first spoken word (ms from the request; NaN → null when it spoke none). */ firstWordMs?: number; totalMs: number } };
 /**
@@ -107,7 +103,7 @@ export const JUDGE_MODEL = 'gpt-6.1-sol';
 import { JUDGE_MAX_OUTPUT } from './limits';
 
 /** Shared by every document: the system block's cache is reused across PDFs. */
-export const cacheKey = (variant?: string) => `petu-${promptVersionOf(variant)}`;
+export const cacheKey = () => `petu-${PROMPT_VERSION}`;
 /** A lower bound on the system block's tokens (≈ 3.3 chars/token measured; 4 keeps it low). */
 export const systemTokensLow = () => Math.floor(systemPrompt().length / 4);
 
@@ -133,10 +129,10 @@ export function buildAnswerRequest(r: Parameters<typeof buildRequest>[0], cfg: M
   const oa = buildRequest(r, cfg, prewarm);
   return isAnthropicModel(cfg.model) ? toAnthropicRequest(oa as never, cfg, prewarm) : oa;
 }
-const developer = (cfg: ModelConfig) => ({ role: 'developer', content: [{ type: 'input_text', text: systemPrompt(cfg.promptVariant), ...bp(cfg.explicitCache, '12h') }] });
+const developer = (cfg: ModelConfig) => ({ role: 'developer', content: [{ type: 'input_text', text: systemPrompt(), ...bp(cfg.explicitCache, '12h') }] });
 const common = (cfg: ModelConfig) => ({
   model: cfg.model, store: false, max_output_tokens: cfg.maxOutput, reasoning: { effort: cfg.effort },
-  prompt_cache_key: cacheKey(cfg.promptVariant),
+  prompt_cache_key: cacheKey(),
 });
 
 /**
@@ -150,7 +146,7 @@ export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { con
   const tail: unknown[] = groundingTail(c, cfg);
   tail.push(...momentNotes(c).map((text) => ({ type: 'input_text', text })));
   tail.push({ type: 'input_text', text: `QUESTION (the student is looking at page ${c.page}): ${r.question}` });
-  if (c.opener) tail.push({ type: 'input_text', text: openerNote(c.opener, isSvgMode(cfg.promptVariant)) });
+  if (c.opener) tail.push({ type: 'input_text', text: openerNote(c.opener) });
   const input = [
     developer(cfg),
     pageBlock(c, cfg),
@@ -193,7 +189,7 @@ function groundingTail(c: AskContext, cfg: ModelConfig): unknown[] {
   if (c.searchText) tail.push({ type: 'input_text', text: c.searchText });
   if (c.scout) {
     const order = c.scout.pages.join(', ');
-    const budget = budgetNote(budgetOf(c.scout.plan, c.opener), isSvgMode(cfg.promptVariant) ? 'hidden' : 'spoken'); // the plan's scope as a length (src/agent/pacing.ts)
+    const budget = budgetNote(budgetOf(c.scout.plan, c.opener)); // the plan's scope as a length (src/agent/pacing.ts)
     tail.push({ type: 'input_text', text: `PLAN (a first read of the whole document; pages in teaching order: ${order})${c.scout.plan ? `: ${c.scout.plan}` : ''}${budget ? `\n${budget}` : ''}` });
     if (c.memory && c.scout.relation) tail.push({ type: 'input_text', text: relationNote(c.scout.relation) });
   }
@@ -238,17 +234,13 @@ export function momentNotes(c: Pick<AskContext, 'aside' | 'about' | 'check'>): s
 /**
  * Stage 2 continues the scout's opener: the student has already heard it (and seen its marks), so the
  * script picks up at the next sentence, as one continuous explanation.
- * svg (C7, p6.11): the opener only oriented (scout s2.9; the gate drops its numbers), so stage 2 writes
- * its plan first while the opener plays, then makes the claims on its case. The opener was said before
- * any case existed, so where the case contradicts it, the first beat says so in words, once (it cannot
- * be unsaid; leaving it would be the mismatch C7 is about). `svg` false (p6.12): the tag prompt keeps its
- * spoken lead-in before the plan, but the scout's s2.9 opener is shared by both formats and now orients
- * only, so that lead-in gives the answer: the old note ("the student has its claim … do not answer the
- * question again") assumed an opener that had claimed it, and left a short factual question unanswered.
+ * C7, p6.11: the opener only oriented (scout s2.9; the gate drops its numbers), so stage 2 writes its
+ * plan first while the opener plays, then makes the claims on its case. The opener was said before any
+ * case existed, so where the case contradicts it, the first beat says so in words, once (it cannot be
+ * unsaid; leaving it would be the mismatch C7 is about).
  */
-export const openerNote = (opener: string, svg = true) => (svg
-  ? `ALREADY SPOKEN: you have already said the opening below aloud, and its tags have been drawn. It only oriented the student: it named the idea and where the explanation is going, before any case was worked. Your script continues from it: the plan first (the student is still hearing the opening while you write it), then your first beat gives the answer on your case. Do not repeat, rephrase or summarise the opening, and do not mark again what it marked. If your worked case contradicts anything the opening said (a number, a result, which is bigger), your first beat corrects it in plain words, once, with what the case shows ("Actually, it lands downstream of the landing, not on it"), then carries on; otherwise never state its claim again, in any words. If the opening already says everything the question needs, output nothing.\nOPENING: ${opener}`
-  : `ALREADY SPOKEN: you have already said the opening below aloud, and its tags have been drawn. It only oriented the student: it named the idea and where the explanation is going, and stated no result. Your script continues straight on from its last word, as the next sentence of the same explanation, and gives the answer. It still starts with spoken words, before the plan: one or two sentences that need no drawing and answer the question in plain words, pointing at the page when that helps. They play while you write the plan; the drawing starts with the first beat after it. Do not repeat, rephrase or summarise the opening, and do not mark again what it marked. If the opening already says everything the question needs, output nothing.\nOPENING: ${opener}`);
+export const openerNote = (opener: string) =>
+  `ALREADY SPOKEN: you have already said the opening below aloud, and its tags have been drawn. It only oriented the student: it named the idea and where the explanation is going, before any case was worked. Your script continues from it: the plan first (the student is still hearing the opening while you write it), then your first beat gives the answer on your case. Do not repeat, rephrase or summarise the opening, and do not mark again what it marked. If your worked case contradicts anything the opening said (a number, a result, which is bigger), your first beat corrects it in plain words, once, with what the case shows ("Actually, it lands downstream of the landing, not on it"), then carries on; otherwise never state its claim again, in any words. If the opening already says everything the question needs, output nothing.\nOPENING: ${opener}`;
 
 /** The scout's cache key: one per scout prompt version, shared by every document. */
 export const scoutCacheKey = () => `petu-scout-${SCOUT_VERSION}`;
@@ -489,16 +481,12 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   signal.addEventListener('abort', onAbort);
   if (signal.aborted) up.abort();
   const now0 = d.now ?? (() => performance.now());
-  // The svg answer mode (the default): plan → {{svgboard}}, each group → one {{svg}} tag (server/svgBeats.ts).
+  // The svg answer mode: plan → {{svgboard}}, each group → one {{svg}} tag (server/svgBeats.ts).
   // Behind an opener, stage 2's narration waits for its plan (C7: nothing it says before its case is decided).
-  const svgf = isSvgMode(cfg.promptVariant) ? new SvgBeatFilter(now0, { hold: !!r.context.opener }) : null;
-  const filter = svgf ?? new ScriptFilter(), lint = new Lint();
+  const filter = new SvgBeatFilter(now0, { hold: !!r.context.opener }), lint = new Lint();
   const read = newRead();
   let outChars = 0, ttft = NaN, firstWord = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
-  let sent = false, terminal = false, complete = false, idle = false, script = '', raw = '';
-  // EXPERIMENT: a board-first script's declared elements are held until the narration names them.
-  const bf = cfg.promptVariant === 'boardfirst' ? new BoardFirst() : null;
-  const send = (s: string) => { if (bf) { raw += s; s = bf.push(s); } emitText(s); };
+  let sent = false, terminal = false, complete = false, idle = false, script = '';
   let lastEmit = now();
   const emitText = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; script += s; lastEmit = now(); if (Number.isNaN(ttft)) ttft = now() - t0; if (Number.isNaN(firstWord) && spoken(s)) firstWord = now() - t0; emit({ t: 'text', d: s }); };
   // While a group (or the plan) is being written nothing streams; a beat of whitespace lets the client
@@ -507,7 +495,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const beat = hb > 0 ? setInterval(() => { if (!signal.aborted && quietBeat(firstWord, lastEmit, now(), script, hb)) { lastEmit = now(); emit({ t: 'text', d: ' ' }); } }, Math.min(250, hb)) : null;
   // Every answer leaves a record, a failed one too (the failures are the ones worth reading).
   const record = (usd: number) => {
-    try { d.log?.({ ...recordHead(r, cfg, d), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.order ? { order: svgf.order } : {}), ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), firstWordMs: Math.round(firstWord), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}) }); } catch { /* a log failure never fails an answer */ }
+    try { d.log?.({ ...recordHead(r, cfg, d), script, lint: lint.notes, usd, svg: { groups: filter.groups, board: filter.board, notes: filter.notes, ...(filter.order ? { order: filter.order } : {}), ...(filter.check ? { check: filter.check } : {}), firstGroupMs: Math.round(filter.firstGroupMs - t0), ttftMs: Math.round(ttft), firstWordMs: Math.round(firstWord), totalMs: Math.round(now() - t0) }, ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}) }); } catch { /* a log failure never fails an answer */ }
   };
   try {
     let res: Response | null = null;
@@ -544,12 +532,11 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
       // have reached OpenAI, so it is booked as an estimate below.
       if (failed && failed.code !== 'network') { d.ledger.release(reqId); record(0); emit(failed); signal.removeEventListener('abort', onAbort); return; }
     } else {
-      const r = await readUpstream(res, ep, { signal, idleMs: T.idleMs, streamMs: T.streamMs, filter, lint, send, onNote: (m) => emit({ t: 'note', message: m }), stop: () => live?.abort() }, read);
+      const r = await readUpstream(res, ep, { signal, idleMs: T.idleMs, streamMs: T.streamMs, filter, lint, send: emitText, onNote: (m) => emit({ t: 'note', message: m }), stop: () => live?.abort() }, read);
       idle = r.idle || !!r.overrun; usage = r.usage; terminal = r.terminal; complete = r.complete;
       if (r.failed) failed = { t: 'error', code: 'upstream', message: r.failed, retryable: true };
       if (signal.aborted) up.abort();
-      send(lint.push(filter.end()) + lint.end());
-      if (bf) emitText(bf.end());
+      emitText(lint.push(filter.end()) + lint.end());
       // Stalled, cut short upstream (response.incomplete), or ended without a terminal event: what
       // arrived plays, then the client hears cut_off; with no text at all it is an error.
       // The output budget ran out (max_output_tokens / max_tokens) just after a whole sentence: the
@@ -580,7 +567,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   if (signal.aborted) return;
   if (failed && failed.code !== 'cut_off' && !outChars) { emit(failed); return; }
   const s = d.ledger.summary();
-  emit({ t: 'done', usage, usd, estimated, spentUsd: s.totalUsd, capUsd: s.capUsd, ttftMs: Math.round(ttft), plan: filter.plan || undefined, ...(svgf?.check ? { check: svgf.check } : {}), lint: lint.notes.length ? lint.notes : undefined });
+  emit({ t: 'done', usage, usd, estimated, spentUsd: s.totalUsd, capUsd: s.capUsd, ttftMs: Math.round(ttft), plan: filter.plan || undefined, ...(filter.check ? { check: filter.check } : {}), lint: lint.notes.length ? lint.notes : undefined });
   if (failed) emit({ ...failed, code: 'cut_off', message: 'The answer was cut off.' });
 }
 

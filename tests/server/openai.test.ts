@@ -859,15 +859,6 @@ describe('Lessons v3: two stages', () => {
     // The opener spoke before any case existed: a contradiction is corrected in words, once; otherwise never restated.
     expect(tail.at(-1).text).toMatch(/If your worked case contradicts anything the opening said[^.]*, your first beat corrects it in plain words, once/);
     expect(tail.at(-1).text).toMatch(/otherwise never state its claim again, in any words/);
-    // The tag prompt keeps its own note (spoken lead-in, no correction rule).
-    const tags = buildRequest(req({ context: { ...multi, opener: 'It is.' } }), { ...cfg, promptVariant: 'tags' }) as any;
-    expect(tags.input.at(-1).content.at(-1).text).toBe(openerNote('It is.', false));
-    expect(openerNote('It is.', false)).toMatch(/starts with spoken words, before the plan/);
-    expect(openerNote('It is.', false)).not.toMatch(/corrects it/);
-    // p6.12: the scout's opener (s2.9) orients in both formats, so the tag lead-in gives the answer; it is never told the student already has it.
-    expect(openerNote('It is.', false)).toMatch(/It only oriented the student[^.]*stated no result/);
-    expect(openerNote('It is.', false)).toMatch(/answer the question in plain words/);
-    expect(openerNote('It is.', false)).not.toMatch(/has its claim|never state it again|do not answer the question again/);
     // The cached prefix is unchanged by the opener.
     expect(b.input.slice(0, 2)).toEqual((buildRequest(req({ context: multi }), cfg) as any).input.slice(0, 2));
   });

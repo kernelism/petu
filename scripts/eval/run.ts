@@ -25,12 +25,10 @@ import { checkBudget, gateQuery, parseArgs, selectQuestions, spendsOnRepairs, wa
 import { renderReport, type ReportItem } from './report.ts';
 import { composeScript, pickStills } from './sheet.ts';
 import { buildSummary, hostLoadOf, runIdOf, type HostLoad, type QuestionSummary } from './summary.ts';
-import { promptVersionOf } from '../../server/prompt/system.ts';
+import { PROMPT_VERSION } from '../../server/prompt/system.ts';
 import { SCOUT_VERSION } from '../../server/prompt/scout.ts';
 import { SCOUT_MODEL } from './configs.ts';
 import { cpus, loadavg } from 'node:os';
-/** The prompt this run's server uses (PETU_PROMPT_VARIANT: an experiment variant, recorded in the run id). */
-const PROMPT_VERSION = promptVersionOf(process.env.PETU_PROMPT_VARIANT?.trim() || undefined);
 import type { EvalResult } from '../../src/agent/evalHooks.ts';
 import type { SpendSummary } from '../../src/agent/protocol.ts';
 

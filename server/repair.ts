@@ -3,25 +3,23 @@
 // Stage 2's request is kept per answer (`RepairCache`, filled by `ask` through `Deps.onBody`) in the
 // OpenAI format. A repair resends it unchanged (same prompt_cache_key, same breakpoints, so the prefix
 // reads from cache), then the stage-2 text released so far as the assistant's turn, then the repair
-// note (server/prompt/repair.ts) as the user's — and asks for at most REPAIR_MAX_OUTPUT tokens. A Claude
+// note (server/prompt/repair.ts) as the user's — and asks for at most SVG_REPAIR_MAX_OUTPUT tokens. A Claude
 // answer model gets the same body converted (toAnthropicRequest): roles user → assistant → user,
 // cache_control on the same blocks, empty text blocks dropped.
 //
 // Spend: reserved at its worst case as kind `repair`, settled on usage; an abort or the deadline books
-// an estimate. MAX_REPAIRS per answer. Output goes through the same ScriptFilter + Lint as stage 2.
+// an estimate. MAX_REPAIRS per answer. Output goes through the same SvgBeatFilter + Lint as stage 2.
 // Secrets: the key is only in the upstream headers; every error text is scrubbed of it.
 import { randomUUID } from 'node:crypto';
 import { costUsd, worstCaseUsd, PRICES, type Usage } from './prices';
 import { estimatedUsage } from './cacheStats';
-import { ScriptFilter } from './scriptFilter';
 import { SvgBeatFilter } from './svgBeats';
-import { isSvgMode } from './prompt/system';
 import { rawSvgScript } from '../src/svgboard/wire';
 import { Lint } from './lint';
 import { capHint, endpointOf, estimateFor, newRead, readUpstream, scrub, systemTokensLow, tokens, TIMEOUTS, type AnswerBody, type CacheKey, type Deps, type ModelConfig } from './openai';
 import { ANTHROPIC_NO_NONE, toAnthropicRequest } from './anthropic';
 import { PROMPT_VERSION } from './prompt/system';
-import { repairNote, svgRepairNote, REPAIR_VERSION } from './prompt/repair';
+import { repairNote, REPAIR_VERSION } from './prompt/repair';
 import { MAX_REPAIRS, REPAIR_MAX_OUTPUT, SVG_REPAIR_MAX_OUTPUT } from './limits';
 import type { RepairWire, RepairWireEvent } from '../src/agent/protocol';
 import type { RepairReport } from '../src/gate/events';
@@ -54,19 +52,19 @@ export class RepairCache {
  * The repair's OpenAI-format body: stage 2's request unchanged, then the released text (assistant, when
  * non-empty), then the repair note (user); small output budget, the repair's effort, streamed.
  */
-export function buildRepairRequest(oa: AnswerBody, w: Pick<RepairWire, 'committed' | 'report'>, cfg: Pick<ModelConfig, 'effort'>, svg = false): AnswerBody {
+export function buildRepairRequest(oa: AnswerBody, w: Pick<RepairWire, 'committed' | 'report'>, cfg: Pick<ModelConfig, 'effort'>): AnswerBody {
   const input: unknown[] = [...oa.input];
-  // The svg mode: the model sees its own format (raw <g> groups), never the wire tags.
-  const committed = svg ? rawSvgScript(w.committed) : w.committed;
+  // The model sees its own format (raw <g> groups), never the wire tags.
+  const committed = rawSvgScript(w.committed);
   if (committed.trim()) input.push({ role: 'assistant', content: [{ type: 'output_text', text: committed }] });
-  input.push({ role: 'user', content: [{ type: 'input_text', text: svg ? svgRepairNote(w.report) : repairNote(w.report) }] });
-  return { ...oa, input, max_output_tokens: svg ? SVG_REPAIR_MAX_OUTPUT : REPAIR_MAX_OUTPUT, reasoning: { effort: cfg.effort }, stream: true, metadata: { prompt: PROMPT_VERSION, repair: REPAIR_VERSION } } as unknown as AnswerBody;
+  input.push({ role: 'user', content: [{ type: 'input_text', text: repairNote(w.report) }] });
+  return { ...oa, input, max_output_tokens: SVG_REPAIR_MAX_OUTPUT, reasoning: { effort: cfg.effort }, stream: true, metadata: { prompt: PROMPT_VERSION, repair: REPAIR_VERSION } } as unknown as AnswerBody;
 }
 
 /** The body for the answer model's provider (Anthropic: converted block for block). */
-export function repairBody(oa: AnswerBody, w: Pick<RepairWire, 'committed' | 'report'>, cfg: ModelConfig, svg = false): any {
-  const body = buildRepairRequest(oa, w, cfg, svg);
-  return cfg.model.startsWith('claude-') ? toAnthropicRequest(body as never, { model: cfg.model, effort: cfg.effort, maxOutput: svg ? SVG_REPAIR_MAX_OUTPUT : REPAIR_MAX_OUTPUT }) : body;
+export function repairBody(oa: AnswerBody, w: Pick<RepairWire, 'committed' | 'report'>, cfg: ModelConfig): any {
+  const body = buildRepairRequest(oa, w, cfg);
+  return cfg.model.startsWith('claude-') ? toAnthropicRequest(body as never, { model: cfg.model, effort: cfg.effort, maxOutput: SVG_REPAIR_MAX_OUTPUT }) : body;
 }
 
 /** A repair line in .petu/answers.jsonl. */
@@ -88,14 +86,13 @@ export async function repair(w: RepairWire, cfg: ModelConfig | null, d: RepairDe
   const entry = d.repairs.get(w.reqId);
   if (!entry) return refuse(404, 'not_found', 'Unknown or expired answer (reqId).');
   if (entry.repairs >= MAX_REPAIRS) return refuse(429, 'too_many', `At most ${MAX_REPAIRS} repairs per answer.`);
-  const svg = isSvgMode(entry.cfg.promptVariant);
   // A model that cannot turn thinking off (Opus, Answer quality "Best") repairs at low, its floor.
   const effort = cfg.effort === 'none' && ANTHROPIC_NO_NONE.has(entry.cfg.model) ? 'low' : cfg.effort;
-  const rc: ModelConfig = { ...cfg, model: entry.cfg.model, effort, fast: entry.cfg.fast, maxOutput: svg ? SVG_REPAIR_MAX_OUTPUT : REPAIR_MAX_OUTPUT };
+  const rc: ModelConfig = { ...cfg, model: entry.cfg.model, effort, fast: entry.cfg.fast, maxOutput: SVG_REPAIR_MAX_OUTPUT };
   const ep = endpointOf(rc.model, d);
   if (!ep.key) return refuse(503, 'no_key', 'No key for the answer model.');
   if (!PRICES[rc.model]) return refuse(400, 'bad_request', `No price for ${rc.model}.`);
-  const body = repairBody(entry.oa, w, rc, svg);
+  const body = repairBody(entry.oa, w, rc);
   const est = estimateFor(ep, body, entry.images);
   const cachedGuess = d.cache?.expectedCached(entry.ck, est) ?? 0;
   const id = randomUUID();
@@ -113,7 +110,7 @@ export async function repair(w: RepairWire, cfg: ModelConfig | null, d: RepairDe
   let late = false;
   const deadline = setTimeout(() => { late = true; up.abort(); }, Math.max(0, Math.min(w.deadlineMs, T.callMs)));
   // A repaired beat draws into the answer's open board: its groups go out with no BOARD tag of their own.
-  const filter = svg ? new SvgBeatFilter(undefined, { opened: true }) : new ScriptFilter(), lint = new Lint(), read = newRead();
+  const filter = new SvgBeatFilter(undefined, { opened: true }), lint = new Lint(), read = newRead();
   let text = '', failed: Extract<RepairWireEvent, { t: 'error' }> | null = null, sent = false;
   const send = (s: string) => { if (!s) return; text += s; if (!signal.aborted && !late) emit({ t: 'text', d: s }); };
   try {
