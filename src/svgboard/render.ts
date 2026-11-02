@@ -246,13 +246,15 @@ function categoryOf(el: Element): number {
  * (axes with engine L or ticks, data.ts drawFrame) answers to its id only: its texts are tick values,
  * round numbers the narration says all the time ("at a price of 10"), and named by one it drew after the
  * curves on it (D20: the frame last, on "30" in the closing sentence). Unnamed, it leads from the beat's start.
+ * Texts are read one by one: engine ticks have no space between them ("0 m10 m20 m" read 051015).
  */
 export function partNames(el: Element, ns: string, groupId?: string): { words: string[]; label?: string[] } {
   const say = el.getAttribute('data-say');
   if (say?.trim()) return { words: labelNames(say, true) };
   const id = (el.getAttribute('data-name') ?? el.getAttribute('id') ?? '').replace(new RegExp(`^${ns.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-`), '');
   if (el.hasAttribute('data-axes') && (el.hasAttribute('data-frame') || el.hasAttribute('data-ticks-x') || el.hasAttribute('data-ticks-y'))) return { words: partWords(id, groupId) };
-  const t = el.nodeName.toLowerCase() === 'text' || el.nodeName.toLowerCase() === 'g' ? (el.textContent ?? '') : '';
+  const tag = el.nodeName.toLowerCase();
+  const t = tag === 'text' ? (el.textContent ?? '') : tag === 'g' ? Array.from(el.querySelectorAll('text'), (x) => x.textContent ?? '').join(' ') : '';
   return { words: partWords(id, groupId), label: labelNames(t) };
 }
 

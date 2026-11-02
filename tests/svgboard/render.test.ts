@@ -21,6 +21,9 @@ describe('svgboard: a part\'s names', () => {
   it('axes without an engine frame keep their label names', () => {
     expect(partNames(el(`<g data-axes="p"><text>price</text></g>`), 'n').label).toEqual(['price']);
   });
+  it('texts are read one by one: no number fused across two of them', () => {
+    expect(partNames(el(`<g>${ticks}</g>`), 'n').label).toEqual(['0', '10', '20', '30', '40', '0', '5', '10', '15']);
+  });
   it('paced, a frame leads its curve: the curve on its word, the frame from the beat\'s start, not on a tick said later', () => {
     // "this line is the demand curve; at a price of 10 …": named at word 3, tick "10" at word 7.
     const w: BeatWord[] = 'this line is the demand curve; at a price of 10 buyers want 30 units'.split(' ').map((text, i) => ({ text, inMs: i * 300, endMs: (i + 1) * 300 }));
