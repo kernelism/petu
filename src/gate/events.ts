@@ -4,8 +4,8 @@
 
 /** How the gate checks: one sentence at a time (no repairs), or whole beats (repairs allowed). */
 export type GateMode = 'sentence' | 'beat';
-/** `&gate=`: off (raw stream plays), shadow (checked and logged, everything plays), live (enforced), audit (dev scripts: enforced, any flag is a gallery failure). */
-export type GateSetting = 'off' | 'shadow' | 'live' | 'audit';
+/** `&gate=`: off (raw stream plays), live (enforced), audit (dev scripts: enforced, any flag is a gallery failure). */
+export type GateSetting = 'off' | 'live' | 'audit';
 
 /** One problem a check found ("check: detail"); `hint` is the fix the repair note suggests. */
 export type GateFlag = { check: string; detail: string; hint?: string };

@@ -31,12 +31,12 @@ class FakeTime {
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 
 /** Narration plays 300 ms a word, starting when released (the clock's endsAt). */
-function harness(o: { preflight: Preflight; repair?: RepairFn; gatefail?: string; headroomMs?: number; setting?: 'live' | 'shadow' }) {
+function harness(o: { preflight: Preflight; repair?: RepairFn; gatefail?: string; headroomMs?: number }) {
   const time = new FakeTime();
   let ends = 0;
   const events: GateLogEvent[] = [];
   const clock = { now: time.now, endsAt: () => ends };
-  const gate = new LiveGate({ clock, preflight: o.preflight, repair: o.repair, faults: parseFaults(o.gatefail), headroomMs: o.headroomMs ?? 6000, onEvent: (e) => events.push(e), sleep: time.sleep, setting: o.setting });
+  const gate = new LiveGate({ clock, preflight: o.preflight, repair: o.repair, faults: parseFaults(o.gatefail), headroomMs: o.headroomMs ?? 6000, onEvent: (e) => events.push(e), sleep: time.sleep });
   const out: string[] = [];
   async function play(chunks: (string | { handoff: true } | { wait: number })[]) {
     const src = async function* () {
@@ -283,13 +283,6 @@ describe('LiveGate', () => {
     const bad = harness({ preflight: fakePreflight(), headroomMs: 1000, gatefail: '1:bad' });
     await bad.play([{ handoff: true }, `Intro ${LONG} `, { wait: 300 }, `So ${LONG} `, { wait: 300 }, 'Notice {{point A}} the point here. ', `End ${LONG} `]);
     expect(bad.out.join('')).not.toContain('point here');
-  });
-
-  it('shadow setting releases everything and logs the verdicts', async () => {
-    const h = harness({ preflight: fakePreflight(), setting: 'shadow' });
-    await h.play([{ handoff: true }, 'Bad {{point BAD}} one. ', 'Two. ']);
-    expect(h.out.join('')).toBe('Bad {{point BAD}} one. Two. ');
-    expect(h.gates()[0]).toMatchObject({ result: 'fail', action: 'release' });
   });
 
   // Evidence: draw run 5b74be89 D1/D3/D5 — the opener's last word ("…once it is bound.") was released

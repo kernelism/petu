@@ -149,9 +149,9 @@ function fileNameOf(src: string): string {
 const styleParam = import.meta.env.DEV ? params.get('style') : null;
 if (styleParam === 'live' || styleParam === 'hand' || styleParam === 'clean') setSettings({ inkStyle: styleParam });
 
-// The live commit gate (src/gate/live.ts): &gate=off|shadow|live|audit (default live for agent answers,
+// The live commit gate (src/gate/live.ts): &gate=off|live|audit (default live for agent answers,
 // audit for dev scripts), &gatefail=K[:mode] (injected faults), &repair=fake|off, &repairms= (the fake's delay).
-const GATE_PARAM = ((p) => (p === 'off' || p === 'shadow' || p === 'live' || p === 'audit' ? p : null))(params.get('gate')) as GateSetting | null;
+const GATE_PARAM = ((p) => (p === 'off' || p === 'live' || p === 'audit' ? p : null))(params.get('gate')) as GateSetting | null;
 const GATE_FAULTS = parseFaults(params.get('gatefail'));
 /** `&gatelog`: every gate and repair event to the console. */
 const GATE_LOG = params.has('gatelog');
@@ -883,7 +883,7 @@ export default function App() {
       gate = new LiveGate({
         clock: { now: () => performance.now(), endsAt: () => clock.endsAt() }, preflight,
         repair: repairFor(),
-        faults: GATE_FAULTS, setting: setting === 'shadow' ? 'shadow' : 'live', onEvent: gateEvent,
+        faults: GATE_FAULTS, onEvent: gateEvent,
         headroomMs: HEADROOM_MS,
       });
     }

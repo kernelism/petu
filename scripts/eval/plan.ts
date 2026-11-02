@@ -36,7 +36,7 @@ export type Args = {
   repair: RepairSetting | null;
 };
 export type RepairSetting = 'live' | 'fake' | 'recorded' | 'off';
-const GATES: GateSetting[] = ['off', 'shadow', 'live', 'audit'];
+const GATES: GateSetting[] = ['off', 'live', 'audit'];
 const REPAIRS: RepairSetting[] = ['live', 'fake', 'recorded', 'off'];
 
 export function parseArgs(argv: string[]): Args {
@@ -87,7 +87,7 @@ export function selectQuestions(a: Args, cfg: Config = CONFIGS[a.config], qs: Qu
 /** The repair mode the app gets: recorded on a replay, live on a generating run, unless --repair says otherwise. */
 export const repairOf = (a: Args): RepairSetting => a.repair ?? (a.replay ? 'recorded' : 'live');
 /** Does this run spend on repairs? (a generating run, gated, with live repairs) */
-export const spendsOnRepairs = (a: Args): boolean => !a.replay && !a.finish && a.gate !== 'off' && a.gate !== 'shadow' && repairOf(a) === 'live';
+export const spendsOnRepairs = (a: Args): boolean => !a.replay && !a.finish && a.gate !== 'off' && repairOf(a) === 'live';
 /** The app's query for the gate flags (appended to the eval URL). */
 export function gateQuery(a: Args): string {
   const q: string[] = [];
