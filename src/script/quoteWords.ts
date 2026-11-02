@@ -112,6 +112,10 @@ export function quoteRole(before: readonly string[], quote: string, clause: stri
   if (first && (content.has(first) || (!content.size && q.includes(first)))) return 'said';
   if (prev && content.has(prev)) return 'said';
   const long = q.length > MAX_SPOKEN;
+  // A long quote whose words the clause goes on to paraphrase, three in a row ("{{"30 and 60 degrees land
+  // at the"}} launches land at the same spot", fu D3): the sentence says it its own way.
+  const cl = ` ${squash(clause)} `;
+  if (long && q.slice(2).some((_, i) => cl.includes(` ${q.slice(i, i + 3).join(' ')} `))) return 'said';
   const capital = /^["'“‘(]?\p{Lu}/u.test(firstRaw);
   if (before.length === 0) {
     // Opening the sentence: its subject is missing unless a capitalised word starts it after the tag.

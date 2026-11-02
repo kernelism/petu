@@ -97,6 +97,9 @@ describe('quote words: nothing doubled, pointers stay silent', () => {
     expect(said('The {{highlight p=8 "Midpoint method: same answer in either direction"}} uses the average of the starting and ending values as its baseline.'))
       .toBe('The Midpoint method: same answer in either direction uses the average of the starting and ending values as its baseline.');
     expect(said('The {{highlight p=9 "The slope is constant; P/Q is not."}} is what the page says.')).toBe('The slope is constant; P/Q is not is what the page says.');
+    // The clause paraphrases the line (three of its words in a row): it points, nothing doubled (fu D3, live after-run).
+    expect(said('{{highlight p=6 "30 and 60 degrees land at the"}} launches land at the same spot because their motions balance.'))
+      .toBe('launches land at the same spot because their motions balance.');
   });
 
   it('a long quote before a word that may fill its slot points: its mark plays, nothing is spoken (D19)', () => {
