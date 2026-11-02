@@ -174,7 +174,6 @@ describe('createApi', () => {
       { ...good(), context: { ...good().context, scout: { pages: [1, 7], plan: '' } } },
       { ...good(), context: { ...good().context, scout: { pages: [1], plan: 'x'.repeat(2001) } } },
       { ...good(), context: { ...good().context, pageText: 'x'.repeat(60_001) } },
-      { ...good(), context: { ...good().context, searchText: 'x'.repeat(20_001) } },
       { ...good(), context: { ...good().context, opener: 'x'.repeat(2_001) } },
       { ...good(), context: { ...good().context, opener: 42 } },
       { ...good(), context: { ...good().context, ink: { summary: 'x'.repeat(4_001) } } },

@@ -167,7 +167,7 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   equations; ≤ 60 per page). The scout gets the deck digest (every page, trimmed; `digest.ts`) and
   the visible page's listing. Stage 2 gets the same digest, the visible page (listing + JPEG), the
   scout's pages (listings, up to 4 images in all with the visible page) and plan, student ink and
-  earlier narration (p±2 are only warmed ahead; `searchText` is a v2 leftover). **What the model sees is
+  earlier narration (p±2 are only warmed ahead). **What the model sees is
   what the locator searches**: quotes resolve against the same line index. `npm run ground` prints
   it.
 - `src/agent/{client,useAgent,prewarm,history}.ts` — NDJSON client, cut-off handling (plays what

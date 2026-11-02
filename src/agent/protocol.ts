@@ -50,8 +50,6 @@ export type AskContext = {
    * answer's first word. The answer continues from it without repeating it.
    */
   opener?: string;
-  /** Volatile tail: keyword hits from pages not already included (v2 contexts; v3 sends the digest instead). */
-  searchText?: string;
   /** Volatile tail: student ink on the visible page. */
   ink?: { summary: string; crop?: { b64: string; w: number; h: number } };
   /**

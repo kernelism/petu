@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PageIndex, rankPages, stems } from '../../../src/agent/context/search';
+import { PageIndex, rankPages, snippet, stems } from '../../../src/agent/context/search';
 
 const pages = new Map<number, string[]>([
   [1, ['Introduction to computer vision', 'Course logistics and grading']],
@@ -30,19 +30,16 @@ describe('search', () => {
     expect(rankPages(pages, 'the and of', 3)).toEqual([]);
   });
 
-  it('formats hits as the best lines with one line of context each', async () => {
+  it('a page snippet is its best lines with one line of context each', async () => {
     const idx = new PageIndex(5, async (p) => pages.get(p) ?? []);
     await idx.fill();
     expect(idx.firstLine(2)).toBe('Optical flow');
-    const s = idx.searchText('least squares flow corners', 1, new Set([2]));
-    expect(s).toBe([
-      'PAGE 3 (search hit)',
+    expect(snippet(pages.get(3)!, 'least squares flow corners')).toEqual([
       'Lucas-Kanade optical flow',
       'Solve a least squares system for flow',
       'Flow vectors per window',
       'Corners give good flow',
-    ].join('\n'));
-    expect(idx.searchText('stereo', 3, new Set([4]))).toBeUndefined();
+    ]);
   });
 
   it('fills the whole index in idle slices', async () => {

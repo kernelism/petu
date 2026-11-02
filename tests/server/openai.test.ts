@@ -73,7 +73,7 @@ describe('buildRequest', () => {
   it('developer prompt first (12h), then page block + image (30m), then history, then the volatile tail with the question last', () => {
     const b = buildRequest(req({
       history: [{ q: 'q1', a: 'a1', page: 1 }],
-      context: { ...context, searchText: 'HITS', ink: { summary: 'a circle', crop: { b64: 'BB', w: 64, h: 64 } } },
+      context: { ...context, ink: { summary: 'a circle', crop: { b64: 'BB', w: 64, h: 64 } } },
     }), cfg) as any;
     expect(b.input[0].role).toBe('developer');
     expect(b.input[0].content[0].prompt_cache_breakpoint).toEqual({ mode: 'explicit', ttl: '12h' });
@@ -85,9 +85,8 @@ describe('buildRequest', () => {
     expect(b.input[2]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'QUESTION (page 1): q1' }] });
     expect(b.input[3]).toEqual({ role: 'assistant', content: [{ type: 'output_text', text: 'a1' }] });
     const tail = b.input[4].content;
-    expect(tail[0].text).toBe('HITS');
-    expect(tail[1].text).toMatch(/^STUDENT INK on page 2: a circle/);
-    expect(tail[2].type).toBe('input_image');
+    expect(tail[0].text).toMatch(/^STUDENT INK on page 2: a circle/);
+    expect(tail[1].type).toBe('input_image');
     expect(tail[tail.length - 1].text).toBe('QUESTION (the student is looking at page 2): Why does disparity shrink?');
     expect(b.input).toHaveLength(5);
     expect(b).toMatchObject({ model: 'gpt-6.1-terra', stream: true, store: false, max_output_tokens: 1400, reasoning: { effort: 'none' }, prompt_cache_key: `petu-${PROMPT_VERSION}`, prompt_cache_options: { mode: 'explicit' } });

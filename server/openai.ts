@@ -186,7 +186,6 @@ function groundingTail(c: AskContext, cfg: ModelConfig): unknown[] {
     tail.push({ type: 'input_text', text: `IMAGE of page ${im.page}:` });
     tail.push({ type: 'input_image', image_url: img(im.b64), detail: cfg.pageDetail ?? 'high' });
   }
-  if (c.searchText) tail.push({ type: 'input_text', text: c.searchText });
   if (c.scout) {
     const order = c.scout.pages.join(', ');
     const budget = budgetNote(budgetOf(c.scout.plan, c.opener)); // the plan's scope as a length (src/agent/pacing.ts)

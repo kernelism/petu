@@ -56,7 +56,7 @@ Failed/slow scout (8s) → `fallbackScout`: visible page only, no opener, stage 
 1. `developer`: system prompt — breakpoint **12h**.
 2. `user`: `docText` (deck digest) — **30m**; `pageText` (visible listing); visible JPEG (detail high) — **30m**.
 3. MEMORY (follow-ups; append-only, 30m breakpoint), then history (≤ 3 Q/A, narration only).
-4. volatile tail: `pagesText` (scout pages' listings), `IMAGE of page N` × ≤ 3, `searchText` (v2 only),
+4. volatile tail: `pagesText` (scout pages' listings), `IMAGE of page N` × ≤ 3,
    `PLAN (…teaching order…)`, `RELATION to your previous answer` (follow-ups: `relationNote`; a revision asks for a fresh section and a different representation or level), `STUDENT INK`, `QUESTION (…page N)`, then `openerNote(opener)` last.
 
 `prompt_cache_key` = `petu-<PROMPT_VERSION>` shared by **all documents** (scout: `petu-scout-<SCOUT_VERSION>`).
@@ -113,6 +113,6 @@ curl -s localhost:<yourport>/api/spend                # never 5180/5181
   cached prefix; scout and answer must keep the digest byte-identical.
 - `LIMITS.images` is 3 (others) + the visible image; raising `imagePages` needs both sides.
 - Follow-ups: the scout's JSON starts with `relation` (continue / revise-representation / simplify / new-example / deeper / new-topic, s2.4); the desk continues a scene by its id (`Desk.addRegion`): a follow-up that reuses the scene's id draws on into it, a revision's new id starts a fresh section below (the old scene stays, untouched).
-- `searchText` is a v2 path still wired; v3 sends the digest instead. History (follow-ups) is live:
+- History (follow-ups) is live:
   ≤ 3 turns to stage 2, the last one (first 600 chars) to the scout as `prior`.
 - `?debug` panel shows cost, cache share, scout verdict, handoff gap and skipped actions — use it.

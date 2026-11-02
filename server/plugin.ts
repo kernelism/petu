@@ -397,7 +397,7 @@ async function readJson(req: IncomingMessage, res: ServerResponse): Promise<any>
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 const isStr = (v: unknown): v is string => typeof v === 'string';
 /** Sane maxima for what the browser sends (it sends ≤ 1280 px images and much shorter text). */
-export const LIMITS = { imageSide: 2048, docText: 120_000, pageText: 60_000, pagesText: 120_000, images: 3, plan: 2_000, opener: 2_000, scoutPages: 6, searchText: 20_000, inkSummary: 4_000,
+export const LIMITS = { imageSide: 2048, docText: 120_000, pageText: 60_000, pagesText: 120_000, images: 3, plan: 2_000, opener: 2_000, scoutPages: 6, inkSummary: 4_000,
   /** Tiered context (ctx=new): the section card, session memory, candidates. */
   section: 60_000, memory: 20_000, candidates: 20_000,
   /** /api/repair: the released stage-2 text, the failed beat, the report (as JSON). */
@@ -418,7 +418,6 @@ export function validateContext(c: any): string | null {
   if (c.images != null && (!Array.isArray(c.images) || c.images.length > LIMITS.images || !c.images.every((im: any) => isImage(im) && isInt(im.page) && im.page >= 1 && im.page <= c.numPages))) return `context.images must be at most ${LIMITS.images} images { page, b64, w, h }`;
   if (c.scout != null && (!Array.isArray(c.scout.pages) || c.scout.pages.length > LIMITS.scoutPages + 1 || !c.scout.pages.every((p: unknown) => isInt(p) && p >= 1 && p <= c.numPages) || !isStr(c.scout.plan) || c.scout.plan.length > LIMITS.plan)) return 'context.scout must be { pages: page numbers, plan }';
   if (c.opener != null && (!isStr(c.opener) || c.opener.length > LIMITS.opener)) return 'context.opener must be a string of at most 2,000 characters';
-  if (c.searchText != null && (!isStr(c.searchText) || c.searchText.length > LIMITS.searchText)) return 'context.searchText must be a string of at most 20,000 characters';
   if (c.ink != null && (!isStr(c.ink.summary) || c.ink.summary.length > LIMITS.inkSummary || (c.ink.crop != null && !isImage(c.ink.crop)))) return 'context.ink is malformed';
   if (c.memory != null && (!isStr(c.memory) || c.memory.length > LIMITS.memory)) return `context.memory must be a string of at most ${LIMITS.memory.toLocaleString('en-US')} characters`;
   if (c.scout?.relation != null && !isRelation(c.scout.relation)) return 'context.scout.relation is not a known relation';
