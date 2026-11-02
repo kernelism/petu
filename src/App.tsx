@@ -179,8 +179,6 @@ type DebugState = {
   meta?: Extract<AskEvent, { t: 'meta' }>; done?: DoneEvent; notes?: string[];
   /** Stage 1: the scout's pages (teaching order), plan, latency and cost. */
   scout?: Extract<AskEvent, { t: 'scout' }>;
-  /** The lesson design (or why there was none): latency from the ask request, cost, the JSON. */
-  storyboard?: Extract<AskEvent, { t: 'storyboard' }>;
   /** Stage 2's first text reached the player (absolute ms), and when the opener's words were due to end then. */
   handoff?: number; openerEnd?: number;
   /** The live gate's verdicts and repairs. */
@@ -231,9 +229,7 @@ function DebugPanel({ d, t0, cap }: { d: DebugState; t0: number; /** The spendin
   const [open, setOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [scoutOpen, setScoutOpen] = useState(false);
-  const [storyOpen, setStoryOpen] = useState(false);
   const done = d.done;
-  const sb = d.storyboard;
   const sc = d.scout;
   const u = done?.usage;
   const cached = u && u.input_tokens > 0 ? `${Math.round((100 * (u.input_tokens_details?.cached_tokens ?? 0)) / u.input_tokens)}%` : '—';
@@ -269,12 +265,6 @@ function DebugPanel({ d, t0, cap }: { d: DebugState; t0: number; /** The spendin
           {scoutOpen ? <span className="debug-plan-text">{sc.plan}</span> : 'scout plan ▸'}
         </button>
       )}
-      {sb && <div className="debug-row" title={sb.fallback}><span>storyboard</span><span>{sb.ms}ms · {money(sb.usd)}{sb.estimated ? ' est.' : ''}{sb.fallback ? ' · fallback' : ''}</span></div>}
-      {sb?.board && (
-        <button type="button" className="debug-plan" onClick={(e) => { e.stopPropagation(); setStoryOpen((o) => !o); }} aria-expanded={storyOpen}>
-          {storyOpen ? <span className="debug-plan-text">{JSON.stringify(sb.board, null, 1)}</span> : `storyboard ${sb.model}/${sb.effort} · ${sb.board.beats.length} beats ▸`}
-        </button>
-      )}
       {d.meta && <div className="debug-row"><span>model</span><span>{d.meta.model}/{d.meta.effort}</span></div>}
       {done && <div className="debug-row"><span>upstream TTFT</span><span>{done.ttftMs}ms</span></div>}
       <div className="debug-row"><span>first chunk</span><span>{ms(d.chunk)}</span></div>
@@ -284,7 +274,7 @@ function DebugPanel({ d, t0, cap }: { d: DebugState; t0: number; /** The spendin
       {done && (
         <>
           <div className="debug-row"><span>$ stage 2</span><span>{money(done.usd)}{done.estimated ? ' est.' : ''}</span></div>
-          <div className="debug-row" title="scout + storyboard + stage 2"><span>$ this answer</span><span>{money(done.usd + (sc?.usd ?? 0) + (sb?.usd ?? 0))}</span></div>
+          <div className="debug-row" title="scout + stage 2"><span>$ this answer</span><span>{money(done.usd + (sc?.usd ?? 0))}</span></div>
           <div className="debug-row"><span>$ spent / cap</span><span>{money(done.spentUsd)} / {money(done.capUsd)}</span></div>
           <div className="debug-row"><span>cached</span><span>{cached}</span></div>
         </>
@@ -316,7 +306,7 @@ function DebugPanel({ d, t0, cap }: { d: DebugState; t0: number; /** The spendin
 function replaySource(chunks: { t: number; d: string }[], events: AskEvent[], h: AskHandlers) {
   return async function* (signal: AbortSignal): AsyncGenerator<string> {
     const t0 = performance.now();
-    for (const e of events) { if (e.t === 'meta') h.onMeta?.(e); else if (e.t === 'scout') h.onScout?.(e); else if (e.t === 'storyboard') h.onStoryboard?.(e); }
+    for (const e of events) { if (e.t === 'meta') h.onMeta?.(e); else if (e.t === 'scout') h.onScout?.(e); }
     // Stage 2 starts at the first chunk at or after the recorded handoff (the gate's opener ends there).
     const ho = events.find((e) => e.t === 'handoff');
     const s2 = ho?.t === 'handoff' ? chunks.findIndex((c) => c.t >= ho.ms - 1) : -1;
@@ -915,7 +905,6 @@ export default function App() {
         // The length budget by the plan's scope (src/agent/pacing.ts): the gate closes the answer at a beat boundary past it.
         if (gate && !BUDGET_OFF) gate.setBudget(budgetOf(e.plan, e.opener));
         if (answerRef.current.question === q) answerRef.current.plan = e.plan ?? ''; if (DEBUG) setDebug((d) => ({ ...d, scout: e })); },
-      onStoryboard: (e) => { if (DEBUG) setDebug((d) => ({ ...d, storyboard: e })); },
       onHandoff: (e) => {
         gate?.handoff();
         // When the words queued so far (the opener) end: past it, the student heard a gap.

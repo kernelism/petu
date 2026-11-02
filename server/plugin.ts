@@ -1,7 +1,6 @@
 // server/plugin.ts — the petu API as Vite dev-server middleware (`apply: 'serve'`, localhost only).
 //
-//   POST /api/ask              AskRequest → NDJSON AskEvents (with an opener and the storyboard on: the
-//                              lesson design first — a `storyboard` event — then stage 2 performing it).
+//   POST /api/ask              AskRequest → NDJSON AskEvents (stage 2).
 //                              `quality: 'standard' | 'best'` picks the answer model (server/quality.ts);
 //                              400 for any other value, or for 'best' without the Anthropic key
 //   POST /api/scout            ScoutRequest → NDJSON ScoutEvents (stage 1, streamed: opener sentences,
@@ -156,7 +155,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     res.on('close', onClose);
     const emit = (e: AskEvent) => { if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify(e) + '\n'); };
     try {
-      await ask(body as AskRequest, picked.cfg, deps, emit, ctl.signal, env.storyboard);
+      await ask(body as AskRequest, picked.cfg, deps, emit, ctl.signal);
     } finally {
       res.off('close', onClose);
       if (!res.writableEnded && !res.destroyed) res.end();
@@ -286,8 +285,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   function routeSpend(req: IncomingMessage, res: ServerResponse) {
     if (req.method !== 'GET') return json(res, 405, { error: 'GET only' });
     const s = ledger.summary();
-    const worst = worstCaseUsd(env.model.model, TYPICAL_INPUT_TOKENS, env.model.maxOutput, env.model.fast) + worstCaseUsd(env.scout.model, TYPICAL_SCOUT_TOKENS, env.scout.maxOutput, env.scout.fast)
-      + (env.storyboard ? worstCaseUsd(env.storyboard.model, TYPICAL_INPUT_TOKENS, env.storyboard.maxOutput, env.storyboard.fast) : 0);
+    const worst = worstCaseUsd(env.model.model, TYPICAL_INPUT_TOKENS, env.model.maxOutput, env.model.fast) + worstCaseUsd(env.scout.model, TYPICAL_SCOUT_TOKENS, env.scout.maxOutput, env.scout.fast);
     const refusal = ledger.check(env.phase, worst);
     // Which keys the server has (booleans only), so a runner can refuse a config before spending on scouts.
     return json(res, 200, { ...s, phase: env.phase, phaseCapUsd: env.caps.phaseUsd?.[env.phase], model: env.model.model, keys: { openai: !!env.key, anthropic: !!env.anthropicKey }, best: !!env.best, ...(refusal ? { blocked: refusal.message, blockedCode: refusal.code } : {}) });

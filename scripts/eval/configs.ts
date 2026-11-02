@@ -1,6 +1,6 @@
 // scripts/eval/configs.ts — named model configs. Each sets env for the dev server the runner starts.
 import { PRICES, worstCaseUsd } from '../../server/prices.ts';
-import { JUDGE_MAX_OUTPUT, MAX_REPAIRS, REPAIR_MAX_OUTPUT, SCOUT_MAX_OUTPUT, STORYBOARD_MAX_OUTPUT } from '../../server/limits.ts';
+import { JUDGE_MAX_OUTPUT, MAX_REPAIRS, REPAIR_MAX_OUTPUT, SCOUT_MAX_OUTPUT } from '../../server/limits.ts';
 export { JUDGE_MAX_OUTPUT };
 
 export type Config = {
@@ -78,7 +78,7 @@ export function expectedAnswerUsd(c: Config): number {
 }
 /** The ledger's worst case for one answer (stage 2 at its own output budget + scout), USD. */
 export const worstAnswerUsd = (c: Config): number =>
-  worstCaseUsd(c.model, Math.ceil(ASSUMED_INPUT_TOKENS * inputFactor(c)), maxOutputOf(c), !!c.fast) + worstCaseUsd(SCOUT_MODEL, SCOUT_INPUT_TOKENS, SCOUT_MAX_OUTPUT) + storyboardWorst();
+  worstCaseUsd(c.model, Math.ceil(ASSUMED_INPUT_TOKENS * inputFactor(c)), maxOutputOf(c), !!c.fast) + worstCaseUsd(SCOUT_MODEL, SCOUT_INPUT_TOKENS, SCOUT_MAX_OUTPUT);
 /** One r3 judgement: expected (~16k in, mostly uncached; ~800 out) and worst (the server's 1600-token budget). */
 export const expectedJudgeUsd = (): number => { const p = PRICES['gpt-6.1-sol']; return (JUDGE_INPUT_TOKENS_R3 * p.in + 800 * p.out) / 1e6; };
 export const worstJudgeUsd = (): number => worstCaseUsd('gpt-6.1-sol', JUDGE_INPUT_TOKENS_R3, JUDGE_MAX_OUTPUT);
@@ -96,9 +96,6 @@ export const JUDGE_INPUT_TOKENS_R3 = 16000;
 /** The scout's worst case per answer (stage 1, gpt-6.1-terra): system + deck digest + visible listing + question. */
 export const SCOUT_MODEL = 'gpt-6.1-terra';
 export const SCOUT_INPUT_TOKENS = 8000;
-/** The storyboard's worst case per answer (gpt-6.1-terra; the same grounding as the answer). Counted only when PETU_STORYBOARD=1. */
-export const STORYBOARD_MODEL = 'gpt-6.1-terra';
-const storyboardWorst = () => (process.env.PETU_STORYBOARD !== '1' ? 0 : worstCaseUsd(process.env.PETU_STORYBOARD_MODEL || STORYBOARD_MODEL, ASSUMED_INPUT_TOKENS, STORYBOARD_MAX_OUTPUT));
 
 /** One live-gate repair at worst: stage 2's input again (the prefix, released text and note) + REPAIR_MAX_OUTPUT. */
 export const worstRepairUsd = (c: Config): number => worstCaseUsd(c.model, Math.ceil(ASSUMED_INPUT_TOKENS * inputFactor(c)), REPAIR_MAX_OUTPUT, !!c.fast);
@@ -110,6 +107,6 @@ export const REPAIR_SHARE = 0.3;
 export const plannedRepairUsd = (c: Config): number => REPAIR_SHARE * MAX_REPAIRS * worstRepairUsd(c);
 
 export function plannedWorstUsd(c: Config, answers: number, judged: number, rubric: 'r2' | 'r3' = 'r2', repairs = false): number {
-  return answers * (worstCaseUsd(c.model, ASSUMED_INPUT_TOKENS, ASSUMED_MAX_OUTPUT, !!c.fast) + worstCaseUsd(SCOUT_MODEL, SCOUT_INPUT_TOKENS, SCOUT_MAX_OUTPUT) + storyboardWorst() + (repairs ? plannedRepairUsd(c) : 0)) +
+  return answers * (worstCaseUsd(c.model, ASSUMED_INPUT_TOKENS, ASSUMED_MAX_OUTPUT, !!c.fast) + worstCaseUsd(SCOUT_MODEL, SCOUT_INPUT_TOKENS, SCOUT_MAX_OUTPUT) + (repairs ? plannedRepairUsd(c) : 0)) +
     judged * worstCaseUsd('gpt-6.1-sol', rubric === 'r3' ? JUDGE_INPUT_TOKENS_R3 : JUDGE_INPUT_TOKENS, JUDGE_MAX_OUTPUT);
 }

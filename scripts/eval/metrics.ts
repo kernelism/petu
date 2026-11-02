@@ -36,9 +36,9 @@ export type Metrics = {
   midSilenceMaxMs: number;
   /** Stage 2's cost (the `done` event). */
   usd: number;
-  /** The scout's cost (the `scout` event) and the storyboard's, when there was one. */
+  /** The scout's cost (the `scout` event). */
   scoutUsd: number;
-  /** Everything the answer cost: scout + storyboard + stage 2 + live-gate repairs. */
+  /** Everything the answer cost: scout + stage 2 + live-gate repairs. */
   answerUsd: number;
   cachedShare: number; estimated: boolean;
   tags: number; malformed: number; linted: number; skipped: Record<string, number>; skippedTotal: number;
@@ -262,7 +262,7 @@ export function computeMetrics(r: EvalResult, parsed?: ScriptParse): Metrics {
       !!parsed?.tags.some((g) => g.of?.some((x) => re.test(x)));
   }).length;
   const labels = labelStats(r.registry);
-  const scoutUsd = r.events.reduce((s, e) => s + ((e.t === 'scout' || e.t === 'storyboard') ? (e.usd ?? 0) : 0), 0);
+  const scoutUsd = r.events.reduce((s, e) => s + (e.t === 'scout' ? (e.usd ?? 0) : 0), 0);
   const handoff = r.events.find((e) => e.t === 'handoff') as Extract<EvalResult['events'][number], { t: 'handoff' }> | undefined;
   const gm = gateMetrics(r);
   const sil = silences(r);
@@ -329,7 +329,7 @@ export type RunMetrics = {
   spokenMs: { p50: number | null; p90: number | null };
   /** Mean spoken length (ms). */
   meanSpokenMs: number | null;
-  /** Everything the answers cost (scout + storyboard + stage 2). */
+  /** Everything the answers cost (scout + stage 2). */
   answerUsd: number;
   usd: number; meanUsd: number; cachedShare: number;
   takeawayFirstRate: number;

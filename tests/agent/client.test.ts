@@ -217,16 +217,3 @@ describe('copy', () => {
     expect(askErrorLine('bad_request', null)).toEqual({ message: "That question couldn't be sent.", retry: false });
   });
 });
-
-describe('askStream: the storyboard event', () => {
-  it('reaches onStoryboard (and onEvent) before stage 2 text', async () => {
-    const seen: string[] = [];
-    const sb: AskEvent = { t: 'storyboard', ms: 4200, usd: 0.02, model: 'gpt-6.1-terra', effort: 'low', version: 'b1.0', fallback: 'storyboard timed out' };
-    const events: AskEvent[] = [sb, { t: 'meta', reqId: 'r', model: 'm', effort: 'none' }, { t: 'text', d: 'Hi.' }, { t: 'done', usd: 0.01, spentUsd: 1, capUsd: 40, ttftMs: 5 }];
-    const out = await collect(askStream(REQ, new AbortController().signal, {
-      onStoryboard: (e) => seen.push(`story ${e.fallback}`), onMeta: () => seen.push('meta'), onEvent: (e) => seen.push(`ev ${e.t}`),
-    }, fakeFetch(ok(body(events)))));
-    expect(out).toEqual(['Hi.']);
-    expect(seen.slice(0, 3)).toEqual(['ev storyboard', 'story storyboard timed out', 'ev meta']);
-  });
-});

@@ -5,7 +5,7 @@ import { formatUsd, type SpendSummary } from '../src/agent/protocol';
 
 export type Phase = 'dev' | 'bakeoff' | 'iterate' | 'validate' | 'founder' | 'lessondev' | 'lessonbake' | 'lessoniter' | 'lessonval' | 'bench';
 export type Entry = {
-  id: string; at: string; phase: Phase; kind: 'answer' | 'scout' | 'storyboard' | 'prewarm' | 'judge' | 'repair' | 'voice' | 'title';
+  id: string; at: string; phase: Phase; kind: 'answer' | 'scout' | 'prewarm' | 'judge' | 'repair' | 'voice' | 'title';
   model: string; usd: number; estimated?: boolean; tokens?: { in: number; cached: number; out: number };
   /** Booked at start-up from a reservation whose process died mid-request. */
   recovered?: boolean;

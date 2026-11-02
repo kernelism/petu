@@ -50,16 +50,12 @@ import { SCOUT_SCHEMA, fallbackScout, parseScout, type ScoutEvent, type ScoutReq
 import { OpenerGate, ScoutJson } from './scoutStream';
 import type { Relation } from '../src/agent/context/memory';
 import { CacheStats, estimatedUsage } from './cacheStats';
-import { STORYBOARD_SYSTEM, STORYBOARD_VERSION } from './prompt/storyboard';
-import { STORYBOARD_SCHEMA, parseStoryboard, storyboardText, type Storyboard } from '../src/agent/storyboard';
 import { ANTHROPIC_URL, AnthropicEvents, NO_ANTHROPIC_KEY, anthropicHeaders, anthropicInput, isAnthropicModel, normalizeUsage, toAnthropicRequest, type AnthropicUsage } from './anthropic';
 
 export type Effort = 'none' | 'low' | 'medium' | 'high';
 export type ModelConfig = { model: string; effort: Effort; maxOutput: number; fast: boolean; verbosity?: 'low' | 'medium'; explicitCache: boolean;
   /** Vision detail for the scout's other pages (the visible page is always high). Default high. */
   pageDetail?: 'low' | 'high';
-  /** A deadline for the whole call (the storyboard: PETU_STORYBOARD_TIMEOUT_MS; default STORYBOARD_TIMEOUT_MS). */
-  timeoutMs?: number;
   /** EXPERIMENT (PETU_PROMPT_VARIANT): a prompt variant from server/prompt/variants; absent = the default prompt. */
   promptVariant?: string };
 export type Deps = {
@@ -90,8 +86,6 @@ export type CacheKey = { model: string; version: string; docHash: string; page: 
 export type AnswerRecord = { at: string; phase: string; model: string; effort: string; page: number; question: string; script: string; lint: string[]; usd: number; error?: string; /** Why the upstream ended an answer early (its terminal status and reason). */ upstream?: string;
   /** The scout's opener as spoken before stage 2 (C7: opener-vs-board contradictions are measured from the record). */
   opener?: string;
-  /** The storyboard stage 2 performed (or why it ran on the scout's plan alone), its latency and cost. */
-  storyboard?: { model: string; effort: string; version: string; ms: number; usd: number; board?: Storyboard; fallback?: string };
   /** EXPERIMENT (boardfirst): the model's script before the board-first reveal, and what it declared and revealed. */
   raw?: string; boardFirst?: { declared: number; revealed: number; hidden: string[]; immediate: number; noId: number };
   /** The svg answer mode: the groups sent, the board opened, what the filter dropped, timings (ms from the request). */
@@ -151,10 +145,9 @@ const common = (cfg: ModelConfig) => ({
  * volatile tail: the scout's other pages (listings, then their images), the scout's plan, student
  * ink, and the question last.
  */
-export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { context: AskContext; storyboard?: Storyboard }, cfg: ModelConfig, prewarm = false) {
+export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { context: AskContext }, cfg: ModelConfig, prewarm = false) {
   const c = r.context;
   const tail: unknown[] = groundingTail(c, cfg);
-  if (r.storyboard) tail.push({ type: 'input_text', text: storyboardText(r.storyboard) });
   tail.push(...momentNotes(c).map((text) => ({ type: 'input_text', text })));
   tail.push({ type: 'input_text', text: `QUESTION (the student is looking at page ${c.page}): ${r.question}` });
   if (c.opener) tail.push({ type: 'input_text', text: openerNote(c.opener, isSvgMode(cfg.promptVariant)) });
@@ -189,7 +182,7 @@ const historyTurns = (h: AskRequest['history']) => h.flatMap((x) => [
   { role: 'user', content: [{ type: 'input_text', text: `QUESTION (page ${x.page}): ${x.q}` }] },
   { role: 'assistant', content: [{ type: 'output_text', text: x.a }] },
 ]);
-/** The volatile grounding both stage 2 and the storyboard read: the scout's pages and images, the plan, student ink. */
+/** Stage 2's volatile grounding: the scout's pages and images, the plan, student ink. */
 function groundingTail(c: AskContext, cfg: ModelConfig): unknown[] {
   const tail: unknown[] = [];
   if (c.pagesText) tail.push({ type: 'input_text', text: c.pagesText });
@@ -228,112 +221,6 @@ export function relationNote(r: Relation): string {
     'deeper': 'The student wants to go deeper: the next level of the mechanism under what you showed, built on a concrete case.',
   };
   return `${head} ${change[r]} What you showed did not land, or not well enough. The subject is the question the student's thread is on (MEMORY names it), in full, not the page they happen to be looking at now: when that question has several parts, the PLAN lists the ones the previous answers missed or treated thinly, and every one of them gets taught here, each in the new representation or at the new level, in the order the plan gives; never stop after the first. Do not add to the old picture: open a fresh board section with a new id and teach with this deliberately different representation or level. The new picture shows the mechanism happening (change one thing and let the student watch what follows) and its final state shows the point on its own. Your first beat says in a few words what is different this time. Reuse the slide's own figure when it can carry the new picture, and point back to the earlier picture only to contrast. Never repeat a claim or a drawing MEMORY lists.`;
-}
-
-/** The storyboard's cache key: one per storyboard prompt version, shared by every document. */
-export const storyCacheKey = () => `petu-story-${STORYBOARD_VERSION}`;
-/**
- * The storyboard's deadline, from its request: past it stage 2 runs on the scout's plan. The opener
- * usually plays for 6–12s; a design that arrives much later than that costs an audible pause.
- */
-export const STORYBOARD_TIMEOUT_MS = 12_000;
-
-/**
- * The lesson design. Same grounding as stage 2 (developer = the designer's brief (12h), then the
- * digest and the visible page (30m each), history, the scout's pages, images and plan, ink), then
- * the question and the opener already spoken. Strict JSON out (STORYBOARD_SCHEMA), streamed so a
- * deadline or the client's abort can end it.
- */
-export function buildStoryboardRequest(r: Pick<AskRequest, 'question' | 'history'> & { context: AskContext }, cfg: ModelConfig) {
-  const c = r.context;
-  const tail = groundingTail(c, cfg);
-  tail.push({ type: 'input_text', text: `QUESTION (the student is looking at page ${c.page}): ${r.question}` });
-  tail.push({ type: 'input_text', text: c.opener ? `OPENING ALREADY SPOKEN (the tutor said this aloud and pointed as its tags show; the lesson continues from it): ${c.opener}` : 'No opening was spoken: the lesson starts the answer.' });
-  return {
-    model: cfg.model, store: false, max_output_tokens: cfg.maxOutput, reasoning: { effort: cfg.effort },
-    prompt_cache_key: storyCacheKey(),
-    input: [
-      { role: 'developer', content: [{ type: 'input_text', text: STORYBOARD_SYSTEM, ...bp(cfg.explicitCache, '12h') }] },
-      pageBlock(c, cfg),
-      ...memoryBlock(c, cfg),
-      ...historyTurns(r.history),
-      { role: 'user', content: tail },
-    ],
-    stream: true,
-    text: { format: { type: 'json_schema', name: 'storyboard', schema: STORYBOARD_SCHEMA, strict: true } },
-    ...(cfg.explicitCache ? { prompt_cache_options: { mode: 'explicit' } } : {}),
-    metadata: { prompt: STORYBOARD_VERSION },
-  };
-}
-
-export type StoryboardEvent = Extract<AskEvent, { t: 'storyboard' }>;
-
-/**
- * Stage 1.5: asks for the storyboard and waits for it whole (no retry: a slow or failed design means
- * stage 2 runs on the scout's plan). Booked as kind 'storyboard': real usage when the stream
- * completes, else an estimate (the full output budget: reasoning may have been spent unseen).
- * Never throws. On the client's abort it returns `fallback: 'aborted'`.
- */
-export async function storyboard(r: Pick<AskRequest, 'question' | 'history'> & { context: AskContext }, cfg: ModelConfig, d: Deps, signal?: AbortSignal): Promise<StoryboardEvent> {
-  const now = d.now ?? (() => performance.now());
-  const t0 = now();
-  const base = { t: 'storyboard' as const, model: cfg.model, effort: cfg.effort, version: STORYBOARD_VERSION };
-  const out = (o: { usd?: number; fallback?: string; board?: Storyboard; usage?: Usage; estimated?: boolean }): StoryboardEvent => ({
-    ...base, ms: Math.round(now() - t0), usd: o.usd ?? 0,
-    ...(o.board ? { board: o.board } : {}), ...(o.fallback ? { fallback: o.fallback } : {}), ...(o.estimated ? { estimated: true } : {}),
-    ...(o.usage ? { input: o.usage.input_tokens, cached: o.usage.input_tokens_details?.cached_tokens ?? 0, output: o.usage.output_tokens, ...(o.usage.output_tokens_details?.reasoning_tokens != null ? { reasoning: o.usage.output_tokens_details.reasoning_tokens } : {}) } : {}),
-  });
-  if (!d.key) return out({ fallback: 'no key' });
-  if (!PRICES[cfg.model]) return out({ fallback: `no price for ${cfg.model}` });
-  if (signal?.aborted) return out({ fallback: 'aborted' });
-  const body = buildStoryboardRequest(r, cfg);
-  const est = estimateInputTokens(body, askImages(r.context));
-  const id = randomUUID();
-  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput, cfg.fast), { kind: 'storyboard', model: cfg.model });
-  if (refused) return out({ fallback: 'cap' });
-
-  const T = { ...TIMEOUTS, ...d.timeouts };
-  const up = new AbortController();
-  const onAbort = () => up.abort();
-  signal?.addEventListener('abort', onAbort);
-  let timedOut = false, usage: Usage | undefined, complete = false, text = '', failed = '';
-  const deadline = setTimeout(() => { timedOut = true; up.abort(); }, Math.min(cfg.timeoutMs ?? STORYBOARD_TIMEOUT_MS, T.callMs));
-  try {
-    const res = await d.fetch(URL_, { method: 'POST', signal: up.signal, headers: headers(d.key), body: JSON.stringify(body) });
-    if (!res.ok || !res.body) {
-      const msg = scrub((await res.text().catch(() => '')).slice(0, 120), d.key);
-      d.ledger.release(id);
-      return out({ fallback: `storyboard failed: OpenAI ${res.status}: ${msg}` });
-    }
-    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-    const dec = new TextDecoder(), sse = new SseParser(), events = new ResponseEvents();
-    for (;;) {
-      let idle: ReturnType<typeof setTimeout> | undefined;
-      const x = await Promise.race([reader.read(), new Promise<'idle'>((ok) => { idle = setTimeout(() => ok('idle'), T.idleMs); })]);
-      clearTimeout(idle);
-      if (x === 'idle') { up.abort(); reader.cancel().catch(() => undefined); failed = 'storyboard stalled'; break; }
-      if (x.done) break;
-      for (const ev of sse.push(dec.decode(x.value, { stream: true }))) {
-        for (const u of events.handle(ev)) {
-          if (u.t === 'text') text += u.d;
-          else if (u.t === 'usage') { usage = u.usage; complete = u.complete; }
-          else if (u.t === 'error') throw new Error(u.message);
-        }
-      }
-    }
-  } catch (e) {
-    failed = signal?.aborted ? 'aborted' : timedOut ? 'storyboard timed out' : `storyboard failed: ${scrub(String(e), d.key).slice(0, 120)}`;
-  } finally {
-    clearTimeout(deadline);
-    signal?.removeEventListener('abort', onAbort);
-  }
-  const u: Usage = usage ?? estimatedUsage(est, 0, cfg.maxOutput);
-  const usd = costUsd(cfg.model, u, '12h', cfg.fast);
-  d.ledger.settle({ id, phase: d.phase, kind: 'storyboard', model: cfg.model, usd, estimated: !usage, tokens: tokens(u) });
-  if (failed) return out({ usd, fallback: failed, ...(usage ? { usage } : { estimated: true }) });
-  if (!complete) return out({ usd, fallback: usage ? 'storyboard cut short upstream' : 'storyboard ended early', ...(usage ? { usage } : { estimated: true }) });
-  const p = parseStoryboard(text);
-  return out({ usd, usage, ...('board' in p ? { board: p.board } : { fallback: p.fallback }) });
 }
 
 /**
@@ -574,28 +461,14 @@ export const askImages = (c: AskContext) => [c.image, ...(c.images ?? []), ...(c
 const recordHead = (r: AskRequest, cfg: ModelConfig, d: Deps) => ({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), ...(r.context.scout ? { pages: r.context.scout.pages, plan: r.context.scout.plan.slice(0, 1200) } : {}), ...(r.context.opener ? { opener: r.context.opener.slice(0, 2000) } : {}) });
 
 /**
- * One answer: [storyboard →] gate → stream → filters → book. Emits AskEvents; resolves when done.
- * With `story` (a model config) and an opener already playing, the lesson is designed first
- * (`storyboard` event, before `meta`) and stage 2 performs it; any storyboard failure means stage 2
- * runs on the scout's plan alone. Without an opener nothing covers the wait, so there is no storyboard;
- * in the svg format (the default) there is none either (it is written for the tag prompt: server/env.ts).
+ * One answer: gate → stream → filters → book. Emits AskEvents; resolves when done.
  */
-export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: AskEvent) => void, signal: AbortSignal, story?: ModelConfig | null): Promise<void> {
+export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: AskEvent) => void, signal: AbortSignal): Promise<void> {
   const reqId = randomUUID();
   const ep = endpointOf(cfg.model, d);
   if (!ep.key) { emit({ t: 'error', code: 'no_key', message: noKeyMessage(ep), retryable: false }); return; }
   if (!PRICES[cfg.model]) { emit({ t: 'error', code: 'bad_request', message: `No price for ${cfg.model}.`, retryable: false }); return; }
-  let sb: StoryboardEvent | undefined;
-  // Never in the svg format (server/env.ts: the storyboard contradicts it), whatever the caller passes.
-  if (story && r.context.opener && !isSvgMode(cfg.promptVariant)) {
-    sb = await storyboard(r, story, d, signal);
-    if (signal.aborted) {
-      try { d.log?.({ ...recordHead(r, cfg, d), script: '', lint: [], usd: 0, error: 'aborted', storyboard: storyRecord(sb) }); } catch { /* never fails an answer */ }
-      return;
-    }
-    emit(sb);
-  }
-  const oa = buildRequest({ ...r, ...(sb?.board ? { storyboard: sb.board } : {}) }, cfg);
+  const oa = buildRequest(r, cfg);
   const body = ep.anthropic ? toAnthropicRequest(oa as never, cfg) : oa;
   const images = askImages(r.context);
   const est = estimateFor(ep, body, images);
@@ -634,7 +507,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const beat = hb > 0 ? setInterval(() => { if (!signal.aborted && quietBeat(firstWord, lastEmit, now(), script, hb)) { lastEmit = now(); emit({ t: 'text', d: ' ' }); } }, Math.min(250, hb)) : null;
   // Every answer leaves a record, a failed one too (the failures are the ones worth reading).
   const record = (usd: number) => {
-    try { d.log?.({ ...recordHead(r, cfg, d), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.order ? { order: svgf.order } : {}), ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), firstWordMs: Math.round(firstWord), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
+    try { d.log?.({ ...recordHead(r, cfg, d), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.order ? { order: svgf.order } : {}), ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), firstWordMs: Math.round(firstWord), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}) }); } catch { /* a log failure never fails an answer */ }
   };
   try {
     let res: Response | null = null;
@@ -785,10 +658,6 @@ export async function readUpstream(res: Response, ep: Endpoint, o: { signal: Abo
 }
 
 export type PrewarmResult = { ok: boolean; usd: number; reason?: string };
-
-const storyRecord = (e: StoryboardEvent): NonNullable<AnswerRecord['storyboard']> => ({
-  model: e.model, effort: e.effort, version: e.version, ms: e.ms, usd: e.usd, ...(e.board ? { board: e.board } : {}), ...(e.fallback ? { fallback: e.fallback } : {}),
-});
 
 /** Writes the cacheable prefix (system prompt + page block) without generating output. */
 export async function prewarm(context: AskContext, cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {

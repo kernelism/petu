@@ -272,7 +272,7 @@ describe('system prompt (svg, default)', () => {
     for (const p of [/STUDENT INK/, /MEMORY/, /RELATION/, /doesn't cover/, /Off-topic/, /no extractable text/, /listing only, no image/, /digest/i, /scroll p=7/]) expect(s).toMatch(p);
   });
 
-  // (Needs DOMParser: tests/server/storyboard.test.ts imports EVAL_VOCAB from here under the node environment.)
+  // (Needs DOMParser: skipped under the node environment.)
   describe.skipIf(typeof DOMParser === 'undefined').each(SVG_EXAMPLES.map((e) => [e.title, e] as const))('example: %s', (_t, ex) => {
     it('has a plan ending with the BOARD layout: viewBox, regions, groups in teaching order', () => {
       const plan = /<plan>([\s\S]*?)<\/plan>/.exec(ex.script)?.[1] ?? '';
