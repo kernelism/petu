@@ -9,6 +9,7 @@ import type { Grounding } from '../../src/geometry/resolve';
 import { parseTag } from '../../src/script/parseTag';
 import { kitStore } from '../../src/desk/kit/kit';
 import { InkTime } from '../../src/playback/inkTime';
+import { mountBoard } from '../../src/svgboard/render';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -570,6 +571,26 @@ describe('Director: a drawing is never lost', () => {
     await vi.advanceTimersByTimeAsync(3000);
     expect(desk.addRegion).toHaveBeenCalledWith(expect.objectContaining({ svg: true }), expect.anything());
     expect([...ended.values()].some((t) => t.skipped === 'no svg board')).toBe(false);
+  });
+
+  it('a withheld beat\'s definitions wait for the board they go on (fu D3 t2: a new board still opening, its constants were lost)', async () => {
+    const regions = new Map<string, RegionInfo>();
+    const desk = fakeDesk({
+      addRegion: vi.fn(async (s) => {
+        await wait(420);
+        const agent = g();
+        mountBoard(agent, { w: 560, h: 390 }, s.id, '#7c3aed');
+        const r = { ...s, layers: { highlight: g(), agent }, scale: () => 0.5 };
+        regions.set(s.id, r);
+        return r;
+      }),
+      region: (id) => regions.get(id) ?? null,
+    });
+    const { d } = make({ desk });
+    d.run({ kind: 'sketch', id: 'b', page: 1, size: 'l', svgboard: { w: 560, h: 390 } } as unknown as RawAction, 0);
+    d.run({ kind: 'svg', svg: '<g data-defs="" display="none"><g data-const="k=2; j=k*10"/></g>' } as unknown as RawAction, 0);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(kitStore(d.registry).consts).toMatchObject({ k: 2, j: 20 });
   });
 
   it('an svg group paces over its own beat: the director asks for the words from its beatFrom', async () => {
