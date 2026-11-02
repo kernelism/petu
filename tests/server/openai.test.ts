@@ -14,7 +14,7 @@ import { PROMPT_VERSION, systemPrompt } from '../../server/prompt/system';
 import type { AskEvent, AskRequest, AskContext } from '../../src/agent/protocol';
 
 const KEY = 'sk-test-SECRET-abc123';
-const cfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 1400, explicitCache: true };
+const cfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 1400 };
 const context: AskContext = {
   docName: 'epipolar.pdf', docHash: 'abc', numPages: 5, page: 2,
   docText: 'DOC header', pageText: 'PAGE 2 lines', image: { b64: 'A'.repeat(4000), w: 1024, h: 768 },
@@ -91,12 +91,6 @@ describe('buildRequest', () => {
     expect(b.input).toHaveLength(5);
     expect(b).toMatchObject({ model: 'gpt-6.1-terra', stream: true, store: false, max_output_tokens: 1400, reasoning: { effort: 'none' }, prompt_cache_key: `petu-${PROMPT_VERSION}`, prompt_cache_options: { mode: 'explicit' } });
     expect(b.service_tier).toBeUndefined();
-  });
-  it('implicit caching drops the breakpoint fields', () => {
-    const b = buildRequest(req(), { ...cfg, explicitCache: false }) as any;
-    expect(JSON.stringify(b)).not.toContain('prompt_cache_breakpoint');
-    expect(b.prompt_cache_options).toBeUndefined();
-    expect(b.prompt_cache_key).toBe(`petu-${PROMPT_VERSION}`);
   });
   it('prewarm: the cacheable prefix only, not streamed, prewarm flag set', () => {
     const b = buildRequest(req({ history: [{ q: 'q', a: 'a', page: 1 }] }), cfg, true) as any;
@@ -393,12 +387,6 @@ describe('prewarm', () => {
     expect(JSON.parse(String(calls[0].init.body)).prompt_cache_options).toEqual({ mode: 'explicit', prewarm: true });
     expect(JSON.parse(readFileSync(join(dir, 'spend.json'), 'utf8')).entries[0]).toMatchObject({ kind: 'prewarm' });
   });
-  it('is disabled without explicit caching and never calls fetch', async () => {
-    const { f, calls } = fakeFetch([]);
-    const r = await prewarm(context, { ...cfg, explicitCache: false }, deps(f));
-    expect(r).toMatchObject({ ok: false });
-    expect(calls).toHaveLength(0);
-  });
 });
 
 describe('judge', () => {
@@ -655,7 +643,7 @@ describe('Lessons v3: two stages', () => {
 
   const sreq = { question: 'How does it work?', docName: 'd.pdf', docHash: 'h', numPages: 12, page: 3, digest: 'DECK d.pdf\np1: a', prior: { q: 'before?', a: 'x'.repeat(2000), page: 2 },
     pageText: 'PAGE 3 (visible; 16:9 slide; image attached)\nt1 60 40–300: Three' };
-  const scfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600, explicitCache: true };
+  const scfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600 };
 
   it('scout request: instructions, the digest (30m) and the visible listing (30m), then the previous exchange and the question last; strict JSON, streamed', () => {
     const b = buildScoutRequest(sreq, scfg) as any;

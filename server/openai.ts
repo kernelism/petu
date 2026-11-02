@@ -26,8 +26,6 @@
 // breakpoint (the docs: keys influence routing, they never isolate matching on GPT-5.6+). A
 // system-only prewarm (`prewarmSystem`) writes the 12h block when a document opens, if no request
 // has read or written it in the last 11.5h (server/cacheStats.ts).
-// Explicit caching is on by default (PETU_EXPLICIT_CACHE=0 falls back to implicit caching: same stable
-// prefix first, no breakpoint fields, /api/prewarm disabled).
 //
 // Secrets: the key is used only in the Authorization header below. It is never logged, emitted or
 // booked; upstream error text is scrubbed of it.
@@ -49,7 +47,7 @@ import { CacheStats, estimatedUsage } from './cacheStats';
 import { ANTHROPIC_URL, AnthropicEvents, NO_ANTHROPIC_KEY, anthropicHeaders, anthropicInput, isAnthropicModel, normalizeUsage, toAnthropicRequest, type AnthropicUsage } from './anthropic';
 
 export type Effort = 'none' | 'low' | 'medium' | 'high';
-export type ModelConfig = { model: string; effort: Effort; maxOutput: number; explicitCache: boolean };
+export type ModelConfig = { model: string; effort: Effort; maxOutput: number };
 export type Deps = {
   key: string; ledger: Ledger; phase: Phase; fetch: typeof fetch;
   /** PETU_ANTHROPIC_KEY (server/env.ts): used only when the answer model is a Claude model (server/anthropic.ts). */
@@ -101,7 +99,7 @@ export const cacheKey = () => `petu-${PROMPT_VERSION}`;
 /** A lower bound on the system block's tokens (≈ 3.3 chars/token measured; 4 keeps it low). */
 export const systemTokensLow = () => Math.floor(systemPrompt().length / 4);
 
-const bp = (on: boolean, ttl: '30m' | '12h') => (on ? { prompt_cache_breakpoint: { mode: 'explicit', ttl } } : {});
+const bp = (ttl: '30m' | '12h') => ({ prompt_cache_breakpoint: { mode: 'explicit', ttl } });
 const img = (b64: string) => `data:image/jpeg;base64,${b64}`;
 const sleepDefault = (ms: number) => new Promise<void>((ok) => setTimeout(ok, ms));
 export const scrub = (s: string, key: string) => (key ? s.split(key).join('***') : s);
@@ -123,7 +121,7 @@ export function buildAnswerRequest(r: Parameters<typeof buildRequest>[0], cfg: M
   const oa = buildRequest(r, cfg, prewarm);
   return isAnthropicModel(cfg.model) ? toAnthropicRequest(oa as never, cfg, prewarm) : oa;
 }
-const developer = (cfg: ModelConfig) => ({ role: 'developer', content: [{ type: 'input_text', text: systemPrompt(), ...bp(cfg.explicitCache, '12h') }] });
+const developer = (cfg: ModelConfig) => ({ role: 'developer', content: [{ type: 'input_text', text: systemPrompt(), ...bp('12h') }] });
 const common = (cfg: ModelConfig) => ({
   model: cfg.model, store: false, max_output_tokens: cfg.maxOutput, reasoning: { effort: cfg.effort },
   prompt_cache_key: cacheKey(),
@@ -137,41 +135,41 @@ const common = (cfg: ModelConfig) => ({
  */
 export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { context: AskContext }, cfg: ModelConfig, prewarm = false) {
   const c = r.context;
-  const tail: unknown[] = groundingTail(c, cfg);
+  const tail: unknown[] = groundingTail(c);
   tail.push(...momentNotes(c).map((text) => ({ type: 'input_text', text })));
   tail.push({ type: 'input_text', text: `QUESTION (the student is looking at page ${c.page}): ${r.question}` });
   if (c.opener) tail.push({ type: 'input_text', text: openerNote(c.opener) });
   const input = [
     developer(cfg),
-    pageBlock(c, cfg),
-    ...(prewarm ? [] : memoryBlock(c, cfg)),
+    pageBlock(c),
+    ...(prewarm ? [] : memoryBlock(c)),
     ...(prewarm ? [] : historyTurns(r.history)),
     ...(prewarm ? [] : [{ role: 'user', content: tail }]),
   ];
   return {
     ...common(cfg), input, stream: !prewarm,
-    ...(cfg.explicitCache ? { prompt_cache_options: { mode: 'explicit', ...(prewarm ? { prewarm: true } : {}) } } : {}),
+    prompt_cache_options: { mode: 'explicit', ...(prewarm ? { prewarm: true } : {}) },
     metadata: { prompt: PROMPT_VERSION },
   };
 }
 
 /** The cacheable page block: the deck digest (30m) and the visible page's listing and image (30m). */
-const pageBlock = (c: AskContext, cfg: ModelConfig) => ({ role: 'user', content: [
-  { type: 'input_text', text: c.docText, ...bp(cfg.explicitCache, '30m') },
+const pageBlock = (c: AskContext) => ({ role: 'user', content: [
+  { type: 'input_text', text: c.docText, ...bp('30m') },
   { type: 'input_text', text: c.pageText },
-  { type: 'input_image', image_url: img(c.image.b64), detail: 'high', ...bp(cfg.explicitCache, '30m') },
+  { type: 'input_image', image_url: img(c.image.b64), detail: 'high', ...bp('30m') },
 ] });
 /**
  * Session MEMORY (follow-ups): its own message after the page block, cached at its end (30m). It is
  * append-only, so each turn reads the earlier turns from cache (≤ 4 breakpoints: system, digest, image, memory).
  */
-const memoryBlock = (c: AskContext, cfg: ModelConfig) => (c.memory ? [{ role: 'user', content: [{ type: 'input_text', text: c.memory, ...bp(cfg.explicitCache, '30m') }] }] : []);
+const memoryBlock = (c: AskContext) => (c.memory ? [{ role: 'user', content: [{ type: 'input_text', text: c.memory, ...bp('30m') }] }] : []);
 const historyTurns = (h: AskRequest['history']) => h.flatMap((x) => [
   { role: 'user', content: [{ type: 'input_text', text: `QUESTION (page ${x.page}): ${x.q}` }] },
   { role: 'assistant', content: [{ type: 'output_text', text: x.a }] },
 ]);
 /** Stage 2's volatile grounding: the scout's pages and images, the plan, student ink. */
-function groundingTail(c: AskContext, cfg: ModelConfig): unknown[] {
+function groundingTail(c: AskContext): unknown[] {
   const tail: unknown[] = [];
   if (c.pagesText) tail.push({ type: 'input_text', text: c.pagesText });
   for (const im of c.images ?? []) {
@@ -252,16 +250,16 @@ export function buildScoutRequest(r: ScoutRequest, cfg: ModelConfig, prewarm = f
   if (r.check) tail.push(`OPEN CHECK QUESTION (page ${r.check.page}): your last answer ended on "${r.check.q}". The student's message below may answer it, or may be a new question of their own. If it answers it, your opener says plainly whether it holds, without working the answer through, and your pages start with page ${r.check.page}, the page the check is about.`);
   tail.push(`QUESTION: ${r.question}`);
   if (r.candidates) tail.splice(tail.length - 1, 0, r.candidates);
-  const prefix: unknown[] = [{ type: 'input_text', text: r.digest, ...bp(cfg.explicitCache, '30m') }];
+  const prefix: unknown[] = [{ type: 'input_text', text: r.digest, ...bp('30m') }];
   // ctx=new, huge documents: the visible section at full detail, cached per section.
-  if (r.section) prefix.push({ type: 'input_text', text: r.section, ...bp(cfg.explicitCache, '30m') });
+  if (r.section) prefix.push({ type: 'input_text', text: r.section, ...bp('30m') });
   // The same listing the answer gets (so prewarm and ask agree byte for byte), minus the image —
   // unless the page is a scan or draws its equations as outlines: then its image, at low detail.
   const listing = r.image ? r.pageText : r.pageText?.replace(/; image attached(?=[;)])/, '; listing only, no image');
-  if (listing) prefix.push({ type: 'input_text', text: listing, ...(r.image ? {} : bp(cfg.explicitCache, '30m')) });
-  if (r.image) prefix.push({ type: 'input_image', image_url: img(r.image.b64), detail: 'low', ...bp(cfg.explicitCache, '30m') });
+  if (listing) prefix.push({ type: 'input_text', text: listing, ...(r.image ? {} : bp('30m')) });
+  if (r.image) prefix.push({ type: 'input_image', image_url: img(r.image.b64), detail: 'low', ...bp('30m') });
   // Session memory: append-only, so each turn reads the earlier turns from cache.
-  if (r.memory) prefix.push({ type: 'input_text', text: r.memory, ...bp(cfg.explicitCache, '30m') });
+  if (r.memory) prefix.push({ type: 'input_text', text: r.memory, ...bp('30m') });
   return {
     model: cfg.model, store: false, max_output_tokens: cfg.maxOutput, reasoning: { effort: cfg.effort },
     prompt_cache_key: scoutCacheKey(),
@@ -272,7 +270,7 @@ export function buildScoutRequest(r: ScoutRequest, cfg: ModelConfig, prewarm = f
     ],
     stream: !prewarm,
     text: { format: { type: 'json_schema', name: 'scout', schema: SCOUT_SCHEMA, strict: true } },
-    ...(cfg.explicitCache ? { prompt_cache_options: { mode: 'explicit', ...(prewarm ? { prewarm: true } : {}) } } : {}),
+    prompt_cache_options: { mode: 'explicit', ...(prewarm ? { prewarm: true } : {}) },
     metadata: { prompt: SCOUT_VERSION },
   };
 }
@@ -389,7 +387,6 @@ export async function scout(r: ScoutRequest, cfg: ModelConfig, d: Deps, signal?:
 
 /** Writes the scout's prefix (instructions + digest) without generating output. */
 export async function prewarmScout(r: Pick<ScoutRequest, 'digest' | 'docHash' | 'numPages' | 'page' | 'docName' | 'pageText' | 'section'>, cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {
-  if (!cfg.explicitCache) return { ok: false, usd: 0, reason: 'prewarm needs explicit caching (PETU_EXPLICIT_CACHE=0)' };
   if (!d.key) return { ok: false, usd: 0, reason: 'no key' };
   if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };
   const body = buildScoutRequest({ ...r, question: '' }, cfg, true);
@@ -638,7 +635,6 @@ export type PrewarmResult = { ok: boolean; usd: number; reason?: string };
 
 /** Writes the cacheable prefix (system prompt + page block) without generating output. */
 export async function prewarm(context: AskContext, cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {
-  if (!cfg.explicitCache) return { ok: false, usd: 0, reason: 'prewarm needs explicit caching (PETU_EXPLICIT_CACHE=0)' };
   const ep = endpointOf(cfg.model, d);
   if (!ep.key) return { ok: false, usd: 0, reason: 'no key' };
   if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };
@@ -654,7 +650,6 @@ export async function prewarm(context: AskContext, cfg: ModelConfig, d: Deps): P
  * a request read or wrote it in the last 11.5h.
  */
 export async function prewarmSystem(cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {
-  if (!cfg.explicitCache) return { ok: false, usd: 0, reason: 'prewarm needs explicit caching (PETU_EXPLICIT_CACHE=0)' };
   const ep = endpointOf(cfg.model, d);
   if (!ep.key) return { ok: false, usd: 0, reason: 'no key' };
   if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };

@@ -18,8 +18,8 @@ describe('parseEnv', () => {
   it('defaults: terra/none (answer and scout), founder phase with $3/day, phase caps incl. the lesson phases, $80 total, prior $0.0076', () => {
     const e = parseEnv(from({}), opts);
     expect(e.key).toBe('');
-    expect(e.model).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 4800, explicitCache: true });
-    expect(e.scout).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600, explicitCache: true });
+    expect(e.model).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 4800 });
+    expect(e.scout).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600 });
     expect(e.phase).toBe('founder');
     expect(e.caps).toEqual({ totalUsd: 80, dailyUsd: 3, phaseUsd: PHASE_CAPS });
     expect(PHASE_CAPS).toEqual({ dev: 1, bakeoff: 6, iterate: 7, validate: 2, founder: 21.99, lessondev: 1.5, lessonbake: 3, lessoniter: 3.5, lessonval: 2, bench: 15 });
@@ -27,11 +27,11 @@ describe('parseEnv', () => {
     expect(e.pdfDirs).toEqual(['/home/u/Documents/670/contents', '/repo/public/dev']);
   });
   it('phases other than founder have no daily cap; per-phase caps and knobs are read', () => {
-    const e = parseEnv(from({ PETU_PHASE: 'bakeoff', PETU_CAP_BAKEOFF: '5', PETU_MODEL: 'gpt-6-luna', PETU_EFFORT: 'low', PETU_MAX_OUTPUT: '900', PETU_EXPLICIT_CACHE: '0', PETU_PDF_DIRS: '~/a, /b', OPENAI_API_KEY: KEY }), opts);
+    const e = parseEnv(from({ PETU_PHASE: 'bakeoff', PETU_CAP_BAKEOFF: '5', PETU_MODEL: 'gpt-6-luna', PETU_EFFORT: 'low', PETU_MAX_OUTPUT: '900', PETU_PDF_DIRS: '~/a, /b', OPENAI_API_KEY: KEY }), opts);
     expect(e.phase).toBe('bakeoff');
     expect(e.caps.dailyUsd).toBeUndefined();
     expect(e.caps.phaseUsd?.bakeoff).toBe(5);
-    expect(e.model).toEqual({ model: 'gpt-6-luna', effort: 'low', maxOutput: 900, explicitCache: false });
+    expect(e.model).toEqual({ model: 'gpt-6-luna', effort: 'low', maxOutput: 900 });
     expect(e.pdfDirs).toEqual(['/home/u/a', '/b']);
     expect(e.key).toBe(KEY);
   });

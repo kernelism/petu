@@ -118,7 +118,6 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   if (isAnthropicModel(scoutModel)) throw new Error('petu: the scout runs on OpenAI only (PETU_SCOUT_MODEL); Claude models are wired for stage 2 (PETU_MODEL)');
   const scoutEffort = oneOf('PETU_SCOUT_EFFORT', EFFORTS, 'none');
   if (scoutEffort === 'none' && NO_NONE.has(scoutModel)) throw new Error(`petu: ${scoutModel} does not accept reasoning effort none; set PETU_SCOUT_EFFORT=low`);
-  const explicitCache = str('PETU_EXPLICIT_CACHE') !== '0';
   const repairOn = oneOf('PETU_REPAIR', ['on', 'off'] as const, 'on') === 'on';
   // A repair has only REPAIR_MAX_OUTPUT tokens: above low, reasoning could spend all of them before any text.
   const repairEffort = oneOf('PETU_REPAIR_EFFORT', EFFORTS, effort === 'none' || effort === 'low' ? effort : 'low');
@@ -139,15 +138,15 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
     .map((s) => s.trim()).filter(Boolean).map(expand);
 
   const anthropicKey = anthropicKeyOf(opts.fileEnv);
-  const answer: ModelConfig = { model, effort, maxOutput, explicitCache };
+  const answer: ModelConfig = { model, effort, maxOutput };
   return {
     key: get('OPENAI_API_KEY')?.trim() ?? '',
     anthropicKey,
     speechmaticsKey: get('SPEECHMATICS_API_KEY')?.trim() ?? '',
     model: answer,
     best: anthropicKey ? bestConfig(answer, DEFAULT_MAX_OUTPUT_REASONING) : null,
-    scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, explicitCache },
-    repair: repairOn ? { model, effort: repairEffort, maxOutput: REPAIR_MAX_OUTPUT, explicitCache } : null,
+    scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT },
+    repair: repairOn ? { model, effort: repairEffort, maxOutput: REPAIR_MAX_OUTPUT } : null,
     phase, caps,
     priorUsd: num('PETU_PRIOR_USD', 0.0076),
     pdfDirs,

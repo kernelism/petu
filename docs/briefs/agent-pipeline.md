@@ -64,7 +64,7 @@ Scout prefix = `SCOUT_SYSTEM`, digest (30m), visible listing with "listing only,
 to what prewarm sends. New mode: digest-or-map (30m) → section card (30m, huge) → visible listing (30m; a scan or
 outlined-math page: its image at detail low instead) → SESSION memory (30m) → tail: CANDIDATES + printed-page note,
 previous exchange, question. The scout may name any page and an optional `find` list (s2.3), resolved locally
-(labels, then BM25) into extra stage-2 pages before stage 2 is built. Stage 2's `docText` is the map on the huge tier. `PETU_EXPLICIT_CACHE=0` → implicit caching, prewarm off.
+(labels, then BM25) into extra stage-2 pages before stage 2 is built. Stage 2's `docText` is the map on the huge tier.
 
 ## Spend: ledger, phases, caps
 

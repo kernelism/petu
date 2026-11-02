@@ -31,7 +31,7 @@ const ask = (over: Partial<AskRequest> = {}): AskRequest => ({
   context: { docName: 'd.pdf', docHash: 'h', numPages: 3, page: 2, docText: 'DIGEST', pageText: 'PAGE', image: { b64: 'AAAA', w: 100, h: 100 }, opener: 'It falls.' },
   ...over,
 });
-const terra: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 3200, explicitCache: true };
+const terra: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 3200 };
 
 describe('repairNote r2-svg', () => {
   it('the svg note asks for the order the prompt teaches (the group, then its sentences) and never for words alone', () => {
@@ -73,7 +73,7 @@ describe('buildRepairRequest', () => {
     expect(b.input.at(-1).role).toBe('user');
   });
   it('Anthropic: user → assistant → user, cache_control on the same blocks, thinking per the repair effort, the svg cap as max_tokens', () => {
-    const cfg: ModelConfig = { model: 'claude-opus-5-5', effort: 'low', maxOutput: 6000, explicitCache: true };
+    const cfg: ModelConfig = { model: 'claude-opus-5-5', effort: 'low', maxOutput: 6000 };
     const o2 = buildRequest(ask({ history: [{ q: 'Before?', a: '', page: 1 }] }), cfg);
     const b = repairBody(o2, { committed: 'Released words.', report: report() }, cfg);
     expect(b.max_tokens).toBe(SVG_REPAIR_MAX_OUTPUT);

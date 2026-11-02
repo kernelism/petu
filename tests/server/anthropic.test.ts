@@ -15,8 +15,8 @@ import type { AskContext, AskEvent, AskRequest } from '../../src/agent/protocol'
 
 const KEY = 'sk-ant-test-SECRET-xyz';
 const OPENAI_KEY = 'sk-openai-should-not-be-sent';
-const opus: ModelConfig = { model: 'claude-opus-5-5', effort: 'low', maxOutput: 6000, explicitCache: true };
-const sonnetNone: ModelConfig = { model: 'claude-sonnet-5-5', effort: 'none', maxOutput: 3200, explicitCache: true };
+const opus: ModelConfig = { model: 'claude-opus-5-5', effort: 'low', maxOutput: 6000 };
+const sonnetNone: ModelConfig = { model: 'claude-sonnet-5-5', effort: 'none', maxOutput: 3200 };
 const context: AskContext = {
   docName: 'econ.pdf', docHash: 'h1', numPages: 20, page: 12,
   docText: 'DOC digest', pageText: 'PAGE 12 lines', image: { b64: 'QUJD', w: 1024, h: 768 },
