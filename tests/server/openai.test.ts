@@ -14,7 +14,7 @@ import { PROMPT_VERSION, systemPrompt } from '../../server/prompt/system';
 import type { AskEvent, AskRequest, AskContext } from '../../src/agent/protocol';
 
 const KEY = 'sk-test-SECRET-abc123';
-const cfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 1400, fast: false, explicitCache: true };
+const cfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 1400 };
 const context: AskContext = {
   docName: 'epipolar.pdf', docHash: 'abc', numPages: 5, page: 2,
   docText: 'DOC header', pageText: 'PAGE 2 lines', image: { b64: 'A'.repeat(4000), w: 1024, h: 768 },
@@ -73,7 +73,7 @@ describe('buildRequest', () => {
   it('developer prompt first (12h), then page block + image (30m), then history, then the volatile tail with the question last', () => {
     const b = buildRequest(req({
       history: [{ q: 'q1', a: 'a1', page: 1 }],
-      context: { ...context, searchText: 'HITS', ink: { summary: 'a circle', crop: { b64: 'BB', w: 64, h: 64 } } },
+      context: { ...context, ink: { summary: 'a circle', crop: { b64: 'BB', w: 64, h: 64 } } },
     }), cfg) as any;
     expect(b.input[0].role).toBe('developer');
     expect(b.input[0].content[0].prompt_cache_breakpoint).toEqual({ mode: 'explicit', ttl: '12h' });
@@ -85,21 +85,12 @@ describe('buildRequest', () => {
     expect(b.input[2]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'QUESTION (page 1): q1' }] });
     expect(b.input[3]).toEqual({ role: 'assistant', content: [{ type: 'output_text', text: 'a1' }] });
     const tail = b.input[4].content;
-    expect(tail[0].text).toBe('HITS');
-    expect(tail[1].text).toMatch(/^STUDENT INK on page 2: a circle/);
-    expect(tail[2].type).toBe('input_image');
+    expect(tail[0].text).toMatch(/^STUDENT INK on page 2: a circle/);
+    expect(tail[1].type).toBe('input_image');
     expect(tail[tail.length - 1].text).toBe('QUESTION (the student is looking at page 2): Why does disparity shrink?');
     expect(b.input).toHaveLength(5);
     expect(b).toMatchObject({ model: 'gpt-6.1-terra', stream: true, store: false, max_output_tokens: 1400, reasoning: { effort: 'none' }, prompt_cache_key: `petu-${PROMPT_VERSION}`, prompt_cache_options: { mode: 'explicit' } });
     expect(b.service_tier).toBeUndefined();
-  });
-  it('implicit caching drops the breakpoint fields; fast and verbosity are opt-in', () => {
-    const b = buildRequest(req(), { ...cfg, explicitCache: false, fast: true, verbosity: 'low' }) as any;
-    expect(JSON.stringify(b)).not.toContain('prompt_cache_breakpoint');
-    expect(b.prompt_cache_options).toBeUndefined();
-    expect(b.prompt_cache_key).toBe(`petu-${PROMPT_VERSION}`);
-    expect(b.service_tier).toBe('fast');
-    expect(b.text).toEqual({ verbosity: 'low' });
   });
   it('prewarm: the cacheable prefix only, not streamed, prewarm flag set', () => {
     const b = buildRequest(req({ history: [{ q: 'q', a: 'a', page: 1 }] }), cfg, true) as any;
@@ -396,12 +387,6 @@ describe('prewarm', () => {
     expect(JSON.parse(String(calls[0].init.body)).prompt_cache_options).toEqual({ mode: 'explicit', prewarm: true });
     expect(JSON.parse(readFileSync(join(dir, 'spend.json'), 'utf8')).entries[0]).toMatchObject({ kind: 'prewarm' });
   });
-  it('is disabled without explicit caching and never calls fetch', async () => {
-    const { f, calls } = fakeFetch([]);
-    const r = await prewarm(context, { ...cfg, explicitCache: false }, deps(f));
-    expect(r).toMatchObject({ ok: false });
-    expect(calls).toHaveLength(0);
-  });
 });
 
 describe('judge', () => {
@@ -658,7 +643,7 @@ describe('Lessons v3: two stages', () => {
 
   const sreq = { question: 'How does it work?', docName: 'd.pdf', docHash: 'h', numPages: 12, page: 3, digest: 'DECK d.pdf\np1: a', prior: { q: 'before?', a: 'x'.repeat(2000), page: 2 },
     pageText: 'PAGE 3 (visible; 16:9 slide; image attached)\nt1 60 40–300: Three' };
-  const scfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600, fast: false, explicitCache: true };
+  const scfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600 };
 
   it('scout request: instructions, the digest (30m) and the visible listing (30m), then the previous exchange and the question last; strict JSON, streamed', () => {
     const b = buildScoutRequest(sreq, scfg) as any;
@@ -859,15 +844,6 @@ describe('Lessons v3: two stages', () => {
     // The opener spoke before any case existed: a contradiction is corrected in words, once; otherwise never restated.
     expect(tail.at(-1).text).toMatch(/If your worked case contradicts anything the opening said[^.]*, your first beat corrects it in plain words, once/);
     expect(tail.at(-1).text).toMatch(/otherwise never state its claim again, in any words/);
-    // The tag prompt keeps its own note (spoken lead-in, no correction rule).
-    const tags = buildRequest(req({ context: { ...multi, opener: 'It is.' } }), { ...cfg, promptVariant: 'tags' }) as any;
-    expect(tags.input.at(-1).content.at(-1).text).toBe(openerNote('It is.', false));
-    expect(openerNote('It is.', false)).toMatch(/starts with spoken words, before the plan/);
-    expect(openerNote('It is.', false)).not.toMatch(/corrects it/);
-    // p6.12: the scout's opener (s2.9) orients in both formats, so the tag lead-in gives the answer; it is never told the student already has it.
-    expect(openerNote('It is.', false)).toMatch(/It only oriented the student[^.]*stated no result/);
-    expect(openerNote('It is.', false)).toMatch(/answer the question in plain words/);
-    expect(openerNote('It is.', false)).not.toMatch(/has its claim|never state it again|do not answer the question again/);
     // The cached prefix is unchanged by the opener.
     expect(b.input.slice(0, 2)).toEqual((buildRequest(req({ context: multi }), cfg) as any).input.slice(0, 2));
   });

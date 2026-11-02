@@ -7,7 +7,7 @@ import type { AskContext } from './protocol';
 export const PREWARM_TTL_MS = 25 * 60_000;
 
 /** Server reasons that won't change while it runs (server/openai.ts prewarm). */
-const PERMANENT = /explicit cach|no key|no price/i;
+const PERMANENT = /no key|no price/i;
 
 type Deps = {
   /** An answer request is in flight: never compete with it. */
@@ -20,7 +20,7 @@ type Deps = {
 export class Prewarm {
   private sent = new Map<string, number>();
   private pending = false;
-  /** The server answered `{ ok: false }` (no explicit caching for this model): stop asking. */
+  /** The server answered `{ ok: false }` for good (no key, no price): stop asking. */
   private off = false;
   constructor(private d: Deps) {}
 
@@ -40,7 +40,7 @@ export class Prewarm {
       try {
         const r = await (this.d.fetch ?? fetch)('/api/prewarm', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ context }) });
         const body = r.ok ? ((await r.json().catch(() => null)) as { ok?: boolean; reason?: string } | null) : null;
-        // `{ ok: false }` for good (no explicit caching, no key, no price): stop asking. Otherwise
+        // `{ ok: false }` for good (no key, no price): stop asking. Otherwise
         // (an upstream failure, a cap refusal) the page may be tried again later.
         if (body?.ok === false && PERMANENT.test(body.reason ?? '')) this.off = true;
         else if (!body?.ok) this.sent.delete(key);

@@ -20,7 +20,7 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 | `server/anthropic.ts` | Stage 2 on a `claude-*` model (`PETU_MODEL`): the Responses body from `buildRequest` converted block for block to the Messages API (system 12h → `cache_control` 1h; digest, page image, MEMORY 30m → 5m), thinking/effort mapping (`none` = thinking off on Sonnet/Haiku 5.5; Opus 5.5 refuses `none`), SSE → `Upstream` (`AnthropicEvents`), usage → petu `Usage` (`normalizeUsage`), `max_tokens: 0` prewarm. Wired via `endpointOf` / `buildAnswerRequest` in `openai.ts`. Key: `PETU_ANTHROPIC_KEY`, else `ANTHROPIC_API_KEY`, from the `.env` file only (never process.env). Scout, storyboard and judge stay on OpenAI. |
 | `server/sse.ts`, `scriptFilter.ts`, `lint.ts` | SSE → `ResponseEvents`; strips `<plan>…</plan>` (kept for debug/eval) and markdown/TeX from narration; grammar notes (`TAG_NAMES`). |
 | `server/svgBeats.ts` | The svg answer mode's stream filter (in front of ScriptFilter): plan → `{{svgboard h=}}`, each SVG group → one `{{svg …}}` tag as it closes (board-engine.md "The svg board"). Used by `ask` and repairs when `isSvgMode(promptVariant)`. |
-| `server/prompt/system.ts` | Stage-2 developer prompt, `PROMPT_VERSION` p6.2 (p6.2: the narration ends on the takeaway; an optional hidden `<check>…</check>` after the last beat, lifted by `svgBeats.ts` into `done.check`): the svg board format is the default (`SVG_PARTS`, examples `svgExamples.ts`); `PETU_PROMPT_VARIANT=tags` is the p5.7 tag prompt byte for byte (also `exdemos`, `boardfirst`). The p5.7 tag prompt: Sections: identity → teach (with the per-beat contract) → no-dup → timing → context → pointing → board (… NUMBERS YOU SAY, TEACHING MOVES, WORK ON THE SLIDE AND FROM IT) → tags → situations → examples (four). |
+| `server/prompt/system.ts` | Stage-2 developer prompt, `PROMPT_VERSION` p6.2 (p6.2: the narration ends on the takeaway; an optional hidden `<check>…</check>` after the last beat, lifted by `svgBeats.ts` into `done.check`): the svg board format (`SVG_PARTS`, examples `svgExamples.ts`); the p5.7 tag prompt and its variants (`PETU_PROMPT_VARIANT`) were deleted 2026-11-01. |
 | `server/prompt/scout.ts` | `SCOUT_SYSTEM`, `SCOUT_VERSION` (s2.7): opener, ≤ 6 pages, ≤ 100-word plan ending with numbered beats and "Scope: narrow|standard|broad" (founder 2026-10-29: length by scope; ~35 spoken words a beat, narrow = two or three beats and the check), JSON order opener→pages→plan. `parseScout` clips a long plan in its prose, never its beats/scope (`clipPlan`). |
 | `src/agent/pacing.ts` | The length budget from the plan: `scopeOf`, `planBeats`, `budgetOf(plan, opener)` (2.4 spoken words/s measured; narrow 50 s target / 60 s cap, standard 75/95, broad 120/150, opener words taken off), `budgetNote` (the `BUDGET` line under stage 2's PLAN, `groundingTail`). The live gate gets it via `LiveGate.setBudget` (App `onScout`; `&budget=off` disables): past `capWords − CHECK_WORDS` it closes the answer at the next beat boundary, holds the rest and plays only the last beat that asks a question (gate events `action: 'cut'`). |
 | `server/prompt/examples.ts` | Few-shot `EXAMPLES` on invented documents (music notation, a village's coins, a lighthouse beam made to move, a service counter), each executable; every val bound by the engine. |
@@ -29,7 +29,7 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 | `src/agent/twoStage.ts` | Joins opener stream + stage-2 stream; emits `scout` / `handoff` events; failure after the opener = cut-off, not error. |
 | `src/agent/useAgent.ts` | Per-document state: `ContextBuilder`, `History` (≤ 3 turns, narration only), `SessionMemory` (MEMORY block), `Prewarm`, spend; `source()` builds the two-stage generator and records each finished or stopped answer. App passes each conversation's own `history`/`memory` (`AgentAsk`; the ask bar's + starts a conversation with empty ones, a restored one brings its own back). |
 | `server/title.ts` | `POST /api/title` (saved questions, layout-ui brief): `{ questions, sections }` → a ≤ 6-word title (`cleanTitle`, src/session/title.ts) from one non-streamed `callJson` on `TITLE_MODEL` gpt-6-luna, effort none, 40 output tokens; ledger kind `title`; `TitleCache` by content (200 cached); 400 bad body/phase, 402 cap, 502 nothing usable, 503 no key. |
-| `src/agent/context/memory.ts` | Session record + MEMORY: per answer the question, pages, `relation`, plan (+ storyboard), board as data (sections; things with kind/id/label/data/the words drawn on; constants; changes), claims, check question. Append-only; past 8 entries the oldest half rolls to one line each. `RELATIONS`, `REVISIONS`. |
+| `src/agent/context/memory.ts` | Session record + MEMORY: per answer the question, pages, `relation`, plan, board as data (sections; things with kind/id/label/data/the words drawn on; constants; changes), claims, check question. Append-only; past 8 entries the oldest half rolls to one line each. `RELATIONS`, `REVISIONS`. |
 | `src/agent/client.ts` | `askStream` (NDJSON), `scoutLive`, `getSpend`, cap/error lines (`capLine`, `askErrorLine`). |
 | `src/agent/prewarm.ts` | Prewarm on ask-bar intent (focus or 3rd char), dedupe 25 min; system block on document open. |
 | `src/agent/context/build.ts` | `ContextBuilder`: `digest()`, `visible()`, `build()` (stage 2), `pagePrefix()` (prewarm), `groundPage()` (pdf.js → `PageGround`). |
@@ -51,21 +51,12 @@ Enter → useAgent.source
 ```
 Failed/slow scout (8s) → `fallbackScout`: visible page only, no opener, stage 2 alone.
 
-**Storyboard** (spec "Board v2" 5; `PETU_STORYBOARD=1`, off by default): inside `/api/ask`, when an opener
-was spoken, `storyboard()` first asks a reasoning model (`PETU_STORYBOARD_MODEL` gpt-6.1-terra,
-`PETU_STORYBOARD_EFFORT` low, deadline `PETU_STORYBOARD_TIMEOUT_MS` 12s) with stage 2's grounding plus
-the opener, for strict JSON (`src/agent/storyboard.ts`: confusion, example, scene, beats, aha, check;
-prompt `server/prompt/storyboard.ts`, `STORYBOARD_VERSION`, cache key `petu-story-<v>`). It emits a
-`storyboard` AskEvent before `meta` (?debug row + expandable JSON; `.petu/answers.jsonl` `storyboard`),
-is booked as kind `storyboard`, and stage 2 gets a `STORYBOARD` block after the PLAN. Timeout, bad
-JSON, upstream error or cap → stage 2 on the scout plan. Esc aborts it (booked as an estimate).
-
 ## Request layout and caching (stage 2, `buildRequest`)
 
 1. `developer`: system prompt — breakpoint **12h**.
 2. `user`: `docText` (deck digest) — **30m**; `pageText` (visible listing); visible JPEG (detail high) — **30m**.
 3. MEMORY (follow-ups; append-only, 30m breakpoint), then history (≤ 3 Q/A, narration only).
-4. volatile tail: `pagesText` (scout pages' listings), `IMAGE of page N` × ≤ 3, `searchText` (v2 only),
+4. volatile tail: `pagesText` (scout pages' listings), `IMAGE of page N` × ≤ 3,
    `PLAN (…teaching order…)`, `RELATION to your previous answer` (follow-ups: `relationNote`; a revision asks for a fresh section and a different representation or level), `STUDENT INK`, `QUESTION (…page N)`, then `openerNote(opener)` last.
 
 `prompt_cache_key` = `petu-<PROMPT_VERSION>` shared by **all documents** (scout: `petu-scout-<SCOUT_VERSION>`).
@@ -73,7 +64,7 @@ Scout prefix = `SCOUT_SYSTEM`, digest (30m), visible listing with "listing only,
 to what prewarm sends. New mode: digest-or-map (30m) → section card (30m, huge) → visible listing (30m; a scan or
 outlined-math page: its image at detail low instead) → SESSION memory (30m) → tail: CANDIDATES + printed-page note,
 previous exchange, question. The scout may name any page and an optional `find` list (s2.3), resolved locally
-(labels, then BM25) into extra stage-2 pages before stage 2 is built. Stage 2's `docText` is the map on the huge tier. `PETU_EXPLICIT_CACHE=0` → implicit caching, prewarm off.
+(labels, then BM25) into extra stage-2 pages before stage 2 is built. Stage 2's `docText` is the map on the huge tier.
 
 ## Spend: ledger, phases, caps
 
@@ -82,7 +73,7 @@ previous exchange, question. The scout may name any page and an optional `find` 
 - Caps: total ≤ $60 (`PETU_TOTAL_CAP_USD` can only lower it); phase (`PETU_PHASE`, default `founder`):
   dev 1, bakeoff 6, iterate 7, validate 2, founder 21.99, lessondev 1.5, lessonbake 3, lessoniter 3.5,
   lessonval 2, bench 15 (override one run: `PETU_CAP_<PHASE>=…`); daily $3 in founder phase only (`PETU_DAILY_CAP_USD`).
-- Kinds booked: `answer`, `scout`, `storyboard`, `prewarm`, `judge`, `repair`. `GET /api/spend` shows totals, `blocked` and `best` (whether Best can run).
+- Kinds booked: `answer`, `scout`, `prewarm`, `judge`, `repair`. `GET /api/spend` shows totals, `blocked` and `best` (whether Best can run).
 - A request whose `phase` ≠ the server's phase is rejected (400).
 
 ## Invariants / contracts
@@ -122,6 +113,6 @@ curl -s localhost:<yourport>/api/spend                # never 5180/5181
   cached prefix; scout and answer must keep the digest byte-identical.
 - `LIMITS.images` is 3 (others) + the visible image; raising `imagePages` needs both sides.
 - Follow-ups: the scout's JSON starts with `relation` (continue / revise-representation / simplify / new-example / deeper / new-topic, s2.4); the desk continues a scene by its id (`Desk.addRegion`): a follow-up that reuses the scene's id draws on into it, a revision's new id starts a fresh section below (the old scene stays, untouched).
-- `searchText` is a v2 path still wired; v3 sends the digest instead. History (follow-ups) is live:
+- History (follow-ups) is live:
   ≤ 3 turns to stage 2, the last one (first 600 chars) to the scout as `prior`.
 - `?debug` panel shows cost, cache share, scout verdict, handoff gap and skipped actions — use it.

@@ -94,6 +94,11 @@ describe('pace: each part draws across its share of the words', () => {
     expect(t.map((x) => x.at)).toEqual([0, 650]);
   });
 
+  it('an unnamed part ahead of the first named one leads from the window\'s start, whatever numbers come later (a frame, D20)', () => {
+    const t = paceParts([part(), part(['demand'])], beat('this line is the demand curve; at a price of 30 buyers want ten'))!;
+    expect(t.map((x) => [x.i, x.at])).toEqual([[0, 0], [1, 4 * 300]]);
+  });
+
   it('spreads the parts over the beat, each drawing until the next starts (less a pen lift)', () => {
     // 4 parts over a 6 s beat (20 words at 300 ms): one every 1.5 s, each drawing 1.42 s.
     const t = paceParts([part(), part(), part(), part()], beat(Array(20).fill('w').join(' ')))!;

@@ -13,15 +13,12 @@
 //    Prewarm: same prefix with `prompt_cache_options.prewarm: true`, no output generated.
 //  - Reasoning (guides/reasoning): `reasoning.effort` ∈ none | minimal | low | medium | high | xhigh | max,
 //    model-dependent. gpt-6.1-sol and gpt-6-astra REJECT `none` (400) — server/env.ts refuses that config.
-//  - Fast mode (guides/fast-mode): `service_tier: 'fast'` (Priority processing was renamed Fast mode
-//    on 2026-07-30; 'priority' is still accepted). Fast prices are exactly 2× Standard (prices.ts).
 //  - Streaming events: `response.output_item.added` (item.id, item.type, message item.phase
 //    commentary | final_answer), `response.output_text.delta` (item_id, delta), `response.completed`,
 //    `response.incomplete` (response.incomplete_details.reason), `response.failed`
 //    (response.error.message), `error` (message).
-//  - `text.verbosity`: gpt-6.1-terra accepts "low" (P1 bake-off), but it stays opt-in (PETU_VERBOSITY), off
-//    by default: it lost 0.25 judge points on the answers it changed and it re-writes the system cache.
-//  - Fast mode stays off (PETU_FAST=0): no first-word gain in the P1 A/B, at 2× the price.
+//  - `text.verbosity` and Fast mode (`service_tier: 'fast'`) are not sent: the P1 bake-off rejected
+//    both (verbosity low lost 0.25 judge points; fast gave no first-word gain at 2× the price).
 //  - Structured output: `text.format: { type: 'json_schema', name, schema, strict: true }`.
 // Cache key (P0 smoke: a per-document key gave the 12h system block 0% cache on every new PDF):
 // `prompt_cache_key` is per prompt version, shared by every document, so all answers route to the
@@ -29,8 +26,6 @@
 // breakpoint (the docs: keys influence routing, they never isolate matching on GPT-5.6+). A
 // system-only prewarm (`prewarmSystem`) writes the 12h block when a document opens, if no request
 // has read or written it in the last 11.5h (server/cacheStats.ts).
-// Explicit caching is on by default (PETU_EXPLICIT_CACHE=0 falls back to implicit caching: same stable
-// prefix first, no breakpoint fields, /api/prewarm disabled).
 //
 // Secrets: the key is used only in the Authorization header below. It is never logged, emitted or
 // booked; upstream error text is scrubbed of it.
@@ -42,26 +37,17 @@ import type { Ledger, Phase } from './ledger';
 import { SseParser, ResponseEvents } from './sse';
 import { ScriptFilter } from './scriptFilter';
 import { Lint } from './lint';
-import { systemPrompt, PROMPT_VERSION, promptVersionOf, isSvgMode } from './prompt/system';
-import { BoardFirst } from './boardFirst';
+import { systemPrompt, PROMPT_VERSION } from './prompt/system';
 import { SvgBeatFilter } from './svgBeats';
 import { SCOUT_SYSTEM, SCOUT_VERSION } from './prompt/scout';
 import { SCOUT_SCHEMA, fallbackScout, parseScout, type ScoutEvent, type ScoutRequest, type ScoutResult } from '../src/agent/scout';
 import { OpenerGate, ScoutJson } from './scoutStream';
 import type { Relation } from '../src/agent/context/memory';
 import { CacheStats, estimatedUsage } from './cacheStats';
-import { STORYBOARD_SYSTEM, STORYBOARD_VERSION } from './prompt/storyboard';
-import { STORYBOARD_SCHEMA, parseStoryboard, storyboardText, type Storyboard } from '../src/agent/storyboard';
 import { ANTHROPIC_URL, AnthropicEvents, NO_ANTHROPIC_KEY, anthropicHeaders, anthropicInput, isAnthropicModel, normalizeUsage, toAnthropicRequest, type AnthropicUsage } from './anthropic';
 
 export type Effort = 'none' | 'low' | 'medium' | 'high';
-export type ModelConfig = { model: string; effort: Effort; maxOutput: number; fast: boolean; verbosity?: 'low' | 'medium'; explicitCache: boolean;
-  /** Vision detail for the scout's other pages (the visible page is always high). Default high. */
-  pageDetail?: 'low' | 'high';
-  /** A deadline for the whole call (the storyboard: PETU_STORYBOARD_TIMEOUT_MS; default STORYBOARD_TIMEOUT_MS). */
-  timeoutMs?: number;
-  /** EXPERIMENT (PETU_PROMPT_VARIANT): a prompt variant from server/prompt/variants; absent = the default prompt. */
-  promptVariant?: string };
+export type ModelConfig = { model: string; effort: Effort; maxOutput: number };
 export type Deps = {
   key: string; ledger: Ledger; phase: Phase; fetch: typeof fetch;
   /** PETU_ANTHROPIC_KEY (server/env.ts): used only when the answer model is a Claude model (server/anthropic.ts). */
@@ -90,10 +76,6 @@ export type CacheKey = { model: string; version: string; docHash: string; page: 
 export type AnswerRecord = { at: string; phase: string; model: string; effort: string; page: number; question: string; script: string; lint: string[]; usd: number; error?: string; /** Why the upstream ended an answer early (its terminal status and reason). */ upstream?: string;
   /** The scout's opener as spoken before stage 2 (C7: opener-vs-board contradictions are measured from the record). */
   opener?: string;
-  /** The storyboard stage 2 performed (or why it ran on the scout's plan alone), its latency and cost. */
-  storyboard?: { model: string; effort: string; version: string; ms: number; usd: number; board?: Storyboard; fallback?: string };
-  /** EXPERIMENT (boardfirst): the model's script before the board-first reveal, and what it declared and revealed. */
-  raw?: string; boardFirst?: { declared: number; revealed: number; hidden: string[]; immediate: number; noId: number };
   /** The svg answer mode: the groups sent, the board opened, what the filter dropped, timings (ms from the request). */
   svg?: { groups: string[]; board: unknown; notes: string[]; /** The beat order the filter read (src/svgboard/beat.ts). */ order?: 'lead' | 'trail'; check?: string; firstGroupMs: number; ttftMs: number; /** Stage 2's first spoken word (ms from the request; NaN → null when it spoke none). */ firstWordMs?: number; totalMs: number } };
 /**
@@ -113,11 +95,11 @@ export const JUDGE_MODEL = 'gpt-6.1-sol';
 import { JUDGE_MAX_OUTPUT } from './limits';
 
 /** Shared by every document: the system block's cache is reused across PDFs. */
-export const cacheKey = (variant?: string) => `petu-${promptVersionOf(variant)}`;
+export const cacheKey = () => `petu-${PROMPT_VERSION}`;
 /** A lower bound on the system block's tokens (≈ 3.3 chars/token measured; 4 keeps it low). */
 export const systemTokensLow = () => Math.floor(systemPrompt().length / 4);
 
-const bp = (on: boolean, ttl: '30m' | '12h') => (on ? { prompt_cache_breakpoint: { mode: 'explicit', ttl } } : {});
+const bp = (ttl: '30m' | '12h') => ({ prompt_cache_breakpoint: { mode: 'explicit', ttl } });
 const img = (b64: string) => `data:image/jpeg;base64,${b64}`;
 const sleepDefault = (ms: number) => new Promise<void>((ok) => setTimeout(ok, ms));
 export const scrub = (s: string, key: string) => (key ? s.split(key).join('***') : s);
@@ -139,10 +121,10 @@ export function buildAnswerRequest(r: Parameters<typeof buildRequest>[0], cfg: M
   const oa = buildRequest(r, cfg, prewarm);
   return isAnthropicModel(cfg.model) ? toAnthropicRequest(oa as never, cfg, prewarm) : oa;
 }
-const developer = (cfg: ModelConfig) => ({ role: 'developer', content: [{ type: 'input_text', text: systemPrompt(cfg.promptVariant), ...bp(cfg.explicitCache, '12h') }] });
+const developer = (cfg: ModelConfig) => ({ role: 'developer', content: [{ type: 'input_text', text: systemPrompt(), ...bp('12h') }] });
 const common = (cfg: ModelConfig) => ({
   model: cfg.model, store: false, max_output_tokens: cfg.maxOutput, reasoning: { effort: cfg.effort },
-  prompt_cache_key: cacheKey(cfg.promptVariant),
+  prompt_cache_key: cacheKey(),
 });
 
 /**
@@ -151,56 +133,52 @@ const common = (cfg: ModelConfig) => ({
  * volatile tail: the scout's other pages (listings, then their images), the scout's plan, student
  * ink, and the question last.
  */
-export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { context: AskContext; storyboard?: Storyboard }, cfg: ModelConfig, prewarm = false) {
+export function buildRequest(r: Pick<AskRequest, 'question' | 'history'> & { context: AskContext }, cfg: ModelConfig, prewarm = false) {
   const c = r.context;
-  const tail: unknown[] = groundingTail(c, cfg);
-  if (r.storyboard) tail.push({ type: 'input_text', text: storyboardText(r.storyboard) });
+  const tail: unknown[] = groundingTail(c);
   tail.push(...momentNotes(c).map((text) => ({ type: 'input_text', text })));
   tail.push({ type: 'input_text', text: `QUESTION (the student is looking at page ${c.page}): ${r.question}` });
-  if (c.opener) tail.push({ type: 'input_text', text: openerNote(c.opener, isSvgMode(cfg.promptVariant)) });
+  if (c.opener) tail.push({ type: 'input_text', text: openerNote(c.opener) });
   const input = [
     developer(cfg),
-    pageBlock(c, cfg),
-    ...(prewarm ? [] : memoryBlock(c, cfg)),
+    pageBlock(c),
+    ...(prewarm ? [] : memoryBlock(c)),
     ...(prewarm ? [] : historyTurns(r.history)),
     ...(prewarm ? [] : [{ role: 'user', content: tail }]),
   ];
   return {
     ...common(cfg), input, stream: !prewarm,
-    ...(cfg.explicitCache ? { prompt_cache_options: { mode: 'explicit', ...(prewarm ? { prewarm: true } : {}) } } : {}),
-    ...(cfg.fast ? { service_tier: 'fast' } : {}),
-    ...(cfg.verbosity ? { text: { verbosity: cfg.verbosity } } : {}),
+    prompt_cache_options: { mode: 'explicit', ...(prewarm ? { prewarm: true } : {}) },
     metadata: { prompt: PROMPT_VERSION },
   };
 }
 
 /** The cacheable page block: the deck digest (30m) and the visible page's listing and image (30m). */
-const pageBlock = (c: AskContext, cfg: ModelConfig) => ({ role: 'user', content: [
-  { type: 'input_text', text: c.docText, ...bp(cfg.explicitCache, '30m') },
+const pageBlock = (c: AskContext) => ({ role: 'user', content: [
+  { type: 'input_text', text: c.docText, ...bp('30m') },
   { type: 'input_text', text: c.pageText },
-  { type: 'input_image', image_url: img(c.image.b64), detail: 'high', ...bp(cfg.explicitCache, '30m') },
+  { type: 'input_image', image_url: img(c.image.b64), detail: 'high', ...bp('30m') },
 ] });
 /**
  * Session MEMORY (follow-ups): its own message after the page block, cached at its end (30m). It is
  * append-only, so each turn reads the earlier turns from cache (≤ 4 breakpoints: system, digest, image, memory).
  */
-const memoryBlock = (c: AskContext, cfg: ModelConfig) => (c.memory ? [{ role: 'user', content: [{ type: 'input_text', text: c.memory, ...bp(cfg.explicitCache, '30m') }] }] : []);
+const memoryBlock = (c: AskContext) => (c.memory ? [{ role: 'user', content: [{ type: 'input_text', text: c.memory, ...bp('30m') }] }] : []);
 const historyTurns = (h: AskRequest['history']) => h.flatMap((x) => [
   { role: 'user', content: [{ type: 'input_text', text: `QUESTION (page ${x.page}): ${x.q}` }] },
   { role: 'assistant', content: [{ type: 'output_text', text: x.a }] },
 ]);
-/** The volatile grounding both stage 2 and the storyboard read: the scout's pages and images, the plan, student ink. */
-function groundingTail(c: AskContext, cfg: ModelConfig): unknown[] {
+/** Stage 2's volatile grounding: the scout's pages and images, the plan, student ink. */
+function groundingTail(c: AskContext): unknown[] {
   const tail: unknown[] = [];
   if (c.pagesText) tail.push({ type: 'input_text', text: c.pagesText });
   for (const im of c.images ?? []) {
     tail.push({ type: 'input_text', text: `IMAGE of page ${im.page}:` });
-    tail.push({ type: 'input_image', image_url: img(im.b64), detail: cfg.pageDetail ?? 'high' });
+    tail.push({ type: 'input_image', image_url: img(im.b64), detail: 'high' });
   }
-  if (c.searchText) tail.push({ type: 'input_text', text: c.searchText });
   if (c.scout) {
     const order = c.scout.pages.join(', ');
-    const budget = budgetNote(budgetOf(c.scout.plan, c.opener), isSvgMode(cfg.promptVariant) ? 'hidden' : 'spoken'); // the plan's scope as a length (src/agent/pacing.ts)
+    const budget = budgetNote(budgetOf(c.scout.plan, c.opener)); // the plan's scope as a length (src/agent/pacing.ts)
     tail.push({ type: 'input_text', text: `PLAN (a first read of the whole document; pages in teaching order: ${order})${c.scout.plan ? `: ${c.scout.plan}` : ''}${budget ? `\n${budget}` : ''}` });
     if (c.memory && c.scout.relation) tail.push({ type: 'input_text', text: relationNote(c.scout.relation) });
   }
@@ -230,112 +208,6 @@ export function relationNote(r: Relation): string {
   return `${head} ${change[r]} What you showed did not land, or not well enough. The subject is the question the student's thread is on (MEMORY names it), in full, not the page they happen to be looking at now: when that question has several parts, the PLAN lists the ones the previous answers missed or treated thinly, and every one of them gets taught here, each in the new representation or at the new level, in the order the plan gives; never stop after the first. Do not add to the old picture: open a fresh board section with a new id and teach with this deliberately different representation or level. The new picture shows the mechanism happening (change one thing and let the student watch what follows) and its final state shows the point on its own. Your first beat says in a few words what is different this time. Reuse the slide's own figure when it can carry the new picture, and point back to the earlier picture only to contrast. Never repeat a claim or a drawing MEMORY lists.`;
 }
 
-/** The storyboard's cache key: one per storyboard prompt version, shared by every document. */
-export const storyCacheKey = () => `petu-story-${STORYBOARD_VERSION}`;
-/**
- * The storyboard's deadline, from its request: past it stage 2 runs on the scout's plan. The opener
- * usually plays for 6–12s; a design that arrives much later than that costs an audible pause.
- */
-export const STORYBOARD_TIMEOUT_MS = 12_000;
-
-/**
- * The lesson design. Same grounding as stage 2 (developer = the designer's brief (12h), then the
- * digest and the visible page (30m each), history, the scout's pages, images and plan, ink), then
- * the question and the opener already spoken. Strict JSON out (STORYBOARD_SCHEMA), streamed so a
- * deadline or the client's abort can end it.
- */
-export function buildStoryboardRequest(r: Pick<AskRequest, 'question' | 'history'> & { context: AskContext }, cfg: ModelConfig) {
-  const c = r.context;
-  const tail = groundingTail(c, cfg);
-  tail.push({ type: 'input_text', text: `QUESTION (the student is looking at page ${c.page}): ${r.question}` });
-  tail.push({ type: 'input_text', text: c.opener ? `OPENING ALREADY SPOKEN (the tutor said this aloud and pointed as its tags show; the lesson continues from it): ${c.opener}` : 'No opening was spoken: the lesson starts the answer.' });
-  return {
-    model: cfg.model, store: false, max_output_tokens: cfg.maxOutput, reasoning: { effort: cfg.effort },
-    prompt_cache_key: storyCacheKey(),
-    input: [
-      { role: 'developer', content: [{ type: 'input_text', text: STORYBOARD_SYSTEM, ...bp(cfg.explicitCache, '12h') }] },
-      pageBlock(c, cfg),
-      ...memoryBlock(c, cfg),
-      ...historyTurns(r.history),
-      { role: 'user', content: tail },
-    ],
-    stream: true,
-    text: { format: { type: 'json_schema', name: 'storyboard', schema: STORYBOARD_SCHEMA, strict: true } },
-    ...(cfg.explicitCache ? { prompt_cache_options: { mode: 'explicit' } } : {}),
-    metadata: { prompt: STORYBOARD_VERSION },
-  };
-}
-
-export type StoryboardEvent = Extract<AskEvent, { t: 'storyboard' }>;
-
-/**
- * Stage 1.5: asks for the storyboard and waits for it whole (no retry: a slow or failed design means
- * stage 2 runs on the scout's plan). Booked as kind 'storyboard': real usage when the stream
- * completes, else an estimate (the full output budget: reasoning may have been spent unseen).
- * Never throws. On the client's abort it returns `fallback: 'aborted'`.
- */
-export async function storyboard(r: Pick<AskRequest, 'question' | 'history'> & { context: AskContext }, cfg: ModelConfig, d: Deps, signal?: AbortSignal): Promise<StoryboardEvent> {
-  const now = d.now ?? (() => performance.now());
-  const t0 = now();
-  const base = { t: 'storyboard' as const, model: cfg.model, effort: cfg.effort, version: STORYBOARD_VERSION };
-  const out = (o: { usd?: number; fallback?: string; board?: Storyboard; usage?: Usage; estimated?: boolean }): StoryboardEvent => ({
-    ...base, ms: Math.round(now() - t0), usd: o.usd ?? 0,
-    ...(o.board ? { board: o.board } : {}), ...(o.fallback ? { fallback: o.fallback } : {}), ...(o.estimated ? { estimated: true } : {}),
-    ...(o.usage ? { input: o.usage.input_tokens, cached: o.usage.input_tokens_details?.cached_tokens ?? 0, output: o.usage.output_tokens, ...(o.usage.output_tokens_details?.reasoning_tokens != null ? { reasoning: o.usage.output_tokens_details.reasoning_tokens } : {}) } : {}),
-  });
-  if (!d.key) return out({ fallback: 'no key' });
-  if (!PRICES[cfg.model]) return out({ fallback: `no price for ${cfg.model}` });
-  if (signal?.aborted) return out({ fallback: 'aborted' });
-  const body = buildStoryboardRequest(r, cfg);
-  const est = estimateInputTokens(body, askImages(r.context));
-  const id = randomUUID();
-  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput, cfg.fast), { kind: 'storyboard', model: cfg.model });
-  if (refused) return out({ fallback: 'cap' });
-
-  const T = { ...TIMEOUTS, ...d.timeouts };
-  const up = new AbortController();
-  const onAbort = () => up.abort();
-  signal?.addEventListener('abort', onAbort);
-  let timedOut = false, usage: Usage | undefined, complete = false, text = '', failed = '';
-  const deadline = setTimeout(() => { timedOut = true; up.abort(); }, Math.min(cfg.timeoutMs ?? STORYBOARD_TIMEOUT_MS, T.callMs));
-  try {
-    const res = await d.fetch(URL_, { method: 'POST', signal: up.signal, headers: headers(d.key), body: JSON.stringify(body) });
-    if (!res.ok || !res.body) {
-      const msg = scrub((await res.text().catch(() => '')).slice(0, 120), d.key);
-      d.ledger.release(id);
-      return out({ fallback: `storyboard failed: OpenAI ${res.status}: ${msg}` });
-    }
-    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-    const dec = new TextDecoder(), sse = new SseParser(), events = new ResponseEvents();
-    for (;;) {
-      let idle: ReturnType<typeof setTimeout> | undefined;
-      const x = await Promise.race([reader.read(), new Promise<'idle'>((ok) => { idle = setTimeout(() => ok('idle'), T.idleMs); })]);
-      clearTimeout(idle);
-      if (x === 'idle') { up.abort(); reader.cancel().catch(() => undefined); failed = 'storyboard stalled'; break; }
-      if (x.done) break;
-      for (const ev of sse.push(dec.decode(x.value, { stream: true }))) {
-        for (const u of events.handle(ev)) {
-          if (u.t === 'text') text += u.d;
-          else if (u.t === 'usage') { usage = u.usage; complete = u.complete; }
-          else if (u.t === 'error') throw new Error(u.message);
-        }
-      }
-    }
-  } catch (e) {
-    failed = signal?.aborted ? 'aborted' : timedOut ? 'storyboard timed out' : `storyboard failed: ${scrub(String(e), d.key).slice(0, 120)}`;
-  } finally {
-    clearTimeout(deadline);
-    signal?.removeEventListener('abort', onAbort);
-  }
-  const u: Usage = usage ?? estimatedUsage(est, 0, cfg.maxOutput);
-  const usd = costUsd(cfg.model, u, '12h', cfg.fast);
-  d.ledger.settle({ id, phase: d.phase, kind: 'storyboard', model: cfg.model, usd, estimated: !usage, tokens: tokens(u) });
-  if (failed) return out({ usd, fallback: failed, ...(usage ? { usage } : { estimated: true }) });
-  if (!complete) return out({ usd, fallback: usage ? 'storyboard cut short upstream' : 'storyboard ended early', ...(usage ? { usage } : { estimated: true }) });
-  const p = parseStoryboard(text);
-  return out({ usd, usage, ...('board' in p ? { board: p.board } : { fallback: p.fallback }) });
-}
-
 /**
  * The moment a question is asked in (v1 learner UX), as per-turn notes before the question: one short
  * general sentence each, true of any subject and any phrasing (the cached system block is untouched).
@@ -351,17 +223,13 @@ export function momentNotes(c: Pick<AskContext, 'aside' | 'about' | 'check'>): s
 /**
  * Stage 2 continues the scout's opener: the student has already heard it (and seen its marks), so the
  * script picks up at the next sentence, as one continuous explanation.
- * svg (C7, p6.11): the opener only oriented (scout s2.9; the gate drops its numbers), so stage 2 writes
- * its plan first while the opener plays, then makes the claims on its case. The opener was said before
- * any case existed, so where the case contradicts it, the first beat says so in words, once (it cannot
- * be unsaid; leaving it would be the mismatch C7 is about). `svg` false (p6.12): the tag prompt keeps its
- * spoken lead-in before the plan, but the scout's s2.9 opener is shared by both formats and now orients
- * only, so that lead-in gives the answer: the old note ("the student has its claim … do not answer the
- * question again") assumed an opener that had claimed it, and left a short factual question unanswered.
+ * C7, p6.11: the opener only oriented (scout s2.9; the gate drops its numbers), so stage 2 writes its
+ * plan first while the opener plays, then makes the claims on its case. The opener was said before any
+ * case existed, so where the case contradicts it, the first beat says so in words, once (it cannot be
+ * unsaid; leaving it would be the mismatch C7 is about).
  */
-export const openerNote = (opener: string, svg = true) => (svg
-  ? `ALREADY SPOKEN: you have already said the opening below aloud, and its tags have been drawn. It only oriented the student: it named the idea and where the explanation is going, before any case was worked. Your script continues from it: the plan first (the student is still hearing the opening while you write it), then your first beat gives the answer on your case. Do not repeat, rephrase or summarise the opening, and do not mark again what it marked. If your worked case contradicts anything the opening said (a number, a result, which is bigger), your first beat corrects it in plain words, once, with what the case shows ("Actually, it lands downstream of the landing, not on it"), then carries on; otherwise never state its claim again, in any words. If the opening already says everything the question needs, output nothing.\nOPENING: ${opener}`
-  : `ALREADY SPOKEN: you have already said the opening below aloud, and its tags have been drawn. It only oriented the student: it named the idea and where the explanation is going, and stated no result. Your script continues straight on from its last word, as the next sentence of the same explanation, and gives the answer. It still starts with spoken words, before the plan: one or two sentences that need no drawing and answer the question in plain words, pointing at the page when that helps. They play while you write the plan; the drawing starts with the first beat after it. Do not repeat, rephrase or summarise the opening, and do not mark again what it marked. If the opening already says everything the question needs, output nothing.\nOPENING: ${opener}`);
+export const openerNote = (opener: string) =>
+  `ALREADY SPOKEN: you have already said the opening below aloud, and its tags have been drawn. It only oriented the student: it named the idea and where the explanation is going, before any case was worked. Your script continues from it: the plan first (the student is still hearing the opening while you write it), then your first beat gives the answer on your case. Do not repeat, rephrase or summarise the opening, and do not mark again what it marked. If your worked case contradicts anything the opening said (a number, a result, which is bigger), your first beat corrects it in plain words, once, with what the case shows ("Actually, it lands downstream of the landing, not on it"), then carries on; otherwise never state its claim again, in any words. If the opening already says everything the question needs, output nothing.\nOPENING: ${opener}`;
 
 /** The scout's cache key: one per scout prompt version, shared by every document. */
 export const scoutCacheKey = () => `petu-scout-${SCOUT_VERSION}`;
@@ -382,16 +250,16 @@ export function buildScoutRequest(r: ScoutRequest, cfg: ModelConfig, prewarm = f
   if (r.check) tail.push(`OPEN CHECK QUESTION (page ${r.check.page}): your last answer ended on "${r.check.q}". The student's message below may answer it, or may be a new question of their own. If it answers it, your opener says plainly whether it holds, without working the answer through, and your pages start with page ${r.check.page}, the page the check is about.`);
   tail.push(`QUESTION: ${r.question}`);
   if (r.candidates) tail.splice(tail.length - 1, 0, r.candidates);
-  const prefix: unknown[] = [{ type: 'input_text', text: r.digest, ...bp(cfg.explicitCache, '30m') }];
+  const prefix: unknown[] = [{ type: 'input_text', text: r.digest, ...bp('30m') }];
   // ctx=new, huge documents: the visible section at full detail, cached per section.
-  if (r.section) prefix.push({ type: 'input_text', text: r.section, ...bp(cfg.explicitCache, '30m') });
+  if (r.section) prefix.push({ type: 'input_text', text: r.section, ...bp('30m') });
   // The same listing the answer gets (so prewarm and ask agree byte for byte), minus the image —
   // unless the page is a scan or draws its equations as outlines: then its image, at low detail.
   const listing = r.image ? r.pageText : r.pageText?.replace(/; image attached(?=[;)])/, '; listing only, no image');
-  if (listing) prefix.push({ type: 'input_text', text: listing, ...(r.image ? {} : bp(cfg.explicitCache, '30m')) });
-  if (r.image) prefix.push({ type: 'input_image', image_url: img(r.image.b64), detail: 'low', ...bp(cfg.explicitCache, '30m') });
+  if (listing) prefix.push({ type: 'input_text', text: listing, ...(r.image ? {} : bp('30m')) });
+  if (r.image) prefix.push({ type: 'input_image', image_url: img(r.image.b64), detail: 'low', ...bp('30m') });
   // Session memory: append-only, so each turn reads the earlier turns from cache.
-  if (r.memory) prefix.push({ type: 'input_text', text: r.memory, ...bp(cfg.explicitCache, '30m') });
+  if (r.memory) prefix.push({ type: 'input_text', text: r.memory, ...bp('30m') });
   return {
     model: cfg.model, store: false, max_output_tokens: cfg.maxOutput, reasoning: { effort: cfg.effort },
     prompt_cache_key: scoutCacheKey(),
@@ -401,9 +269,8 @@ export function buildScoutRequest(r: ScoutRequest, cfg: ModelConfig, prewarm = f
       ...(prewarm ? [] : [{ role: 'user', content: [{ type: 'input_text', text: tail.join('\n') }] }]),
     ],
     stream: !prewarm,
-    ...(cfg.fast ? { service_tier: 'fast' } : {}),
     text: { format: { type: 'json_schema', name: 'scout', schema: SCOUT_SCHEMA, strict: true } },
-    ...(cfg.explicitCache ? { prompt_cache_options: { mode: 'explicit', ...(prewarm ? { prewarm: true } : {}) } } : {}),
+    prompt_cache_options: { mode: 'explicit', ...(prewarm ? { prewarm: true } : {}) },
     metadata: { prompt: SCOUT_VERSION },
   };
 }
@@ -447,7 +314,7 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
   const body = buildScoutRequest(r, cfg);
   const est = estimateInputTokens(body, r.image ? [{ w: 512, h: 512 }] : []);
   const id = randomUUID();
-  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput, cfg.fast), { kind: 'scout', model: cfg.model });
+  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput), { kind: 'scout', model: cfg.model });
   if (refused) { decide(fallbackScout(r.page, 'cap')); return finish(0); }
 
   const T = { ...TIMEOUTS, ...d.timeouts };
@@ -508,7 +375,7 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
   }
   if (!sent) { d.ledger.release(id); return finish(0); }
   const u: Usage = usage ?? estimatedUsage(est, 0, Math.ceil(outChars / 3.2) || cfg.maxOutput);
-  const usd = costUsd(cfg.model, u, '12h', cfg.fast);
+  const usd = costUsd(cfg.model, u, '12h');
   d.ledger.settle({ id, phase: d.phase, kind: 'scout', model: cfg.model, usd, estimated: !usage, tokens: tokens(u) });
   return finish(usd, usage);
 }
@@ -520,11 +387,10 @@ export async function scout(r: ScoutRequest, cfg: ModelConfig, d: Deps, signal?:
 
 /** Writes the scout's prefix (instructions + digest) without generating output. */
 export async function prewarmScout(r: Pick<ScoutRequest, 'digest' | 'docHash' | 'numPages' | 'page' | 'docName' | 'pageText' | 'section'>, cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {
-  if (!cfg.explicitCache) return { ok: false, usd: 0, reason: 'prewarm needs explicit caching (PETU_EXPLICIT_CACHE=0)' };
   if (!d.key) return { ok: false, usd: 0, reason: 'no key' };
   if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };
   const body = buildScoutRequest({ ...r, question: '' }, cfg, true);
-  const res = await callJson(body, cfg.model, estimateInputTokens(body, []), cfg.maxOutput, cfg.fast, 'prewarm', d);
+  const res = await callJson(body, cfg.model, estimateInputTokens(body, []), cfg.maxOutput, 'prewarm', d);
   return res.ok ? { ok: true, usd: res.usd } : { ok: false, usd: res.usd, reason: res.message };
 }
 
@@ -574,36 +440,22 @@ export const askImages = (c: AskContext) => [c.image, ...(c.images ?? []), ...(c
 const recordHead = (r: AskRequest, cfg: ModelConfig, d: Deps) => ({ at: new Date().toISOString(), phase: d.phase, model: cfg.model, effort: cfg.effort, page: r.context.page, question: r.question.slice(0, 2000), ...(r.context.scout ? { pages: r.context.scout.pages, plan: r.context.scout.plan.slice(0, 1200) } : {}), ...(r.context.opener ? { opener: r.context.opener.slice(0, 2000) } : {}) });
 
 /**
- * One answer: [storyboard →] gate → stream → filters → book. Emits AskEvents; resolves when done.
- * With `story` (a model config) and an opener already playing, the lesson is designed first
- * (`storyboard` event, before `meta`) and stage 2 performs it; any storyboard failure means stage 2
- * runs on the scout's plan alone. Without an opener nothing covers the wait, so there is no storyboard;
- * in the svg format (the default) there is none either (it is written for the tag prompt: server/env.ts).
+ * One answer: gate → stream → filters → book. Emits AskEvents; resolves when done.
  */
-export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: AskEvent) => void, signal: AbortSignal, story?: ModelConfig | null): Promise<void> {
+export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: AskEvent) => void, signal: AbortSignal): Promise<void> {
   const reqId = randomUUID();
   const ep = endpointOf(cfg.model, d);
   if (!ep.key) { emit({ t: 'error', code: 'no_key', message: noKeyMessage(ep), retryable: false }); return; }
   if (!PRICES[cfg.model]) { emit({ t: 'error', code: 'bad_request', message: `No price for ${cfg.model}.`, retryable: false }); return; }
-  let sb: StoryboardEvent | undefined;
-  // Never in the svg format (server/env.ts: the storyboard contradicts it), whatever the caller passes.
-  if (story && r.context.opener && !isSvgMode(cfg.promptVariant)) {
-    sb = await storyboard(r, story, d, signal);
-    if (signal.aborted) {
-      try { d.log?.({ ...recordHead(r, cfg, d), script: '', lint: [], usd: 0, error: 'aborted', storyboard: storyRecord(sb) }); } catch { /* never fails an answer */ }
-      return;
-    }
-    emit(sb);
-  }
-  const oa = buildRequest({ ...r, ...(sb?.board ? { storyboard: sb.board } : {}) }, cfg);
+  const oa = buildRequest(r, cfg);
   const body = ep.anthropic ? toAnthropicRequest(oa as never, cfg) : oa;
   const images = askImages(r.context);
   const est = estimateFor(ep, body, images);
   const ck: CacheKey = { model: cfg.model, version: PROMPT_VERSION, docHash: r.context.docHash, page: r.context.page };
   try { d.onBody?.(reqId, oa, cfg, ck, images); } catch { /* the repair cache never fails an answer */ }
   const cachedGuess = d.cache?.expectedCached(ck, est) ?? 0;
-  const estUsd = costUsd(cfg.model, estimatedUsage(est, cachedGuess, cfg.maxOutput), '12h', cfg.fast);
-  const refused = d.ledger.reserve(reqId, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput, cfg.fast), { kind: 'answer', model: cfg.model, estUsd });
+  const estUsd = costUsd(cfg.model, estimatedUsage(est, cachedGuess, cfg.maxOutput), '12h');
+  const refused = d.ledger.reserve(reqId, d.phase, worstCaseUsd(cfg.model, est, cfg.maxOutput), { kind: 'answer', model: cfg.model, estUsd });
   if (refused) { emit({ t: 'error', code: 'cap', message: capHint(refused.code, refused.message, d.phase), retryable: false }); return; }
   emit({ t: 'meta', reqId, model: cfg.model, effort: cfg.effort });
 
@@ -616,16 +468,12 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   signal.addEventListener('abort', onAbort);
   if (signal.aborted) up.abort();
   const now0 = d.now ?? (() => performance.now());
-  // The svg answer mode (the default): plan → {{svgboard}}, each group → one {{svg}} tag (server/svgBeats.ts).
+  // The svg answer mode: plan → {{svgboard}}, each group → one {{svg}} tag (server/svgBeats.ts).
   // Behind an opener, stage 2's narration waits for its plan (C7: nothing it says before its case is decided).
-  const svgf = isSvgMode(cfg.promptVariant) ? new SvgBeatFilter(now0, { hold: !!r.context.opener }) : null;
-  const filter = svgf ?? new ScriptFilter(), lint = new Lint();
+  const filter = new SvgBeatFilter(now0, { hold: !!r.context.opener }), lint = new Lint();
   const read = newRead();
   let outChars = 0, ttft = NaN, firstWord = NaN, usage: Usage | undefined, failed: Extract<AskEvent, { t: 'error' }> | null = null;
-  let sent = false, terminal = false, complete = false, idle = false, script = '', raw = '';
-  // EXPERIMENT: a board-first script's declared elements are held until the narration names them.
-  const bf = cfg.promptVariant === 'boardfirst' ? new BoardFirst() : null;
-  const send = (s: string) => { if (bf) { raw += s; s = bf.push(s); } emitText(s); };
+  let sent = false, terminal = false, complete = false, idle = false, script = '';
   let lastEmit = now();
   const emitText = (s: string) => { if (!s || signal.aborted) return; outChars += s.length; script += s; lastEmit = now(); if (Number.isNaN(ttft)) ttft = now() - t0; if (Number.isNaN(firstWord) && spoken(s)) firstWord = now() - t0; emit({ t: 'text', d: s }); };
   // While a group (or the plan) is being written nothing streams; a beat of whitespace lets the client
@@ -634,7 +482,7 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   const beat = hb > 0 ? setInterval(() => { if (!signal.aborted && quietBeat(firstWord, lastEmit, now(), script, hb)) { lastEmit = now(); emit({ t: 'text', d: ' ' }); } }, Math.min(250, hb)) : null;
   // Every answer leaves a record, a failed one too (the failures are the ones worth reading).
   const record = (usd: number) => {
-    try { d.log?.({ ...recordHead(r, cfg, d), script, lint: lint.notes, usd, ...(bf ? { raw, boardFirst: bf.stats() } : {}), ...(svgf ? { svg: { groups: svgf.groups, board: svgf.board, notes: svgf.notes, ...(svgf.order ? { order: svgf.order } : {}), ...(svgf.check ? { check: svgf.check } : {}), firstGroupMs: Math.round(svgf.firstGroupMs - t0), ttftMs: Math.round(ttft), firstWordMs: Math.round(firstWord), totalMs: Math.round(now() - t0) } } : {}), ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}), ...(sb ? { storyboard: storyRecord(sb) } : {}) }); } catch { /* a log failure never fails an answer */ }
+    try { d.log?.({ ...recordHead(r, cfg, d), script, lint: lint.notes, usd, svg: { groups: filter.groups, board: filter.board, notes: filter.notes, ...(filter.order ? { order: filter.order } : {}), ...(filter.check ? { check: filter.check } : {}), firstGroupMs: Math.round(filter.firstGroupMs - t0), ttftMs: Math.round(ttft), firstWordMs: Math.round(firstWord), totalMs: Math.round(now() - t0) }, ...(failed ? { error: failed.code } : signal.aborted ? { error: 'aborted' } : {}), ...(read.terminal && !read.complete ? { upstream: read.status } : {}) }); } catch { /* a log failure never fails an answer */ }
   };
   try {
     let res: Response | null = null;
@@ -671,12 +519,11 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
       // have reached OpenAI, so it is booked as an estimate below.
       if (failed && failed.code !== 'network') { d.ledger.release(reqId); record(0); emit(failed); signal.removeEventListener('abort', onAbort); return; }
     } else {
-      const r = await readUpstream(res, ep, { signal, idleMs: T.idleMs, streamMs: T.streamMs, filter, lint, send, onNote: (m) => emit({ t: 'note', message: m }), stop: () => live?.abort() }, read);
+      const r = await readUpstream(res, ep, { signal, idleMs: T.idleMs, streamMs: T.streamMs, filter, lint, send: emitText, onNote: (m) => emit({ t: 'note', message: m }), stop: () => live?.abort() }, read);
       idle = r.idle || !!r.overrun; usage = r.usage; terminal = r.terminal; complete = r.complete;
       if (r.failed) failed = { t: 'error', code: 'upstream', message: r.failed, retryable: true };
       if (signal.aborted) up.abort();
-      send(lint.push(filter.end()) + lint.end());
-      if (bf) emitText(bf.end());
+      emitText(lint.push(filter.end()) + lint.end());
       // Stalled, cut short upstream (response.incomplete), or ended without a terminal event: what
       // arrived plays, then the client hears cut_off; with no text at all it is an error.
       // The output budget ran out (max_output_tokens / max_tokens) just after a whole sentence: the
@@ -701,13 +548,13 @@ export async function ask(r: AskRequest, cfg: ModelConfig, d: Deps, emit: (e: As
   if (!sent) { d.ledger.release(reqId); record(0); return; }
   if (usage) d.cache?.observe(ck, usage, systemTokensLow());
   const u: Usage = usage ?? estimatedUsage(est, cachedGuess, Math.ceil(Math.max(read.rawChars, outChars) / 3.2));
-  const usd = costUsd(cfg.model, u, '12h', cfg.fast);
+  const usd = costUsd(cfg.model, u, '12h');
   d.ledger.settle({ id: reqId, phase: d.phase, kind: 'answer', model: cfg.model, usd, estimated, tokens: tokens(u) });
   record(usd);
   if (signal.aborted) return;
   if (failed && failed.code !== 'cut_off' && !outChars) { emit(failed); return; }
   const s = d.ledger.summary();
-  emit({ t: 'done', usage, usd, estimated, spentUsd: s.totalUsd, capUsd: s.capUsd, ttftMs: Math.round(ttft), plan: filter.plan || undefined, ...(svgf?.check ? { check: svgf.check } : {}), lint: lint.notes.length ? lint.notes : undefined });
+  emit({ t: 'done', usage, usd, estimated, spentUsd: s.totalUsd, capUsd: s.capUsd, ttftMs: Math.round(ttft), plan: filter.plan || undefined, ...(filter.check ? { check: filter.check } : {}), lint: lint.notes.length ? lint.notes : undefined });
   if (failed) emit({ ...failed, code: 'cut_off', message: 'The answer was cut off.' });
 }
 
@@ -786,19 +633,14 @@ export async function readUpstream(res: Response, ep: Endpoint, o: { signal: Abo
 
 export type PrewarmResult = { ok: boolean; usd: number; reason?: string };
 
-const storyRecord = (e: StoryboardEvent): NonNullable<AnswerRecord['storyboard']> => ({
-  model: e.model, effort: e.effort, version: e.version, ms: e.ms, usd: e.usd, ...(e.board ? { board: e.board } : {}), ...(e.fallback ? { fallback: e.fallback } : {}),
-});
-
 /** Writes the cacheable prefix (system prompt + page block) without generating output. */
 export async function prewarm(context: AskContext, cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {
-  if (!cfg.explicitCache) return { ok: false, usd: 0, reason: 'prewarm needs explicit caching (PETU_EXPLICIT_CACHE=0)' };
   const ep = endpointOf(cfg.model, d);
   if (!ep.key) return { ok: false, usd: 0, reason: 'no key' };
   if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };
   const body = buildAnswerRequest({ question: '', history: [], context }, cfg, true);
   // An Anthropic prewarm generates nothing (max_tokens 0): reserve no output.
-  const r = await callJson(body, cfg.model, estimateFor(ep, body, askImages(context)), ep.anthropic ? 0 : cfg.maxOutput, cfg.fast, 'prewarm', d, { ep });
+  const r = await callJson(body, cfg.model, estimateFor(ep, body, askImages(context)), ep.anthropic ? 0 : cfg.maxOutput, 'prewarm', d, { ep });
   if (r.ok && r.json?.usage) d.cache?.observe({ model: cfg.model, version: PROMPT_VERSION, docHash: context.docHash, page: context.page }, r.json.usage, systemTokensLow());
   return r.ok ? { ok: true, usd: r.usd } : { ok: false, usd: r.usd, reason: r.message };
 }
@@ -808,7 +650,6 @@ export async function prewarm(context: AskContext, cfg: ModelConfig, d: Deps): P
  * a request read or wrote it in the last 11.5h.
  */
 export async function prewarmSystem(cfg: ModelConfig, d: Deps): Promise<PrewarmResult> {
-  if (!cfg.explicitCache) return { ok: false, usd: 0, reason: 'prewarm needs explicit caching (PETU_EXPLICIT_CACHE=0)' };
   const ep = endpointOf(cfg.model, d);
   if (!ep.key) return { ok: false, usd: 0, reason: 'no key' };
   if (!PRICES[cfg.model]) return { ok: false, usd: 0, reason: `no price for ${cfg.model}` };
@@ -817,7 +658,7 @@ export async function prewarmSystem(cfg: ModelConfig, d: Deps): Promise<PrewarmR
   if (d.cache?.systemFresh(k, ep.anthropic ? 55 * 60_000 : undefined)) return { ok: true, usd: 0, reason: 'cached' };
   const oa = buildSystemPrewarm(cfg);
   const body = ep.anthropic ? toAnthropicRequest(oa as never, cfg, true) : oa;
-  const r = await callJson(body, cfg.model, estimateFor(ep, body, []), ep.anthropic ? 0 : cfg.maxOutput, cfg.fast, 'prewarm', d, { ep });
+  const r = await callJson(body, cfg.model, estimateFor(ep, body, []), ep.anthropic ? 0 : cfg.maxOutput, 'prewarm', d, { ep });
   if (r.ok) {
     const u = r.json?.usage as Usage | undefined;
     const t = u ? (u.input_tokens_details?.cached_tokens ?? 0) + (u.input_tokens_details?.cache_write_tokens ?? 0) : 0;
@@ -844,7 +685,7 @@ export async function judge(j: JudgeRequest, d: Deps): Promise<JudgeResult> {
     text: { format: { type: 'json_schema', name: j.name ?? 'judgement', schema: j.schema, strict: true } },
   };
   const images = j.content.flatMap((p) => (p.type === 'input_image' ? [imageDims(p)] : []));
-  const r = await callJson(body, JUDGE_MODEL, estimateInputTokens(body, images), JUDGE_MAX_OUTPUT, false, 'judge', d);
+  const r = await callJson(body, JUDGE_MODEL, estimateInputTokens(body, images), JUDGE_MAX_OUTPUT, 'judge', d);
   if (!r.ok) return { ok: false, code: r.code, message: r.message, usd: r.usd };
   const text = outputText(r.json);
   try { return { ok: true, output: JSON.parse(text), usd: r.usd }; } catch { return { ok: false, code: 'upstream', message: `judge returned non-JSON: ${text.slice(0, 120)}`, usd: r.usd }; }
@@ -854,9 +695,9 @@ export type CallResult = { ok: true; json: any; usd: number } | { ok: false; cod
 
 /** A non-streamed call: reserve the worst case → POST (one retry on 429/5xx/network) → book usage. */
 type CallOpts = { timeoutMs?: number; retry?: boolean; signal?: AbortSignal; ep?: Endpoint };
-export async function callJson(body: unknown, model: string, est: number, maxOutput: number, fast: boolean, kind: 'prewarm' | 'judge' | 'scout' | 'title', d: Deps, o: CallOpts = {}): Promise<CallResult> {
+export async function callJson(body: unknown, model: string, est: number, maxOutput: number, kind: 'prewarm' | 'judge' | 'scout' | 'title', d: Deps, o: CallOpts = {}): Promise<CallResult> {
   const id = randomUUID();
-  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(model, est, maxOutput, fast), { kind, model });
+  const refused = d.ledger.reserve(id, d.phase, worstCaseUsd(model, est, maxOutput), { kind, model });
   if (refused) return { ok: false, code: 'cap', message: capHint(refused.code, refused.message, d.phase), usd: 0 };
   const sleep = d.sleep ?? sleepDefault;
   const T = { ...TIMEOUTS, ...d.timeouts };
@@ -876,7 +717,7 @@ export async function callJson(body: unknown, model: string, est: number, maxOut
         const u = json.usage as Usage | undefined;
         const estimated = !u;
         const usage: Usage = u ?? { input_tokens: est, output_tokens: maxOutput, input_tokens_details: { cache_write_tokens: est } };
-        const usd = costUsd(model, usage, '12h', fast);
+        const usd = costUsd(model, usage, '12h');
         d.ledger.settle({ id, phase: d.phase, kind, model, usd, estimated, tokens: tokens(usage) });
         return { ok: true, json, usd };
       }
@@ -886,13 +727,13 @@ export async function callJson(body: unknown, model: string, est: number, maxOut
       // A network error or timeout after sending may still bill: the last try is booked below at its
       // worst case; a first try that a retry follows is booked now, on its own.
       last = { ok: false, code: 'network', message: scrub(String(e), ep.key).slice(0, 200), usd: 0 };
-      if (attempt < attempts - 1) d.ledger.settle({ id: `${id}:a0`, phase: d.phase, kind, model, usd: worstCaseUsd(model, est, maxOutput, fast), estimated: true });
+      if (attempt < attempts - 1) d.ledger.settle({ id: `${id}:a0`, phase: d.phase, kind, model, usd: worstCaseUsd(model, est, maxOutput), estimated: true });
       else reached = true;
     }
     if (attempt < attempts - 1) await sleep(500 + Math.random() * 300);
   }
   if (reached) {
-    const usd = worstCaseUsd(model, est, maxOutput, fast);
+    const usd = worstCaseUsd(model, est, maxOutput);
     d.ledger.settle({ id, phase: d.phase, kind, model, usd, estimated: true });
     return { ...last, usd };
   }

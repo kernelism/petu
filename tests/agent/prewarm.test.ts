@@ -90,7 +90,7 @@ describe('Prewarm', () => {
     await p.intent('h1', 2, prefix());
     expect(f).toHaveBeenCalledTimes(2);
 
-    const g = vi.fn(async () => new Response(JSON.stringify({ ok: false, usd: 0, reason: 'prewarm needs explicit caching (PETU_EXPLICIT_CACHE=0)' }), { status: 200 }));
+    const g = vi.fn(async () => new Response(JSON.stringify({ ok: false, usd: 0, reason: 'no key' }), { status: 200 }));
     const q = make({ f: g }).p;
     await q.intent('h1', 2, prefix());
     await q.intent('h1', 3, prefix());

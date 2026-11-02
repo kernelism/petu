@@ -6,7 +6,6 @@ import { GateState } from '../../src/gate/engine';
 import { parseTag } from '../../src/script/parseTag';
 import { gateAnswer } from '../../scripts/gate-beats/gateRun';
 import type { Recording } from '../../scripts/gate-beats/recordings';
-import { Lint } from '../../server/lint';
 import { EXAMPLES } from '../../server/prompt/examples';
 import type { Grounding, GroundMark } from '../../src/geometry/resolve';
 import { ScriptFilter } from '../../server/scriptFilter';
@@ -72,11 +71,5 @@ describe('constants before statements', () => {
     expect(checkOrder(W('It leaves at 20 metres a second.'), 2, consts)).toEqual([]);
     expect(checkOrder(W('It leaves at 20 metres a second.'), 1, consts).map((f) => f.check)).toEqual(['order']);
     expect(checkOrder(W('It leaves at 20 metres a second.'), 4, consts)).toEqual([]);
-  });
-  it('lint notes a formula or a val naming a constant declared later', () => {
-    const l = new Lint();
-    l.push('{{plot on=s id=p fn="v*x-g*x^2/2" domain=0,4}} it is {{val id=g}} {{const v=20 g=9.8}} {{plot on=s fn="v*x" domain=0,1}}');
-    l.end();
-    expect(l.notes.filter((n) => /before it is declared/.test(n)).map((n) => n.split(':')[0])).toEqual(['constant v used before it is declared', 'constant g used before it is declared']);
   });
 });

@@ -46,11 +46,9 @@ describe('selection', () => {
     expect(selectQuestions(parseArgs(['--only', 'D4,T2'])).map((q) => q.id)).toEqual(['D4', 'T2']);
     expect(() => selectQuestions(parseArgs(['--only', 'D99']))).toThrow(/D99/);
   });
-  it('configs restrict the questions (astra on D1-D6, fast on 10, no judge)', () => {
+  it('configs restrict the questions (astra on D1-D6); --no-judge', () => {
     expect(selectQuestions(parseArgs(['--qset', 'q1', '--config', 'astra-low'])).map((q) => q.id)).toEqual(['D1', 'D2', 'D3', 'D4', 'D5', 'D6']);
-    const fast = parseArgs(['--qset', 'q1', '--config', 'terra-none-fast']);
-    expect(selectQuestions(fast)).toHaveLength(10);
-    expect(wantsJudge(fast, CONFIGS['terra-none-fast'])).toBe(false);
+    expect(wantsJudge(parseArgs([]), { ...CONFIGS['terra-none'], judge: false })).toBe(false);
     expect(wantsJudge(parseArgs(['--no-judge']), CONFIGS['terra-none'])).toBe(false);
   });
   it('a follow-up counts as two answers', () => {
@@ -75,16 +73,15 @@ describe('budget preflight', () => {
     expect(bad.ok).toBe(false); expect(bad.message).toMatch(/>/);
     expect(checkBudget(spend({ blocked: 'cap' }), CONFIGS['terra-none'], dev, 1, false).ok).toBe(false);
   });
-  it('fast mode and the dearer models cost more at worst', () => {
-    expect(plannedWorstUsd(CONFIGS['terra-none-fast'], 10, 0)).toBeGreaterThan(plannedWorstUsd(CONFIGS['terra-none'], 10, 0));
+  it('the dearer models cost more at worst', () => {
     expect(plannedWorstUsd(CONFIGS['astra-low'], 6, 0)).toBeGreaterThan(plannedWorstUsd(CONFIGS['terra-none'], 6, 0));
     expect(plannedWorstUsd(CONFIGS['terra-none'], 0, 5)).toBeGreaterThan(0);
     // r3 shows the judge a timeline of frames and a deck digest: a bigger worst case than r2's sheet
     expect(plannedWorstUsd(CONFIGS['terra-none'], 0, 5, 'r3')).toBeGreaterThan(plannedWorstUsd(CONFIGS['terra-none'], 0, 5, 'r2'));
   });
   it('config env carries model, effort, phase and never a key', () => {
-    const e = configEnv(CONFIGS['terra-none-fast'], 'bakeoff');
-    expect(e).toMatchObject({ PETU_MODEL: 'gpt-6.1-terra', PETU_EFFORT: 'none', PETU_PHASE: 'bakeoff', PETU_FAST: '1' });
+    const e = configEnv(CONFIGS['terra-none'], 'bakeoff');
+    expect(e).toEqual({ PETU_MODEL: 'gpt-6.1-terra', PETU_EFFORT: 'none', PETU_PHASE: 'bakeoff' });
     expect(Object.keys(e).some((k) => /KEY/i.test(k))).toBe(false);
   });
 });

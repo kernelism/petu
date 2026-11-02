@@ -1,6 +1,5 @@
 // src/agent/protocol.ts — shared by the browser (src/agent/client.ts) and the dev server (server/).
 import type { Usage } from '../../server/prices';
-import type { Storyboard } from './storyboard';
 import type { Relation } from './context/memory';
 import type { GateEvent, RepairEvent, RepairRequest } from '../gate/events';
 
@@ -51,8 +50,6 @@ export type AskContext = {
    * answer's first word. The answer continues from it without repeating it.
    */
   opener?: string;
-  /** Volatile tail: keyword hits from pages not already included (v2 contexts; v3 sends the digest instead). */
-  searchText?: string;
   /** Volatile tail: student ink on the visible page. */
   ink?: { summary: string; crop?: { b64: string; w: number; h: number } };
   /**
@@ -78,12 +75,6 @@ export type AskEvent =
       find?: string[]; relation?: Relation; ctx?: { mode: string; tier: string; tokens: Record<string, number>; candidates: string[]; printedOffset?: number; ms: number } }
   /** Client-side: stage 2's first text reached the player (ms from Enter); the opener's words were then due to end at `openerEndMs`. */
   | { t: 'handoff'; ms: number; openerEndMs?: number }
-  /**
-   * The lesson design (server, before stage 2's meta): `ms` from the ask request to the storyboard
-   * (or its fallback), its cost and tokens. `fallback` says why stage 2 runs on the scout's plan alone.
-   */
-  | { t: 'storyboard'; ms: number; usd: number; model: string; effort: string; version: string; board?: Storyboard; fallback?: string;
-      estimated?: boolean; input?: number; cached?: number; output?: number; reasoning?: number }
   | { t: 'text'; d: string }
   | { t: 'note'; message: string }
   | { t: 'done'; usage?: Usage; usd: number; estimated?: boolean; spentUsd: number; capUsd: number; ttftMs: number; plan?: string; /** The hidden check question (p6.2), offered as "Test yourself" after the answer: never spoken. */ check?: string; lint?: string[] }

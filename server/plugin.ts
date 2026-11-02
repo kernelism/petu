@@ -1,7 +1,6 @@
 // server/plugin.ts — the petu API as Vite dev-server middleware (`apply: 'serve'`, localhost only).
 //
-//   POST /api/ask              AskRequest → NDJSON AskEvents (with an opener and the storyboard on: the
-//                              lesson design first — a `storyboard` event — then stage 2 performing it).
+//   POST /api/ask              AskRequest → NDJSON AskEvents (stage 2).
 //                              `quality: 'standard' | 'best'` picks the answer model (server/quality.ts);
 //                              400 for any other value, or for 'best' without the Anthropic key
 //   POST /api/scout            ScoutRequest → NDJSON ScoutEvents (stage 1, streamed: opener sentences,
@@ -156,7 +155,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
     res.on('close', onClose);
     const emit = (e: AskEvent) => { if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify(e) + '\n'); };
     try {
-      await ask(body as AskRequest, picked.cfg, deps, emit, ctl.signal, env.storyboard);
+      await ask(body as AskRequest, picked.cfg, deps, emit, ctl.signal);
     } finally {
       res.off('close', onClose);
       if (!res.writableEnded && !res.destroyed) res.end();
@@ -286,8 +285,7 @@ export function createApi(o: { env: PetuEnv; root: string; fetch?: typeof fetch;
   function routeSpend(req: IncomingMessage, res: ServerResponse) {
     if (req.method !== 'GET') return json(res, 405, { error: 'GET only' });
     const s = ledger.summary();
-    const worst = worstCaseUsd(env.model.model, TYPICAL_INPUT_TOKENS, env.model.maxOutput, env.model.fast) + worstCaseUsd(env.scout.model, TYPICAL_SCOUT_TOKENS, env.scout.maxOutput, env.scout.fast)
-      + (env.storyboard ? worstCaseUsd(env.storyboard.model, TYPICAL_INPUT_TOKENS, env.storyboard.maxOutput, env.storyboard.fast) : 0);
+    const worst = worstCaseUsd(env.model.model, TYPICAL_INPUT_TOKENS, env.model.maxOutput) + worstCaseUsd(env.scout.model, TYPICAL_SCOUT_TOKENS, env.scout.maxOutput);
     const refusal = ledger.check(env.phase, worst);
     // Which keys the server has (booleans only), so a runner can refuse a config before spending on scouts.
     return json(res, 200, { ...s, phase: env.phase, phaseCapUsd: env.caps.phaseUsd?.[env.phase], model: env.model.model, keys: { openai: !!env.key, anthropic: !!env.anthropicKey }, best: !!env.best, ...(refusal ? { blocked: refusal.message, blockedCode: refusal.code } : {}) });
@@ -399,7 +397,7 @@ async function readJson(req: IncomingMessage, res: ServerResponse): Promise<any>
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 const isStr = (v: unknown): v is string => typeof v === 'string';
 /** Sane maxima for what the browser sends (it sends ≤ 1280 px images and much shorter text). */
-export const LIMITS = { imageSide: 2048, docText: 120_000, pageText: 60_000, pagesText: 120_000, images: 3, plan: 2_000, opener: 2_000, scoutPages: 6, searchText: 20_000, inkSummary: 4_000,
+export const LIMITS = { imageSide: 2048, docText: 120_000, pageText: 60_000, pagesText: 120_000, images: 3, plan: 2_000, opener: 2_000, scoutPages: 6, inkSummary: 4_000,
   /** Tiered context (ctx=new): the section card, session memory, candidates. */
   section: 60_000, memory: 20_000, candidates: 20_000,
   /** /api/repair: the released stage-2 text, the failed beat, the report (as JSON). */
@@ -420,7 +418,6 @@ export function validateContext(c: any): string | null {
   if (c.images != null && (!Array.isArray(c.images) || c.images.length > LIMITS.images || !c.images.every((im: any) => isImage(im) && isInt(im.page) && im.page >= 1 && im.page <= c.numPages))) return `context.images must be at most ${LIMITS.images} images { page, b64, w, h }`;
   if (c.scout != null && (!Array.isArray(c.scout.pages) || c.scout.pages.length > LIMITS.scoutPages + 1 || !c.scout.pages.every((p: unknown) => isInt(p) && p >= 1 && p <= c.numPages) || !isStr(c.scout.plan) || c.scout.plan.length > LIMITS.plan)) return 'context.scout must be { pages: page numbers, plan }';
   if (c.opener != null && (!isStr(c.opener) || c.opener.length > LIMITS.opener)) return 'context.opener must be a string of at most 2,000 characters';
-  if (c.searchText != null && (!isStr(c.searchText) || c.searchText.length > LIMITS.searchText)) return 'context.searchText must be a string of at most 20,000 characters';
   if (c.ink != null && (!isStr(c.ink.summary) || c.ink.summary.length > LIMITS.inkSummary || (c.ink.crop != null && !isImage(c.ink.crop)))) return 'context.ink is malformed';
   if (c.memory != null && (!isStr(c.memory) || c.memory.length > LIMITS.memory)) return `context.memory must be a string of at most ${LIMITS.memory.toLocaleString('en-US')} characters`;
   if (c.scout?.relation != null && !isRelation(c.scout.relation)) return 'context.scout.relation is not a known relation';

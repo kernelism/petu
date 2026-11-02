@@ -15,8 +15,6 @@ import { HARD_STOP_USD } from '../src/agent/protocol';
 import type { Caps, Phase } from './ledger';
 import type { Effort, ModelConfig } from './openai';
 import { ANTHROPIC_NO_NONE, isAnthropicModel } from './anthropic';
-import { VARIANT_NAMES } from './prompt/variants/index';
-import { isSvgMode } from './prompt/system';
 import { bestConfig } from './quality';
 
 /** The $80 hard stop (prior spike spend included; $40 until 2026-10-28, $60 until 2026-10-31). PETU_TOTAL_CAP_USD may only lower it. */
@@ -39,7 +37,8 @@ const EFFORTS: Effort[] = ['none', 'low', 'medium', 'high'];
  * latency gate (Enter → first caption word p50 1.27s / p90 2.21s over 58 answers; gate 1.4s / 2.5s).
  * luna-none missed p90 (2.62s) and scored lowest; terra-low (p90 4.5s), sol-low (p50 3.9s) and
  * astra-low (p90 8.7s) are too slow for one streamed pass. Fast mode gave no first-word gain (warm
- * A/B: 2.09s vs 1.24s/1.42s), and verbosity low lost 0.25 judge points on the answers it changed.
+ * A/B: 2.09s vs 1.24s/1.42s), and verbosity low lost 0.25 judge points on the answers it changed:
+ * neither is sent (their knobs PETU_FAST, PETU_SCOUT_FAST and PETU_VERBOSITY were removed 2026-11-01).
  */
 export const DEFAULT_MODEL = 'gpt-6.1-terra';
 /**
@@ -58,19 +57,7 @@ export const DEFAULT_MAX_OUTPUT_REASONING = 6000;
 /** Stage 1 (spec A): the fast model at effort none; its JSON is the opener (one or two sentences), ≤ 6 pages and a plan of ≤ 100 words ending with its beats. */
 export const DEFAULT_SCOUT_MODEL = 'gpt-6.1-terra';
 export { SCOUT_MAX_OUTPUT } from './limits';
-import { REPAIR_MAX_OUTPUT, SCOUT_MAX_OUTPUT, STORYBOARD_MAX_OUTPUT } from './limits';
-/**
- * The storyboard (spec "Board v2" 5): a reasoning model designs the lesson while the opener plays.
- * Off by default until it lands within the opener: the first live runs (2026-10-28) timed out at 12s
- * at effort low and none, a 20–24s handoff gap. PETU_STORYBOARD=1 turns it on for a run.
- * Tag prompt only (C7, 2026-10-31): it was written for the tag DSL and contradicts the svg format, the
- * default: its beats end on a check question "asked of the student" (svg hides it in <check>, never
- * spoken), it asks for "the computation, never its numbers" (svg computes the case's numbers in the
- * plan), and stage 2 reads it as a second plan beside its own <plan>. So PETU_STORYBOARD=1 is refused
- * with the svg format, and ask() never runs it there (server/openai.ts).
- */
-export const DEFAULT_STORYBOARD_MODEL = 'gpt-6.1-terra';
-export const DEFAULT_STORYBOARD_EFFORT: Effort = 'low';
+import { REPAIR_MAX_OUTPUT, SCOUT_MAX_OUTPUT } from './limits';
 /** Models whose API rejects reasoning.effort "none" (developers.openai.com/api/docs/guides/reasoning, 2026-10-28). */
 const NO_NONE = new Set(['gpt-6.1-sol', 'gpt-6-astra']);
 
@@ -85,8 +72,6 @@ export type PetuEnv = {
   best: ModelConfig | null;
   /** Stage 1 (scout): a fast model at no reasoning; JSON out. */
   scout: ModelConfig;
-  /** The lesson designer between the scout and stage 2; null when PETU_STORYBOARD=0. */
-  storyboard: ModelConfig | null;
   /**
    * The live gate's repairs (design §6; server/repair.ts): stage 2's model at PETU_REPAIR_EFFORT (default
    * stage 2's effort) with REPAIR_MAX_OUTPUT; null when PETU_REPAIR=off (every /api/repair is refused).
@@ -124,7 +109,6 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   const effort = oneOf('PETU_EFFORT', EFFORTS, DEFAULT_EFFORT);
   if (effort === 'none' && NO_NONE.has(model)) throw new Error(`petu: ${model} does not accept reasoning effort none; set PETU_EFFORT=low`);
   if (effort === 'none' && ANTHROPIC_NO_NONE.has(model)) throw new Error(`petu: ${model} cannot turn thinking off; set PETU_EFFORT=low`);
-  const verbosity = str('PETU_VERBOSITY') == null ? undefined : oneOf('PETU_VERBOSITY', ['low', 'medium'] as const, 'low');
   // Lessons v3: an answer may walk several pages and build a figure across them.
   const maxOutput = Math.round(num('PETU_MAX_OUTPUT', effort === 'none' ? DEFAULT_MAX_OUTPUT : DEFAULT_MAX_OUTPUT_REASONING));
   if (maxOutput < 1) throw new Error('petu: PETU_MAX_OUTPUT must be ≥ 1');
@@ -134,17 +118,6 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
   if (isAnthropicModel(scoutModel)) throw new Error('petu: the scout runs on OpenAI only (PETU_SCOUT_MODEL); Claude models are wired for stage 2 (PETU_MODEL)');
   const scoutEffort = oneOf('PETU_SCOUT_EFFORT', EFFORTS, 'none');
   if (scoutEffort === 'none' && NO_NONE.has(scoutModel)) throw new Error(`petu: ${scoutModel} does not accept reasoning effort none; set PETU_SCOUT_EFFORT=low`);
-  const explicitCache = str('PETU_EXPLICIT_CACHE') !== '0';
-  // EXPERIMENT: a stage-2 prompt variant (server/prompt/variants); unset = the default prompt, unchanged.
-  const promptVariant = str('PETU_PROMPT_VARIANT');
-  if (promptVariant && !VARIANT_NAMES.includes(promptVariant)) throw new Error(`petu: PETU_PROMPT_VARIANT must be one of ${VARIANT_NAMES.join(' | ')} (got "${promptVariant}")`);
-  const storyModel = str('PETU_STORYBOARD_MODEL') ?? DEFAULT_STORYBOARD_MODEL;
-  if (!PRICES[storyModel]) throw new Error(`petu: PETU_STORYBOARD_MODEL "${storyModel}" has no price in server/prices.ts`);
-  if (isAnthropicModel(storyModel)) throw new Error('petu: the storyboard runs on OpenAI only (PETU_STORYBOARD_MODEL)');
-  const storyEffort = oneOf('PETU_STORYBOARD_EFFORT', EFFORTS, DEFAULT_STORYBOARD_EFFORT);
-  if (storyEffort === 'none' && NO_NONE.has(storyModel)) throw new Error(`petu: ${storyModel} does not accept reasoning effort none; set PETU_STORYBOARD_EFFORT=low`);
-  const storyOn = oneOf('PETU_STORYBOARD', ['0', '1'] as const, '0') === '1';
-  if (storyOn && isSvgMode(promptVariant)) throw new Error('petu: the storyboard (PETU_STORYBOARD=1) is written for the tag prompt and contradicts the svg format; set PETU_PROMPT_VARIANT=tags or PETU_STORYBOARD=0');
   const repairOn = oneOf('PETU_REPAIR', ['on', 'off'] as const, 'on') === 'on';
   // A repair has only REPAIR_MAX_OUTPUT tokens: above low, reasoning could spend all of them before any text.
   const repairEffort = oneOf('PETU_REPAIR_EFFORT', EFFORTS, effort === 'none' || effort === 'low' ? effort : 'low');
@@ -165,16 +138,15 @@ export function parseEnv(get: (k: string) => string | undefined, opts: { root: s
     .map((s) => s.trim()).filter(Boolean).map(expand);
 
   const anthropicKey = anthropicKeyOf(opts.fileEnv);
-  const answer: ModelConfig = { model, effort, maxOutput, fast: str('PETU_FAST') === '1', ...(verbosity ? { verbosity } : {}), explicitCache, ...(promptVariant ? { promptVariant } : {}), ...(str('PETU_PAGE_DETAIL') ? { pageDetail: oneOf('PETU_PAGE_DETAIL', ['low', 'high'] as const, 'high') } : {}) };
+  const answer: ModelConfig = { model, effort, maxOutput };
   return {
     key: get('OPENAI_API_KEY')?.trim() ?? '',
     anthropicKey,
     speechmaticsKey: get('SPEECHMATICS_API_KEY')?.trim() ?? '',
     model: answer,
     best: anthropicKey ? bestConfig(answer, DEFAULT_MAX_OUTPUT_REASONING) : null,
-    scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT, fast: str('PETU_SCOUT_FAST') === '1', explicitCache },
-    storyboard: storyOn ? { model: storyModel, effort: storyEffort, maxOutput: STORYBOARD_MAX_OUTPUT, fast: false, explicitCache, ...(str('PETU_STORYBOARD_TIMEOUT_MS') ? { timeoutMs: num('PETU_STORYBOARD_TIMEOUT_MS', 12_000) } : {}) } : null,
-    repair: repairOn ? { model, effort: repairEffort, maxOutput: REPAIR_MAX_OUTPUT, fast: str('PETU_FAST') === '1', explicitCache } : null,
+    scout: { model: scoutModel, effort: scoutEffort, maxOutput: SCOUT_MAX_OUTPUT },
+    repair: repairOn ? { model, effort: repairEffort, maxOutput: REPAIR_MAX_OUTPUT } : null,
     phase, caps,
     priorUsd: num('PETU_PRIOR_USD', 0.0076),
     pdfDirs,

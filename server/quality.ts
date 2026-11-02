@@ -15,11 +15,8 @@ export const BEST_EFFORT: Effort = 'low';
 
 export const isQuality = (q: unknown): q is AnswerQuality => (ANSWER_QUALITIES as readonly unknown[]).includes(q);
 
-/** Best's config: the standard one's prompt (variant, page detail, cache) on the best model, with a reasoning budget. */
-export function bestConfig(standard: ModelConfig, maxOutput: number): ModelConfig {
-  const { verbosity: _openaiOnly, ...rest } = standard;
-  return { ...rest, model: BEST_MODEL, effort: BEST_EFFORT, maxOutput, fast: false };
-}
+/** Best's config: the best model, with a reasoning budget. */
+export const bestConfig = (standard: ModelConfig, maxOutput: number): ModelConfig => ({ ...standard, model: BEST_MODEL, effort: BEST_EFFORT, maxOutput });
 
 /** The answer config for a request's `quality`, or why it is refused. */
 export function answerConfig(env: { model: ModelConfig; best: ModelConfig | null }, quality: unknown): { cfg: ModelConfig } | { error: string } {

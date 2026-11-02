@@ -18,8 +18,8 @@ describe('parseEnv', () => {
   it('defaults: terra/none (answer and scout), founder phase with $3/day, phase caps incl. the lesson phases, $80 total, prior $0.0076', () => {
     const e = parseEnv(from({}), opts);
     expect(e.key).toBe('');
-    expect(e.model).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 4800, fast: false, explicitCache: true });
-    expect(e.scout).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600, fast: false, explicitCache: true });
+    expect(e.model).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 4800 });
+    expect(e.scout).toEqual({ model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600 });
     expect(e.phase).toBe('founder');
     expect(e.caps).toEqual({ totalUsd: 80, dailyUsd: 3, phaseUsd: PHASE_CAPS });
     expect(PHASE_CAPS).toEqual({ dev: 1, bakeoff: 6, iterate: 7, validate: 2, founder: 21.99, lessondev: 1.5, lessonbake: 3, lessoniter: 3.5, lessonval: 2, bench: 15 });
@@ -27,11 +27,11 @@ describe('parseEnv', () => {
     expect(e.pdfDirs).toEqual(['/home/u/Documents/670/contents', '/repo/public/dev']);
   });
   it('phases other than founder have no daily cap; per-phase caps and knobs are read', () => {
-    const e = parseEnv(from({ PETU_PHASE: 'bakeoff', PETU_CAP_BAKEOFF: '5', PETU_MODEL: 'gpt-6-luna', PETU_EFFORT: 'low', PETU_FAST: '1', PETU_VERBOSITY: 'low', PETU_MAX_OUTPUT: '900', PETU_EXPLICIT_CACHE: '0', PETU_PDF_DIRS: '~/a, /b', OPENAI_API_KEY: KEY }), opts);
+    const e = parseEnv(from({ PETU_PHASE: 'bakeoff', PETU_CAP_BAKEOFF: '5', PETU_MODEL: 'gpt-6-luna', PETU_EFFORT: 'low', PETU_MAX_OUTPUT: '900', PETU_PDF_DIRS: '~/a, /b', OPENAI_API_KEY: KEY }), opts);
     expect(e.phase).toBe('bakeoff');
     expect(e.caps.dailyUsd).toBeUndefined();
     expect(e.caps.phaseUsd?.bakeoff).toBe(5);
-    expect(e.model).toEqual({ model: 'gpt-6-luna', effort: 'low', maxOutput: 900, fast: true, verbosity: 'low', explicitCache: false });
+    expect(e.model).toEqual({ model: 'gpt-6-luna', effort: 'low', maxOutput: 900 });
     expect(e.pdfDirs).toEqual(['/home/u/a', '/b']);
     expect(e.key).toBe(KEY);
   });
@@ -72,7 +72,6 @@ describe('parseEnv', () => {
     expect(() => parseEnv(from({ PETU_MODEL: 'gpt-6.1-sol', PETU_EFFORT: 'none' }), opts)).toThrow(/none/);
     expect(() => parseEnv(from({ PETU_PHASE: 'spike' }), opts)).toThrow(/PETU_PHASE/);
     expect(() => parseEnv(from({ PETU_DAILY_CAP_USD: 'lots' }), opts)).toThrow(/PETU_DAILY_CAP_USD/);
-    expect(() => parseEnv(from({ PETU_VERBOSITY: 'high' }), opts)).toThrow(/PETU_VERBOSITY/);
   });
 });
 
@@ -174,7 +173,6 @@ describe('createApi', () => {
       { ...good(), context: { ...good().context, scout: { pages: [1, 7], plan: '' } } },
       { ...good(), context: { ...good().context, scout: { pages: [1], plan: 'x'.repeat(2001) } } },
       { ...good(), context: { ...good().context, pageText: 'x'.repeat(60_001) } },
-      { ...good(), context: { ...good().context, searchText: 'x'.repeat(20_001) } },
       { ...good(), context: { ...good().context, opener: 'x'.repeat(2_001) } },
       { ...good(), context: { ...good().context, opener: 42 } },
       { ...good(), context: { ...good().context, ink: { summary: 'x'.repeat(4_001) } } },
