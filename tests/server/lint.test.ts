@@ -32,14 +32,11 @@ describe('Lint (grammar checks only)', () => {
     expect(out).toBe(s);
     expect(notes).toEqual(['unknown tag "{{wiggle p=1}}"', 'unclosed quote in "{{highlight p=1 \\"open}}"', 'malformed (dropped): {{highlight p=1 "open}}']);
   });
-  it('notes a malformed tag with its raw text, a hand-placed curve and a duplicated drawing; changes nothing', () => {
-    const s = 'A {{grid on=s id=g vals=1,2;3}} B {{curve on=s pts=O A B C L}} C {{arrow on=s from=O to=A}} D {{arrow on=s from=O to=A em}} E {{arrow on=s from=O to=B}}';
+  it('notes a malformed tag with its raw text; tag-board style (hand curves, a drawing made twice) is not linted; changes nothing', () => {
+    const s = 'A {{grid on=s id=g vals=1,2;3}} B {{curve on=s pts=O A B C L}} C {{arrow on=s from=O to=A}} D {{arrow on=s from=O to=A em}} E {{fade id=s}}';
     const { out, notes } = run(s);
     expect(out).toBe(s);
-    expect(notes[0]).toBe('malformed (dropped): {{grid on=s id=g vals=1,2;3}}');
-    expect(notes[1]).toMatch(/^hand-placed curve \(5 points\)/);
-    expect(notes[2]).toMatch(/^duplicate drawing/);
-    expect(notes).toHaveLength(3);
+    expect(notes).toEqual(['malformed (dropped): {{grid on=s id=g vals=1,2;3}}']);
   });
   it('gives identical results when the input is split at every offset', () => {
     const s = circles(4) + '{{sketch id=a near=p1}}{{bogus}} {{math on=a at=1,1 "\\frac{a}{b}" em}} {x} done';
@@ -49,19 +46,11 @@ describe('Lint (grammar checks only)', () => {
   });
 });
 
-describe('Lint: what to write instead, for slips the engine cannot recover (Task 1c)', () => {
-  it('two table columns in vals=: map= or two blocks', () => {
-    const { notes } = run('{{bars on=hotel id=burden vals=prices.guests,prices.hotel labels=guests,hotel below=prices}}');
-    expect(notes[0]).toMatch(/^malformed \(dropped\): .* — vals= takes one column: use map=prices\.guests fn="x" for one, or two blocks$/);
-  });
+describe('Lint: what to write instead, for slips the engine cannot recover', () => {
   it('a tag over 800 characters: a hand curve should be a plot', () => {
     const pts = Array.from({ length: 90 }, (_, i) => `${(i / 20).toFixed(6)},-1.0001`).join(' ');
     const { notes } = run(`The period {{curve on=pend pts=${pts} em}} grows.`);
     expect(notes).toEqual([expect.stringMatching(/^tag over 800 characters \(spoken as words, not drawn\): \{\{curve .* — draw a curve from its formula with \{\{plot fn=\}\}$/)]);
-  });
-  it('fade on a section: fade its elements by id', () => {
-    const { notes } = run('{{sketch id=s near=p2}} {{box on=s at=1,1 size=10,10 id=b}} {{fade id=s}}');
-    expect(notes).toEqual(['fade id=s names a section: fade the elements inside it by their ids']);
   });
   it('a recovered slip is not noted (arc is read as an angle)', () => {
     expect(run('{{sketch id=p}} {{arc on=p center=P from=D to=B}}').notes).toEqual([]);

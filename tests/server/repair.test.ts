@@ -11,7 +11,7 @@ import { parseEnv } from '../../server/env';
 import { createApi, validateRepair, LIMITS } from '../../server/plugin';
 import { buildRequest, cacheKey, type ModelConfig } from '../../server/openai';
 import { RepairCache, buildRepairRequest, repairBody, REPAIR_TTL_MS, REPAIR_CACHE_MAX } from '../../server/repair';
-import { repairNote, svgRepairNote, boardReport, REPAIR_VERSION, BOARD_CHARS } from '../../server/prompt/repair';
+import { repairNote, boardReport, REPAIR_VERSION, BOARD_CHARS } from '../../server/prompt/repair';
 import { MAX_REPAIRS, REPAIR_MAX_OUTPUT, SVG_REPAIR_MAX_OUTPUT } from '../../server/limits';
 import type { AskRequest, RepairWire } from '../../src/agent/protocol';
 import type { RepairReport } from '../../src/gate/events';
@@ -31,25 +31,17 @@ const ask = (over: Partial<AskRequest> = {}): AskRequest => ({
   context: { docName: 'd.pdf', docHash: 'h', numPages: 3, page: 2, docText: 'DIGEST', pageText: 'PAGE', image: { b64: 'AAAA', w: 100, h: 100 }, opener: 'It falls.' },
   ...over,
 });
-const terra: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 3200, fast: false, explicitCache: true };
+const terra: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 3200 };
 
-describe('repairNote r2', () => {
-  it('has every part of the contract, in order', () => {
-    const n = repairNote(report());
-    const order = ['GATE REPORT (r2). The beat below was NOT shown', 'FAILED BEAT: Notice point Z {{circle on=s at=Z}}', 'PROBLEMS:', '- unknown: point Z is not on the board (fix: create it with {{point on=s id=Z}})',
-      'ON THE BOARD NOW:', 's: a axes; c1 plot "demand"', 'old: 4 elements', 'consts: g=9.8', 'finds: peak', 'LATER BEATS USE: Z',
-      'continuing right after "…the curve rises then falls as price grows". Same point, ≤ 22 words.', 'every board number via {{val}}', 'no pointing words and no tags.'];
-    let at = -1;
-    for (const s of order) { const i = n.indexOf(s); expect(i, s).toBeGreaterThan(at); at = i; }
-    expect(REPAIR_VERSION).toBe('r2');
-  });
+describe('repairNote r2-svg', () => {
   it('the svg note asks for the order the prompt teaches (the group, then its sentences) and never for words alone', () => {
-    const n = svgRepairNote({ ...report(), beat: '{{beat}} {{svg <g id="eq"><circle cx="5" cy="5" r="3"/></g>}} The curves meet here.' });
+    const n = repairNote({ ...report(), beat: '{{beat}} {{svg <g id="eq"><circle cx="5" cy="5" r="3"/></g>}} The curves meet here.' });
     expect(n).toContain('GATE REPORT (r2-svg)');
     expect(n).not.toContain('{{beat}}');
     expect(n).toMatch(/its <g id="…"> group first \(the same id unless the problem is the id\), then the same point in ≤ \d+ spoken words/);
     expect(n).toMatch(/Keep a drawing: if the group can't be fixed, draw less \(a simpler group\), never words alone/);
     expect(n).not.toMatch(/say the point plainly with no group/);
+    expect(REPAIR_VERSION).toBe('r2');
   });
   it('the board report is capped', () => {
     const items = Array.from({ length: 200 }, (_, i) => ({ id: `n${i}`, kind: 'node', label: 'a long label for the element' }));
@@ -59,7 +51,7 @@ describe('repairNote r2', () => {
 
 describe('buildRepairRequest', () => {
   const oa = buildRequest(ask(), terra);
-  it('OpenAI: the same body and cache key, then committed (assistant) and the note (user); 450 out, streamed', () => {
+  it('OpenAI: the same body and cache key, then committed (assistant) and the note (user); the svg cap out, streamed', () => {
     const b = buildRepairRequest(oa, { committed: 'So far so good.', report: report() }, { effort: 'low' }) as any;
     expect(b.prompt_cache_key).toBe(cacheKey());
     expect(b.prompt_cache_options).toEqual(oa.prompt_cache_options);
@@ -68,7 +60,7 @@ describe('buildRepairRequest', () => {
     expect(a).toEqual({ role: 'assistant', content: [{ type: 'output_text', text: 'So far so good.' }] });
     expect(u.role).toBe('user');
     expect(u.content[0].text).toBe(repairNote(report()));
-    expect(b.max_output_tokens).toBe(REPAIR_MAX_OUTPUT);
+    expect(b.max_output_tokens).toBe(SVG_REPAIR_MAX_OUTPUT);
     expect(b.reasoning).toEqual({ effort: 'low' });
     expect(b.stream).toBe(true);
     // The breakpoints are untouched (12h system, 30m digest and image).
@@ -80,11 +72,11 @@ describe('buildRepairRequest', () => {
     expect(b.input.length).toBe(oa.input.length + 1);
     expect(b.input.at(-1).role).toBe('user');
   });
-  it('Anthropic: user → assistant → user, cache_control on the same blocks, thinking per the repair effort, 450 max_tokens', () => {
-    const cfg: ModelConfig = { model: 'claude-opus-5-5', effort: 'low', maxOutput: 6000, fast: false, explicitCache: true };
+  it('Anthropic: user → assistant → user, cache_control on the same blocks, thinking per the repair effort, the svg cap as max_tokens', () => {
+    const cfg: ModelConfig = { model: 'claude-opus-5-5', effort: 'low', maxOutput: 6000 };
     const o2 = buildRequest(ask({ history: [{ q: 'Before?', a: '', page: 1 }] }), cfg);
     const b = repairBody(o2, { committed: 'Released words.', report: report() }, cfg);
-    expect(b.max_tokens).toBe(REPAIR_MAX_OUTPUT);
+    expect(b.max_tokens).toBe(SVG_REPAIR_MAX_OUTPUT);
     expect(b.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
     expect(b.output_config).toEqual({ effort: 'low' });
     expect(b.stream).toBe(true);

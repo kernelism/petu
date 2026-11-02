@@ -27,7 +27,7 @@ import { acceptGroups, checkGroups, newBoardState, type BoardState, type GroupGe
 import type { NarrationClock } from '../playback/clock';
 import { clauseAfter, lookahead, markQuote, quoteRole, sentenceTail, spokenAt } from '../script/quoteWords';
 import { CHECK_WORDS } from '../agent/pacing';
-import type { FaultMode, Faults, GateFlag, GateLogEvent, GateMode, GateSetting, RepairFn, RepairReport, RepairResult } from './events';
+import type { FaultMode, Faults, GateFlag, GateLogEvent, GateMode, RepairFn, RepairReport, RepairResult } from './events';
 
 /** Checked narration that must still be playing before the gate checks whole beats (and may repair). */
 export const HEADROOM_MS = 6000;
@@ -308,8 +308,6 @@ export type LiveGateDeps = {
   maxHoldMs?: number;
   minRepairMs?: number;
   maxRepairs?: number;
-  /** live/audit enforce; shadow checks and logs but releases everything. */
-  setting?: Exclude<GateSetting, 'off'>;
   onEvent(e: GateLogEvent): void;
   /** Timers (tests: a fake clock's). */
   sleep?(ms: number, signal?: AbortSignal): Promise<void>;
@@ -396,7 +394,6 @@ export class LiveGate {
 
   constructor(private d: LiveGateDeps) { this.t0 = d.clock.now(); }
 
-  private get setting() { return this.d.setting ?? 'live'; }
   private headroom() { return this.d.headroomMs ?? HEADROOM_MS; }
   private now() { return this.d.clock.now(); }
   private buffered() { return Math.max(0, this.d.clock.endsAt() - this.now()); }
@@ -631,7 +628,7 @@ export class LiveGate {
     if (signal.aborted) return;
     // A number said that the board computes differently is said as the board's (the unit is not
     // released yet, so I1 holds): what is heard matches what is drawn.
-    if (r.fixes?.length && this.setting !== 'shadow') {
+    if (r.fixes?.length) {
       let text = u.text;
       for (const f of [...r.fixes].sort((a, b) => b.start - a.start)) text = text.slice(0, f.start) + f.to + text.slice(f.end);
       const note = `numbers said as the board's: ${r.fixes.map((f) => `${f.from} → ${f.to} (${f.of})`).join(', ')}`;
@@ -645,7 +642,6 @@ export class LiveGate {
     const ms = this.now() - t0;
     if (!r.flags.length) { this.emitGate(u, 'pass', 'release', r, ms); this.release(u, u.text, out); return; }
     this.stats.fails++;
-    if (this.setting === 'shadow') { this.emitGate(u, 'fail', 'release', r, ms, { notes: ['shadow: released unchecked'] }); this.release(u, u.text, out); return; }
     // Strip: a failed page-pointing tag (or accent) leaves; the unit plays without it if it then passes.
     const strip = this.stripOf(u, r);
     if (strip) {

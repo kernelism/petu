@@ -167,7 +167,7 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   equations; ≤ 60 per page). The scout gets the deck digest (every page, trimmed; `digest.ts`) and
   the visible page's listing. Stage 2 gets the same digest, the visible page (listing + JPEG), the
   scout's pages (listings, up to 4 images in all with the visible page) and plan, student ink and
-  earlier narration (p±2 are only warmed ahead; `searchText` is a v2 leftover). **What the model sees is
+  earlier narration (p±2 are only warmed ahead). **What the model sees is
   what the locator searches**: quotes resolve against the same line index. `npm run ground` prints
   it.
 - `src/agent/{client,useAgent,prewarm,history}.ts` — NDJSON client, cut-off handling (plays what
@@ -185,7 +185,7 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   `?debug` shows scout verdict, opener, stage-2 first text and the handoff gap.
 - Every answer leaves a local record in `.petu/answers.jsonl` (question, page, the script as sent,
   lint notes). Server lint runs the client parser over each completed tag: a malformed tag is noted
-  with its raw text; a hand-placed curve (≥ 4 points) and a drawing made twice are noted too
+  with its raw text, as are an unknown tag and an unclosed quote; svg groups bypass it
   (`done.lint`, shown in `?debug`).
 - `server/` — `plugin.ts` (routes: `/api/ask`, `/api/scout`, `/api/prewarm`, `/api/spend`, `/api/judge` (eval
   token), `/api/report`, `/api/title` (a saved question's title: `server/title.ts`, gpt-6-luna, ledger kind `title`), `/api/dev-pdf/`), `env.ts` (the only reader of the key and `PETU_*` knobs), `openai.ts`

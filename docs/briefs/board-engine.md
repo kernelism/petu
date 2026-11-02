@@ -48,7 +48,7 @@ computes every coordinate and every number.
 ## The svg board (p6: the default answer format)
 
 The model draws the board itself, in SVG, one group per beat; the engine streams, checks, restyles
-and draws it. The tag kit above stays for the `tags` prompt variant (`PETU_PROMPT_VARIANT=tags`).
+and draws it. The tag kit above stays for the demo and dev scripts (the `tags` prompt variant that taught it to the model was deleted 2026-11-01).
 
 - **Format** (the model's raw output; `server/prompt/system.ts`, examples `server/prompt/svgExamples.ts`):
   (p6.1) one or two sentences with no drawing (page pointing; they play while the plan is written),

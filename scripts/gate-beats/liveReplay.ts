@@ -58,7 +58,7 @@ export type ReplayResult = {
 const hasWord = (s: string) => tokenize(s).some((t) => t.kind === 'word');
 
 /** Replays one recorded answer through the gate. */
-export async function replayGate(rec: Recording, o: { gatefail?: string; seed?: number; setting?: 'live' | 'shadow'; pages?: Map<number, string>; severity?: 'default' | 'design' } = {}): Promise<ReplayResult> {
+export async function replayGate(rec: Recording, o: { gatefail?: string; seed?: number; pages?: Map<number, string>; severity?: 'default' | 'design' } = {}): Promise<ReplayResult> {
   const time = new FakeTime();
   const clock = new PacedClock(() => 170, time.now);
   // The recorded board's skips, by tag body (the director's timings, matched to tags in order).
@@ -72,7 +72,7 @@ export async function replayGate(rec: Recording, o: { gatefail?: string; seed?: 
     accept: (u) => pre.accept(u), reject: (u) => pre.reject(u),
   };
   const events: GateLogEvent[] = [];
-  const gate = new LiveGate({ clock, preflight: timed, faults: parseFaults(o.gatefail), onEvent: (e) => events.push(e), sleep: time.sleep, setting: o.setting ?? 'live' });
+  const gate = new LiveGate({ clock, preflight: timed, faults: parseFaults(o.gatefail), onEvent: (e) => events.push(e), sleep: time.sleep });
   const released: Released[] = [];
   const s2 = rec.stage2At > 0 ? rec.stage2Chunk : 0;
   const src = async function* () {

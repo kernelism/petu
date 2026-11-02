@@ -145,10 +145,4 @@ export class PageIndex {
   topPages(question: string, k = 3, exclude: Set<number> = new Set()) {
     return rankPages(this.pages, question, k, exclude);
   }
-
-  /** `PAGE n (search hit)` blocks for the best pages not in `exclude`; undefined without hits. */
-  searchText(question: string, k = 3, exclude: Set<number> = new Set()): string | undefined {
-    const blocks = this.topPages(question, k, exclude).map(({ page }) => [`PAGE ${page} (search hit)`, ...snippet(this.pages.get(page) ?? [], question)].join('\n'));
-    return blocks.length ? blocks.join('\n') : undefined;
-  }
 }

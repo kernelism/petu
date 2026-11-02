@@ -2,8 +2,7 @@
 // follow-up that knows the previous answer's plan and board).
 //
 // Each completed answer leaves a compact record: the question, the pages it taught from, how it
-// related to the answer before it, the plan (the scout's lesson design, and the storyboard's when
-// there was one), the board as data (each section, each drawn thing's id, kind, label and the words
+// related to the answer before it, the plan (the scout's lesson design), the board as data (each section, each drawn thing's id, kind, label and the words
 // it was drawn on, the constants and values it was built from), the claims it made and the check
 // question it ended on. The MEMORY block lists these, oldest first. It is append-only: an entry is
 // written once and never changes, so turn N+1's block starts with turn N's and a cache breakpoint at
@@ -11,7 +10,6 @@
 // one short line each (the only time the block's prefix changes).
 import { svgTextWords } from '../../svgboard/check';
 import { beatsOf } from '../../svgboard/beat';
-import type { Storyboard } from '../storyboard';
 
 /** How a question stands to the answer before it (the scout decides; see server/prompt/scout.ts). */
 export const RELATIONS = ['continue', 'revise-representation', 'simplify', 'new-example', 'deeper', 'new-topic'] as const;
@@ -34,7 +32,7 @@ export type TurnRecord = {
   /** The pages it taught from, in order. */
   pages: number[];
   relation?: Relation;
-  /** The lesson design: the scout's plan, and the storyboard's example and scene when there was one. */
+  /** The lesson design: the scout's plan. */
   plan: string;
   sections: BoardSection[];
   things: BoardThing[];
@@ -171,13 +169,6 @@ export function claimsOf(script: string): { claims: string[]; check?: string } {
   return { claims: pick.map((s) => clip(s, CLAIM_CHARS)), ...(check ? { check } : {}) };
 }
 
-/** The plan as the lesson was designed: the scout's plan, then the storyboard's example and scene. */
-export function planOf(plan: string, story?: Storyboard): string {
-  const parts = [squash(plan)];
-  if (story) parts.push(`example: ${squash(story.example)}`, `scene: ${squash(story.scene.things)}`);
-  return clip(parts.filter(Boolean).join(' | '), PLAN_CHARS);
-}
-
 /** The svg board's layout from an answer's own <plan>: from its BOARD line on (canvas, regions, groups). */
 export function layoutOf(plan: string): string | undefined {
   const i = plan.search(/\bBOARD\b/);
@@ -192,7 +183,7 @@ export function partsOf(plan: string): string | undefined {
 }
 
 /** A finished answer → its record. */
-export function recordOf(t: { question: string; page: number; pages: number[]; plan: string; script: string; relation?: Relation; storyboard?: Storyboard; stopped?: boolean; answerPlan?: string; check?: string; checkPage?: number }): TurnRecord {
+export function recordOf(t: { question: string; page: number; pages: number[]; plan: string; script: string; relation?: Relation; stopped?: boolean; answerPlan?: string; check?: string; checkPage?: number }): TurnRecord {
   const layout = layoutOf(t.answerPlan ?? '');
   const parts = partsOf(t.answerPlan ?? '');
   // The hidden check is never spoken: claimsOf only finds a spoken closing question, so a reply to the
@@ -203,7 +194,7 @@ export function recordOf(t: { question: string; page: number; pages: number[]; p
     ...(parts ? { parts } : {}),
     question: t.question, page: t.page, pages: [...new Set([t.page, ...t.pages])],
     ...(t.relation ? { relation: t.relation } : {}),
-    plan: planOf(t.plan, t.storyboard), ...boardOf(t.script), ...claimsOf(t.script),
+    plan: clip(squash(t.plan), PLAN_CHARS), ...boardOf(t.script), ...claimsOf(t.script),
     ...(check ? { check, ...(t.checkPage ? { checkPage: t.checkPage } : {}) } : {}),
     ...(t.stopped ? { stopped: true } : {}),
   };

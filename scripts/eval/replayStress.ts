@@ -300,7 +300,7 @@ export function collectEval(runsDir: string, srcToPdf: (src: string) => string |
   for (const run of readdirSync(runsDir).sort()) {
     const rd = join(runsDir, run);
     if (!isDir(rd)) continue;
-    // Prompt-variant experiments (PETU_PROMPT_VARIANT: other output formats) aren't the production grammar.
+    // Recordings of prompt-variant experiments (other output formats, since deleted) aren't the production grammar.
     if (EXPERIMENT_RUN.test(run)) continue;
     for (const q of readdirSync(rd).sort()) {
       const f = join(rd, q, 'result.json');

@@ -88,7 +88,6 @@ describe('ContextBuilder', () => {
     expect(digest).toContain('p8: Lucas Kanade · least squares optical flow · aperture problem');
     expect(context.pagesText).toBeUndefined();
     expect(context.images).toBeUndefined();
-    expect(context.searchText).toBeUndefined();
     expect(context.ink).toBeUndefined();
     b.destroy();
   });
@@ -143,7 +142,6 @@ describe('ContextBuilder', () => {
     expect(context.ink?.crop?.b64).toBe('CROP');
     const pre = await b.pagePrefix(1);
     expect(pre.ink).toBeUndefined();
-    expect(pre.searchText).toBeUndefined();
     b.destroy();
   });
 
