@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The board's visual grammar: size = structure (title / content / small), weight = importance (the
-// title only), colour = time (ink at rest; the accent only while a part draws). The model's own sizes,
-// weights and colours carry nothing.
+// title only), colour = the takeaway and time (ink at rest but for what the model gave its accent hue;
+// the accent while a part draws). The model's own sizes, weights and other colours carry nothing.
 import { describe, expect, it } from 'vitest';
 import { sanitizeGroup } from '../../src/svgboard/sanitize';
 import { prepareText } from '../../src/svgboard/polish';
@@ -55,7 +55,7 @@ describe('board grammar', () => {
     expect(typeScale(12, 1).small).toBe(11);
   });
 
-  it('a card: every line one size, regular, ink; one pitch; the card holds them', () => {
+  it('a card: every line one size, regular, ink but the accented takeaway; one pitch; the card holds them', () => {
     const st = newTypeState(SCALE);
     st.titled = true;
     const ts = run(CARD, st);
@@ -63,7 +63,7 @@ describe('board grammar', () => {
     const k = Math.min(RAISE_MAX, 28.8 / 20);
     expect(ts.map(size)).toEqual([20, 22, 22, 18].map((v) => expect.closeTo(v * k, 5)));
     for (const t of ts) {
-      expect(t.getAttribute('fill')).toBe(INK.ink);
+      expect(t.getAttribute('fill')).toBe(t.textContent === 'shortage 80 flats' ? '#7c3aed' : INK.ink);
       expect(t.getAttribute('font-weight')).toBe('400');
       expect(t.getAttribute('data-role')).toBe('content');
     }
@@ -81,7 +81,8 @@ describe('board grammar', () => {
     expect(by(ts, '150').getAttribute('data-role')).toBe('small');
     expect(by(ts, 'rent ($ a month)').getAttribute('data-role')).toBe('content');
     expect(by(ts, 'flats').getAttribute('data-role')).toBe('content');
-    expect(by(ts, 'demand').getAttribute('fill')).toBe(INK.ink);
+    expect(by(ts, 'rent ($ a month)').getAttribute('fill')).toBe(INK.ink);
+    expect(by(ts, 'demand').getAttribute('fill')).toBe('#7c3aed');
   });
 
   it('hand-drawn ticks are found by geometry; the top heading is the title, semibold; a free number is content', () => {
@@ -128,11 +129,11 @@ describe('board grammar', () => {
     expect(ts.some((t) => t.getAttribute('data-role') === 'title')).toBe(false);
   });
 
-  it('model colours on marks become ink at rest (no random accent)', () => {
+  it('marks: an accent stroke stays the accent at rest, a solid fill is ink', () => {
     const st = newTypeState(SCALE);
     const r = sanitizeGroup('<g><line x1="0" y1="0" x2="100" y2="0" stroke="#7c3aed"/><circle cx="5" cy="5" r="4" fill="#7c3aed"/></g>', { ns: 'b', palette: { accent: '#7c3aed', hue: null }, minFont: st.scale.small, w: 1000, h: 700, ids: new Map(), doc: document });
     if (typeof r === 'string') throw new Error(r);
-    expect(r.el.querySelector('line')!.getAttribute('stroke')).toBe(INK.ink);
+    expect(r.el.querySelector('line')!.getAttribute('stroke')).toBe('#7c3aed');
     expect(r.el.querySelector('circle')!.getAttribute('fill')).toBe(INK.ink2);
   });
 

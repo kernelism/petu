@@ -241,9 +241,10 @@
 /* Zoomed past the board's width: it scrolls sideways too (no visible scrollbar). */
 .desk-board-scroll.is-wide { overflow-x: auto; }
 
-/* The board's grammar (src/svgboard/grammar.ts): colour means time. The part being drawn is the accent
-   (render.ts sets data-live and --board-live); it settles back to ink. Text never carries the
-   model's colours; superseded copies (ghosts) are grey. */
+/* The board's grammar (src/svgboard/grammar.ts): colour means the takeaway and time. The part being
+   drawn is the accent (render.ts sets data-live and --board-live); it settles back to its rest colour:
+   ink, or the accent for what the model gave its accent hue (the takeaway). Text never carries the
+   model's other colours; superseded copies (ghosts) are grey. */
 svg[data-svgboard] text, svg[data-svgboard] :is(path, line, polyline, polygon, circle, ellipse) {
   transition: fill 420ms ease-out, stroke 420ms ease-out;
 }
