@@ -1,10 +1,10 @@
 // src/svgboard/style.ts — the board's palette and type for the model's SVG (pure: no DOM).
 /**
  * The model draws with whatever colours and fonts it likes; the board keeps its structure and
- * normalises its styling: greys and blacks become the board's ink tiers, near-white stays paper, the
- * answer's first chromatic hue becomes the tutor's accent (settings ink, violet by default) and every
- * other hue a neutral grey (one accent per board: founder rule), light tints keep their lightness as
- * a tint of their new colour.
+ * normalises its styling: greys and blacks become the board's ink tiers, near-white stays paper, text
+ * and strokes in the answer's first chromatic hue become the tutor's accent (settings ink, violet by
+ * default) and every other hue ink (one accent per board: founder rule), light tints keep their
+ * lightness as a tint of ink.
  */
 export const INK = { ink: '#1D1D1F', ink2: '#3A3A3C', muted: '#6E6E73', faint: '#8E8E93', line: '#D9D6CF', sheet: '#F7F6F2', paper: '#FFFFFE' } as const;
 export const FONT_SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif';
@@ -74,8 +74,14 @@ export function hsl(c: Rgb): { h: number; s: number; l: number } {
   return { h: (h + 360) % 360, s, l };
 }
 
+/** Colourfulness (0–1): at CHROMATIC or more a colour is a hue, under it a grey. */
+export function chromaOf(c: Rgb): number { const { s, l } = hsl(c); return s * (1 - Math.abs(2 * l - 1)); }
+export const CHROMATIC = 0.12;
+
 /** The answer's palette: which hue became the accent (the first chromatic one seen). */
 export type Palette = { accent: string; hue: number | null };
+/** How far (deg) a hue may sit from the accent's and still be it (a lighter or deeper shade of the same violet). */
+const ACCENT_HUE_DEG = 20;
 
 
 /**
@@ -88,25 +94,26 @@ export function mapColor(v: string | null | undefined, role: 'stroke' | 'fill' |
   if (!c) return null;
   const { h, s, l } = hsl(c);
   const a = c.a;
-  const chroma = s * (1 - Math.abs(2 * l - 1));
+  const chroma = chromaOf(c);
   // Paper: near-white stays the board's paper (a backing behind a label, a light card).
   if (l > 0.94 && (chroma < 0.08 || l > 0.97)) return { color: INK.paper, alpha: a };
-  if (chroma < 0.12) {
+  if (chroma < CHROMATIC) {
     // Neutral: the ink tiers.
     if (role === 'fill' && l > 0.8) return { color: INK.sheet, alpha: a };
     // Text never goes lighter than the muted tier (≥ 4.5:1 on the paper); strokes may be faint.
     const color = l < 0.3 ? INK.ink : l < 0.5 ? INK.ink2 : l < 0.7 || role === 'text' ? INK.muted : role === 'fill' ? INK.line : INK.faint;
     return { color, alpha: a };
   }
-  // Chromatic: colour means time on the board (grammar.ts), never the model's hue. At rest a coloured
-  // mark is ink (the accent is the part being drawn: render.ts data-live); a pale wash stays a wash
-  // of ink, a pale outline a hairline.
+  // Chromatic: the model's hue is never kept. Its first hue is what the prompt calls the accent (the
+  // takeaway: SVG_TEACH), so text and strokes in that hue stay the board's accent at rest (grammar.ts
+  // keeps it on text); every other hue is ink. A pale wash stays a wash of ink, a pale outline a hairline.
   if (pal.hue == null) pal.hue = h;
   if (role === 'fill' && l > 0.72) {
     const k = Math.max(0.1, Math.min(0.3, (1 - l) * 1.2));
     return { color: INK.muted, alpha: a * k };
   }
   if (role === 'stroke' && l > 0.72) return { color: INK.line, alpha: a };
+  if (role !== 'fill' && Math.min(Math.abs(h - pal.hue), 360 - Math.abs(h - pal.hue)) < ACCENT_HUE_DEG) return { color: pal.accent, alpha: a };
   return { color: role === 'fill' ? INK.ink2 : INK.ink, alpha: a };
 }
 

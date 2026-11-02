@@ -8,13 +8,14 @@
  *    it, standing clear above it, not an axis's title), `small` (axis ticks and units: short numeric text next to a tick mark or along an axis
  *    line, or the engine's own ticks) and `content` (everything else: labels, values, card lines).
  *  - WEIGHT encodes importance only: semibold for the title, regular for everything else.
- *  - COLOUR encodes time only: every text is ink at rest. The part being drawn is the accent while it
- *    draws (render.ts `data-live`, styled in board CSS); superseded parts (ghosts) are grey.
+ *  - COLOUR encodes the takeaway and time: every text is ink at rest except the takeaway, which keeps
+ *    the accent the model gave it (style.ts mapColor: its first hue). The part being drawn is the
+ *    accent while it draws (render.ts `data-live`, styled in board CSS); superseded parts (ghosts) are grey.
  * The grammar's sizes (user units, from the slide's measured body size: content = the body, title =
  * 1.25 × body, small = 0.82 × body but never under 11 px on screen) are the ceiling the model's sizes
  * are raised toward; the legibility floor (LEGIBLE_PX) is what its smallest text is raised to.
  */
-import { INK } from './style';
+import { CHROMATIC, chromaOf, INK, parseColor } from './style';
 import { core, groupGeometry, overlapArea, segHitsBox, type Box, type Seg as GSeg, type TextBox } from './check';
 
 export type Role = 'title' | 'content' | 'small';
@@ -202,7 +203,9 @@ export function applyGrammar(g: Element, st: TypeState): Map<Element, number> {
   for (const [el, role] of roles) {
     el.setAttribute('data-role', role);
     el.setAttribute('font-weight', role === 'title' ? '600' : '400');
-    el.setAttribute('fill', INK.ink);
+    // A hue (its own or its group's) stays for sanitize to map: the accent's is the takeaway (style.ts).
+    const f = el.closest('[fill]')?.getAttribute('fill'), c = parseColor(f);
+    el.setAttribute('fill', c && chromaOf(c) >= CHROMATIC ? f! : INK.ink);
     for (const k of ['fill-opacity', 'opacity', 'font-style', 'letter-spacing', 'stroke', 'stroke-width']) el.removeAttribute(k);
     for (const s of Array.from(el.querySelectorAll('tspan'))) for (const k of ['font-size', 'font-weight', 'fill', 'fill-opacity', 'opacity', 'font-style']) s.removeAttribute(k);
   }
