@@ -37,6 +37,7 @@
 import { compileVars, freeNames } from '../desk/expr';
 import { drawText, readTemplate, type Affix } from '../values/quantity';
 import { isUnitWord } from '../values/units';
+import { readFormat } from '../values/format';
 
 export type Axes = { name: string; x0: number; x1: number; y0: number; y1: number; box: { x: number; y: number; w: number; h: number } };
 type CurveSpec = { kind: 'fn'; src: string; ax: string | null; dom: string | null } | { kind: 'param'; src: [string, string]; ax: string | null; t: string };
@@ -307,17 +308,22 @@ function clipped(c: Curve, n = 240): DPt[][] {
 
 const dOf = (lines: { x: number; y: number }[][], close = false) => lines.map((l) => l.map((p, i) => `${i ? 'L' : 'M'}${r2(p.x)} ${r2(p.y)}`).join('') + (close ? 'Z' : '')).join('');
 
-/** Formats a computed value: `fmt` decimals, else about 3 significant figures (thousands grouped from 10,000). */
+/**
+ * Formats a computed value: `fmt`'s decimals (values/format.ts: "2", "0.00", ".2f"; a percent format
+ * shows v × 100, its "%" is the caller's affix), else about 3 significant figures (thousands grouped from 10,000).
+ */
 export function fmtValue(v: number, fmt?: string | null): string {
-  const dp = fmt != null && /^\d+$/.test(fmt.trim()) ? Number(fmt) : Math.abs(v) >= 100 ? 0 : Math.abs(v) >= 10 ? 1 : Math.abs(v) >= 1 ? 2 : 3;
-  let s = v.toFixed(Math.min(10, dp));
-  if (fmt == null && s.includes('.')) s = s.replace(/0+$/, '').replace(/\.$/, '');
+  const f = readFormat(fmt);
+  if (f?.percent) v *= 100;
+  const dp = f ? f.dp : Math.abs(v) >= 100 ? 0 : Math.abs(v) >= 10 ? 1 : Math.abs(v) >= 1 ? 2 : 3;
+  let s = v.toFixed(dp);
+  if (!f && s.includes('.')) s = s.replace(/0+$/, '').replace(/\.$/, '');
   if (s === '-0') s = '0';
   if (Math.abs(v) >= 10000) { const [i, f] = s.split('.'); s = i.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (f ? `.${f}` : ''); }
   return s.replace(/^-/, '−');
 }
 /** A number with its unit, as a bare data-val or a tick writes it ("12%", "$10", "5 m"): quantity.ts. */
-const withUnit = (v: string, u: string | null) => drawText(v, readTemplate(null, u));
+const withUnit = (v: string, u: string | null, fmt?: string | null) => drawText(readFormat(fmt)?.percent ? `${v}%` : v, readTemplate(null, u));
 
 const ATTRS_DATA = ['data-const', 'data-axes', 'data-fn', 'data-param', 'data-between', 'data-at', 'data-from', 'data-to', 'data-points', 'data-set', 'data-rotate', 'data-translate', 'data-val'];
 /** Whether an element (or its subtree) uses the data attributes. */
@@ -554,8 +560,11 @@ function resolveOne(el: Element, sc: DataScope): void {
     const tpl = el.getAttribute('data-tpl')!;
     // One reading of the text drives both what is drawn and what is said ({{val}}): "{}" in the text's own
     // words takes the number (the words carry its affixes), else the value + data-unit.
-    const t = readTemplate(tpl, el.getAttribute('data-unit'));
-    const label = valueLabel(tpl), words = valueWords(tpl), fmt = el.getAttribute('data-fmt');
+    const fmt = el.getAttribute('data-fmt');
+    const t0 = readTemplate(tpl, el.getAttribute('data-unit'));
+    // A percent format ("0%") shows the fraction as a percent: its "%" is the quantity's, unless the text writes one.
+    const t = readFormat(fmt)?.percent && !t0.post.startsWith('%') ? { ...t0, post: `%${t0.post}` } : t0;
+    const label = valueLabel(tpl), words = valueWords(tpl);
     const num = fmtValue(v, fmt);
     const affix = t.pre || t.post ? { pre: t.pre, post: t.post } : undefined;
     sc.values.push({ v, of: nm ?? src, ...(label ? { label } : {}), ...(nm ? { id: nm } : {}), text: num, ...(t.unit ? { unit: t.unit } : {}), ...(affix ? { affix } : {}), ...(fmt != null ? { fmt } : {}), ...(words.length ? { words } : {}) });
@@ -598,8 +607,8 @@ function drawFrame(el: Element, ax: Axes, sc: DataScope): void {
   const fmt = el.getAttribute('data-fmt');
   const nums = (s: string) => splitTop(s, ',').map((v) => evalF(v, sc));
   // Inserted at the front in reverse: texts last-in-front so the L draws first.
-  if (ty) for (const v of nums(ty).reverse()) { const p = toBoard(ax, ax.x0, v); if (p.y < y - 0.5 || p.y > y + h + 0.5) continue; add('text', { x: r2(x - 10), y: r2(p.y), 'text-anchor': 'end', 'dominant-baseline': 'middle', 'font-size': String(fs), fill: '#1D1D1F', 'data-tick': '', 'data-role': 'small' }, withUnit(fmtValue(v, fmt), el.getAttribute('data-unit-y'))); }
-  if (tx) for (const v of nums(tx).reverse()) { const p = toBoard(ax, v, ax.y0); if (p.x < x - 0.5 || p.x > x + w + 0.5) continue; add('text', { x: r2(p.x), y: r2(y + h + 8), 'text-anchor': 'middle', 'dominant-baseline': 'hanging', 'font-size': String(fs), fill: '#1D1D1F', 'data-tick': '', 'data-role': 'small' }, withUnit(fmtValue(v, fmt), el.getAttribute('data-unit-x'))); }
+  if (ty) for (const v of nums(ty).reverse()) { const p = toBoard(ax, ax.x0, v); if (p.y < y - 0.5 || p.y > y + h + 0.5) continue; add('text', { x: r2(x - 10), y: r2(p.y), 'text-anchor': 'end', 'dominant-baseline': 'middle', 'font-size': String(fs), fill: '#1D1D1F', 'data-tick': '', 'data-role': 'small' }, withUnit(fmtValue(v, fmt), el.getAttribute('data-unit-y'), fmt)); }
+  if (tx) for (const v of nums(tx).reverse()) { const p = toBoard(ax, v, ax.y0); if (p.x < x - 0.5 || p.x > x + w + 0.5) continue; add('text', { x: r2(p.x), y: r2(y + h + 8), 'text-anchor': 'middle', 'dominant-baseline': 'hanging', 'font-size': String(fs), fill: '#1D1D1F', 'data-tick': '', 'data-role': 'small' }, withUnit(fmtValue(v, fmt), el.getAttribute('data-unit-x'), fmt)); }
   if (ty) for (const v of nums(ty).reverse()) { const p = toBoard(ax, ax.x0, v); if (p.y < y - 0.5 || p.y > y + h + 0.5) continue; add('line', { x1: r2(x - 5), y1: r2(p.y), x2: r2(x), y2: r2(p.y), stroke: '#6E6E73', 'stroke-width': '1' }); }
   if (tx) for (const v of nums(tx).reverse()) { const p = toBoard(ax, v, ax.y0); if (p.x < x - 0.5 || p.x > x + w + 0.5) continue; add('line', { x1: r2(p.x), y1: r2(y + h), x2: r2(p.x), y2: r2(y + h + 5), stroke: '#6E6E73', 'stroke-width': '1' }); }
   if (el.hasAttribute('data-frame')) add('path', { d: `M${r2(x)} ${r2(y)}L${r2(x)} ${r2(y + h)}L${r2(x + w)} ${r2(y + h)}`, fill: 'none', stroke: '#3A3A3C', 'stroke-width': '2' });

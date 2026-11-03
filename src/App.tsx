@@ -1192,8 +1192,10 @@ export default function App() {
   const togglePause = useCallback(() => {
     // While a question's route is being decided the answer stays paused under it (a second or so).
     if (routingRef.current) return;
-    // During an aside, Space pauses the aside (the answer under it stays paused).
+    // During an aside, Space pauses the aside (the answer under it stays paused); once it has said all
+    // it had, there is nothing left to pause: Space plays on, the answer from its word.
     const a = asideSession.current;
+    if (asideRef.current?.state === 'done') { closeAsideRef.current(); return; }
     if (a && asideRef.current) {
       if (a.isPaused()) { if (a.resume()) setAside((d) => d && { ...d, paused: false }); }
       else if (a.pause()) setAside((d) => d && { ...d, paused: true });
@@ -1649,6 +1651,8 @@ export default function App() {
     const desk = new Desk(api.deskHost(), stageRef.current!, { onClose: () => { if (busyRef.current) closeRef.current(); void deskRef.current?.hide(); } });
     deskRef.current = desk;
     desk.subscribe((s) => { setDesk(s); setPaused(desk.follow.paused()); });
+    // Its layout from the start (the dock sits under the page column before any answer).
+    setDesk(desk.state());
     if (import.meta.env.DEV) { window.__viewer = api; window.__desk = desk; }
     setNumPages(api.numPages());
     const d = docRef.current;
@@ -1756,7 +1760,16 @@ export default function App() {
   };
 
   /** Puts a question on the board: a saved one comes back as it was left (no replay); a new one starts empty. */
-  const enterConv = (c: Conversation<TrailEntry>) => {
+  /**
+   * The header a pick shows: answer `entry`'s, else (or when it never reached the board: stopped before
+   * its first drawing) the latest one before it that did, else the latest on the board.
+   */
+  const headOf = (c: Conversation<TrailEntry>, entry?: number) => {
+    const on = (e: TrailEntry) => (e.head?.el.isConnected ? e.head : undefined);
+    return (entry != null ? c.entries.slice(0, entry + 1).reverse().map(on).find(Boolean) : undefined)
+      ?? [...c.entries].reverse().map(on).find(Boolean);
+  };
+  const enterConv = (c: Conversation<TrailEntry>, entry?: number) => {
     convRef.current = c;
     trailRef.current = c.entries;
     trailN.current = c.n;
@@ -1781,7 +1794,7 @@ export default function App() {
         // board sat out of view until the next layout pass (2026-10-31).
         if (left) await viewerRef.current?.scrollToPage(left.page);
         if (convRef.current !== c) return;
-        const head = [...c.entries].reverse().map((e) => e.head).find((h) => h?.el.isConnected);
+        const head = headOf(c, entry);
         if (head) void d.showHead(head.el);
       });
     }
@@ -1798,17 +1811,17 @@ export default function App() {
   };
 
   /** A row of the session list: the one on the board scrolls to its latest answer; another is brought back. */
-  const pickSession = (id: number) => {
+  const pickSession = (id: number, entry?: number) => {
     const c = convsRef.current.find((x) => x.id === id), cur = convRef.current!;
     if (!c) return;
     if (c === cur) {
-      const head = [...c.entries].reverse().map((e) => e.head).find((h) => h?.el.isConnected);
+      const head = headOf(c, entry);
       if (head) void deskRef.current?.showHead(head.el);
       return;
     }
     saveConv(!!c.board);
     if (!cur.entries.length) convsRef.current = convsRef.current.filter((x) => x !== cur);
-    enterConv(c);
+    enterConv(c, entry);
   };
 
   // The list names a question by its section title until its own title comes: the labels load when it opens.
@@ -1920,7 +1933,7 @@ export default function App() {
       paused: aside ? aside.paused : userPaused,
       speed,
       onJump: jumpTo, onTogglePause: togglePause, onReplay: replaySentence, onSpeed: cycleSpeed, onStop,
-      ...(aside ? { aside: { onResume: closeAside, onInstead: answerInstead } } : {}),
+      ...(aside ? { aside: { onResume: closeAside, onInstead: answerInstead, done: aside.state === 'done' } } : {}),
     }
     : undefined;
   const mode = barMode({ busy, aside: !!aside, answered, check: checkOpen ? check : null });

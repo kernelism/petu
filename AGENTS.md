@@ -216,7 +216,7 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   documents in other domains (music notation, shadows, levers), each executable
   (`tests/server/examples.test.ts`). Bump `PROMPT_VERSION` on any change. `tests/server/prompt.test.ts`
   keeps every tag parseable, the size bounded and eval-deck vocabulary out. The scout's prompt is
-  `prompt/scout.ts` (`SCOUT_VERSION` s2.11: ROUTE for a question asked mid-answer; pages before the opener; a tag is silent).
+  `prompt/scout.ts` (`SCOUT_VERSION` s2.12: ROUTE for a question asked mid-answer; pages before the opener; a tag is silent; an off-topic question chooses no pages).
 - **Model**: `gpt-6.1-terra`, `reasoning.effort: none`, Standard tier (P1 bake-off, the only config
   under the latency gate). Override per run with `PETU_MODEL` / `PETU_EFFORT`.
 
