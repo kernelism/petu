@@ -65,7 +65,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.14');
+    expect(PROMPT_VERSION).toBe('p6.15');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -117,7 +117,7 @@ describe('system prompt (svg, default)', () => {
   it('p6.6 (follow-ups and rhythm): the plan accounts for the question\'s parts; a page sentence marks one thing and names it; a complaint is about the thread\'s question in full', () => {
     expect(s).toMatch(/parts: what the question asks for, each part named; covered here: …; left: …/);
     expect(s).toMatch(/A question with several parts gets every part it asks for, each with its beat, never the first part alone/);
-    expect(s).toMatch(/marks the one thing it is about and names it in that same sentence \(a highlighted phrase: say its words\)/);
+    expect(s).toMatch(/marks the one thing it is about and names it in that same sentence, in your words right after the tag/);
     expect(s).toMatch(/one page mark in a sentence/);
     expect(s).toMatch(/the board waits on its own: the beat's group still comes first/);
     expect(s).toMatch(/the subject is the question their thread is on \(MEMORY names it\), in full/);
@@ -137,6 +137,12 @@ describe('system prompt (svg, default)', () => {
     expect(s).toMatch(/A formula \(up to 120 characters\) may use/);
     expect(s).toMatch(/if\(cond, a, b\), pi \(built in, never a constant\), and integral\(f, u, a, b\)/);
     expect(s).toMatch(/never expand a series or an integral by hand/);
+  });
+
+  it('p6.15 (founder, bayes.pdf): a tag is silent; a sentence reads whole without its tags, the tag in front of the words, never in their place', () => {
+    expect(s).toMatch(/A tag is silent: the student hears only your narration, never a tag's quote, so every sentence reads whole with its tags taken out/);
+    expect(s).toMatch(/never in their place/);
+    expect(s).not.toMatch(/a highlighted phrase: say its words/);
   });
 
   it('p6.11 (C7, plan before speech): the plan comes first, before any spoken word; p6.5\'s spoken lead-in is gone; the first group is small', () => {

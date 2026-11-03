@@ -641,6 +641,11 @@ describe('Lessons v3: two stages', () => {
     expect(SCOUT_SYSTEM).toMatch(/a fact the pages state, not a number/);
   });
 
+  it('scout s2.10: a tag is silent, so the opener reads whole without its tags (founder, bayes.pdf)', () => {
+    expect(SCOUT_SYSTEM).toMatch(/A tag is silent: the student hears only your words, never a tag's quote, so every sentence must read whole with its tags taken out/);
+    expect(SCOUT_SYSTEM).toMatch(/never "The \{\{highlight p=N "half-life"\}\} sets how fast it fades"/);
+  });
+
   const sreq = { question: 'How does it work?', docName: 'd.pdf', docHash: 'h', numPages: 12, page: 3, digest: 'DECK d.pdf\np1: a', prior: { q: 'before?', a: 'x'.repeat(2000), page: 2 },
     pageText: 'PAGE 3 (visible; 16:9 slide; image attached)\nt1 60 40–300: Three' };
   const scfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600 };

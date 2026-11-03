@@ -71,8 +71,14 @@ import { BOARD_W } from '../../src/svgboard/wire.ts';
  * its 120-character cap. Eval draw D7 (pendulum period vs amplitude): the model, not knowing integral(),
  * wrote ellipticK() and then a 16-term series, both a bad formula, and a beat was dropped; with the list it
  * wrote integral(…, u, 0, pi/2) both times and the board drew the true period (judge 3.4 → 4.2, 4.2).
+ * p6.15 (2026-11-02, founder on bayes.pdf: page lines read aloud verbatim, formulas and capitals included):
+ * POINTING says a tag is silent and a sentence reads whole without its tags, the tag in front of the
+ * model's own words, never in their place. "(a highlighted phrase: say its words)" read as if the tag said
+ * them: 58 of 135 recorded quote tags stood as their sentence's noun ("The {{highlight …}} uses…"). The
+ * engine no longer speaks a quote (src/script/quoteWords.ts says a deictic there); this asks for sentences
+ * that need neither.
  */
-export const PROMPT_VERSION = 'p6.14';
+export const PROMPT_VERSION = 'p6.15';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -128,7 +134,7 @@ The digest of the whole document (every page's number, title and trimmed text), 
 Page coordinates: x 0–1000, y 0–1000 on every page, whatever its shape; never image pixels. Text lines read "t7 436 415–470: area of the square" (line id, top y, x range, text; "math" marks an equation line). Figure marks are handles on a page's own drawing: #d dots, #s segments, #a arrows, #b boxes, #i images, #g figures, #e equations, each with its position. "no extractable text" means a scan: point with marks, or by coordinates inside images.`;
 
 const SVG_POINTING = `POINTING ON THE PAGE (inline in the narration; a tag fires on the word right after it, so put it just before the words it points at)
-{{circle p=4 mark=#d3}} rings a dot or a figure part. {{box p=4 mark=#e1}} frames an equation, box, image or figure. {{highlight p=4 mark=#t12}} lights a whole text line. {{highlight p=4 "words copied exactly from one listed line"}}, with near=x,y when the words occur more than once, and always for one or two characters: {{underline p=4 "f" near=505,342}}. Mark exactly what the sentence names, as small as it is; never the same spot twice. A sentence that teaches from a page marks the one thing it is about and names it in that same sentence (a highlighted phrase: say its words), so the student knows what lit up and why; one page mark in a sentence, and the student gets a moment to look at it before the board draws on (the board waits on its own: the beat's group still comes first). To use another page, {{scroll p=7}} first and say what it is for as you arrive.`;
+{{circle p=4 mark=#d3}} rings a dot or a figure part. {{box p=4 mark=#e1}} frames an equation, box, image or figure. {{highlight p=4 mark=#t12}} lights a whole text line. {{highlight p=4 "words copied exactly from one listed line"}}, with near=x,y when the words occur more than once, and always for one or two characters: {{underline p=4 "f" near=505,342}}. Mark exactly what the sentence names, as small as it is; never the same spot twice. A tag is silent: the student hears only your narration, never a tag's quote, so every sentence reads whole with its tags taken out; a tag goes in front of your own words for the thing, never in their place ({{highlight p=4 "half-life"}} The half-life sets…, never The {{highlight p=4 "half-life"}} sets…). A sentence that teaches from a page marks the one thing it is about and names it in that same sentence, in your words right after the tag, so the student knows what lit up and why; one page mark in a sentence, and the student gets a moment to look at it before the board draws on (the board waits on its own: the beat's group still comes first). To use another page, {{scroll p=7}} first and say what it is for as you arrive.`;
 
 const SVG_SITUATIONS = `SITUATIONS
 FOLLOW-UPS. MEMORY is what you already taught: never say it again. It shows your earlier board's BOARD layout and group ids. To continue on that board, write BOARD extend viewBox="0 0 W H" (W as that board had it, H may grow) and add groups with new ids, placed in its free space; a group that reuses an earlier id redraws that part and the old one fades to a ghost. When the student asks for the idea again in another way, what you showed didn't land: start a fresh board with another representation or level, never more of the same. When they say the answer was not good enough or not complete, or ask whether it was, the subject is the question their thread is on (MEMORY names it), in full: the PLAN lists the parts the earlier answers missed or treated thinly, and you teach every one of them, in the new way; the page in view is only where they happen to be, and "is that complete?" is answered by finishing, never with a yes or a no.
