@@ -403,7 +403,7 @@ export const LIMITS = { imageSide: 2048, docText: 120_000, pageText: 60_000, pag
   /** /api/repair: the released stage-2 text, the failed beat, the report (as JSON). */
   committed: 40_000, beat: 4_000, report: 6_000,
   /** The moment a question is asked in (v1 learner UX): an aside's paused answer, what the student points at, a check reply. */
-  aside: 12_000, about: 4_000, check: 2_000 };
+  aside: 12_000, replaced: 12_000, about: 4_000, check: 2_000 };
 const isImage = (v: any) => v != null && isStr(v.b64) && v.b64.length > 0 && typeof v.w === 'number' && typeof v.h === 'number' && v.w > 0 && v.h > 0 && v.w <= LIMITS.imageSide && v.h <= LIMITS.imageSide;
 
 export function validateContext(c: any): string | null {
@@ -421,7 +421,7 @@ export function validateContext(c: any): string | null {
   if (c.ink != null && (!isStr(c.ink.summary) || c.ink.summary.length > LIMITS.inkSummary || (c.ink.crop != null && !isImage(c.ink.crop)))) return 'context.ink is malformed';
   if (c.memory != null && (!isStr(c.memory) || c.memory.length > LIMITS.memory)) return `context.memory must be a string of at most ${LIMITS.memory.toLocaleString('en-US')} characters`;
   if (c.scout?.relation != null && !isRelation(c.scout.relation)) return 'context.scout.relation is not a known relation';
-  for (const k of ['aside', 'about', 'check'] as const) if (c[k] != null && (!isStr(c[k]) || c[k].length > LIMITS[k])) return `context.${k} must be a string of at most ${LIMITS[k].toLocaleString('en-US')} characters`;
+  for (const k of ['aside', 'replaced', 'about', 'check'] as const) if (c[k] != null && (!isStr(c[k]) || c[k].length > LIMITS[k])) return `context.${k} must be a string of at most ${LIMITS[k].toLocaleString('en-US')} characters`;
   if (c.scoutSection != null && (!isStr(c.scoutSection) || c.scoutSection.length > LIMITS.section)) return 'context.scoutSection is too long';
   return null;
 }
@@ -439,6 +439,7 @@ export function validateScout(b: any): string | null {
   if (b.check != null && !(isStr(b.check.q) && b.check.q.length <= LIMITS.check && isInt(b.check.page) && b.check.page >= 1 && b.check.page <= b.numPages)) return `check must be { q (at most ${LIMITS.check.toLocaleString('en-US')} characters), page }`;
   if (b.image != null && !isImage(b.image)) return 'image must be { b64, w, h }';
   if (b.pinned != null && typeof b.pinned !== 'boolean') return 'pinned must be a boolean';
+  if (b.paused != null && (!isStr(b.paused) || b.paused.length > LIMITS.aside)) return `paused must be a string of at most ${LIMITS.aside.toLocaleString('en-US')} characters`;
   return null;
 }
 

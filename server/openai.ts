@@ -40,7 +40,7 @@ import { Lint } from './lint';
 import { systemPrompt, PROMPT_VERSION } from './prompt/system';
 import { SvgBeatFilter } from './svgBeats';
 import { SCOUT_SYSTEM, SCOUT_VERSION } from './prompt/scout';
-import { SCOUT_SCHEMA, fallbackScout, parsePages, parseScout, type ScoutEvent, type ScoutRequest, type ScoutResult } from '../src/agent/scout';
+import { SCOUT_SCHEMA, fallbackScout, isRoute, parsePages, parseScout, type Route, type ScoutEvent, type ScoutRequest, type ScoutResult } from '../src/agent/scout';
 import { OpenerGate, ScoutJson } from './scoutStream';
 import { homePage } from '../src/agent/moment';
 import type { Relation } from '../src/agent/context/memory';
@@ -213,8 +213,9 @@ export function relationNote(r: Relation): string {
  * The moment a question is asked in (v1 learner UX), as per-turn notes before the question: one short
  * general sentence each, true of any subject and any phrasing (the cached system block is untouched).
  */
-export function momentNotes(c: Pick<AskContext, 'aside' | 'about' | 'check'>): string[] {
+export function momentNotes(c: Pick<AskContext, 'aside' | 'replaced' | 'about' | 'check'>): string[] {
   const out: string[] = [];
+  if (c.replaced) out.push(`REPLACED: the student stopped your previous answer part-way to ask the question below instead. Answer this question in full, as a new answer in a new section with new ids; do not finish, resume or repeat the stopped answer, and refer back to it only where this question needs it. What they heard of it:\n${c.replaced}`);
   if (c.aside) out.push(`ASIDE: the student paused your answer mid-way to ask the question below. Answer just that, briefly, with a small drawing of its own in a new section with new ids; then the paused answer resumes on its own, so neither continue nor repeat it.\n${c.aside}`);
   if (c.about) out.push(`POINTED AT: the question is about this.\n${c.about}`);
   if (c.check) out.push(`OPEN CHECK QUESTION: your last answer ended on "${c.check}". The student's message below may answer it, or may be a new question of their own. If it answers it, judge it on the board: draw their answer and the correct one side by side, then say what the difference shows. If it is a new question, answer that question, and leave the check for later.`);
@@ -241,14 +242,16 @@ const PRIOR_CHARS = 600;
  * Stage 1 (scout). Cacheable prefix: the scout instructions and the deck digest (30m), byte-identical
  * to the digest the answer sends, then the visible page's listing (30m: constant per page; what the
  * opener may point at). Then the previous exchange and the question last. Strict JSON out, streamed:
- * the pages first (they decide where the opener is spoken), then the opener, so it can be spoken while
- * the plan is written.
+ * the route (asked mid-answer only) and relation, then the pages (they decide where the opener is
+ * spoken), then the opener, so it can be spoken while the plan is written.
  */
 export function buildScoutRequest(r: ScoutRequest, cfg: ModelConfig, prewarm = false) {
   const tail = [`The student is looking at page ${r.page}.`];
   if (r.prior) tail.push(`PREVIOUS QUESTION (page ${r.prior.page}): ${r.prior.q}\nPREVIOUS ANSWER (spoken): ${r.prior.a.length > PRIOR_CHARS ? `${r.prior.a.slice(0, PRIOR_CHARS)}…` : r.prior.a}`);
   // The moment (C5), per question: what the student pointed at, and the open check this may reply to.
   if (r.about) tail.push(`POINTED AT: the question is about this.\n${r.about}`);
+  // Asked mid-answer: the answer waiting paused, so the scout can decide the route (aside or new).
+  if (r.paused) tail.push(`PAUSED ANSWER: the student typed this question while your answer below was playing; it waits paused on the last word said.\n${r.paused}`);
   if (r.check) tail.push(`OPEN CHECK QUESTION (page ${r.check.page}): your last answer ended on "${r.check.q}". The student's message below may answer it, or may be a new question of their own. If it answers it, your opener says plainly whether it holds, without working the answer through, and your pages start with page ${r.check.page}, the page the check is about.`);
   tail.push(`QUESTION: ${r.question}`);
   if (r.candidates) tail.splice(tail.length - 1, 0, r.candidates);
@@ -298,11 +301,14 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
     if (openerMs == null) openerMs = ms();
     emit({ t: 'opener', d: s, ms: ms() });
   };
-  const decide = (v: { pages: number[]; plan: string; fallback?: string; find?: string[]; relation?: Relation }) => {
+  /** The route, once known (only for a question asked mid-answer: `r.paused`). */
+  let route: Route | undefined;
+  const decide = (v: { pages: number[]; plan: string; fallback?: string; find?: string[]; relation?: Relation; route?: Route }) => {
     if (verdict) return;
     say(gate.end());
-    verdict = { pages: v.pages, plan: v.plan, ms: ms(), usd: 0, ...(v.fallback ? { fallback: v.fallback } : {}), ...(v.relation ? { relation: v.relation } : {}), ...(v.find?.length ? { find: v.find } : {}), ...(gate.said ? { opener: gate.said } : {}), ...(openerMs != null ? { openerMs } : {}) };
-    if (!signal?.aborted) emit({ t: 'scout', pages: verdict.pages, plan: verdict.plan, ms: verdict.ms, ...(v.fallback ? { fallback: v.fallback } : {}), ...(v.relation ? { relation: v.relation } : {}), ...(v.find?.length ? { find: v.find } : {}), ...(gate.notes.length ? { notes: gate.notes } : {}) });
+    if (r.paused && !route && v.route) route = v.route;
+    verdict = { pages: v.pages, plan: v.plan, ms: ms(), usd: 0, ...(v.fallback ? { fallback: v.fallback } : {}), ...(v.relation ? { relation: v.relation } : {}), ...(route ? { route } : {}), ...(v.find?.length ? { find: v.find } : {}), ...(gate.said ? { opener: gate.said } : {}), ...(openerMs != null ? { openerMs } : {}) };
+    if (!signal?.aborted) emit({ t: 'scout', pages: verdict.pages, plan: verdict.plan, ms: verdict.ms, ...(v.fallback ? { fallback: v.fallback } : {}), ...(v.relation ? { relation: v.relation } : {}), ...(route ? { route } : {}), ...(v.find?.length ? { find: v.find } : {}), ...(gate.notes.length ? { notes: gate.notes } : {}) });
   };
   /**
    * The pages the scout already sent (the `pages` event), if any. They decided where the answer is
@@ -336,8 +342,10 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
   const deadline = setTimeout(() => { timedOut = true; up.abort(); }, Math.min(SCOUT_TIMEOUT_MS, T.callMs));
   const json = new ScoutJson({
     onString: (k, dlt) => { if (k === 'opener') say(gate.push(dlt)); },
-    onField: (k) => {
+    onField: (k, v) => {
       const f = json.fields;
+      // The route first (the schema writes it first): the app opens the aside or replaces the answer on it.
+      if (k === 'route' && r.paused && !route && !verdict && isRoute(v)) { route = v; if (!signal?.aborted) emit({ t: 'route', route: v, ms: ms() }); }
       // The pages close before the opener starts (the schema's order): where the answer is spoken is
       // known before its first word (the client travels there), and the opener points only at that page.
       // (Pages written after the opener came too late to move anything: the verdict carries them.)
@@ -346,13 +354,14 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
         if (pages.length) {
           early = pages;
           emit({ t: 'pages', pages, ms: ms() });
-          gate.anchor(homePage(r.page, pages, !!r.pinned));
+          // An aside stays on the page asked on (its route, written before the pages, says so).
+          gate.anchor(homePage(r.page, pages, !!r.pinned || route === 'aside'));
         }
       }
       // The opener's last sentence plays as soon as its string closes, not when the verdict comes.
       if (k === 'opener') say(gate.end());
       // The verdict once pages and plan are both in (the opener, before the plan in the schema, is complete by then).
-      if ((k === 'pages' || k === 'plan') && 'pages' in f && 'plan' in f) decide(parseScout(JSON.stringify({ pages: f.pages, plan: f.plan, find: f.find, relation: f.relation }), r.numPages, r.page));
+      if ((k === 'pages' || k === 'plan') && 'pages' in f && 'plan' in f) decide(parseScout(JSON.stringify({ pages: f.pages, plan: f.plan, find: f.find, relation: f.relation, route: f.route }), r.numPages, r.page));
     },
   });
   try {

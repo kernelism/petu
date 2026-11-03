@@ -271,6 +271,18 @@ export function partNames(el: Element, ns: string, groupId?: string): { words: s
 }
 
 /**
+ * The reason a stop withdraws a drawing still in progress instead of landing it (Director.stop('withdraw'):
+ * the answer is replaced by another question, src/agent/route.ts). A stop lands a group's undrawn parts
+ * at once, a finished picture for the record of an answer the student ended; an answer the student left
+ * for another question keeps only what they saw drawn whole, so a half-drawn group (a heading over an
+ * empty table, parts its narration never reached) leaves the board and an id it replaced comes back.
+ */
+export const WITHDRAW = 'withdraw';
+/** How long a withdrawn group takes to fade off the board. */
+const WITHDRAW_MS = 200;
+const withdrawing = (s?: AbortSignal) => !!s?.aborted && s.reason === WITHDRAW;
+
+/**
  * Appends `g` (a replaced id's old group fades to a ghost first) and draws it part by part. With the
  * beat's narration (`beat`: its words and when each is spoken) the drawing is paced to the speech
  * (src/playback/pace.ts): a part the narration names (its data-say, its id, its label's words and
@@ -288,11 +300,27 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
   paused?: Paused;
   /** Each part as it starts drawing (in order): the board follows the pen through a group taller than the view. */
   onStep?: (el: SVGElement) => void }): Promise<void> {
+  const prev = id ? b.groups.get(id) : undefined;
+  const ghost = prev && prev !== g ? { id: prev.getAttribute('id'), opacity: prev.getAttribute('opacity') } : null;
   if (id) {
-    const prev = b.groups.get(id);
-    if (prev && prev !== g) { prev.removeAttribute('id'); prev.setAttribute('opacity', '0.3'); prev.setAttribute('data-ghost', ''); }
+    if (prev && ghost) { prev.removeAttribute('id'); prev.setAttribute('opacity', '0.3'); prev.setAttribute('data-ghost', ''); }
     b.groups.set(id, g);
   }
+  /** Takes the group back off the board (a withdrawing stop): the group it replaced is itself again. */
+  const withdraw = () => {
+    // A short fade, never a blink: the new answer's own fade of the old page marks runs alongside.
+    g.style.transition = `opacity ${WITHDRAW_MS}ms ease-out`;
+    g.style.opacity = '0';
+    g.setAttribute('data-withdrawn', '');
+    setTimeout(() => g.remove(), WITHDRAW_MS);
+    if (!id || b.groups.get(id) !== g) return;
+    if (prev && ghost) {
+      if (ghost.id != null) prev.setAttribute('id', ghost.id);
+      if (ghost.opacity != null) prev.setAttribute('opacity', ghost.opacity); else prev.removeAttribute('opacity');
+      prev.removeAttribute('data-ghost');
+      b.groups.set(id, prev);
+    } else b.groups.delete(id);
+  };
   b.root.appendChild(g);
   b.root.style.setProperty('--board-live', o.color);
   tintLiveHatch(b, o.color);
@@ -451,8 +479,10 @@ export async function drawGroup(b: SvgBoard, g: SVGGElement, id: string | undefi
     penLift(pen);
     // The last part stays the accent a moment, then settles to ink (a stop settles it at once).
     if (sig.aborted) setLive(b, null); else settleLive(b, LIVE_SETTLE_MS);
-    // Whatever did not draw (aborted) lands now.
-    for (const s of steps) if (s.el.style.opacity === '0' || s.el.style.strokeDashoffset !== '') land(s);
+    // Whatever did not draw (aborted) lands now; a withdrawing stop takes an unfinished group away instead.
+    const left = steps.filter((s) => s.el.style.opacity === '0' || s.el.style.strokeDashoffset !== '');
+    if (left.length && withdrawing(o.stop)) withdraw();
+    else for (const s of left) land(s);
     o.stop?.removeEventListener('abort', onSig);
   }
   // The last fades run out on the ink's clock (a pause holds them), then a held pause lets go.

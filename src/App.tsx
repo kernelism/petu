@@ -59,7 +59,8 @@ import type { Grounding } from './geometry/resolve';
 import type { AskEvent } from './agent/protocol';
 import { AskError, askErrorLine, capLine, capNotice, spendPhase, type AskHandlers } from './agent/client';
 import { fakeRepair, makeRepair, recordedRepair } from './agent/repair';
-import { useAgent, type MakeContext } from './agent/useAgent';
+import { useAgent, type MakeContext, type Prescout } from './agent/useAgent';
+import { askTarget, routeOf } from './agent/route';
 import { ContextBuilder, groundPage } from './agent/context/build';
 import { installEvalHooks, outOfFrameOf, publishGate, type EvalBackend, type Recorder, type RegistryRow } from './agent/evalHooks';
 import type { Registry } from './desk/registry';
@@ -348,6 +349,8 @@ function registryRows(reg: Registry): RegistryRow[] {
 
 /** An aside's state in the dock: its question, words so far, and how it stands. */
 type Aside = { question: string; words: string[]; state: 'thinking' | 'playing' | 'done' | 'error'; paused: boolean };
+/** The moment a question was asked in, taken once on Enter and handed to whichever path plays it (a mid-answer question's route comes later). */
+type Asked = { point: Pointed | null; taken: ReturnType<typeof takeMarks>; page: number; scout?: Prescout };
 /** One answer on the session trail: its header on the board and what replays it. */
 type TrailEntry = { num: string; question: string; title: string; /** The page it was asked on (a replay is asked there again). */ page: number; /** The pages its answer taught from, home first (parts.ts taughtPages): the header's meta and the session list's titles. */ pages?: number[]; script: string; grounding?: Grounding; head: TrailHead; check?: string; /** The check question it offered (done.check), offered again on a replay. */ offered?: string; /** Asides asked during it (the session drawer lists them under it). */ asides?: string[]; /** How long it played (ms), once done. */ ms?: number };
 /** A dev script's aside when it has none of its own (no API call on the demo path). */
@@ -429,6 +432,12 @@ export default function App() {
   const asideSession = useRef<AnswerSession | null>(null);
   const asideGrounding = useRef<Grounding | undefined>();
   const asideDirRef = useRef<Director>();
+  /**
+   * A question asked mid-answer whose route the scout is deciding (src/agent/route.ts): the answer waits
+   * paused, the dock shows the question, nothing else commits until the route comes (before any word).
+   */
+  const routingRef = useRef<{ q: string; pre: Prescout } | null>(null);
+  const [routing, setRouting] = useState<string | null>(null);
   /** The answer was paused because the student started typing in the bar (it resumes if they clear it). */
   const typingPaused = useRef(false);
   /** The bar's moment (src/ui/barMode.ts): an answer has played; the last one closed on this question. */
@@ -552,6 +561,14 @@ export default function App() {
     const h = answerRef.current.head;
     if (h && (!h.el.isConnected || deskRef.current?.awaitsHead(h.el))) deskRef.current?.headNext(h.el, h.h);
   };
+  /** Drops a route still being decided (Stop, another question, a new answer): its scout is aborted. */
+  const dropRouting = (keep?: Prescout) => {
+    const r = routingRef.current;
+    if (!r) return;
+    routingRef.current = null;
+    setRouting(null);
+    if (r.pre !== keep) r.pre.abort();
+  };
   const clearHide = () => window.clearTimeout(hideTimer.current);
   const clearPause = () => { window.clearTimeout(pauseTimer.current); setPausing(false); };
 
@@ -642,6 +659,7 @@ export default function App() {
     const s = sessionRef.current;
     sessionRef.current = null;
     s?.stop();
+    dropRouting();
     endAside();
     setUserPaused(false);
     director.stop();
@@ -753,6 +771,8 @@ export default function App() {
     check?: string;
     /** The page that check was offered on (checkPageOf): the reply is asked there. */
     checkPage?: number;
+    /** Asked mid-answer and routed here (src/agent/route.ts): the moment as taken on Enter, and its scout, already under way. */
+    asked?: Asked;
   };
 
   /** Plays one answer. Resolves when it is done, stopped or failed. */
@@ -762,8 +782,12 @@ export default function App() {
     /** The conversation it belongs to (its history and memory), even once the student has moved on to another. */
     const conv = convRef.current!;
     const old = sessionRef.current;
+    // A new answer while another plays replaces it (src/agent/route.ts "new"): stage 2 is told what the
+    // student heard of it, and its drawing still in progress is withdrawn rather than landed (below).
+    const replaced = old && old.position() > 0 && !run.again ? pausedContext(old) : null;
     sessionRef.current = null;
     old?.stop();
+    dropRouting(run.asked?.scout);
     clearHide();
     lastQuestion.current = q;
     recRef.current = run.rec ?? null;
@@ -774,7 +798,7 @@ export default function App() {
     typingPaused.current = false;
     setUserPaused(false);
     // The moment it is asked in: what the student pointed at, the check question it replies to.
-    const point = run.again ? null : pointedRef.current;
+    const point = run.again ? null : run.asked ? run.asked.point : pointedRef.current;
     setPointed(null);
     setCheck(null);
     setCheckOpen(false);
@@ -782,13 +806,13 @@ export default function App() {
     /** The model's hidden check question (done.check), offered once the answer ends. */
     let offered: string | undefined = run.again?.offered;
     // …and the marks drawn since the last question (src/ink/student/marks.ts): sent as text, then notes.
-    const taken = run.again ? null : takeMarks();
+    const taken = run.again ? null : run.asked ? run.asked.taken : takeMarks();
     // The one page this question is about (moment.ts askedPage), decided now and handed to every
     // consumer below. An eval run asks on the page it scrolled to and set (pageRef); a trail replay on its own.
     const visible = run.rec || run.replay ? pageRef.current : viewerRef.current?.mostVisiblePage?.() ?? pageRef.current;
-    const page = run.again ? run.again.page : askedPage({ point, check: run.check ? run.checkPage : null, mark: taken?.page, focus: run.rec || run.replay ? null : viewerRef.current?.focusPage?.(), visible });
+    const page = run.again ? run.again.page : run.asked ? run.asked.page : askedPage({ point, check: run.check ? run.checkPage : null, mark: taken?.page, focus: run.rec || run.replay ? null : viewerRef.current?.focusPage?.(), visible });
     const aboutText = [point ? aboutContext(point) : '', taken?.context ?? ''].filter(Boolean).join('\n\n');
-    const moment = { ...(aboutText ? { about: aboutText } : {}), ...(run.check ? { check: run.check } : {}) };
+    const moment = { ...(aboutText ? { about: aboutText } : {}), ...(run.check ? { check: run.check } : {}), ...(replaced ? { replaced } : {}) };
     // The session trail: this answer's header goes above its first section on the board.
     // The header is always what the student typed: after a check question they may answer it or ask
     // something new, and only the model (which sees the open check question) can tell which.
@@ -817,11 +841,11 @@ export default function App() {
     setPartIdx(0);
     setSpokenN(0);
     // The old ink fades at the head of the director's queue while the request goes out.
-    void director.begin(300);
+    void director.begin(300, old ? 'withdraw' : 'land');
     director.ask(page);
     groundingRef.current = undefined;
     const ag = agentRef.current;
-    if (toAgent && ag.blocked && !run.replay) { flash(ag.blocked, CAP_CAPTION_MS); settle(); return; }
+    if (toAgent && ag.blocked && !run.replay) { run.asked?.scout?.abort(); flash(ag.blocked, CAP_CAPTION_MS); settle(); return; }
 
     setCaptionWords([]);
     setQuestion(q);
@@ -946,6 +970,7 @@ export default function App() {
           onGrounds: (gs) => { for (const g of gs) pageTexts.set(g.page, g.lines.map((l) => l.text).join('\n')); },
           ...(gate ? { released: () => gate!.releasedText() } : {}),
           moment, ...(run.check && run.checkPage ? { checkPage: run.checkPage } : {}), history: conv.history, memory: conv.memory,
+          ...(run.asked?.scout ? { started: run.asked.scout } : {}),
         })
         : run.again
           ? async function* (signal) {
@@ -1105,10 +1130,16 @@ export default function App() {
     void session.start(gate ? gate.wrap(source) : source).finally(finishGate);
   }), [director, flash]);
 
-  /** The bar's Enter: mid-answer (or in an aside) an aside; after a check question, the reply; else a new answer. */
+  /**
+   * The bar's Enter: mid-answer (or in an aside) the scout decides where it goes (src/agent/route.ts; a dev
+   * script, with no scout, opens an aside); after a check question, the reply; else a new answer.
+   */
   const askAsideRef = useRef<(q: string) => void>(() => {});
+  const routeAskRef = useRef<(q: string) => void>(() => {});
   const onAsk = useCallback((q: string) => {
-    if (asideRef.current || sessionRef.current) { askAsideRef.current(q); return; }
+    const target = askTarget({ playing: !!(asideRef.current || sessionRef.current), agent: answerRef.current.toAgent });
+    if (target === 'route') { routeAskRef.current(q); return; }
+    if (target === 'aside') { askAsideRef.current(q); return; }
     const c = checkRef.current;
     void runAnswer(q, c ? { check: c, checkPage: checkPageRef.current ?? undefined } : {});
   }, [runAnswer]);
@@ -1159,6 +1190,8 @@ export default function App() {
   }, [backTo]);
 
   const togglePause = useCallback(() => {
+    // While a question's route is being decided the answer stays paused under it (a second or so).
+    if (routingRef.current) return;
     // During an aside, Space pauses the aside (the answer under it stays paused).
     const a = asideSession.current;
     if (a && asideRef.current) {
@@ -1271,13 +1304,14 @@ export default function App() {
    * goes on from the word it paused on. One level: asking again replaces the aside. Agent answers ask
    * /api/ask with the paused answer as context (`aside`); dev scripts play their canned `answers`.
    */
-  const askAside = (q: string) => {
+  const askAside = (q: string, asked?: Asked) => {
     const s = sessionRef.current;
-    if (!s) return;
+    if (!s) { asked?.scout?.abort(); return; }
     if (!s.isPaused()) s.pause();
     typingPaused.current = false;
     setUserPaused(true);
     clearPause();
+    dropRouting(asked?.scout);
     endAside();
     const desk = deskRef.current;
     const head = asideHead({
@@ -1294,21 +1328,16 @@ export default function App() {
     dir.registry.clear();
     dir.figures.clear();
     asideGrounding.current = undefined;
-    const point = pointedRef.current;
-    setPointed(null);
-    const taken = takeMarks();
-    const page = askedPage({ point, mark: taken.page, focus: viewerRef.current?.focusPage?.(), visible: viewerRef.current?.mostVisiblePage?.() ?? pageRef.current });
+    const { point, taken, page } = asked ?? takeAsked();
     dir.ask(page);
     const next: Aside = { question: q, words: [], state: 'thinking', paused: false };
     asideRef.current = next;
     setAside(next);
     const cur = answerRef.current;
-    const said = joinWords(s.script().words.slice(0, s.position()));
-    const board = director.registry.entries().map((e) => `${e.kind}${e.id ? ` #${e.id}` : ''}${e.target.region ? ` on ${e.target.region}` : e.target.page ? ` on p${e.target.page}` : ''}`);
     const aboutText = [point ? aboutContext(point) : '', taken.context].filter(Boolean).join('\n\n');
-    const moment = { aside: asideContext({ question: cur.question, plan: cur.plan, said, board }), ...(aboutText ? { about: aboutText } : {}) };
+    const moment = { aside: pausedContext(s), ...(aboutText ? { about: aboutText } : {}) };
     const source: (signal: AbortSignal) => AsyncIterable<string> = cur.toAgent
-      ? agentRef.current.source({ question: q, page, ink: () => taken.strokes, handlers: {}, onGrounding: (g) => { asideGrounding.current = g; }, moment, history: convRef.current!.history, memory: convRef.current!.memory })
+      ? agentRef.current.source({ question: q, page, ink: () => taken.strokes, handlers: {}, onGrounding: (g) => { asideGrounding.current = g; }, moment, history: convRef.current!.history, memory: convRef.current!.memory, ...(asked?.scout ? { started: asked.scout } : {}) })
       : async function* (signal) {
         const script = DEV_SCRIPT?.answers?.[q] ?? asideFallback(q);
         if (DEV_SCRIPT && docRef.current) asideGrounding.current = await devGrounding(docRef.current, script);
@@ -1333,16 +1362,72 @@ export default function App() {
   };
   askAsideRef.current = askAside;
 
+  /** The paused (or replaced) answer as the student has it: its question, plan, the words said so far and its board (moment.ts asideContext). */
+  function pausedContext(s: AnswerSession): string {
+    const cur = answerRef.current;
+    const said = joinWords(s.script().words.slice(0, s.position()));
+    const board = director.registry.entries().map((e) => `${e.kind}${e.id ? ` #${e.id}` : ''}${e.target.region ? ` on ${e.target.region}` : e.target.page ? ` on p${e.target.page}` : ''}`);
+    return asideContext({ question: cur.question, plan: cur.plan, said, board });
+  }
+  /** The moment of a question asked now: what the student pointed at, the marks drawn since, the page it is about. */
+  function takeAsked(): Asked {
+    const point = pointedRef.current;
+    setPointed(null);
+    const taken = takeMarks();
+    const page = askedPage({ point, mark: taken.page, focus: viewerRef.current?.focusPage?.(), visible: viewerRef.current?.mostVisiblePage?.() ?? pageRef.current });
+    return { point, taken, page };
+  }
+
+  /**
+   * A question asked while an agent answer plays (src/agent/route.ts): the answer (and an aside over it)
+   * waits paused while the scout, given the paused answer, writes where the question goes, first, before
+   * any word. aside: it plays beside the paused answer; new: it replaces the answer, which ends where it
+   * is. The scout is the same one that answer then plays from: the question is sent once.
+   */
+  const routeAsk = (q: string) => {
+    const s = sessionRef.current;
+    if (!s) return;
+    if (!s.isPaused()) s.pause();
+    asideSession.current?.pause();
+    typingPaused.current = false;
+    setUserPaused(true);
+    clearPause();
+    dropRouting();
+    const asked = takeAsked();
+    const aboutText = [asked.point ? aboutContext(asked.point) : '', asked.taken.context].filter(Boolean).join('\n\n');
+    const conv = convRef.current!;
+    const pre = agentRef.current.prescout({ question: q, page: asked.page, paused: pausedContext(s), ...(aboutText ? { moment: { about: aboutText } } : {}), history: conv.history, memory: conv.memory });
+    const r = { q, pre };
+    routingRef.current = r;
+    setRouting(q);
+    void pre.route.then((route) => {
+      if (DEBUG) console.info('[route]', JSON.stringify(q), route ?? '(none: aside)', routingRef.current === r ? '' : '(dropped)');
+      if (routingRef.current !== r) return; // stopped, or another question asked since
+      if (routeOf(route) === 'new') void runAnswer(q, { asked: { ...asked, scout: pre } });
+      else askAside(q, { ...asked, scout: pre });
+    });
+  };
+  routeAskRef.current = routeAsk;
+
+  /** The aside strip's "Answer instead": the side question becomes the answer; the paused one ends where it is. */
+  const answerInstead = useCallback(() => {
+    const a = asideRef.current;
+    if (!a) return;
+    endAside();
+    void runAnswer(a.question);
+  }, [runAnswer]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /** Return / "Back to answer": the inset collapses to its marker and the answer goes on from its word. */
   const closeAside = useCallback(() => {
     if (!asideRef.current) return;
+    dropRouting();
     endAside();
     if (sessionRef.current?.resume()) setUserPaused(false);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const closeAsideRef = useRef(closeAside);
   closeAsideRef.current = closeAside;
 
-  /** Typing in the bar mid-answer pauses it (the question will be an aside); clearing the bar resumes it. */
+  /** Typing in the bar mid-answer pauses it (the scout will route the question: aside or new); clearing the bar resumes it. */
   const onTyping = useCallback((typing: boolean) => {
     const s = sessionRef.current;
     if (!s || asideRef.current) return;
@@ -1835,7 +1920,7 @@ export default function App() {
       paused: aside ? aside.paused : userPaused,
       speed,
       onJump: jumpTo, onTogglePause: togglePause, onReplay: replaySentence, onSpeed: cycleSpeed, onStop,
-      ...(aside ? { aside: { onResume: closeAside } } : {}),
+      ...(aside ? { aside: { onResume: closeAside, onInstead: answerInstead } } : {}),
     }
     : undefined;
   const mode = barMode({ busy, aside: !!aside, answered, check: checkOpen ? check : null });
@@ -1906,13 +1991,14 @@ export default function App() {
           reproduced in Playwright WebKit). */}
       <div ref={dockRef} className="dock" style={{ left: `${dock.x}px`, width: `${dock.w}px`, '--glide': `${GLIDE_MS}ms` } as CSSProperties}>
         {!EVAL && <NewQuestion shown={convRef.current!.entries.length > 0} onClick={newQuestion} />}
+        {/* A question whose route is being decided (src/agent/route.ts): only the question, muted, as before any answer's first word. */}
         <Caption
-          words={aside ? aside.words : captionWords}
-          visible={captionVisible || !!aside}
-          question={aside ? aside.question : question}
-          waiting={aside ? aside.state === 'thinking' : waiting}
-          hint={aside?.state === 'error' ? "That couldn't be answered. Press Return to go back to the answer." : undefined}
-          parts={partsView}
+          words={routing != null ? [] : aside ? aside.words : captionWords}
+          visible={captionVisible || !!aside || routing != null}
+          question={routing ?? (aside ? aside.question : question)}
+          waiting={routing != null || (aside ? aside.state === 'thinking' : waiting)}
+          hint={routing == null && aside?.state === 'error' ? "That couldn't be answered. Press Return to go back to the answer." : undefined}
+          parts={routing != null ? undefined : partsView}
           error={answerError ? { message: answerError.message, onRetry: answerError.retry ? onRetry : undefined } : undefined}
           check={pinCheck ? check ?? undefined : undefined}
           onDismissCheck={dismissCheck}

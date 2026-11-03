@@ -110,6 +110,29 @@ describe('scoutLive / scoutPages (client)', () => {
     const cut = vi.fn(async () => ndjson([{ t: 'opener', d: 'Half. ', ms: 1 }, 'garbage' as unknown as object]));
     expect(await scoutPages(req, ctl().signal, cut as unknown as typeof fetch)).toMatchObject({ pages: [4], opener: 'Half. ', fallback: expect.any(String) });
   });
+  it('route: resolves on its event, before the opener; null when the stream has none (first opener, verdict, failure)', async () => {
+    const mid = { ...req, paused: 'The paused answer was to: "x"' };
+    const f = vi.fn(async () => ndjson([{ t: 'route', route: 'new', ms: 300 }, { t: 'opener', d: 'A. ', ms: 700 }, { t: 'scout', pages: [6], plan: 'p', ms: 900, route: 'new' }, { t: 'end', usd: 0, ms: 1000 }]));
+    const live = scoutLive(mid, ctl().signal, f as unknown as typeof fetch);
+    expect(await live.route).toBe('new');
+    expect((await live.verdict)?.route).toBe('new');
+    // No route event: the first opener sentence settles it (the route is written first).
+    const g = vi.fn(async () => ndjson([{ t: 'opener', d: 'A. ', ms: 1 }], { hang: true, signal: ctl().signal }));
+    expect(await scoutLive(mid, ctl().signal, g as unknown as typeof fetch).route).toBeNull();
+    // Nor do the pages (written after the route): a scout that sends its pages and no opener has none.
+    const pg = vi.fn(async () => ndjson([{ t: 'pages', pages: [6], ms: 1 }], { hang: true, signal: ctl().signal }));
+    expect(await scoutLive(mid, ctl().signal, pg as unknown as typeof fetch).route).toBeNull();
+    // A failure, and a route that is not one.
+    const e500 = vi.fn(async () => new Response('x', { status: 500 }));
+    expect(await scoutLive(mid, ctl().signal, e500 as unknown as typeof fetch).route).toBeNull();
+    const odd = vi.fn(async () => ndjson([{ t: 'route', route: 'elsewhere', ms: 1 }, { t: 'scout', pages: [6], plan: 'p', ms: 2 }]));
+    expect(await scoutLive(mid, ctl().signal, odd as unknown as typeof fetch).route).toBeNull();
+    // Not mid-answer: a verdict's route is not one.
+    const h = vi.fn(async () => ndjson([{ t: 'scout', pages: [6], plan: 'p', ms: 2, route: 'new' }]));
+    const plain = scoutLive(req, ctl().signal, h as unknown as typeof fetch);
+    expect(await plain.route).toBeNull();
+    expect((await plain.verdict)?.route).toBeUndefined();
+  });
   it('an abort returns null and ends the opener', async () => {
     const c = ctl();
     const f = vi.fn(async () => { c.abort(); throw new DOMException('aborted', 'AbortError'); });

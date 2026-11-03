@@ -15,6 +15,9 @@
 // part's page), stage 2 is built on the home page (its listing and image, "the student is looking at"
 // it, since by then they are), and the server's opener gate let the opener point only at the home page.
 // Was: the opener on the asked page and the first move only at stage 2's first scroll, ~10 s in.
+// A question asked mid-answer has its scout started earlier (useAgent.prescout): its route was read
+// before this ran (src/agent/route.ts); here the route only rides the `scout` event, for the record.
+// An aside is pinned (its home is the page asked on); the server's gate pins it by the same route.
 import type { AskContext, AskEvent } from './protocol';
 import { AskError, capNotice, type AskHandlers, type ScoutLive } from './client';
 import type { ScoutResult } from './scout';
@@ -64,7 +67,7 @@ export async function* twoStage(o: TwoStage, signal: AbortSignal): AsyncGenerato
         t: 'scout', pages: sc.pages, plan: sc.plan, ms: sc.ms, atMs, usd: c.usd, ...(sc.fallback ? { fallback: sc.fallback } : {}),
         ...(sc.openerMs != null ? { openerMs: sc.openerMs } : {}), ...(sc.opener ? { opener: sc.opener } : {}),
         ...(c.cached != null ? { cached: c.cached } : {}), ...(c.input != null ? { input: c.input } : {}),
-        ...(sc.find?.length ? { find: sc.find } : {}), ...(sc.relation ? { relation: sc.relation } : {}), ...(home !== asked ? { home: home! } : {}), ...(o.ctx ? { ctx: o.ctx } : {}),
+        ...(sc.find?.length ? { find: sc.find } : {}), ...(sc.relation ? { relation: sc.relation } : {}), ...(sc.route ? { route: sc.route } : {}), ...(home !== asked ? { home: home! } : {}), ...(o.ctx ? { ctx: o.ctx } : {}),
       };
       o.handlers.onEvent?.(ev);
       o.handlers.onScout?.(ev);

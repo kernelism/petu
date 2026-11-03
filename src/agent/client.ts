@@ -1,6 +1,6 @@
 // src/agent/client.ts — the browser side of POST /api/ask (NDJSON AskEvents) and GET /api/spend.
 import { formatUsd, HARD_STOP_USD, type AskErrorCode, type AskEvent, type AskRequest, type SpendSummary } from './protocol';
-import { fallbackScout, parsePages, parseScout, type ScoutEvent, type ScoutRequest, type ScoutResult } from './scout';
+import { fallbackScout, isRoute, parsePages, parseScout, type Route, type ScoutEvent, type ScoutRequest, type ScoutResult } from './scout';
 
 export class AskError extends Error {
   constructor(readonly code: AskErrorCode, message: string, readonly retryable: boolean) { super(message); }
@@ -109,6 +109,12 @@ export type ScoutLive = {
    * that never sent them early. Read, never awaited: the opener must not wait on it.
    */
   pages(): number[] | null;
+  /**
+   * Asked mid-answer (`paused` sent): where the question goes, as soon as the scout wrote it (before any
+   * opener). Null on every other exit (no route in the stream, a fallback, an abort), never later than
+   * the first opener sentence or the verdict, so nothing waits on it.
+   */
+  route: Promise<Route | null>;
 };
 
 /**
@@ -126,10 +132,13 @@ export function scoutLive(req: ScoutRequest, signal: AbortSignal, f: typeof fetc
   let pay!: (c: { usd: number; cached?: number; input?: number }) => void;
   const verdict = new Promise<ScoutResult | null>((ok) => { settle = ok; });
   const cost = new Promise<{ usd: number; cached?: number; input?: number }>((ok) => { pay = ok; });
+  let routeTo!: (r: Route | null) => void;
+  const route = new Promise<Route | null>((ok) => { routeTo = ok; });
   let decided = false;
   const decide = (v: ScoutResult | null) => {
     if (decided) return;
     decided = true;
+    routeTo(v?.route ?? null);
     q.close();
     settle(v && { ...v, ...(said ? { opener: said } : {}), ...(openerMs != null ? { openerMs } : {}) });
   };
@@ -148,18 +157,21 @@ export function scoutLive(req: ScoutRequest, signal: AbortSignal, f: typeof fetc
         if (!s) return;
         let e: ScoutEvent;
         try { e = JSON.parse(s) as ScoutEvent; } catch { return; }
-        if (e.t === 'pages' && !decided && !said && early == null) {
+        if (e.t === 'route') { if (!decided && isRoute(e.route)) routeTo(e.route); }
+        else if (e.t === 'pages' && !decided && !said && early == null) {
+          routeTo(null); // the route is written before the pages: pages without one mean it has none
           const p = parsePages(e.pages, req.numPages);
           if (p.length) early = p;
         } else if (e.t === 'opener' && !decided && typeof e.d === 'string' && e.d) {
+          routeTo(null); // the route is written first: an opener without one has none
           if (openerMs == null) openerMs = Math.round(now() - t0);
           said += e.d;
           q.push(e.d);
         } else if (e.t === 'scout') {
           // The server parses already; parse again so a bad reply can never pass a bad page on.
-          const p = parseScout(JSON.stringify({ pages: e.pages, plan: e.plan, find: e.find, relation: e.relation }), req.numPages, req.page);
+          const p = parseScout(JSON.stringify({ pages: e.pages, plan: e.plan, find: e.find, relation: e.relation, route: e.route }), req.numPages, req.page);
           const fb = e.fallback ?? p.fallback;
-          decide({ pages: p.pages, plan: p.plan, ms: Math.round(now() - t0), usd: 0, ...(fb ? { fallback: fb } : {}), ...(p.find ? { find: p.find } : {}), ...(p.relation ? { relation: p.relation } : {}) });
+          decide({ pages: p.pages, plan: p.plan, ms: Math.round(now() - t0), usd: 0, ...(fb ? { fallback: fb } : {}), ...(p.find ? { find: p.find } : {}), ...(p.relation ? { relation: p.relation } : {}), ...(req.paused && p.route ? { route: p.route } : {}) });
         } else if (e.t === 'end') { usd = typeof e.usd === 'number' ? e.usd : 0; cached = e.cached; input = e.input; }
       };
       for (;;) {
@@ -178,7 +190,7 @@ export function scoutLive(req: ScoutRequest, signal: AbortSignal, f: typeof fetc
       pay({ usd, ...(cached != null ? { cached } : {}), ...(input != null ? { input } : {}) });
     }
   })();
-  return { opener: q, verdict, cost, pages: () => early };
+  return { opener: q, verdict, cost, pages: () => early, route };
 }
 
 /** Stage 1 as one result (tests, eval tools): the streamed scout, its opener collected. */

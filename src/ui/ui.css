@@ -837,7 +837,7 @@
   .caption-leaving { display: none; }
   .dock, .caption, .caption-viewport, .dropveil, .tb-fold, .tb-tip { transition-duration: 0s; }
   .dock-new, .empty-card, .askbar, .askbar-chip, .keycap, .icon-btn, .btn-primary, .btn-quiet, .tb-btn, .tb-dot, .seg,
-  .topbar-num, .pb-btn, .pb-resume, .pb-more, .caption-retry, .askbar-about-x, .askbar-transcript, .caption-check-x, .transcript-s { transition-duration: 0s; }
+  .topbar-num, .pb-btn, .pb-resume, .pb-instead, .pb-more, .caption-retry, .askbar-about-x, .askbar-transcript, .caption-check-x, .transcript-s { transition-duration: 0s; }
   .icon-btn:active, .btn-primary:active, .tb-btn:active, .askbar-btn:active, .dock-new:active,
   .askbar-chip:active, .route-back:active { transform: none; }
 }
@@ -998,6 +998,20 @@
 .pb .pb-resume:hover { background: rgba(255,255,255,.2); color: #fff; }
 .pb .pb-resume:active { background: rgba(255,255,255,.26); }
 .pb .pb-resume:focus-visible { outline: 2px solid #fff; outline-offset: 0; }
+/* "Answer instead": the quiet way to drop the paused answer for the side question (the route's override). */
+.pb .pb-instead {
+  flex: none;
+  height: var(--pb-h);
+  margin-right: 4px;
+  padding: 0 8px;
+  border-radius: var(--radius-s);
+  color: rgba(255,255,255,.66);
+  font-size: 12.5px;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.pb .pb-instead:hover { background: var(--hover-dark); color: rgba(255,255,255,.94); }
+.pb .pb-instead:active { background: var(--press-dark); }
+.pb .pb-instead:focus-visible { outline: 2px solid #fff; outline-offset: 0; }
 /* The resume key after the label: a 12px icon (lucide CornerDownLeft) or the ↵ glyph. */
 .pb-resume-k { display: inline-flex; font-size: 12px; color: rgba(255,255,255,.62); }
 .pb-resume svg { width: 12px; height: 12px; }
