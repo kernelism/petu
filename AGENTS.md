@@ -174,9 +174,13 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   arrived), prewarm on ask-bar intent, follow-up history (narration only). `evalHooks.ts` is
   dev-only (`?eval`).
 - **Two stages, one stream** (`src/agent/twoStage.ts`, `server/scoutStream.ts`): `/api/scout` streams
-  the scout's JSON `{opener, pages, plan}` as NDJSON. The opener (the answer's first sentence or two,
-  tags on the visible page only, released clause by clause) plays at once; the moment pages and plan
-  are parsed, stage 2 is built and asked with the opener verbatim (`context.opener`, ALREADY SPOKEN)
+  the scout's JSON `{relation, pages, opener, find, plan}` as NDJSON. The pages come first: they decide the
+  answer's **home** (`moment.ts homePage`: the page in view when it is one of them or the student pinned the
+  question to it, else the first of them), and an answer whose home is elsewhere opens with a move there
+  before its first word (no 10 s of narration over an unrelated page; the trail records the pages taught,
+  `parts.ts taughtPages`). The opener (the answer's first sentence or two,
+  tags on the page in view only when it is home, released clause by clause) plays at once; the moment pages and plan
+  are parsed, stage 2 is built on the home page and asked with the opener verbatim (`context.opener`, ALREADY SPOKEN)
   and its script follows the opener's last word; the note tells it never to restate the opener's claim and to open on something new (the mechanism, the first drawn step). A failed scout, or no verdict within 8s (`SCOUT_TIMEOUT_MS`), = stage 2 alone on the visible page.
   No ellipsis anywhere (founder, 2026-10-31): before the first word the narration line stays empty under
   the muted question; a mid-answer pause past 1 s quietly previews the plan's next page in the route row

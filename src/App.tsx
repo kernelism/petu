@@ -8,12 +8,12 @@ import { PdfViewer } from './pdf/PdfViewer';
 import type { ViewerApi } from './pdf/viewerApi';
 import { Director, type ActionTiming, type Journey } from './playback/director';
 import { AnswerSession, type ParsedScript, type SessionState } from './playback/session';
-import { deriveParts, nextSentence, partAt, partProgress, partText, partTitle, replayTarget, returnTarget, type Part } from './playback/parts';
+import { deriveParts, nextSentence, partAt, partProgress, partText, partTitle, replayTarget, returnTarget, taughtPages, type Part } from './playback/parts';
 import { SectionLabels } from './pdf/sections';
 import { RouteChip, upcomingPage, type Route } from './ui/RouteChip';
 import type { PartsView } from './ui/PartsBar';
 import { barMode, closingQuestion } from './ui/barMode';
-import { answerHead, asideHead, clockOf, trailTitle, type TrailHead } from './ui/trail';
+import { answerHead, asideHead, clockOf, pagesLabel, trailTitle, type TrailHead } from './ui/trail';
 import { aboutContext, askedPage, asideContext, bboxOf, checkPageOf, isLoop, pointedLabel, type Pointed } from './agent/moment';
 import { isTyping, playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
 import { PacedClock, type NarrationClock } from './playback/clock';
@@ -349,7 +349,7 @@ function registryRows(reg: Registry): RegistryRow[] {
 /** An aside's state in the dock: its question, words so far, and how it stands. */
 type Aside = { question: string; words: string[]; state: 'thinking' | 'playing' | 'done' | 'error'; paused: boolean };
 /** One answer on the session trail: its header on the board and what replays it. */
-type TrailEntry = { num: string; question: string; title: string; page: number; /** The pages its answer's parts taught from (their section titles name it in the session list). */ pages?: number[]; script: string; grounding?: Grounding; head: TrailHead; check?: string; /** The check question it offered (done.check), offered again on a replay. */ offered?: string; /** Asides asked during it (the session drawer lists them under it). */ asides?: string[]; /** How long it played (ms), once done. */ ms?: number };
+type TrailEntry = { num: string; question: string; title: string; /** The page it was asked on (a replay is asked there again). */ page: number; /** The pages its answer taught from, home first (parts.ts taughtPages): the header's meta and the session list's titles. */ pages?: number[]; script: string; grounding?: Grounding; head: TrailHead; check?: string; /** The check question it offered (done.check), offered again on a replay. */ offered?: string; /** Asides asked during it (the session drawer lists them under it). */ asides?: string[]; /** How long it played (ms), once done. */ ms?: number };
 /** A dev script's aside when it has none of its own (no API call on the demo path). */
 const asideFallback = (q: string) => `Here the side answer to "${q}" would play, with its own small drawing. Press Return to go back to the answer.`;
 
@@ -998,7 +998,7 @@ export default function App() {
         if (sessionRef.current !== session) return;
         scriptRef.current = sc;
         const ps = deriveParts(sc, page);
-        if (!again) entry.pages = [...new Set(ps.filter((p) => !p.back).map((p) => p.page))];
+        if (!again) entry.pages = taughtPages(sc, ps);
         const prev = partsRef.current;
         if (ps.length === prev.length && ps.every((p, i) => p.start === prev[i].start && p.page === prev[i].page && p.back === prev[i].back)) return;
         partsRef.current = ps;
@@ -1046,9 +1046,9 @@ export default function App() {
         deskRef.current?.follow.setAnswering(false);
         if (spoken.length) setTranscript({ question: q, answer: joinWords(spoken) });
         sessionRef.current = null;
-        // The trail: where it was asked and how long it played; what replays it resolves as it did.
+        // The trail: the pages it taught from and how long it played; what replays it resolves as it did.
         entry.ms = performance.now() - t0;
-        entry.head.setMeta(`p.${entry.page} · ${clockOf(entry.ms)}`);
+        entry.head.setMeta(`${pagesLabel(entry.pages?.length ? entry.pages : [entry.page])} · ${clockOf(entry.ms)}`);
         if (!again) entry.grounding = groundingRef.current;
         if (spoken.length) setAnswered(true);
         if (st === 'done') {

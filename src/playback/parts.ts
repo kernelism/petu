@@ -118,3 +118,18 @@ export function nextSentence(words: string[], pos: number): number | null {
   return null;
 }
 
+/**
+ * The pages an answer taught from, in the order it reached them: where its first part played (its home,
+ * src/agent/twoStage.ts), then every page it moved to or pointed at. What the trail header and the
+ * session list record (was: the page the question was asked on, "p.1" for an answer taught on p87,
+ * and only the pages that began a part, so a walk 86 → 87 → 88 was recorded as 86). Board sections and
+ * their `near=` are not counted: they explain a page, they do not teach on it.
+ */
+export function taughtPages(script: ParsedScript, parts: Part[]): number[] {
+  const out: number[] = parts.length ? [parts[0].page] : [];
+  for (const { action: a } of script.acts) {
+    if (a.kind === 'sketch' || !('page' in a) || typeof a.page !== 'number') continue;
+    if (!out.includes(a.page)) out.push(a.page);
+  }
+  return out;
+}

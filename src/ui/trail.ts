@@ -16,7 +16,7 @@ export const ASIDE_HEAD_H = 40;
 export type TrailHead = {
   el: HTMLElement;
   h: number;
-  /** "p.14 · 0:52": where it was asked and how long it played. */
+  /** "p.86–88 · 0:52": the pages it taught from (pagesLabel) and how long it played. */
   setMeta(meta: string): void;
 };
 
@@ -114,4 +114,17 @@ export function contTag(o: { num: string; question: string; onGo(): void }): Con
       btn.setAttribute('aria-label', `Answer ${o.num}, part ${i}${total ? ` of ${total}` : ''}: ${o.question}. Go to its start`);
     },
   };
+}
+
+/** "p.86–88", "p.12, 40–41": an answer's taught pages as the header's meta names them (ascending, runs joined). */
+export function pagesLabel(pages: readonly number[]): string {
+  const ps = [...new Set(pages)].sort((a, b) => a - b);
+  const runs: string[] = [];
+  for (let i = 0; i < ps.length; i++) {
+    let j = i;
+    while (j + 1 < ps.length && ps[j + 1] === ps[j] + 1) j++;
+    runs.push(j > i ? `${ps[i]}–${ps[j]}` : `${ps[i]}`);
+    i = j;
+  }
+  return `p.${runs.join(', ')}`;
 }
