@@ -5,6 +5,7 @@ import { BAR_LABEL, PLACEHOLDER, type BarMode } from './barMode';
 import { TranscriptPanel, type Transcript } from './Transcript';
 import type { LiveTranscript } from './transcriptLive';
 import './ui.css';
+import { setTypeSink } from './typeAhead';
 
 const isTypingTarget = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
@@ -98,6 +99,24 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
   });
   const inputRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (focusSeq) inputRef.current?.focus(); }, [focusSeq]);
+  // Typing with the bar unfocused (ui/typeAhead.ts): the text lands here, the bar focused, as if typed in it.
+  const textRef = useRef(text);
+  textRef.current = text;
+  const sinkOk = useRef(true);
+  sinkOk.current = !(blocked && !busy);
+  useEffect(() => {
+    setTypeSink((t) => {
+      const el = inputRef.current;
+      if (!el || !sinkOk.current) return false;
+      const v = textRef.current + t;
+      el.focus();
+      textRef.current = v;
+      setText(v);
+      setTyping(v);
+      return true;
+    });
+    return () => setTypeSink(null);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const typingRef = useRef(false);
   const setTyping = (v: string) => {
     const t = v.trim().length > 0;
