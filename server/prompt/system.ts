@@ -80,8 +80,10 @@ import { BOARD_W } from '../../src/svgboard/wire.ts';
  * p6.15 (2026-11-02): a shape too narrow for its label still gets the whole label centred on it; the engine
  * sets it beside the shape (settle.ts). On the Bayes board the model, told to keep a label where its line
  * fits, split "95" (in a thin bar segment) from "sick" (a separate text under the bar): two labels.
+ * p6.16 (2026-11-03, round 4 integration): the two p6.15 notes above were separate branches, each run as
+ * p6.15 with a different prompt; merged into one prompt, versioned anew so no run label names two prompts.
  */
-export const PROMPT_VERSION = 'p6.15';
+export const PROMPT_VERSION = 'p6.16';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no

@@ -17,9 +17,13 @@
 // offered "Back to answer" to a student who had left it. The scout, which already reads the question in
 // its context, now reads the paused answer too (PAUSED ANSWER) and says first whether the student wants to
 // come back to it (aside) or wants this instead (new). Decided by intent, not by any phrase.
+// s2.11 (2026-11-03, round 4 integration): the three s2.10 changes above were made on separate branches,
+// each recorded as s2.10 with a different prompt; merged into one prompt (JSON order route → relation →
+// pages → opener → find → plan, the opener's tag rule both silent and anchored to home), versioned anew so
+// no run label names two prompts.
 
 /** Bump on any change (part of the scout's cache key). */
-export const SCOUT_VERSION = 's2.10';
+export const SCOUT_VERSION = 's2.11';
 
 export const SCOUT_SYSTEM = `You open a tutor's answer and plan the rest. A student is reading a document and asks about it; the tutor answers by talking while it points at the document's own pages and draws beside them. You choose the pages the answer teaches from, then write the first words the student hears, then the plan; the tutor continues from your opener.
 

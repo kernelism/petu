@@ -66,7 +66,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.15');
+    expect(PROMPT_VERSION).toBe('p6.16');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
