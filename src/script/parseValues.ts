@@ -7,6 +7,7 @@
 //   {{contrast of=path v=30 "faster"}}  {{limit of=path k=0 dur=4 show=top}}  {{beforeafter of=v rate=0.1}}
 import type { FindAction, FindMode, MoveAction, TweenAction, ValAction } from './types';
 import { normName, NAME } from './pointExpr';
+import { readFormat } from '../values/format';
 
 /** A value reference: an id, optionally a part (`[2]`, `[1,2]`), optionally a field (`.x`, `.c`, `.price`). */
 const VAL_REF = /^([A-Za-z][A-Za-z0-9_′]{0,23})(\[\d{1,2}(?:,\d{1,2})?\])?(?:\.([A-Za-z_][A-Za-z0-9_ ]{0,23}))?$/;
@@ -25,9 +26,11 @@ const num = (s?: string) => (s == null || s === '' ? undefined : Number.isFinite
 export function parseVal(args: Record<string, string>): ValAction | null {
   const r = ref(args.id);
   if (!r) return null;
-  const fmt = num(args.fmt ?? args.dp);
-  if ((args.fmt ?? args.dp) != null && !(fmt != null && Number.isInteger(fmt) && fmt >= 0 && fmt <= 6)) return null;
-  const as = args.as?.toLowerCase();
+  // Any notation of decimals (values/format.ts); a percent one ("0%") says the value as a percent.
+  const f = readFormat(args.fmt ?? args.dp);
+  if ((args.fmt ?? args.dp) != null && !(f && f.dp <= 6)) return null;
+  const fmt = f?.dp;
+  const as = args.as?.toLowerCase() ?? (f?.percent ? 'percent' : undefined);
   if (as != null && as !== 'percent' && as !== 'abs') return null;
   // x=: the plot's value at x (a slip for {{find … x=}}); a field other than .x/.y, or a part, is no plot.
   const x = args.x != null ? formula(args.x) : undefined;
