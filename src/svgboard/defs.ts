@@ -36,7 +36,8 @@ function definitions(src: string): Def[] | null {
     if (a('data-axes') != null && a('data-box') != null) out.push({ kind: 'axes', name: a('data-axes')!, el: `<g${attrs({ 'data-axes': a('data-axes'), 'data-x': a('data-x'), 'data-y': a('data-y'), 'data-box': a('data-box') })}/>` });
     if (name && (a('data-fn') != null || a('data-param') != null)) out.push({ kind: 'curve', name, el: `<path${attrs({ 'data-name': name, 'data-fn': a('data-fn'), 'data-param': a('data-param'), 'data-t': a('data-t'), 'data-x': a('data-x') ?? a('data-domain'), 'data-axes': ax })} fill="none"/>` });
     if (name && a('data-at') != null) out.push({ kind: 'point', name, el: `<circle${attrs({ 'data-name': name, 'data-at': a('data-at') })} r="0"/>` });
-    if (name && a('data-val') != null && /^(text|tspan)$/i.test(el.nodeName)) out.push({ kind: 'val', name, el: `<text${attrs({ 'data-name': name, 'data-val': a('data-val'), 'data-fmt': a('data-fmt') })}/>` });
+    // A readout keeps its text's template and unit: a later {{val}} says it with the same affixes ("$10").
+    if (name && a('data-val') != null && /^(text|tspan)$/i.test(el.nodeName)) out.push({ kind: 'val', name, el: `<text${attrs({ 'data-name': name, 'data-val': a('data-val'), 'data-fmt': a('data-fmt'), 'data-unit': a('data-unit'), 'data-tpl': a('data-tpl') ?? (el.textContent || null) })}/>` });
   }
   return out;
 }

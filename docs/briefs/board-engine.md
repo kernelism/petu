@@ -9,7 +9,7 @@ computes every coordinate and every number.
 | Path | What it is |
 |---|---|
 | `src/script/types.ts` | The grammar as types: `Shape`, `KitBlock`, `KitVerb`, `RefAction`, `LayoutAction`, `RawAction` (pre-resolve) vs `Action`. Coords: page 0–1000 × 0–1000 (`p=N`), region 0–1000 × 0–700 (`on=id`). |
-| `src/script/parser.ts` | `ScriptParser`: incremental; emits `word` / `action` / `end`. Tags may split across chunks; `MAX_TAG_CHARS` 800; newline or a second `{{` fails the tag → its text becomes narration. A page mark's quote the sentence uses as a word (`The {{highlight p=4 "filter kernel"}} supplies…`) is spoken right after the tag (`src/script/quoteWords.ts`: after a word that needs a noun, or opening a sentence before a lowercase word; never doubled, never for pointers or quotes over 4 words), so speech, captions, the gate and the transcript all have it. |
+| `src/script/parser.ts` | `ScriptParser`: incremental; emits `word` / `action` / `end`. Tags may split across chunks; `MAX_TAG_CHARS` 800; newline or a second `{{` fails the tag → its text becomes narration. A tag is silent: a page mark's quote is never spoken. When the sentence uses the tag as its noun (`The {{highlight p=4 "…"}} supplies…`), the parser says a deictic at it instead, chosen by the word before it and never by the quote (`src/script/quoteWords.ts`: "This supplies…" in an article's place, "the page's highlighted line", "by this"; a mark after an article fires on the article), so speech, captions, the gate and the transcript all have it. |
 | `src/script/tokenize.ts` | Tag body → `{name, args, quotes, flags, rawArgs}`. |
 | `src/script/parseTag.ts` | `parseTag(body)`: one `switch` on the tag name → `RawAction` or null (malformed = skipped + `console.warn`). |
 | `src/script/parseKit.ts` | `parseKitBlock` / `parseKitVerb`: grid, bars, table, scatter, calc, fit; step, sweep, set, band, dist, col, level. |
@@ -100,7 +100,7 @@ and draws it. The tag kit above stays for the demo and dev scripts (the `tags` p
   `onx(P)`, `ony(P)`, `mid(P,Q)`, a named point (`id`/`data-name`), or `x, y` formulas); `<line
   data-from= data-to=>`, `data-points="P; Q; R"`; `data-set="cx: 300+50*cos(th); width: 28*I"`;
   `data-rotate="deg, cx, cy"`, `data-translate`; computed text `<text data-val="xof(qd)-xof(qs)"
-  data-fmt="0" data-unit="flats">` (a `{}` in the words takes the number). `xof(P)`/`yof(P)` read a
+  data-fmt="0" data-unit="flats">` (a `{}` in the words takes the number; its affixes are said with it). `xof(P)`/`yof(P)` read a
   point's data coordinates in any formula. What does not resolve is hidden (`data-bad`) and flagged by
   the gate (check `svg`), never drawn wrong. `GateState.apply('svg')` adds every data-val as a
   computed value (the number check) and re-resolves after a tween.
@@ -108,13 +108,21 @@ and draws it. The tag kit above stays for the demo and dev scripts (the `tags` p
   every bound group each frame (`refreshData`, via `KitStore.onConsts`; `KitStore.svgBox` frames it).
   `data-ghost` on a moving element/group leaves a 28% copy of where it started (marks only, no text);
   `data-trace` on a moving point leaves its path (accent, 45%).
-- **Legibility floor** (renderer): no board text under `LEGIBLE_PX` (12) on screen. A label the raise
-  leaves no room is settled, not shrunk (`settle.ts`): a nudge of ≤ ½ em, a two-line wrap at its middle
-  word (a row of labels keeps its places), a nudge of ≤ 2 em; only collisions the raise created count
-  (a label the model put on its own curve stays). Evidence: docs/superpowers/reference/lane-legibility.md.
+- **Legibility floor** (renderer): no board text under `LEGIBLE_PX` (12) on screen. A text with no room
+  moves, never shrinks (`settle.ts`, gate and renderer alike): one collision model for every text on the
+  board, the model's labels, data-at labels, the engine's tick numbers and earlier groups' text alike.
+  Containment always counts (canvas edge; a text half across a rect/circle/ellipse; an axis's number band,
+  owned by the frame below its x axis for what is anchored on that axis), so do earlier groups; within a
+  group a pair counts unless the model wrote both ends where they are and they already met (a label on
+  its own curve stays): anything engine-placed counts from either side. The freest text moves (model x/y,
+  then data-at by dx/dy; an engine tick never). A label too wide for its shape is placed whole beside it
+  (leader when not adjacent, ink when it leaves a fill), never wrapped and its shape never grown; other
+  labels nudge ≤ ½ em, a free row label may wrap at its middle word, then nudge ≤ 2 em.
+  Evidence: docs/superpowers/reference/lane-legibility.md; the price-ceiling and Bayes boards (2026-11-02).
 - **Polish** (`src/svgboard/polish.ts`, gate and renderer alike): text raised to the board minimum
-  reflows: tspan steps scale, a line wider than its card wraps at words, stacked lines are pushed
-  down, the card grows; a label crossed by its own group's stroke is nudged off (≤ 1.25 em, never
+  reflows: tspan steps scale, stacked lines are pushed down, a card of two or more lines grows to hold
+  them (a single label is never wrapped and its shape never grown: settle places it whole); engine-placed
+  text (data-at, ticks) is left to settle; a label crossed by its own group's stroke is nudged off (≤ 1.25 em, never
   onto text). Sanitize: text opacity ≥ 0.8 and never lighter than the muted ink; stroke opacity ≥ 0.4;
   large fills (rect sides > 40, areas > 2400 u²) softened to a wash (accent 0.2, grey 0.16); bars
   and dots stay solid.
@@ -178,8 +186,15 @@ Prevention by construction: the narration never types a number the engine comput
   names); `shares` are kept as the board shows them (normalised to sum to 1; `set` takes raw values); `plotSrc` keeps plot tags so curves are recomputed with the current constants.
 - **`{{val id=… fmt=1 as=percent|abs}}`** (`src/script/parseValues.ts`): the parser turns it into a
   caption word with the engine's value at that point of the stream (`GateState.say` → `src/values/say.ts`:
-  the board's own `fmt`, plus a spoken form for TTS). It glues to touching text (`${{val id=c}}.` →
-  `$4.5.`) and is chunk-independent. Refs: a block's single value, a calc, a part (`v[2]`, `g[1,2]`,
+  the board's own `fmt`, plus a spoken form for TTS). A readout is said as the board writes it: one
+  reader of its text template (`src/values/quantity.ts readTemplate`) gives what the board draws and what
+  is said, so `${}` is said "$10" (spoken "ten dollars"), `{} units` "100 units", `{}%` "12%"; a sign in
+  the template is wording, not said ("price −${}" → "falls by $1"). The quantity takes what is glued to
+  `{}`, else the next word when it is a unit (`src/values/units.ts`, the one unit vocabulary) or the
+  template's last word. It glues to touching text (`${{val id=c}}.` → `$4.5.`) and never doubles an affix
+  the narration writes itself (`{{val id=t}} seconds`, `${{val id=p}}`, `{{val id=r}}%`: the parser waits
+  for the next words, `quantity.ts inSentence`); it is chunk-independent. The number check reads a
+  narration number's unit with the same rule (`unitSaid`: "$10" is in dollars, like "10 dollars"). Refs: a block's single value, a calc, a part (`v[2]`, `g[1,2]`,
   `t[3].c` / `t[3].price`), a constant, a readout (`E`, `E.x`, `E.y`). **Unresolved → the caption shows
   `UNBOUND_TEXT` (an em dash), never a guessed number**; the director records the val as skipped
   (`unbound value …`) and the gate fails its beat. A val must come after what it names (no

@@ -11,6 +11,10 @@ import './ui.css';
  * During an aside the row belongs to it, a quiet strip: "Side question" and "Back to answer" (Return),
  * the one obvious action. Its pause, replay and speed show only while the dock is hovered or focus is
  * in the row (ui.css, no JS: Tab still reaches them); no stop, Esc and Return close the aside.
+ * The scout routes a question asked mid-answer (src/agent/route.ts), and when it cannot tell it opens an
+ * aside; "Answer instead", a quiet text button before the way back, is the student's word over it: the
+ * paused answer ends where it is and the side question is asked again as the answer. One way only: an
+ * answer replaced by mistake is still on the board's trail, its head replays it.
  */
 export type PartsView = {
   /** Part titles. Two or more show the rail; with one, `label` fills the title slot. */
@@ -29,8 +33,8 @@ export type PartsView = {
   /** Steps to the next speed (wrapping round). */
   onSpeed(): void;
   onStop(): void;
-  /** An aside is open over the paused answer: the way back to it. */
-  aside?: { onResume(): void };
+  /** An aside is open over the paused answer: the way back to it, and the way to drop it for the side question. */
+  aside?: { onResume(): void; onInstead?(): void };
 };
 
 /** "1×", "1.25×", "0.75×". */
@@ -64,6 +68,11 @@ export function PartsBar({ titles, label, current, progress, paused, speed, onJu
       <div className={`pb is-aside${paused ? ' is-paused' : ''}`} role="toolbar" aria-label="Side question playback">
         <span className="pb-side">Side question</span>
         <span className="pb-more">{play}{replay}{speedBtn}</span>
+        {aside.onInstead && (
+          <button type="button" className="pb-instead" tabIndex={0} onClick={aside.onInstead} title="End the paused answer here and answer this question instead">
+            Answer instead
+          </button>
+        )}
         <button type="button" className="pb-resume" tabIndex={0} onClick={aside.onResume} title="Back to the answer (Return)">
           Back to answer <span className="pb-resume-k" aria-hidden="true"><CornerDownLeft size={12} strokeWidth={2} /></span>
         </button>

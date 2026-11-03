@@ -15,15 +15,16 @@ import { blockPart } from '../script/pointExpr';
 import type { FindAction, KitSource, MoveAction, RawAction, ValAction } from '../script/types';
 import { Figures, type Grounding } from '../geometry/resolve';
 import { curveOf, read, yAt, type Curve, type FitData, type Reading } from '../values/readout';
-import { sayNumber, spokenOf } from '../values/say';
+import { sayNumber, type Said } from '../values/say';
+import { NO_AFFIX, type Affix } from '../values/quantity';
 import { latestCharts } from '../agent/context/charts';
-import { newScope, resolveData, type DataScope } from '../svgboard/data';
+import { fmtValue, newScope, resolveData, type DataScope } from '../svgboard/data';
 import { parseGroup } from '../svgboard/sanitize';
 
 export type ValueSource = 'page' | 'question' | 'literal' | 'const' | 'computed' | 'derived';
 export type Value = { v: number; source: ValueSource; /** block id, page, const name, an svg readout's id (else 'svg')… */ of: string; beat: number; /** An svg readout's own words for the number (data.ts valueLabel). */ label?: string; row?: { table: string; r: number; cells: number[] };
   /** An svg board readout (data-val): the number as the board writes it. Spoken numbers are held to these (check.ts boardNumbers). */ shown?: string;
-  /** An svg readout's unit and its text's words (data.ts valueUnit, valueWords): what ties a spoken number to it. */ unit?: string; words?: string[] };
+  /** An svg readout's unit and its text's words (quantity.ts readTemplate, data.ts valueWords): what ties a spoken number to it. */ unit?: string; words?: string[] };
 
 type Block = {
   id: string; kind: string; vals?: number[][]; full?: number[][]; src?: KitSource; tab?: { heads: string[] }; computedCols?: Set<number>; region?: string;
@@ -56,6 +57,9 @@ export const UNBOUND_TEXT = '—';
  * A readout's name as {{val id=…}} reaches it: the tag parsers turn '-' into '_' (eid), so an svg text
  * id="height-low" must be found as height_low (eval D20, 2026-11-01: four readouts said as unbound).
  */
+/** An svg board readout, as last resolved: its value, its number as the board writes it, the affixes around it and its data-fmt. */
+type Readout = { v: number; text: string; affix?: Affix; fmt?: string };
+
 const readoutKey = (id: string) => id.toLowerCase().replace(/-/g, '_');
 
 export class GateState {
@@ -82,7 +86,7 @@ export class GateState {
    * `{{val id=t}}` says one exactly as the board writes it, so the word heard and the number seen are one
    * (C4, 2026-10-31: the narration computed its numbers apart from the board's, and drifted).
    */
-  readonly readouts = new Map<string, { v: number; text: string }>();
+  readonly readouts = new Map<string, Readout>();
   /** Constants a later definition tried to change (the first value stands): `k=5 (it is 2)`. */
   readonly redefined: string[] = [];
   private svgGroups: Element[] = [];
@@ -311,7 +315,7 @@ export class GateState {
    * The engine's value for a {{val}} reference: a readout (E, E.x, E.y), a constant, a calc's result,
    * a one-value block, or a part (v[2], g[1,2], t[3].c / t[3].price). A string says why not.
    */
-  value(ref: string): { v: number; dp?: number; /** An svg readout's board text. */ text?: string } | string {
+  value(ref: string): { v: number; dp?: number } & Partial<Readout> | string {
     const m = /^([^.[]+)(\[[^\]]+\])?(?:\.(.+))?$/.exec(ref);
     if (!m) return `bad reference ${ref}`;
     const [, id, idx, field] = m;
@@ -322,7 +326,7 @@ export class GateState {
       return Number.isFinite(v) ? { v } : `${ref}: no such value`;
     }
     const ro = !idx && !field ? this.readouts.get(readoutKey(id)) : undefined;
-    if (ro && !this.blocks.has(id)) return { v: ro.v, text: ro.text };
+    if (ro && !this.blocks.has(id)) return ro;
     const b = this.blocks.get(id);
     if (!b && !idx && !field && id.toLowerCase() in this.consts) return { v: this.consts[id.toLowerCase()] };
     if (!b) return `unknown ${id}`;
@@ -357,15 +361,19 @@ export class GateState {
   }
 
   /**
-   * How a {{val}} is said: the caption text (the board's number format, or fmt= decimals; as=percent
-   * multiplies by 100 and adds %; as=abs drops the sign) and its spoken form (for TTS). Null when the
-   * engine has no such value: the caller shows UNBOUND_TEXT and the gate fails the beat.
+   * How a {{val}} is said: its number (the board's number format, or fmt= decimals; as=percent
+   * multiplies by 100 and adds %; as=abs drops the sign) with the affixes the board writes around it
+   * (values/say.ts Said; the parser drops one the narration writes itself, quantity.ts inSentence). Null
+   * when the engine has no such value: the caller shows UNBOUND_TEXT and the gate fails the beat.
    */
-  say(a: ValAction): { said: string; spoken: string } | null {
+  say(a: ValAction): Said | null {
     const r = this.value(a.ref);
     if (typeof r === 'string') return null;
-    // An svg readout is said as the board writes it (its data-fmt), unless the tag asks for a format.
-    if (r.text != null && a.fmt == null && a.as == null) return { said: r.text, spoken: spokenOf(r.text) };
+    // An svg readout is said as the board writes it: its data-fmt and its text's affixes ("$10", "100 units").
+    if (r.text != null && a.as !== 'percent') {
+      const num = a.fmt == null && a.as == null ? r.text : fmtValue(a.as === 'abs' ? Math.abs(r.v) : r.v, a.fmt != null ? String(a.fmt) : r.fmt);
+      return { num, ...(r.affix ?? NO_AFFIX) };
+    }
     return sayNumber(r.v, { fmt: a.fmt ?? r.dp, as: a.as });
   }
 
@@ -448,7 +456,7 @@ export class GateState {
     for (const x of this.svg.values) {
       if (!Number.isFinite(x.v)) continue;
       this.values.push({ v: x.v, source: 'computed', of: x.id ?? 'svg', beat, shown: x.text, ...(x.label ? { label: x.label } : {}), ...(x.unit ? { unit: x.unit } : {}), ...(x.words ? { words: x.words } : {}) });
-      if (x.id) this.readouts.set(readoutKey(x.id), { v: x.v, text: x.text });
+      if (x.id) this.readouts.set(readoutKey(x.id), { v: x.v, text: x.text, ...(x.affix ? { affix: x.affix } : {}), ...(x.fmt != null ? { fmt: x.fmt } : {}) });
     }
   }
 

@@ -13,7 +13,7 @@ import { enginePlaced, hasData, isMarker, newScope, resolveData, type DataScope 
 import { prepareText } from './polish';
 import { FONT_FIGURE } from './style';
 import { DEFS_ATTR } from './wire';
-import { settle, type Drawn } from './settle';
+import { axisBands, settle, type Band, type Drawn } from './settle';
 
 export type Pt = { x: number; y: number };
 export type Box = { x: number; y: number; w: number; h: number };
@@ -21,7 +21,8 @@ export type TextBox = Box & { text: string; fs: number; group: string; /** The <
   /** The curves its data-at point lies on (cross(d,s) → d, s): it labels that point, so touching them is by design. */ on?: string[] };
 export type Seg = { a: Pt; b: Pt; group: string; /** Part of a tiny shape (a dot, a tick): never counts as crossing text. */ tiny?: boolean; /** The named data curve it is part of (data-fn / data-param). */ curve?: string };
 export type GroupGeo = { id?: string; texts: TextBox[]; segs: Seg[]; box: Box | null; error?: string; /** Data attributes that did not resolve (the element is not drawn). */ problems?: string[];
-  /** What the grounded rule found (grounded below): flags fail the beat, notes are logged. */ ground?: Grounded };
+  /** What the grounded rule found (grounded below): flags fail the beat, notes are logged. */ ground?: Grounded;
+  /** Its frames' number bands (settle.ts axisBands): later groups keep out of them. */ bands?: Band[] };
 export type SvgFlag = { check: 'svg'; detail: string };
 
 export type M = [number, number, number, number, number, number];
@@ -262,7 +263,8 @@ export function groupGeometry(src: string | Element, minFont = 16, scope?: DataS
   walk(g, I);
   const fin = pts.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
   const box = fin.length ? (() => { const x = Math.min(...fin.map((p) => p.x)), y = Math.min(...fin.map((p) => p.y)); return { x, y, w: Math.max(...fin.map((p) => p.x)) - x, h: Math.max(...fin.map((p) => p.y)) - y }; })() : null;
-  return { ...(id ? { id } : {}), texts, segs, box, ...(problems.length ? { problems } : {}), ...(ground && (ground.notes.length || ground.flags.length) ? { ground } : {}) };
+  const bands = axisBands(g, texts.length ? Math.min(...texts.map((t) => t.fs)) : minFont);
+  return { ...(id ? { id } : {}), texts, segs, box, ...(problems.length ? { problems } : {}), ...(ground && (ground.notes.length || ground.flags.length) ? { ground } : {}), ...(bands.length ? { bands } : {}) };
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -364,7 +366,7 @@ export function segHitsBox(a: Pt, b: Pt, r: Box): boolean {
 /** The core of a text box a stroke must not cross (estimates run a little wide and tall). */
 export const core = (t: TextBox): Box => ({ x: t.x + Math.min(t.w * 0.12, t.fs * 0.3), y: t.y + t.h * 0.22, w: Math.max(0, t.w - 2 * Math.min(t.w * 0.12, t.fs * 0.3)), h: t.h * 0.56 });
 
-export type BoardState = { w: number; h: number; ids: Set<string>; texts: TextBox[]; segs: Seg[] };
+export type BoardState = { w: number; h: number; ids: Set<string>; texts: TextBox[]; segs: Seg[]; bands?: Band[] };
 export const newBoardState = (w = 1000, h = 700): BoardState => ({ w, h, ids: new Set(), texts: [], segs: [] });
 /** The bottom may grow past the plan's height by this much (the board grows with it); beyond it, the group is outside. */
 export const GROW = 1.6;
@@ -383,11 +385,11 @@ export function checkGroups(srcs: string[], board: BoardState, minFont = 16, sco
   const flags: SvgFlag[] = [];
   const notes: string[] = [];
   const ids = new Set(board.ids);
-  const texts = [...board.texts], segs = [...board.segs];
+  const texts = [...board.texts], segs = [...board.segs], bands = [...(board.bands ?? [])];
   const geos: GroupGeo[] = [];
   let grow: number | undefined;
   for (const src of srcs) {
-    const g = groupGeometry(src, minFont, scope, { prior: { texts: [...texts], segs: segs.filter((s) => !s.tiny) }, w: board.w });
+    const g = groupGeometry(src, minFont, scope, { prior: { texts: [...texts], segs: segs.filter((s) => !s.tiny), bands: [...bands] }, w: board.w });
     geos.push(g);
     const name = g.id ? `group ${g.id}` : 'a group';
     if (g.error) { flags.push({ check: 'svg', detail: `${name}: ${g.error}` }); continue; }
@@ -424,13 +426,14 @@ export function checkGroups(srcs: string[], board: BoardState, minFont = 16, sco
     for (const t of g.texts) for (const s of segs) test(t, s);
     for (const s of g.segs) for (const t of texts) test(t, s);
     segs.push(...g.segs);
+    bands.push(...(g.bands ?? []));
   }
   return { flags, notes, geos, ...(grow ? { grow } : {}), scope };
 }
 
 /** Adds an accepted beat's groups to the board state. */
 export function acceptGroups(board: BoardState, geos: GroupGeo[], grow?: number): void {
-  for (const g of geos) { if (g.error) continue; if (g.id) board.ids.add(g.id); board.texts.push(...g.texts); board.segs.push(...g.segs); }
+  for (const g of geos) { if (g.error) continue; if (g.id) board.ids.add(g.id); board.texts.push(...g.texts); board.segs.push(...g.segs); if (g.bands?.length) board.bands = [...(board.bands ?? []), ...g.bands]; }
   if (grow && grow > board.h) board.h = grow;
 }
 

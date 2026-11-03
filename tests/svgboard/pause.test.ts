@@ -3,7 +3,7 @@
 // an aside pause the session; a group in flight must stand still mid-stroke, wait to start, and on
 // resume go on from where it stood, still on its words.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { drawGroup, mountBoard, type SvgBoard } from '../../src/svgboard/render';
+import { drawGroup, mountBoard, WITHDRAW, type SvgBoard } from '../../src/svgboard/render';
 import { drawStrokes } from '../../src/ink/agent/animate';
 import type { BeatWord } from '../../src/playback/pace';
 
@@ -119,6 +119,56 @@ describe('an svg group follows its answer\'s pause', () => {
     expect(offset(s.one)).toBe('');
     expect(offset(s.two)).toBe('');
     await done;
+  });
+});
+
+describe('a replaced answer withdraws its drawing in progress (src/agent/route.ts "new")', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (f: FrameRequestCallback) => setTimeout(() => f(performance.now()), 16));
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+  });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); document.body.innerHTML = ''; });
+
+  it('a withdrawing stop while paused mid-group takes the half-drawn group off the board, not lands it', async () => {
+    const s = setup(), nar = narration(), stop = new AbortController();
+    const done = drawGroup(s.b, s.g, 'grp', { signal: new AbortController().signal, stop: stop.signal, color: '#000', beat: nar.beat, paused: nar.paused });
+    await vi.advanceTimersByTimeAsync(600);
+    nar.pause();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(s.g.isConnected).toBe(true);
+    stop.abort(WITHDRAW);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(s.g.isConnected).toBe(false);
+    expect(s.b.groups.has('grp')).toBe(false);
+    await done;
+  });
+
+  it('the group it replaced (same id) comes back as itself; a finished group stays', async () => {
+    const s = setup();
+    const old = s.b.root.ownerDocument.createElementNS(SVG, 'g');
+    old.setAttribute('id', 'b1-grp');
+    await drawGroup(s.b, old, 'grp', { signal: AbortSignal.abort(), color: '#000' });
+    const nar = narration(), stop = new AbortController();
+    const done = drawGroup(s.b, s.g, 'grp', { signal: new AbortController().signal, stop: stop.signal, color: '#000', beat: nar.beat, paused: nar.paused });
+    await vi.advanceTimersByTimeAsync(600);
+    expect(old.getAttribute('data-ghost')).toBe('');
+    stop.abort(WITHDRAW);
+    await vi.advanceTimersByTimeAsync(300);
+    await done;
+    expect(s.b.groups.get('grp')).toBe(old);
+    expect(old.getAttribute('id')).toBe('b1-grp');
+    expect(old.hasAttribute('data-ghost')).toBe(false);
+    expect(old.hasAttribute('opacity')).toBe(false);
+    // A group drawn to its end is what the student saw whole: a withdrawing stop leaves it.
+    const t = setup(), n2 = narration(), stop2 = new AbortController();
+    const d2 = drawGroup(t.b, t.g, 'two', { signal: new AbortController().signal, stop: stop2.signal, color: '#000', beat: n2.beat, paused: n2.paused });
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(offset(t.two)).toBe('');
+    stop2.abort(WITHDRAW);
+    await vi.advanceTimersByTimeAsync(300);
+    await d2;
+    expect(t.g.isConnected).toBe(true);
   });
 });
 

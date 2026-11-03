@@ -641,6 +641,11 @@ describe('Lessons v3: two stages', () => {
     expect(SCOUT_SYSTEM).toMatch(/a fact the pages state, not a number/);
   });
 
+  it('scout s2.10: a tag is silent, so the opener reads whole without its tags (founder, bayes.pdf)', () => {
+    expect(SCOUT_SYSTEM).toMatch(/A tag is silent: the student hears only your words, never a tag's quote, so every sentence must read whole with its tags taken out/);
+    expect(SCOUT_SYSTEM).toMatch(/never "The \{\{highlight p=N "half-life"\}\} sets how fast it fades"/);
+  });
+
   const sreq = { question: 'How does it work?', docName: 'd.pdf', docHash: 'h', numPages: 12, page: 3, digest: 'DECK d.pdf\np1: a', prior: { q: 'before?', a: 'x'.repeat(2000), page: 2 },
     pageText: 'PAGE 3 (visible; 16:9 slide; image attached)\nt1 60 40–300: Three' };
   const scfg: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 600 };
@@ -657,8 +662,9 @@ describe('Lessons v3: two stages', () => {
     expect(tail.length).toBeLessThan(900); // the previous answer is trimmed
     expect(tail.endsWith('QUESTION: How does it work?')).toBe(true);
     expect(b).toMatchObject({ stream: true, max_output_tokens: 600, reasoning: { effort: 'none' }, prompt_cache_key: scoutCacheKey(), text: { format: { type: 'json_schema', strict: true } } });
-    // The opener is first in the schema: it streams first.
-    expect(Object.keys(b.text.format.schema.properties)).toEqual(['relation', 'opener', 'pages', 'find', 'plan']);
+    // The route and relation (a few tokens) come first, then the pages (they decide where the opener is
+    // spoken: moment.ts homePage), then the opener: it streams before the plan.
+    expect(Object.keys(b.text.format.schema.properties)).toEqual(['route', 'relation', 'pages', 'opener', 'find', 'plan']);
     // The prewarm is the same prefix (and the same output format, which is part of the prompt).
     const pre = buildScoutRequest(sreq, scfg, true) as any;
     expect(pre.input).toEqual(b.input.slice(0, 2));
@@ -698,6 +704,55 @@ describe('Lessons v3: two stages', () => {
     expect(b.input.slice(0, 2)).toEqual((buildScoutRequest({ ...sreq, page: 12, prior: undefined }, scfg) as any).input.slice(0, 2));
   });
 
+  it('route: a question asked mid-answer gets the paused answer in the tail (the cached prefix is untouched); the schema writes the route first', () => {
+    const b = buildScoutRequest({ ...sreq, paused: 'The paused answer was to: "Why?"\nSaid so far: "First, the base rate"' }, scfg) as any;
+    const tail = b.input[2].content[0].text as string;
+    expect(tail).toContain('PAUSED ANSWER: the student typed this question while your answer below was playing');
+    expect(tail).toContain('Said so far: "First, the base rate"');
+    expect(tail.endsWith('QUESTION: How does it work?')).toBe(true);
+    expect(b.input.slice(0, 2)).toEqual((buildScoutRequest(sreq, scfg) as any).input.slice(0, 2));
+    expect((buildScoutRequest(sreq, scfg) as any).input[2].content[0].text).not.toContain('PAUSED ANSWER');
+    // One schema for every question (a second would miss the cached prefix), the route its first field.
+    expect(Object.keys(b.text.format.schema.properties)[0]).toBe('route');
+    expect(b.text.format.schema.required).toContain('route');
+    expect(b.text.format).toEqual((buildScoutRequest(sreq, scfg) as any).text.format);
+  });
+
+  it('route: streamed as its own event before any opener, only when the request had a paused answer', async () => {
+    const obj = { route: 'new', relation: 'new-topic', opener: 'The last page plots the posterior.', pages: [5], find: [], plan: 'p' };
+    const paused = fakeFetch([{ chunks: scoutSse(obj, 4) }]);
+    const ev: ScoutEvent[] = [];
+    const r = await scoutStream({ ...sreq, paused: 'The paused answer was to: "x"' }, scfg, deps(paused.f), (e) => ev.push(e));
+    expect(ev.map((e) => e.t)).toEqual(['route', 'opener', 'scout', 'end']);
+    expect(ev[0]).toMatchObject({ t: 'route', route: 'new' });
+    expect(ev[2]).toMatchObject({ t: 'scout', route: 'new' });
+    expect(r.route).toBe('new');
+    // Not mid-answer: the model still writes the field (one schema), and nothing carries it.
+    const plain = fakeFetch([{ chunks: scoutSse(obj, 4) }]);
+    const ev2: ScoutEvent[] = [];
+    const r2 = await scoutStream(sreq, scfg, deps(plain.f), (e) => ev2.push(e));
+    expect(ev2.map((e) => e.t)).toEqual(['opener', 'scout', 'end']);
+    expect(ev2[1]).not.toHaveProperty('route');
+    expect(r2.route).toBeUndefined();
+    // A value outside the enum is no route.
+    const bad = fakeFetch([{ chunks: scoutSse({ ...obj, route: 'replace' }, 4) }]);
+    const ev3: ScoutEvent[] = [];
+    await scoutStream({ ...sreq, paused: 'p' }, scfg, deps(bad.f), (e) => ev3.push(e));
+    expect(ev3.map((e) => e.t)).toEqual(['opener', 'scout', 'end']);
+  });
+
+  it('route: an aside stays on the page asked on (its route, written before the pages, pins it); a new route travels', async () => {
+    const obj = { route: 'aside', relation: 'new-topic', pages: [8, 9], opener: '{{circle p=3 mark=#d1}} A ceiling holds the price down.', find: [], plan: 'p' };
+    const aside = fakeFetch([{ chunks: scoutSse(obj, 4) }]);
+    const ev: ScoutEvent[] = [];
+    const r = await scoutStream({ ...sreq, paused: 'The paused answer was to: "x"' }, scfg, deps(aside.f), (e) => ev.push(e));
+    expect(ev.map((e) => e.t)).toEqual(['route', 'pages', 'opener', 'scout', 'end']);
+    expect(r.opener).toMatch(/^\{\{circle p=3 mark=#d1\}\}/);
+    const fresh = fakeFetch([{ chunks: scoutSse({ ...obj, route: 'new' }, 4) }]);
+    const r2 = await scoutStream({ ...sreq, paused: 'The paused answer was to: "x"' }, scfg, deps(fresh.f), () => {});
+    expect(r2.opener).toBe(' A ceiling holds the price down.');
+  });
+
   it('the scout verdict carries an optional find list (≤ 3 short strings)', () => {
     expect(parseScout('{"opener":"a","pages":[2],"find":["Table 15.5"," appendix  D ","x","y"],"plan":"p"}', 12, 3)).toEqual({ pages: [2], plan: 'p', find: ['Table 15.5', 'appendix D', 'x'] });
     expect(parseScout('{"pages":[2],"find":[],"plan":"p"}', 12, 3)).toEqual({ pages: [2], plan: 'p' });
@@ -733,6 +788,28 @@ describe('Lessons v3: two stages', () => {
     expect(e).toEqual([expect.objectContaining({ kind: 'scout', phase: 'dev', usd: r.usd, estimated: false })]);
     expect(r.usd).toBeCloseTo(costUsd('gpt-6.1-terra', susage), 9);
     expect(ev[3]).toMatchObject({ t: 'end', usd: r.usd, cached: 2800, input: 3000 });
+  });
+
+  it('scout stream: the pages come first (the schema\'s order) and go out before the opener; an opener for an answer spoken elsewhere points at nothing', async () => {
+    const obj = { relation: 'new-topic', pages: [8, 9], opener: '{{circle p=3 mark=#d1}} A ceiling holds the price down. It cannot clear the market.', find: [], plan: 'p' };
+    const { f } = fakeFetch([{ chunks: scoutSse(obj, 4) }]);
+    const { r, ev } = await collect(f);
+    expect(ev.map((e) => e.t)).toEqual(['pages', 'opener', 'opener', 'scout', 'end']);
+    expect(ev[0]).toMatchObject({ t: 'pages', pages: [8, 9] });
+    expect(r.opener).toBe(' A ceiling holds the price down. It cannot clear the market.');
+    // The page in view among the pages: its tags stay. Pinned to it (the student pointed): they stay too.
+    const here = fakeFetch([{ chunks: scoutSse({ ...obj, pages: [3, 9] }, 4) }]);
+    expect((await collect(here.f)).r.opener).toMatch(/^\{\{circle p=3 mark=#d1\}\}/);
+    const pinned = fakeFetch([{ chunks: scoutSse(obj, 4) }]);
+    const ev2: ScoutEvent[] = [];
+    const r2 = await scoutStream({ ...sreq, pinned: true }, scfg, deps(pinned.f), (e) => ev2.push(e));
+    expect(r2.opener).toMatch(/^\{\{circle p=3 mark=#d1\}\}/);
+    // A scout that fails after its pages keeps them (the answer may already be spoken there); only its plan is lost.
+    const cut = fakeFetch([{ chunks: scoutSse('{"relation":"new-topic","pages":[8,9],"opener":"Half an answer. And', 6, false) }]);
+    expect((await collect(cut.f)).r).toMatchObject({ pages: [8, 9], plan: '', fallback: expect.any(String) });
+    // A bad page never goes out early: the same check as the verdict's.
+    const bad = fakeFetch([{ chunks: scoutSse({ ...obj, pages: [999, 9, 9] }, 4) }]);
+    expect((await collect(bad.f)).ev[0]).toMatchObject({ t: 'pages', pages: [9] });
   });
 
   it('scout stream: a check reply\'s verdict on the student\'s own number is spoken; a number of its own is not', async () => {

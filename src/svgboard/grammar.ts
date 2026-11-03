@@ -17,6 +17,7 @@
  */
 import { CHROMATIC, chromaOf, INK, parseColor } from './style';
 import { core, groupGeometry, overlapArea, segHitsBox, type Box, type Seg as GSeg, type TextBox } from './check';
+import type { Band } from './settle';
 
 export type Role = 'title' | 'content' | 'small';
 export type TypeScale = { title: number; content: number; small: number };
@@ -26,7 +27,7 @@ type Seg = { x1: number; y1: number; x2: number; y2: number };
  * the content size the board's drawing has room for (set by its tightest group so far, never grows);
  * `drawn`: earlier groups' text boxes and strokes (a later label keeps clear of them too).
  */
-export type TypeState = { scale: TypeScale; axes: Seg[]; ticks: Seg[]; titled: boolean; /** The scale factor over the model's sizes the board's tightest group settled on (a later group is never scaled more). */ roomK?: number; /** The legibility floor in user units (render.ts): a model's smaller text counts as this. */ floor?: number; /** The hard floor (units) a text may go to on its own, to clear a collision. */ minFloor?: number; drawn?: { texts: TextBox[]; segs: GSeg[] } };
+export type TypeState = { scale: TypeScale; axes: Seg[]; ticks: Seg[]; titled: boolean; /** The scale factor over the model's sizes the board's tightest group settled on (a later group is never scaled more). */ roomK?: number; /** The legibility floor in user units (render.ts): a model's smaller text counts as this. */ floor?: number; /** The hard floor (units) a text may go to on its own, to clear a collision. */ minFloor?: number; drawn?: { texts: TextBox[]; segs: GSeg[]; bands?: Band[] } };
 
 export const SMALL_MIN_PX = 11;
 /**
@@ -231,7 +232,8 @@ export const RAISE_MAX = 1.5;
  * the slide's body size, whatever the canvas), RAISE_MAX, and the k an earlier, tighter group settled
  * on; in that range, the largest k at which no text runs into a text or stroke it was clear of at the
  * model's own sizes. A title is never under TITLE_K × the content median.
- * Collisions that remain are moved apart by settle.ts (nudge, wrap), never by shrinking a tier.
+ * Collisions that remain are moved apart by settle.ts (one collision model for every text: nudge, a row
+ * label's wrap, a shape's label placed whole beside it), never by shrinking a tier.
  */
 function roomSizes(g: Element, roles: Map<Element, Role>, st: TypeState): Map<Element, number> {
   const els = Array.from(roles.keys());

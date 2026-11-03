@@ -1,5 +1,5 @@
 // src/playback/director.ts
-import { mountBoard } from '../svgboard/render';
+import { mountBoard, WITHDRAW } from '../svgboard/render';
 import { defineSvgGroup } from '../svgboard/element';
 import { isDefsGroup } from '../svgboard/wire';
 import { REGION_H, REGION_W, targetOf, type Action, type InkAction, type LayoutAction, type RawAction, type Target } from '../script/types';
@@ -273,8 +273,13 @@ export class Director {
     for (const p of pages) if (p >= 1 && p <= v.numPages()) void v.textRuns(p).catch(() => {});
   }
 
-  stop(): void {
-    this.ctrl.abort();
+  /**
+   * Stops the answer. `land` (Stop, a new document): every drawing in progress lands its final state at
+   * once. `withdraw` (the answer is replaced by another question, src/agent/route.ts): an svg group still
+   * drawing leaves the board instead (render.ts WITHDRAW), so what stays is what the student saw whole.
+   */
+  stop(how: 'land' | 'withdraw' = 'land'): void {
+    this.ctrl.abort(how === 'withdraw' ? WITHDRAW : undefined);
     this.ctrl = new AbortController();
     this.lane = Promise.resolve();
     this.last = null;
@@ -295,10 +300,10 @@ export class Director {
    * fade sits at the head of the layout lane, so the caller can start streaming right away.
    * The desk (connectors, this answer's ids) is reset later, by the new answer's first layout or ink
    * action (rule 8; see resetFor), so an answer that ends without acting leaves it as it is. The board
-   * itself persists across answers.
+   * itself persists across answers. `how`: how the answer it ends stops (stop()).
    */
-  begin(ms = 300): Promise<void> {
-    this.stop();
+  begin(ms = 300, how: 'land' | 'withdraw' = 'land'): Promise<void> {
+    this.stop(how);
     this.registry.clear();
     this.figures.clear();
     this.pendingReset = ms;

@@ -3,7 +3,9 @@
  * One ask bar whose meaning follows the moment (spec "v1 learner UX"). Pure, so it is testable:
  *
  *   ask      nothing asked yet                       "Ask about this PDF…"   Enter asks
- *   during   an answer is playing (or paused)         "Ask about this…"       typing pauses it; Enter asks an aside
+ *   during   an answer is playing (or paused)         "Ask about this…"       typing pauses it; Enter asks, and the scout
+ *                                                                            routes it (src/agent/route.ts): an aside, or
+ *                                                                            a new answer in the paused one's place
  *   aside    an aside is open over the paused answer  "Ask about this…"       Enter on an empty bar resumes
  *   follow   an answer has ended                      "Follow up…"            Enter asks a follow-up
  *   check    the answer ended on a check question     "Your answer…"          Enter sends the reply (judged on the board)

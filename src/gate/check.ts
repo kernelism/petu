@@ -13,7 +13,7 @@ import { mentions, matches, type Mention } from './numbers';
 import type { Beat, Tag, Word } from './segment';
 import { NEW_INK } from './segment';
 import type { GateState, Value } from './engine';
-import { unitOf } from '../svgboard/data';
+import { unitSaid } from '../values/quantity';
 
 export type CheckKind = 'number' | 'threshold' | 'direction' | 'deixis' | 'layout' | 'geometry' | 'erasure' | 'tag' | 'unbound' | 'order' | 'named' | 'svg' | 'drift';
 export type Flag = { check: CheckKind; detail: string };
@@ -445,7 +445,8 @@ export function boardNumbers(words: readonly Word[], known: readonly Value[], be
   const ws = words.map((w) => w.text), ms = mentions(ws), cls = clauses(ws);
   for (const m of ms) {
     if (!boardMention(m) || board.some((k) => kindOk(m, k) && boardEqual(m, k)) || known.some((k) => k.shown == null && own(m, k.v))) continue;
-    const said = unitOf(m.percent ? ['%'] : ws.slice(m.w1 + 1, m.w1 + 4));
+    // Its unit, read like a readout's affixes (quantity.ts): "$10" is in dollars, "10 dollars" too.
+    const said = m.percent ? '%' : unitSaid(ws, m.w0, m.w1);
     const close = board.filter((k) => kindOk(m, k) && rel(m, k.v) <= BOARD_NEAR && !(said && k.unit && said !== k.unit));
     if (!close.length) {
       // checkNumbers left it here (nearBoard is by value); a readout near in value but in another unit is not

@@ -340,7 +340,7 @@ describe('live gate: page pointing matches the words (diag C8)', () => {
   const D19 = 'The {{highlight p=9 "slope is constant; P/Q is not."}} Elasticity changes because it measures percentage changes. ';
   const A7 = 'Page 3 starts with the {{highlight p=3 "A point x in image 1 back-projects to a ray in 3D"}} viewing ray: the first pixel fixes a direction. ';
 
-  it('never strips a quote mark for its words: one the sentence uses is spoken, a long one in an unclear slot points', async () => {
+  it('never strips a quote mark for its words: the sentence that uses it gets a deictic, a pointer stays a pointer', async () => {
     const p = new GatePreflight();
     const D8 = 'The {{highlight p=3 "forces between components of System 1"}} are like the forces between a horse and cart. ';
     const D19b = 'The {{highlight p=9 "The slope is constant; P/Q is not."}} distinction is that slope measures units. ';
@@ -351,26 +351,26 @@ describe('live gate: page pointing matches the words (diag C8)', () => {
     expect((await p.check({ key: 'o1', kind: 'opener', text: 'so the {{highlight p=3 "a point x in image 1 back-projects to a ray in 3D"}} viewing ray matters. ' })).flags).toEqual([]);
   });
 
-  it('plays a long quote mark in an unclear slot as a pointer: the mark stays, nothing is spoken for it', async () => {
+  it('a mark the sentence uses as a noun plays as written: the parser, not the gate, says its deictic', async () => {
     const h = harness({ preflight: new GatePreflight() });
     await h.play([A7, { handoff: true }, 'Done. ']);
     expect(h.out.join('')).toBe(A7 + 'Done. ');
     expect(h.gates()[0]).toMatchObject({ result: 'pass' });
   });
 
-  it('a stripped mark the sentence used as a word leaves its words in the narration', async () => {
+  it('a stripped mark the sentence used as a word leaves the deictic the parser would say, never its quote', async () => {
     // The page does not have the quote (the shadow board says so): stripping only the tag would say "Here, the uses…".
     const board: ShadowBoard = { apply: (as) => ({ skipped: new Map(as.filter((a) => a.kind === 'highlight').map((a) => [a, 'quote not found'])) }), rebuild: () => {} };
     const h = harness({ preflight: new GatePreflight({ board }) });
     await h.play(['Ordinary percent change uses the start. Here, the {{highlight p=8 "Midpoint method"}} uses the average instead. ', { handoff: true }, D19, 'Then {{highlight p=9 "a pointer"}} look. ']);
-    expect(h.out.join('')).toBe('Ordinary percent change uses the start. Here, the Midpoint method uses the average instead. The slope is constant; P/Q is not. Elasticity changes because it measures percentage changes. Then look. ');
+    expect(h.out.join('')).toBe('Ordinary percent change uses the start. Here, this uses the average instead. This line. Elasticity changes because it measures percentage changes. Then look. ');
   });
 
-  it('a stripped long quote that was its sentence’s subject leaves its words (draw D8, q2 D18)', async () => {
+  it('a stripped line that was its sentence’s subject leaves a deictic, not the line read out (draw D8, q2 D18)', async () => {
     const board: ShadowBoard = { apply: (as) => ({ skipped: new Map(as.filter((a) => a.kind === 'highlight').map((a) => [a, 'quote not found'])) }), rebuild: () => {} };
     const h = harness({ preflight: new GatePreflight({ board }) });
-    await h.play(['The {{highlight p=3 "forces between components of System 1"}} are like a horse and cart. {{highlight p=8 "Midpoint method: same answer in either direction"}} uses the average. ', { handoff: true }, 'Done. ']);
-    expect(h.out.join('')).toBe('The forces between components of System 1 are like a horse and cart. Midpoint method: same answer in either direction uses the average. Done. ');
+    await h.play(["The {{highlight p=3 \"forces between components of System 1\"}} are like a horse and cart. {{highlight p=8 \"Midpoint method: same answer in either direction\"}} uses the average. The page's {{highlight p=4 \"Sensitivity: P(+ | D) = 0.95\"}} means it catches most. ", { handoff: true }, 'Done. ']);
+    expect(h.out.join('')).toBe("These are like a horse and cart. This uses the average. The page's highlighted line means it catches most. Done. ");
   });
 });
 

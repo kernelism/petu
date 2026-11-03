@@ -1,6 +1,7 @@
 // src/agent/protocol.ts — shared by the browser (src/agent/client.ts) and the dev server (server/).
 import type { Usage } from '../../server/prices';
 import type { Relation } from './context/memory';
+import type { Route } from './scout';
 import type { GateEvent, RepairEvent, RepairRequest } from '../gate/events';
 
 /** What the browser sends to POST /api/ask (and /api/prewarm, without question/history/ink). */
@@ -55,10 +56,13 @@ export type AskContext = {
   /**
    * Volatile tail, the moment the question is asked in (v1 learner UX; src/agent/moment.ts):
    * `aside`: asked mid-answer, which waits paused (its plan, what it has said, its board);
+   * `replaced`: asked mid-answer, and it replaces that answer, which ended where it was (the same
+   * context: what the student heard of it; src/agent/route.ts);
    * `about`: what the student pointed at (a selection, or a region circled on a page or the board);
    * `check`: the answer ended on this question to the student, and the question is their reply.
    */
   aside?: string;
+  replaced?: string;
   about?: string;
   check?: string;
 };
@@ -72,7 +76,11 @@ export type AskEvent =
        * first opener sentence. `opener`: what the opener said (script). `cached`/`input`: its tokens. */
       atMs?: number; openerMs?: number; opener?: string; cached?: number; input?: number;
       /** The scout's `find` strings, and the context it read (?debug: tier, tokens per block, candidate pages). */
-      find?: string[]; relation?: Relation; ctx?: { mode: string; tier: string; tokens: Record<string, number>; candidates: string[]; printedOffset?: number; ms: number } }
+      find?: string[]; relation?: Relation;
+      /** Where the answer was spoken (moment.ts homePage), when not the page it was asked on: the view travelled there before the first word. */
+      home?: number;
+      /** Asked mid-answer: the route the scout wrote (src/agent/route.ts). */
+      route?: Route; ctx?: { mode: string; tier: string; tokens: Record<string, number>; candidates: string[]; printedOffset?: number; ms: number } }
   /** Client-side: stage 2's first text reached the player (ms from Enter); the opener's words were then due to end at `openerEndMs`. */
   | { t: 'handoff'; ms: number; openerEndMs?: number }
   | { t: 'text'; d: string }

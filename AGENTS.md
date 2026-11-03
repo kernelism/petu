@@ -174,15 +174,24 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   arrived), prewarm on ask-bar intent, follow-up history (narration only). `evalHooks.ts` is
   dev-only (`?eval`).
 - **Two stages, one stream** (`src/agent/twoStage.ts`, `server/scoutStream.ts`): `/api/scout` streams
-  the scout's JSON `{opener, pages, plan}` as NDJSON. The opener (the answer's first sentence or two,
-  tags on the visible page only, released clause by clause) plays at once; the moment pages and plan
-  are parsed, stage 2 is built and asked with the opener verbatim (`context.opener`, ALREADY SPOKEN)
+  the scout's JSON `{route, relation, pages, opener, find, plan}` as NDJSON. The pages come before the opener: they decide the
+  answer's **home** (`moment.ts homePage`: the page in view when it is one of them or the student pinned the
+  question to it, else the first of them), and an answer whose home is elsewhere opens with a move there
+  before its first word (no 10 s of narration over an unrelated page; the trail records the pages taught,
+  `parts.ts taughtPages`). The opener (the answer's first sentence or two,
+  tags on the page in view only when it is home, released clause by clause) plays at once; the moment pages and plan
+  are parsed, stage 2 is built on the home page and asked with the opener verbatim (`context.opener`, ALREADY SPOKEN)
   and its script follows the opener's last word; the note tells it never to restate the opener's claim and to open on something new (the mechanism, the first drawn step). A failed scout, or no verdict within 8s (`SCOUT_TIMEOUT_MS`), = stage 2 alone on the visible page.
   No ellipsis anywhere (founder, 2026-10-31): before the first word the narration line stays empty under
   the muted question; a mid-answer pause past 1 s quietly previews the plan's next page in the route row
   ("Next p52 · section"), and shows nothing when the plan stays on the page in view. Stage 2 speaks before
   it plans (p6.5); `silenceMs` in the eval is the silence actually heard after the opener.
   `?debug` shows scout verdict, opener, stage-2 first text and the handoff gap.
+  A question typed while an answer plays is routed by the scout (`src/agent/route.ts`): it gets the paused
+  answer and writes `route` first (aside: a side answer, then the answer resumes; new: this replaces it,
+  the old one ends where it is and a group still drawing is withdrawn); no route = aside, and the aside
+  strip's "Answer instead" overrides. An aside is pinned to the page asked on (the route is written
+  before the pages, so the server's opener gate pins it too).
 - Every answer leaves a local record in `.petu/answers.jsonl` (question, page, the script as sent,
   lint notes). Server lint runs the client parser over each completed tag: a malformed tag is noted
   with its raw text, as are an unknown tag and an unclosed quote; svg groups bypass it
@@ -207,8 +216,7 @@ useAgent / client ◄──── NDJSON AskEvents ─── first message only 
   documents in other domains (music notation, shadows, levers), each executable
   (`tests/server/examples.test.ts`). Bump `PROMPT_VERSION` on any change. `tests/server/prompt.test.ts`
   keeps every tag parseable, the size bounded and eval-deck vocabulary out. The scout's prompt is
-  `prompt/scout.ts` (`SCOUT_VERSION` s2.2: a relationship between quantities is shown across its
-  range, computed).
+  `prompt/scout.ts` (`SCOUT_VERSION` s2.11: ROUTE for a question asked mid-answer; pages before the opener; a tag is silent).
 - **Model**: `gpt-6.1-terra`, `reasoning.effort: none`, Standard tier (P1 bake-off, the only config
   under the latency gate). Override per run with `PETU_MODEL` / `PETU_EFFORT`.
 
