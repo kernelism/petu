@@ -136,7 +136,7 @@ export function prepareGroup(b: SvgBoard, src: string, minPx: number, pxPerUnit:
     // A label the floor leaves no room moves instead of shrinking (settle.ts); then this group's final
     // geometry is what the next group keeps clear of.
     settle(g, raw, prior, b.w);
-    try { const geo = groupGeometry(g, 0); st.drawn = { texts: prior.texts.concat(geo.texts.map((t) => ({ ...t, el: undefined }))), segs: prior.segs.concat(geo.segs.filter((x) => !x.tiny)) }; } catch { /* best-effort */ }
+    try { const geo = groupGeometry(g, 0); st.drawn = { texts: prior.texts.concat(geo.texts.map((t) => ({ ...t, el: undefined }))), segs: prior.segs.concat(geo.segs.filter((x) => !x.tiny)), bands: (prior.bands ?? []).concat(geo.bands ?? []) }; } catch { /* best-effort */ }
   } });
   // Washes: the board's hatch (an attribute, so a serialised board carries it with its pattern).
   if (typeof s !== 'string') s.el.querySelectorAll('[data-wash]').forEach((e) => e.setAttribute('fill', `url(#${hatchId(b.ns)})`));
