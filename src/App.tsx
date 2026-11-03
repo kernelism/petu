@@ -1192,8 +1192,10 @@ export default function App() {
   const togglePause = useCallback(() => {
     // While a question's route is being decided the answer stays paused under it (a second or so).
     if (routingRef.current) return;
-    // During an aside, Space pauses the aside (the answer under it stays paused).
+    // During an aside, Space pauses the aside (the answer under it stays paused); once it has said all
+    // it had, there is nothing left to pause: Space plays on, the answer from its word.
     const a = asideSession.current;
+    if (asideRef.current?.state === 'done') { closeAsideRef.current(); return; }
     if (a && asideRef.current) {
       if (a.isPaused()) { if (a.resume()) setAside((d) => d && { ...d, paused: false }); }
       else if (a.pause()) setAside((d) => d && { ...d, paused: true });
@@ -1920,7 +1922,7 @@ export default function App() {
       paused: aside ? aside.paused : userPaused,
       speed,
       onJump: jumpTo, onTogglePause: togglePause, onReplay: replaySentence, onSpeed: cycleSpeed, onStop,
-      ...(aside ? { aside: { onResume: closeAside, onInstead: answerInstead } } : {}),
+      ...(aside ? { aside: { onResume: closeAside, onInstead: answerInstead, done: aside.state === 'done' } } : {}),
     }
     : undefined;
   const mode = barMode({ busy, aside: !!aside, answered, check: checkOpen ? check : null });

@@ -148,6 +148,13 @@ describe('B1: the dock in its moments', () => {
   afterEach(() => { vi.unstubAllGlobals(); });
   afterEach(() => { act(() => root.unmount()); host.remove(); });
 
+  it('a finished aside: nothing left to pause or replay, only the way back', () => {
+    const base = { titles: [], label: 'Why?', current: 0, progress: 1, speed: 1, onJump: vi.fn(), onTogglePause: vi.fn(), onReplay: vi.fn(), onSpeed: vi.fn(), onStop: vi.fn() };
+    act(() => root.render(createElement(PartsBar, { ...base, paused: false, aside: { onResume: vi.fn(), done: true } })));
+    expect(host.querySelector('.pb-more')).toBeNull();
+    expect(host.querySelector('.pb-resume')).not.toBeNull();
+  });
+
   it('an aside: a quiet strip, "Side question" and "Back to answer" (return key icon); its controls fold away, no stop', () => {
     const base = { titles: ['One', 'Two', 'Three', 'Four'], label: 'Why?', current: 3, progress: 0.5, speed: 1.25, onJump: vi.fn(), onTogglePause: vi.fn(), onReplay: vi.fn(), onSpeed: vi.fn(), onStop: vi.fn() };
     const onResume = vi.fn();

@@ -34,7 +34,7 @@ export type PartsView = {
   onSpeed(): void;
   onStop(): void;
   /** An aside is open over the paused answer: the way back to it, and the way to drop it for the side question. */
-  aside?: { onResume(): void; onInstead?(): void };
+  aside?: { onResume(): void; onInstead?(): void; /** It has said all it had: nothing to pause or replay, the way back is all that is left. */ done?: boolean };
 };
 
 /** "1×", "1.25×", "0.75×". */
@@ -67,7 +67,7 @@ export function PartsBar({ titles, label, current, progress, paused, speed, onJu
     return (
       <div className={`pb is-aside${paused ? ' is-paused' : ''}`} role="toolbar" aria-label="Side question playback">
         <span className="pb-side">Side question</span>
-        <span className="pb-more">{play}{replay}{speedBtn}</span>
+        {!aside.done && <span className="pb-more">{play}{replay}{speedBtn}</span>}
         {aside.onInstead && (
           <button type="button" className="pb-instead" tabIndex={0} onClick={aside.onInstead} title="End the paused answer here and answer this question instead">
             Answer instead
