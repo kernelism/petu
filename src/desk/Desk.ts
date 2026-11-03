@@ -945,6 +945,13 @@ export class Desk implements DeskApi {
       this.position();
       this.follow.userTookOver();
       const { H } = this.host.viewport();
+      // A follow-up drawn on into its question's group: its own header is framed near the band's top,
+      // not the group's first answer (a pick of "and specificity?" showed the answer before it).
+      if (el !== g.head && el.parentElement === g.item) {
+        const off = el.getBoundingClientRect().top - g.item.getBoundingClientRect().top;
+        await this.host.glideTo(() => Math.max(0, Math.min(this.host.maxScroll(), g.top + off - SAFE_TOP - 16)), 600);
+        return;
+      }
       // A walked answer: its head is over its first slice (where it began).
       const at = g.slices?.[0] ?? g;
       const y = at.top, h = Math.min(at.h, H - SAFE_TOP - safeBottom());
