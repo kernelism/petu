@@ -126,8 +126,12 @@ export function labelNames(text: string, say = false): string[] {
 function spokenNumbers(words: readonly BeatWord[]): Mention[] {
   return mentions(words.map((w) => w.text.replace(/°/g, ''))).filter((m) => !m.ref && !(m.spelled && !m.frac && m.dp === 0 && m.value < 3));
 }
-/** The first word in [lo, hi) a name says (its first word and its last, for a number said in several). */
-function named(names: readonly string[], words: readonly BeatWord[], said: readonly Mention[], ok: (k: number) => boolean): { w0: number; w1: number } | null {
+/**
+ * The first word in [lo, hi) a name says (its first word and its last, for a number said in several). A
+ * number said once names one part: `taken` holds the mentions earlier parts took (two readouts of 52.5 N,
+ * the horse's pull and the cart's, said in turn: the second drew on the first's word, D8).
+ */
+function named(names: readonly string[], words: readonly BeatWord[], said: readonly Mention[], ok: (k: number) => boolean, taken = new Set<Mention>()): { w0: number; w1: number } | null {
   if (!names.length) return null;
   const nums = names.map(numName).filter((x): x is { v: number; tol: number } => !!x);
   const plain = names.filter((n) => !numName(n));
@@ -135,7 +139,7 @@ function named(names: readonly string[], words: readonly BeatWord[], said: reado
   if (plain.length) for (let k = 0; k < words.length; k++) if (ok(k) && namesWord(words[k].text, plain)) { best = { w0: k, w1: k }; break; }
   for (const m of said) {
     if (best && m.w0 >= best.w0) break;
-    if (ok(m.w0) && nums.some((n) => Math.abs(m.value - n.v) <= Math.min(n.tol, tolerance(m, n.v)))) { best = { w0: m.w0, w1: m.w1 }; break; }
+    if (ok(m.w0) && !taken.has(m) && nums.some((n) => Math.abs(m.value - n.v) <= Math.min(n.tol, tolerance(m, n.v)))) { taken.add(m); best = { w0: m.w0, w1: m.w1 }; break; }
   }
   return best;
 }
@@ -175,8 +179,9 @@ export function paceParts(parts: readonly PartIn[], words: readonly BeatWord[], 
   const unnamedDur = (len: number) => Math.max(min, Math.min(PART_MAX_MS, len - PART_GAP_MS));
   const said = spokenNumbers(words);
   const ok = (k: number) => words[k].inMs >= from - 1 && words[k].inMs < to;
+  const taken = new Set<Mention>();
   const hits = parts.map((p) => {
-    const h = named(p.words, words, said, ok) ?? named(p.label ?? [], words, said, ok);
+    const h = named(p.words, words, said, ok, taken) ?? named(p.label ?? [], words, said, ok, taken);
     if (!h) return null;
     const w1 = words[h.w1];
     return { at: Math.max(from, words[h.w0].inMs), until: Math.min(to, w1.endMs ?? w1.inMs + WORD_EST_MS) };
