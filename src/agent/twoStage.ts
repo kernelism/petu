@@ -6,6 +6,8 @@
 // Stage 2 starts the moment the verdict is in, while the opener is still being spoken, and is told
 // the opener verbatim so it continues instead of repeating. The player sees one stream: the opener's
 // text, a separating space, then stage 2's text, never interleaved.
+// A question asked mid-answer has its scout started earlier (useAgent.prescout): its route was read
+// before this ran (src/agent/route.ts); here the route only rides the `scout` event, for the record.
 import type { AskContext, AskEvent } from './protocol';
 import { AskError, capNotice, type AskHandlers, type ScoutLive } from './client';
 import type { ScoutResult } from './scout';
