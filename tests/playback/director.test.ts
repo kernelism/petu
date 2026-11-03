@@ -9,7 +9,7 @@ import type { Grounding } from '../../src/geometry/resolve';
 import { parseTag } from '../../src/script/parseTag';
 import { kitStore } from '../../src/desk/kit/kit';
 import { InkTime } from '../../src/playback/inkTime';
-import { mountBoard } from '../../src/svgboard/render';
+import { mountBoard, WITHDRAW } from '../../src/svgboard/render';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -600,5 +600,21 @@ describe('Director: a drawing is never lost', () => {
     d.run({ kind: 'svg', svg: '<g id="river"></g>', id: 'river', beatFrom: 7 } as unknown as RawAction, 0);
     await vi.advanceTimersByTimeAsync(3000);
     expect(asked).toEqual([7]);
+  });
+
+  it('a new answer that replaces this one stops its group in flight with the withdraw reason; Stop lands it (render.ts WITHDRAW)', async () => {
+    const reasons: unknown[] = [];
+    const build: BuildElement = async () => ({ target: { region: 'svgb' }, bbox: { x: 0, y: 0, w: 10, h: 10 }, draw: (_s, k) => new Promise<void>((r) => { k.stop?.addEventListener('abort', () => { reasons.push(k.stop!.reason); r(); }); }) });
+    const d = new Director({ viewer: () => fakeViewer(), desk: () => fakeDesk(), settings: () => DEFAULTS, onScrolledTo: () => {}, build, beat: () => [] });
+    d.run({ kind: 'svg', svg: '<g id="a"></g>', id: 'a', beatFrom: 0 } as unknown as RawAction, 0);
+    await vi.advanceTimersByTimeAsync(3000);
+    void d.begin(300, 'withdraw');
+    d.run({ kind: 'svg', svg: '<g id="b"></g>', id: 'b', beatFrom: 0 } as unknown as RawAction, 0);
+    await vi.advanceTimersByTimeAsync(3000);
+    void d.begin(300);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(reasons).toHaveLength(2);
+    expect(reasons[0]).toBe(WITHDRAW);
+    expect(reasons[1]).not.toBe(WITHDRAW);
   });
 });
