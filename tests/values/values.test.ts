@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ScriptParser } from '../../src/script/parser';
 import { parseTag } from '../../src/script/parseTag';
 import { GateState, UNBOUND_TEXT } from '../../src/gate/engine';
-import { sayNumber, spokenOf, intWords } from '../../src/values/say';
+import { sayNumber, saidText, spokenOf, intWords } from '../../src/values/say';
 import { curveOf, read } from '../../src/values/readout';
 import { SCRIPTS } from '../../src/demo/scripts';
 import type { RawAction, ScriptEvent } from '../../src/script/types';
@@ -38,14 +38,17 @@ describe('grammar', () => {
 });
 
 describe('say', () => {
+  const said = (v: number, f?: Parameters<typeof sayNumber>[1]) => saidText(sayNumber(v, f)!);
+  const spoken = (v: number, f?: Parameters<typeof sayNumber>[1]) => spokenOf(sayNumber(v, f)!);
   it('formats like the board and speaks it', () => {
-    expect(sayNumber(133.333)).toEqual({ said: '133.3', spoken: 'one hundred thirty-three point three' });
-    expect(sayNumber(0.583, { as: 'percent' })!.said).toBe('58%');
-    expect(sayNumber(0.0583, { as: 'percent' })!.said).toBe('5.8%');
-    expect(sayNumber(-12, { as: 'abs' })!.said).toBe('12');
-    expect(sayNumber(-2.5)!.spoken).toBe('minus two point five');
-    expect(sayNumber(7.25, { fmt: 0 })!.said).toBe('7');
-    expect(spokenOf('1,250%')).toBe('one thousand two hundred fifty percent');
+    expect(said(133.333)).toBe('133.3');
+    expect(spoken(133.333)).toBe('one hundred thirty-three point three');
+    expect(said(0.583, { as: 'percent' })).toBe('58%');
+    expect(said(0.0583, { as: 'percent' })).toBe('5.8%');
+    expect(said(-12, { as: 'abs' })).toBe('12');
+    expect(spoken(-2.5)).toBe('minus two point five');
+    expect(said(7.25, { fmt: 0 })).toBe('7');
+    expect(spokenOf({ num: '1,250', pre: '', post: '%' })).toBe('one thousand two hundred fifty percent');
     expect(intWords(21000)).toBe('twenty-one thousand');
     expect(sayNumber(NaN)).toBeNull();
   });
@@ -62,6 +65,10 @@ describe('bound numbers in the parser', () => {
     const s = '{{const v=20 g=9.8 T=2*v/g}} The flight lasts {{val id=T}}s, about {{val id=v as=percent}} more.';
     for (const n of [1, 2, 3, 7]) expect(run(s, n).words).toEqual(run(s).words);
     expect(run(s).words).toContain('4.08s,');
+  });
+  it('a word touching a tag on its left glues to its val however the stream is cut (it waited apart when the tag was still streaming)', () => {
+    const s = 'Prices {{bars on=s id=p vals=2,4.5,7}} rise to ${{val id=p[2]}} and (${{val id=p[3]}}).';
+    for (const n of [1, 2, 3, 5, 7]) expect(run(s, n).words, `chunk ${n}`).toEqual(['Prices', 'rise', 'to', '$4.5', 'and', '($7).']);
   });
   it('an unknown reference shows the neutral dash, with no said text', () => {
     const r = run('It costs {{val id=nope}} dollars.');

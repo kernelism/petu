@@ -100,7 +100,7 @@ and draws it. The tag kit above stays for the demo and dev scripts (the `tags` p
   `onx(P)`, `ony(P)`, `mid(P,Q)`, a named point (`id`/`data-name`), or `x, y` formulas); `<line
   data-from= data-to=>`, `data-points="P; Q; R"`; `data-set="cx: 300+50*cos(th); width: 28*I"`;
   `data-rotate="deg, cx, cy"`, `data-translate`; computed text `<text data-val="xof(qd)-xof(qs)"
-  data-fmt="0" data-unit="flats">` (a `{}` in the words takes the number). `xof(P)`/`yof(P)` read a
+  data-fmt="0" data-unit="flats">` (a `{}` in the words takes the number; its affixes are said with it). `xof(P)`/`yof(P)` read a
   point's data coordinates in any formula. What does not resolve is hidden (`data-bad`) and flagged by
   the gate (check `svg`), never drawn wrong. `GateState.apply('svg')` adds every data-val as a
   computed value (the number check) and re-resolves after a tween.
@@ -178,8 +178,15 @@ Prevention by construction: the narration never types a number the engine comput
   names); `shares` are kept as the board shows them (normalised to sum to 1; `set` takes raw values); `plotSrc` keeps plot tags so curves are recomputed with the current constants.
 - **`{{val id=… fmt=1 as=percent|abs}}`** (`src/script/parseValues.ts`): the parser turns it into a
   caption word with the engine's value at that point of the stream (`GateState.say` → `src/values/say.ts`:
-  the board's own `fmt`, plus a spoken form for TTS). It glues to touching text (`${{val id=c}}.` →
-  `$4.5.`) and is chunk-independent. Refs: a block's single value, a calc, a part (`v[2]`, `g[1,2]`,
+  the board's own `fmt`, plus a spoken form for TTS). A readout is said as the board writes it: one
+  reader of its text template (`src/values/quantity.ts readTemplate`) gives what the board draws and what
+  is said, so `${}` is said "$10" (spoken "ten dollars"), `{} units` "100 units", `{}%` "12%"; a sign in
+  the template is wording, not said ("price −${}" → "falls by $1"). The quantity takes what is glued to
+  `{}`, else the next word when it is a unit (`src/values/units.ts`, the one unit vocabulary) or the
+  template's last word. It glues to touching text (`${{val id=c}}.` → `$4.5.`) and never doubles an affix
+  the narration writes itself (`{{val id=t}} seconds`, `${{val id=p}}`, `{{val id=r}}%`: the parser waits
+  for the next words, `quantity.ts inSentence`); it is chunk-independent. The number check reads a
+  narration number's unit with the same rule (`unitSaid`: "$10" is in dollars, like "10 dollars"). Refs: a block's single value, a calc, a part (`v[2]`, `g[1,2]`,
   `t[3].c` / `t[3].price`), a constant, a readout (`E`, `E.x`, `E.y`). **Unresolved → the caption shows
   `UNBOUND_TEXT` (an em dash), never a guessed number**; the director records the val as skipped
   (`unbound value …`) and the gate fails its beat. A val must come after what it names (no

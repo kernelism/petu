@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { quantity } from '../../src/values/quantity';
 import { describe, it, expect, vi } from 'vitest';
 import { systemPrompt, PROMPT_VERSION } from '../../server/prompt/system';
 import { SVG_EXAMPLES } from '../../server/prompt/svgExamples';
@@ -242,6 +243,8 @@ describe('system prompt (svg, default)', () => {
       const vals = evs.flatMap((e) => (e.type === 'action' && e.action.kind === 'val' ? [e.action] : []));
       expect(vals.length, 'the example shows {{val}}').toBeGreaterThan(1);
       const shown = new Set(p.values.values.flatMap((v) => (v.shown != null ? [v.shown] : [])).concat(Object.values(p.values.consts).map((v) => fmtValue(v))));
+      // A readout is said with the affixes its text writes ("2.0 m/s"), or bare when the narration says the unit.
+      for (const r of p.values.readouts.values()) if (r.affix) shown.add(quantity(r.text, r.affix));
       for (const v of vals) { expect(v.said, v.ref).toBeDefined(); expect(shown, v.ref).toContain(v.said); }
       for (const b of beatsOfWire(wire)) expect(boardNumbers(b.words, p.values.values).flags, b.text).toEqual([]);
       expect(numberFixes(beatsOfWire(wire).flatMap((b) => b.words), p.values.values)).toEqual([]);

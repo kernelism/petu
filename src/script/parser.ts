@@ -3,9 +3,29 @@ import { parseTag } from './parseTag';
 import { GateState, UNBOUND_TEXT } from '../gate/engine';
 import { cutTagBody, isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
 import { clauseAfter, deixisAt, endsSentence, isArticle, lookahead, markOf, replaceWord, sentenceTail, type Mark } from './quoteWords';
+import { inSentence } from '../values/quantity';
+import { saidText, spokenOf, type Said } from '../values/say';
 
 const words = (s: string): ScriptEvent[] =>
   s.split(/\s+/).filter(Boolean).map((text) => ({ type: 'word', text }));
+
+/**
+ * The next words of `rest` (up to 3, the longest unit: "metres per second"), stopping at a tag or a word
+ * ending in punctuation. Null: the stream has not brought them in yet.
+ */
+function wordsAhead(rest: string, final: boolean): string[] | null {
+  const open = rest.indexOf('{{');
+  const seg = open === -1 ? rest : rest.slice(0, open);
+  const toks = seg.split(/\s+/).filter(Boolean);
+  const done = open !== -1 || final;
+  const complete = done || /\s$/.test(seg) ? toks : toks.slice(0, -1);
+  const out: string[] = [];
+  for (const t of complete) {
+    out.push(t);
+    if (out.length === 3 || /[,.;:!?…)\]]$/.test(t)) return out;
+  }
+  return done ? out : null;
+}
 
 /** A `{{` with no `}}` within this many chars is not a tag. */
 /** Long enough for a figure's whole {{let}} (a fitted figure with ~20 named points runs ~400). */
@@ -49,15 +69,20 @@ function scanTag(buf: string, open: number, final: boolean): Scan {
  * Incremental parser for `narration {{tag ...}} narration`. Chunk boundaries can fall anywhere.
  *
  * Every parsed tag is applied to a value model (the engine's numbers, headless: src/gate/engine.ts),
- * in stream order, so a `{{val id=…}}` becomes a narration word with the engine's value — glued to
- * the text touching it ("${{val id=c}}." → "$4.5.") — and a `{{contrast}}` becomes the copy it
- * draws. The val action is emitted too (with `said`/`spoken`, or neither when unresolved: the word
- * is then UNBOUND_TEXT and the director records the skip).
+ * in stream order, so a `{{val id=…}}` becomes a narration word with the engine's value, said as the
+ * board writes it (its affixes: "$10", "100 units", values/quantity.ts) — glued to the text touching
+ * it ("${{val id=c}}." → "$4.5.") and never doubling an affix the narration writes itself ("{{val id=t}}
+ * seconds", "${{val id=c}}") — and a `{{contrast}}` becomes the copy it draws. The val action is
+ * emitted with its tag (with `said`/`spoken`, settled when its word is; or neither when unresolved: the
+ * word is then UNBOUND_TEXT and the director records the skip).
  */
 export class ScriptParser {
   private buf = '';
-  /** A val's word, waiting to see whether text touches it on the right. */
-  private held: string | null = null;
+  /**
+   * A val, waiting for the text after it: whether text touches it on the right, and (when the board
+   * writes an affix around it) whether the narration says that unit itself. `left`: text glued on its left.
+   */
+  private held: { v: ValAction; s: Said | null; left: string } | null = null;
   /**
    * A page mark the sentence may use as a word (src/script/quoteWords.ts), waiting for the text after
    * it: when the sentence lacks a noun there, a deictic ("this") is said right after it, so the mark
@@ -110,14 +135,16 @@ export class ScriptParser {
       a = { ...rest, ref: `${id}.${field ?? 'y'}` };
     }
     if (a.kind === 'val') {
-      const s = this.values.say(a);
-      const v: ValAction = s ? { ...a, ...s } : a;
       // The word: glued to a word touching the tag on its left ("$"); the right side is settled once seen.
-      let text = s?.said ?? UNBOUND_TEXT;
+      const s = this.values.say(a);
+      const v: ValAction = s ? { ...a, said: saidText(s), spoken: spokenOf(s) } : a;
       const last = out[out.length - 1];
-      if (touchesLeft && last?.type === 'word') { out.pop(); text = last.text + text; }
+      let left = '';
+      if (touchesLeft && last?.type === 'word') { out.pop(); left = last.text; }
+      // The action goes out with its tag (the gate reads each tag's action from that push); its said and
+      // spoken are settled with its word (release), once the narration shows which affixes it writes.
       out.push({ type: 'action', action: v });
-      this.held = text;
+      this.held = { v, s, left };
       return;
     }
     if (a.kind === 'plot' && a.axes && !a.domainSrc && !a.domain && !a.t && !a.onChart) a = this.hostDomain(a);
@@ -165,14 +192,29 @@ export class ScriptParser {
     return { ...a, ...(host.domainSrc ? { domainSrc: host.domainSrc } : {}), ...(host.domain ? { domain: host.domain } : {}) };
   }
 
-  /** Emits a held val word, glued to a word touching it on the right. False: wait for more text. */
+  /**
+   * Emits a held val's words, glued to a word touching it on the right. A value the board writes with
+   * affixes waits for the words after it too: a unit the narration says there is its own, so the board's
+   * is not said again (the val's said/spoken follow). False: wait for more text.
+   */
   private release(out: ScriptEvent[], final: boolean): boolean {
-    if (this.held == null) return true;
+    const h = this.held;
+    if (h == null) return true;
     const m = /^[^\s{]+/.exec(this.buf);
     if (!m && !this.buf.length && !final) return false;
     if (m && m[0].length === this.buf.length && !final) return false; // the touching word may go on
-    out.push({ type: 'word', text: this.held + (m ? m[0] : '') });
-    if (m) this.buf = this.buf.slice(m[0].length);
+    const touch = m ? m[0] : '';
+    let s = h.s;
+    if (s && (s.pre || s.post)) {
+      // Punctuation touching it ends the phrase: nothing after it says its unit.
+      const next = /[,.;:!?…)\]]$/.test(touch) ? [] : wordsAhead(this.buf.slice(touch.length), final);
+      if (next == null) return false;
+      s = { ...s, ...inSentence(s, h.left, touch ? [touch, ...next] : next) };
+      h.v.said = saidText(s);
+      h.v.spoken = spokenOf(s);
+    }
+    out.push(...words(h.left + (h.v.said ?? UNBOUND_TEXT) + touch));
+    if (m) this.buf = this.buf.slice(touch.length);
     this.held = null;
     return true;
   }
@@ -209,7 +251,12 @@ export class ScriptParser {
       out.push(...words(before));
       this.buf = this.buf.slice(open);
       const s = scanTag(this.buf, 0, final);
-      if (s.kind === 'wait') return out;
+      if (s.kind === 'wait') {
+        // A word touching the tag waits with it: it glues to a val ("${{val id=p}}"), however the stream is cut.
+        const glue = /\S+$/.exec(before)?.[0];
+        if (glue) { out.pop(); this.buf = glue + this.buf; }
+        return out;
+      }
       if (s.kind === 'cut') {
         // An svg group keeps its whole children (completeSvg); any other half tag is dropped.
         const body = cutTagBody(this.buf.slice(2));
