@@ -735,6 +735,28 @@ describe('Lessons v3: two stages', () => {
     expect(ev[3]).toMatchObject({ t: 'end', usd: r.usd, cached: 2800, input: 3000 });
   });
 
+  it('scout stream: the pages come first (the schema\'s order) and go out before the opener; an opener for an answer spoken elsewhere points at nothing', async () => {
+    const obj = { relation: 'new-topic', pages: [8, 9], opener: '{{circle p=3 mark=#d1}} A ceiling holds the price down. It cannot clear the market.', find: [], plan: 'p' };
+    const { f } = fakeFetch([{ chunks: scoutSse(obj, 4) }]);
+    const { r, ev } = await collect(f);
+    expect(ev.map((e) => e.t)).toEqual(['pages', 'opener', 'opener', 'scout', 'end']);
+    expect(ev[0]).toMatchObject({ t: 'pages', pages: [8, 9] });
+    expect(r.opener).toBe(' A ceiling holds the price down. It cannot clear the market.');
+    // The page in view among the pages: its tags stay. Pinned to it (the student pointed): they stay too.
+    const here = fakeFetch([{ chunks: scoutSse({ ...obj, pages: [3, 9] }, 4) }]);
+    expect((await collect(here.f)).r.opener).toMatch(/^\{\{circle p=3 mark=#d1\}\}/);
+    const pinned = fakeFetch([{ chunks: scoutSse(obj, 4) }]);
+    const ev2: ScoutEvent[] = [];
+    const r2 = await scoutStream({ ...sreq, pinned: true }, scfg, deps(pinned.f), (e) => ev2.push(e));
+    expect(r2.opener).toMatch(/^\{\{circle p=3 mark=#d1\}\}/);
+    // A scout that fails after its pages keeps them (the answer may already be spoken there); only its plan is lost.
+    const cut = fakeFetch([{ chunks: scoutSse('{"relation":"new-topic","pages":[8,9],"opener":"Half an answer. And', 6, false) }]);
+    expect((await collect(cut.f)).r).toMatchObject({ pages: [8, 9], plan: '', fallback: expect.any(String) });
+    // A bad page never goes out early: the same check as the verdict's.
+    const bad = fakeFetch([{ chunks: scoutSse({ ...obj, pages: [999, 9, 9] }, 4) }]);
+    expect((await collect(bad.f)).ev[0]).toMatchObject({ t: 'pages', pages: [9] });
+  });
+
   it('scout stream: a check reply\'s verdict on the student\'s own number is spoken; a number of its own is not', async () => {
     const obj = { opener: 'Yes, 0.5 is right. It lands 180 m downstream. The current sets it.', pages: [3], plan: 'p' };
     const { f } = fakeFetch([{ chunks: scoutSse(obj, 4) }]);

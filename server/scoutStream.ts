@@ -9,7 +9,10 @@
 //
 // `OpenerGate` turns the opener's characters into spoken script: whole sentences only (the first one
 // plays as soon as it is complete), tags restricted to pointing at the visible page, narration cleaned
-// of markdown and TeX like the answer's.
+// of markdown and TeX like the answer's. The pages arrive before the opener (SCOUT_SCHEMA's order):
+// once they say the answer is spoken elsewhere (moment.ts homePage), the view will have travelled
+// there before the first word, so the opener may point at nothing: the scout only listed the page the
+// student was on, and a tag on it would fire on a page no longer in view (`anchor`).
 //
 // C7 (2026-10-31, "what it says and what it draws don't match"): the opener plays before any plan or
 // board exists, from a scout that does not reason, so it may orient but must not claim what the worked
@@ -194,8 +197,20 @@ export class OpenerGate {
   /** The first dropped sentence (raw), spoken at the end only if nothing else was. */
   private first = '';
   private firstOpen = false;
+  /** The one page the opener's tags may point at: the visible page, or none once the answer is spoken elsewhere. */
+  private page: number | null;
   /** `own`: the student's question (the numbers in it are theirs to hear back). */
-  constructor(private visible: number, private own = '') {}
+  constructor(private visible: number, private own = '') { this.page = visible; }
+
+  /**
+   * Where the answer is spoken (moment.ts homePage), known before the opener: the visible page keeps its
+   * tags; any other home allows none. Ignored once something was said (an opener written before its
+   * pages keeps today's rule: what played pointed at the page in view).
+   */
+  anchor(home: number): void {
+    if (this.said || this.buf) return;
+    this.page = home === this.visible ? this.visible : null;
+  }
 
   push(d: string): string {
     this.buf += d;
@@ -307,6 +322,6 @@ export class OpenerGate {
     if (!name || !OPENER_TAGS.has(name)) return false;
     if (/\son=/.test(tag)) return false;
     const p = /\sp=(\d+)/.exec(tag);
-    return !!p && Number(p[1]) === this.visible;
+    return !!p && this.page != null && Number(p[1]) === this.page;
   }
 }

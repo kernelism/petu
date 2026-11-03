@@ -40,8 +40,9 @@ import { Lint } from './lint';
 import { systemPrompt, PROMPT_VERSION } from './prompt/system';
 import { SvgBeatFilter } from './svgBeats';
 import { SCOUT_SYSTEM, SCOUT_VERSION } from './prompt/scout';
-import { SCOUT_SCHEMA, fallbackScout, parseScout, type ScoutEvent, type ScoutRequest, type ScoutResult } from '../src/agent/scout';
+import { SCOUT_SCHEMA, fallbackScout, parsePages, parseScout, type ScoutEvent, type ScoutRequest, type ScoutResult } from '../src/agent/scout';
 import { OpenerGate, ScoutJson } from './scoutStream';
+import { homePage } from '../src/agent/moment';
 import type { Relation } from '../src/agent/context/memory';
 import { CacheStats, estimatedUsage } from './cacheStats';
 import { ANTHROPIC_URL, AnthropicEvents, NO_ANTHROPIC_KEY, anthropicHeaders, anthropicInput, isAnthropicModel, normalizeUsage, toAnthropicRequest, type AnthropicUsage } from './anthropic';
@@ -240,7 +241,8 @@ const PRIOR_CHARS = 600;
  * Stage 1 (scout). Cacheable prefix: the scout instructions and the deck digest (30m), byte-identical
  * to the digest the answer sends, then the visible page's listing (30m: constant per page; what the
  * opener may point at). Then the previous exchange and the question last. Strict JSON out, streamed:
- * the opener comes first so it can be spoken while the pages and plan are written.
+ * the pages first (they decide where the opener is spoken), then the opener, so it can be spoken while
+ * the plan is written.
  */
 export function buildScoutRequest(r: ScoutRequest, cfg: ModelConfig, prewarm = false) {
   const tail = [`The student is looking at page ${r.page}.`];
@@ -302,8 +304,15 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
     verdict = { pages: v.pages, plan: v.plan, ms: ms(), usd: 0, ...(v.fallback ? { fallback: v.fallback } : {}), ...(v.relation ? { relation: v.relation } : {}), ...(v.find?.length ? { find: v.find } : {}), ...(gate.said ? { opener: gate.said } : {}), ...(openerMs != null ? { openerMs } : {}) };
     if (!signal?.aborted) emit({ t: 'scout', pages: verdict.pages, plan: verdict.plan, ms: verdict.ms, ...(v.fallback ? { fallback: v.fallback } : {}), ...(v.relation ? { relation: v.relation } : {}), ...(v.find?.length ? { find: v.find } : {}), ...(gate.notes.length ? { notes: gate.notes } : {}) });
   };
+  /**
+   * The pages the scout already sent (the `pages` event), if any. They decided where the answer is
+   * spoken (the view may be there by now), so a scout that fails after them keeps them: its plan is
+   * lost, not its pages (was: the visible page alone, under an opener already playing on page 86).
+   */
+  let early: number[] | null = null;
+  const fallback = (why: string): ScoutResult => (early ? { ...fallbackScout(r.page, why), pages: early } : fallbackScout(r.page, why));
   const finish = (usd: number, u?: Usage): ScoutResult => {
-    if (!verdict) decide(fallbackScout(r.page, 'scout ended without a verdict'));
+    if (!verdict) decide(fallback('scout ended without a verdict'));
     verdict!.usd = usd;
     if (!signal?.aborted) emit({ t: 'end', usd, ms: ms(), ...(u ? { cached: u.input_tokens_details?.cached_tokens ?? 0, input: u.input_tokens } : {}) });
     return verdict!;
@@ -329,9 +338,20 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
     onString: (k, dlt) => { if (k === 'opener') say(gate.push(dlt)); },
     onField: (k) => {
       const f = json.fields;
+      // The pages close before the opener starts (the schema's order): where the answer is spoken is
+      // known before its first word (the client travels there), and the opener points only at that page.
+      // (Pages written after the opener came too late to move anything: the verdict carries them.)
+      if (k === 'pages' && !verdict && openerMs == null && !signal?.aborted) {
+        const pages = parsePages(f.pages, r.numPages);
+        if (pages.length) {
+          early = pages;
+          emit({ t: 'pages', pages, ms: ms() });
+          gate.anchor(homePage(r.page, pages, !!r.pinned));
+        }
+      }
       // The opener's last sentence plays as soon as its string closes, not when the verdict comes.
       if (k === 'opener') say(gate.end());
-      // The verdict once pages and plan are both in (the opener, first in the schema, is complete by then).
+      // The verdict once pages and plan are both in (the opener, before the plan in the schema, is complete by then).
       if ((k === 'pages' || k === 'plan') && 'pages' in f && 'plan' in f) decide(parseScout(JSON.stringify({ pages: f.pages, plan: f.plan, find: f.find, relation: f.relation }), r.numPages, r.page));
     },
   });
@@ -363,7 +383,7 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
       }
     }
   } catch (e) {
-    if (!verdict && !signal?.aborted) decide(fallbackScout(r.page, timedOut ? 'scout timed out' : `scout failed: ${scrub(String(e), d.key).slice(0, 120)}`));
+    if (!verdict && !signal?.aborted) decide(fallback(timedOut ? 'scout timed out' : `scout failed: ${scrub(String(e), d.key).slice(0, 120)}`));
   } finally {
     clearTimeout(deadline);
     signal?.removeEventListener('abort', onAbort);
@@ -371,7 +391,8 @@ export async function scoutStream(r: ScoutRequest, cfg: ModelConfig, d: Deps, em
   if (!verdict) {
     // The stream ended without the fields arriving one by one (or the incremental read missed them):
     // parse the whole text once more.
-    decide(timedOut ? fallbackScout(r.page, 'scout timed out') : parseScout(text, r.numPages, r.page));
+    const whole = timedOut ? null : parseScout(text, r.numPages, r.page);
+    decide(!whole || (whole.fallback && early) ? fallback(whole?.fallback ?? 'scout timed out') : whole);
   }
   if (!sent) { d.ledger.release(id); return finish(0); }
   const u: Usage = usage ?? estimatedUsage(est, 0, Math.ceil(outChars / 3.2) || cfg.maxOutput);

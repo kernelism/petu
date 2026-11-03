@@ -1,7 +1,7 @@
 // tests/agent/askedPage.test.ts — the one page a question is about (C5, src/agent/moment.ts): decided
 // when it is sent, a check reply on the check's own page, a selection's page over the page in view.
 import { describe, it, expect } from 'vitest';
-import { askedPage, checkPageOf, type Pointed } from '../../src/agent/moment';
+import { askedPage, checkPageOf, homePage, type Pointed } from '../../src/agent/moment';
 
 const sel = (page: number): Pointed => ({ kind: 'selection', page, text: 'the rate doubles' });
 
@@ -35,5 +35,19 @@ describe('checkPageOf: where the check was offered', () => {
   it('board and svg tags do not move it; no page tag: the asked page', () => {
     expect(checkPageOf('{{scroll p=5}} a {{dot on=s1 x=1 y=2}} {{svg <g id="a"><text x="1" y="2">p=9</text></g>}} b', 2)).toBe(5);
     expect(checkPageOf('Just words.', 7)).toBe(7);
+  });
+});
+
+describe('homePage: where the answer is spoken', () => {
+  it('the page asked on when the scout teaches from it, wherever it is in the order', () => {
+    expect(homePage(12, [11, 12, 14])).toBe(12);
+  });
+  it('else the first page the scout teaches from: a question about p87 asked on the cover is spoken on p87', () => {
+    expect(homePage(1, [87, 88])).toBe(87);
+    expect(homePage(12, [13])).toBe(13);
+  });
+  it('pinned (pointed, drew, a check reply, an aside) or no pages: the page asked on', () => {
+    expect(homePage(5, [40], true)).toBe(5);
+    expect(homePage(5, [])).toBe(5);
   });
 });

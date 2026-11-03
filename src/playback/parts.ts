@@ -39,11 +39,12 @@ export function deriveParts(script: ParsedScript, origin: number): Part[] {
   for (const { action: a, word } of script.acts) {
     if (a.kind !== 'scroll') continue;
     const p = a.page;
-    if (isJourney(cur, p)) {
-      const last = raw[raw.length - 1];
-      if (last.start === word) raw[raw.length - 1] = { start: word, page: p, back: p === origin && raw.length > 1 };
-      else raw.push({ start: word, page: p, back: p === origin });
-    }
+    const last = raw[raw.length - 1];
+    // A move before a part has said a word sets where that part plays, near or far: the answer's
+    // opening move to its home page (src/agent/twoStage.ts) makes the first part that page's, even
+    // when it is next to the page asked on.
+    if (last.start === word) raw[raw.length - 1] = { start: word, page: p, back: p === origin && raw.length > 1 };
+    else if (isJourney(cur, p)) raw.push({ start: word, page: p, back: p === origin });
     cur = p;
   }
   // Fold glances: a part is final once the next one has started (or the script ended).
@@ -116,3 +117,4 @@ export function nextSentence(words: string[], pos: number): number | null {
   for (let i = Math.max(0, pos); i < words.length - 1; i++) if (endsSentence(words[i])) return i + 1;
   return null;
 }
+

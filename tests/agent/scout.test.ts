@@ -78,6 +78,20 @@ describe('scoutLive / scoutPages (client)', () => {
     const f2 = vi.fn(async () => ndjson([{ t: 'scout', pages: [6], plan: 'p', ms: 5 }, { t: 'end', usd: 0.002, ms: 6 }]));
     expect(await scoutPages(req, ctl().signal, f2 as unknown as typeof fetch)).toMatchObject({ pages: [6], plan: 'p', usd: 0.002 });
   });
+  it('the early pages are known (re-checked) before the first opener sentence; pages after the opener are not early', async () => {
+    const f = vi.fn(async () => ndjson([{ t: 'pages', pages: [99, 8, 9], ms: 300 }, { t: 'opener', d: 'A. ', ms: 700 }, { t: 'scout', pages: [8, 9], plan: 'p', ms: 900 }, { t: 'end', usd: 0, ms: 950 }]));
+    const live = scoutLive(req, ctl().signal, f as unknown as typeof fetch);
+    expect(live.pages()).toBeNull();
+    for await (const s of live.opener) { expect(s).toBe('A. '); expect(live.pages()).toEqual([8, 9]); }
+    const late = vi.fn(async () => ndjson([{ t: 'opener', d: 'A. ', ms: 700 }, { t: 'pages', pages: [8], ms: 800 }, { t: 'scout', pages: [8], plan: 'p', ms: 900 }]));
+    const l2 = scoutLive(req, ctl().signal, late as unknown as typeof fetch);
+    for await (const _ of l2.opener) { /* drain */ }
+    await l2.verdict;
+    expect(l2.pages()).toBeNull();
+    // A stream that ends after the early pages (no verdict) keeps them in its fallback.
+    const cut = vi.fn(async () => ndjson([{ t: 'pages', pages: [8, 9], ms: 300 }, { t: 'opener', d: 'A. ', ms: 700 }]));
+    expect(await scoutPages(req, ctl().signal, cut as unknown as typeof fetch)).toMatchObject({ pages: [8, 9], fallback: expect.any(String), opener: 'A. ' });
+  });
   it('the opener ends when the verdict comes, even while the stream is still open', async () => {
     const c = ctl();
     const f = vi.fn(async () => ndjson([{ t: 'opener', d: 'A. ', ms: 1 }, { t: 'scout', pages: [2], plan: '', ms: 2 }], { hang: true, signal: c.signal }));

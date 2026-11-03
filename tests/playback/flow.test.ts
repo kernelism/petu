@@ -149,6 +149,14 @@ describe('deriveParts', () => {
   it('an answer that opens by moving to its page is one part on that page', () => {
     expect(deriveParts(script([scroll(3), ...n(50), END]), 1)).toEqual([{ start: 0, page: 3, back: false }]);
   });
+
+  it('the opening move sets the first part\'s page even to the next page (its home, twoStage): not "Page 12" for an answer spoken on 13', () => {
+    expect(deriveParts(script([scroll(13), ...n(50), END]), 12)).toEqual([{ start: 0, page: 13, back: false }]);
+    // Stage 2's own first scroll right after the opening move (the same word) is where the part plays.
+    expect(deriveParts(script([scroll(87), scroll(88), ...n(50), END]), 1)).toEqual([{ start: 0, page: 88, back: false }]);
+    // A move after words were said stays a move within the part when it is not a journey.
+    expect(deriveParts(script([...n(20), scroll(13), ...n(30), END]), 12)).toEqual([{ start: 0, page: 12, back: false }]);
+  });
 });
 
 describe('journey beat and the way back', () => {

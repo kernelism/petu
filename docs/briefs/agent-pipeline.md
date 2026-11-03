@@ -1,8 +1,10 @@
 # Agent pipeline brief
 
-One answer = two OpenAI calls joined into one script stream: the **scout** (stage 1) streams an
-opener that plays at once plus the pages/plan; **stage 2** (perform) continues from the opener's last
-word. All calls go through a Vite-middleware server on localhost, gated by a persistent spend ledger.
+One answer = two OpenAI calls joined into one script stream: the **scout** (stage 1) streams its
+pages, an opener that plays at once, and the plan; **stage 2** (perform) continues from the opener's last
+word. The answer is spoken on its **home page** from the first word (`moment.ts homePage`): the page in
+view when the scout's pages include it (or the student pinned the question to it: pointed, drew, a check
+reply, an aside), else the first of the scout's pages, which the stream opens by moving to. All calls go through a Vite-middleware server on localhost, gated by a persistent spend ledger.
 
 ## File map
 
@@ -12,7 +14,7 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 | `server/openai.ts` | Request builders `buildRequest` (stage 2), `buildScoutRequest`, `buildSystemPrewarm`; `ask`, `scoutStream`, `prewarm*`, `judge`, `callJson`; `openerNote`; token estimate; timeouts `TIMEOUTS` (15s headers / 20s idle / 60s call), `SCOUT_TIMEOUT_MS` 8000. |
 | `server/repair.ts`, `server/prompt/repair.ts` | Live-gate repairs (`POST /api/repair`, design 2026-10-29 §6): `RepairCache` keeps stage 2's OpenAI-format body per `reqId` (10 min, ≤ 16; filled by `ask` via `Deps.onBody`); a repair resends it unchanged (same cache key and breakpoints) + the released text (assistant) + `repairNote(report)` (user, `REPAIR_VERSION` r1), 450 output tokens, the answer's provider (Anthropic converted by `toAnthropicRequest`). Ledger kind `repair`; `MAX_REPAIRS` 2 per answer (429); 404 unknown reqId, 400 bad body/phase, 402 cap, 503 `PETU_REPAIR=off`; the deadline aborts and books an estimate. `PETU_REPAIR_EFFORT` (default: stage 2's). answers.jsonl gets `{kind:'repair', …}`. Shares `readUpstream` (SSE → filter → lint) with `ask`. |
 | `src/agent/repair.ts` | The gate's `RepairFn`s: `makeRepair({reqId, phase})` (NDJSON), `fakeRepair({delayMs, faults, text})` (no network), `recordedRepair(events)` (replays). |
-| `server/scoutStream.ts` | `ScoutJson` (incremental JSON reader) + `OpenerGate` (whole sentences only; tags limited to `OPENER_TAGS` on the visible page; a dropped quote tag the sentence uses as a word keeps its words (`quoteWords.ts`); narration cleaned). |
+| `server/scoutStream.ts` | `ScoutJson` (incremental JSON reader) + `OpenerGate` (whole sentences only; tags limited to `OPENER_TAGS` on the visible page, none once `anchor(home)` says the answer is spoken elsewhere; a dropped quote tag the sentence uses as a word keeps its words (`quoteWords.ts`); narration cleaned). |
 | `server/env.ts` | The ONLY reader of the key and `PETU_*`. Defaults: `gpt-6.1-terra`, effort none, `DEFAULT_MAX_OUTPUT` 3200, scout max 600. `PHASE_CAPS`, `MAX_TOTAL_USD`. Throws on bad knobs. |
 | `server/ledger.ts` | `Ledger`: `reserve` (worst case) → `settle` (real or estimated) / `release`; lockfile; dead-process reservations booked as `recovered`. File `.petu/spend.json`. |
 | `server/prices.ts` | `PRICES` per model (in/cached/out/write30m/write12h), `costUsd`, `worstCaseUsd`. A wrong price = a wrong ledger. |
@@ -21,12 +23,12 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 | `server/sse.ts`, `scriptFilter.ts`, `lint.ts` | SSE → `ResponseEvents`; strips `<plan>…</plan>` (kept for debug/eval) and markdown/TeX from narration; grammar notes (`TAG_NAMES`). |
 | `server/svgBeats.ts` | The svg answer mode's stream filter (in front of ScriptFilter): plan → `{{svgboard h=}}`, each SVG group → one `{{svg …}}` tag as it closes (board-engine.md "The svg board"). Used by `ask` and repairs when `isSvgMode(promptVariant)`. |
 | `server/prompt/system.ts` | Stage-2 developer prompt, `PROMPT_VERSION` p6.2 (p6.2: the narration ends on the takeaway; an optional hidden `<check>…</check>` after the last beat, lifted by `svgBeats.ts` into `done.check`): the svg board format (`SVG_PARTS`, examples `svgExamples.ts`); the p5.7 tag prompt and its variants (`PETU_PROMPT_VARIANT`) were deleted 2026-11-01. |
-| `server/prompt/scout.ts` | `SCOUT_SYSTEM`, `SCOUT_VERSION` (s2.7): opener, ≤ 6 pages, ≤ 100-word plan ending with numbered beats and "Scope: narrow|standard|broad" (founder 2026-10-29: length by scope; ~35 spoken words a beat, narrow = two or three beats and the check), JSON order opener→pages→plan. `parseScout` clips a long plan in its prose, never its beats/scope (`clipPlan`). |
+| `server/prompt/scout.ts` | `SCOUT_SYSTEM`, `SCOUT_VERSION` (s2.10): opener, ≤ 6 pages, ≤ 100-word plan ending with numbered beats and "Scope: narrow|standard|broad" (founder 2026-10-29: length by scope; ~35 spoken words a beat, narrow = two or three beats and the check), JSON order relation→pages→opener→find→plan (s2.10: the pages decide where the opener is spoken). `parseScout` clips a long plan in its prose, never its beats/scope (`clipPlan`). |
 | `src/agent/pacing.ts` | The length budget from the plan: `scopeOf`, `planBeats`, `budgetOf(plan, opener)` (2.4 spoken words/s measured; narrow 50 s target / 60 s cap, standard 75/95, broad 120/150, opener words taken off), `budgetNote` (the `BUDGET` line under stage 2's PLAN, `groundingTail`). The live gate gets it via `LiveGate.setBudget` (App `onScout`; `&budget=off` disables): past `capWords − CHECK_WORDS` it closes the answer at the next beat boundary, holds the rest and plays only the last beat that asks a question (gate events `action: 'cut'`). |
 | `server/prompt/examples.ts` | Few-shot `EXAMPLES` on invented documents (music notation, a village's coins, a lighthouse beam made to move, a service counter), each executable; every val bound by the engine. |
 | `src/agent/protocol.ts` | `AskRequest`, `AskContext`, `AskEvent` (NDJSON), `SpendSummary`, `HARD_STOP_USD` 60. |
 | `src/agent/scout.ts` | `ScoutRequest/Result/Event`, `SCOUT_SCHEMA`, `parseScout`, `fallbackScout`, `answerPages`, `imagePages` (≤ 4 images incl. visible). |
-| `src/agent/twoStage.ts` | Joins opener stream + stage-2 stream; emits `scout` / `handoff` events; failure after the opener = cut-off, not error. |
+| `src/agent/twoStage.ts` | Joins opener stream + stage-2 stream; decides the home (early `pages` event, else the verdict's) and opens with `{{scroll p=home}}` at word 0 when it is not the page asked on; builds stage 2 on the home page; emits `scout` (with `home` when it moved) / `handoff` events; failure after the opener = cut-off, not error. |
 | `src/agent/useAgent.ts` | Per-document state: `ContextBuilder`, `History` (≤ 3 turns, narration only), `SessionMemory` (MEMORY block), `Prewarm`, spend; `source()` builds the two-stage generator and records each finished or stopped answer. App passes each conversation's own `history`/`memory` (`AgentAsk`; the ask bar's + starts a conversation with empty ones, a restored one brings its own back). |
 | `server/title.ts` | `POST /api/title` (saved questions, layout-ui brief): `{ questions, sections }` → a ≤ 6-word title (`cleanTitle`, src/session/title.ts) from one non-streamed `callJson` on `TITLE_MODEL` gpt-6-luna, effort none, 40 output tokens; ledger kind `title`; `TitleCache` by content (200 cached); 400 bad body/phase, 402 cap, 502 nothing usable, 503 no key. |
 | `src/agent/context/memory.ts` | Session record + MEMORY: per answer the question, pages, `relation`, plan, board as data (sections; things with kind/id/label/data/the words drawn on; constants; changes), claims, check question. Append-only; past 8 entries the oldest half rolls to one line each. `RELATIONS`, `REVISIONS`. |
@@ -44,9 +46,10 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 ```
 Enter → useAgent.source
   ├ ContextBuilder.digest(page,q) + visible(page)      (digest waits ≤ 2.5s for the text index)
-  ├ POST /api/scout  → NDJSON: opener… → scout{pages,plan} → end{usd}
-  │      opener sentences yield to the player immediately (tags on the visible page only)
-  └ on verdict: ContextBuilder.build(page,q,ink,{pages,plan}) → POST /api/ask {context+opener}
+  ├ POST /api/scout  → NDJSON: pages → opener… → scout{pages,plan} → end{usd}
+  │      home = homePage(page, pages, pinned); if home ≠ page the stream opens with {{scroll p=home}}
+  │      opener sentences yield to the player immediately (tags on the visible page only, and only when it is home)
+  └ on verdict: ContextBuilder.build(home,q,ink,{pages,plan}) → POST /api/ask {context+opener}
          → NDJSON: meta → text… → done{usd,plan,lint} | error   → yielded after the opener
 ```
 Failed/slow scout (8s) → `fallbackScout`: visible page only, no opener, stage 2 alone.

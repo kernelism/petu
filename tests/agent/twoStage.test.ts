@@ -14,8 +14,9 @@ function fakeScout() {
   const q = new Queue<string>();
   let decide!: (v: ScoutResult | null) => void;
   const verdict = new Promise<ScoutResult | null>((ok) => { decide = ok; });
-  const live: ScoutLive = { opener: q, verdict, cost: Promise.resolve({ usd: 0.001 }) };
-  return { live, say: (s: string) => q.push(s), decide: (v: ScoutResult | null) => { q.close(); decide(v); } };
+  let early: number[] | null = null;
+  const live: ScoutLive = { opener: q, verdict, cost: Promise.resolve({ usd: 0.001 }), pages: () => early };
+  return { live, say: (s: string) => q.push(s), decide: (v: ScoutResult | null) => { q.close(); decide(v); }, pagesFirst: (p: number[]) => { early = p; } };
 }
 
 function setup(over: Partial<TwoStage> = {}) {
@@ -28,7 +29,7 @@ function setup(over: Partial<TwoStage> = {}) {
   const o: TwoStage = {
     live: s.live,
     visible: ground(3),
-    build: vi.fn(async (sc: ScoutResult) => { log.push(`build ${sc.pages.join(',')}`); return { context: ctx(3), grounds: [ground(3), ...sc.pages.filter((p) => p !== 3).map(ground)] }; }),
+    build: vi.fn(async (sc: ScoutResult, home: number) => { log.push(`build ${sc.pages.join(',')}${home !== 3 ? ` on ${home}` : ''}`); return { context: ctx(home), grounds: [ground(home), ...sc.pages.filter((p) => p !== home).map(ground)] }; }),
     ask: (context) => { asked.push(context); log.push('ask'); return (async function* () { await gate; yield 'Then '; yield 'more.'; })(); },
     onGrounding: (pages) => log.push(`ground ${pages.map((p) => p.page).join(',')}`),
     handlers: { onEvent: (e) => events.push(e), onHandoff: (e) => { e.openerEndMs = 1234; } },
@@ -176,5 +177,74 @@ describe('twoStage with a slow stage 2: opener → wait → stage 2', () => {
     await done;
     expect(out).toEqual(['Prices rise. ']);
     expect(events.map((e) => e.t)).not.toContain('handoff');
+  });
+});
+
+describe('twoStage: the answer is spoken on its home page (moment.ts homePage)', () => {
+  it('pages that leave out the page asked on: the stream opens with a move to the first of them, before the first word; stage 2 is built there', async () => {
+    const { o, s, log, events, release } = setup();
+    const out: string[] = [];
+    const done = drain(twoStage(o, new AbortController().signal), out);
+    s.pagesFirst([87, 88]); // the scout's pages come before its opener
+    s.say('A price ceiling holds the price below equilibrium. ');
+    s.decide({ pages: [87, 88], plan: 'p', ms: 900, usd: 0, opener: 'A price ceiling holds the price below equilibrium. ' });
+    await tick(); await tick();
+    release();
+    await done;
+    expect(out).toEqual(['{{scroll p=87}} ', 'A price ceiling holds the price below equilibrium. ', ' ', 'Then ', 'more.']);
+    expect(log).toContain('build 87,88 on 87');
+    expect(events[0]).toMatchObject({ t: 'scout', home: 87 });
+  });
+
+  it('the page asked on among the pages: no move, it is the home (not the first page)', async () => {
+    const { o, s, log, events, release } = setup();
+    const out: string[] = [];
+    const done = drain(twoStage(o, new AbortController().signal), out);
+    s.pagesFirst([2, 3]);
+    s.say('It votes. ');
+    s.decide({ pages: [2, 3], plan: 'p', ms: 900, usd: 0, opener: 'It votes. ' });
+    release();
+    await done;
+    expect(out[0]).toBe('It votes. ');
+    expect(out.join('')).not.toContain('scroll');
+    expect(log).toContain('build 2,3');
+    expect(events[0]).not.toHaveProperty('home');
+  });
+
+  it('pinned to the page asked on (pointed, drew, a check reply, an aside): no move whatever the pages', async () => {
+    const { o, s, log, release } = setup({ pinned: true });
+    const out: string[] = [];
+    const done = drain(twoStage(o, new AbortController().signal), out);
+    s.pagesFirst([40]);
+    s.say('That mark is the ceiling. ');
+    s.decide({ pages: [40], plan: 'p', ms: 900, usd: 0 });
+    release();
+    await done;
+    expect(out.join('')).not.toContain('scroll');
+    expect(log).toContain('build 40');
+  });
+
+  it('no opener: the move goes before stage 2\'s first text (its first word)', async () => {
+    const { o, s, events, release } = setup();
+    const out: string[] = [];
+    const done = drain(twoStage(o, new AbortController().signal), out);
+    s.decide({ pages: [7, 8], plan: 'p', ms: 900, usd: 0 });
+    release();
+    await done;
+    expect(out).toEqual(['{{scroll p=7}} ', 'Then ', 'more.']);
+    expect(events.map((e) => e.t)).toEqual(['scout', 'handoff']);
+  });
+
+  it('an opener that came before any pages (a scout that wrote it first) stays on the page asked on, and so does stage 2', async () => {
+    const { o, s, log, release } = setup();
+    const out: string[] = [];
+    const done = drain(twoStage(o, new AbortController().signal), out);
+    s.say('It votes. ');
+    await tick();
+    s.decide({ pages: [7], plan: 'p', ms: 900, usd: 0, opener: 'It votes. ' });
+    release();
+    await done;
+    expect(out.join('')).not.toContain('scroll');
+    expect(log).toContain('build 7');
   });
 });

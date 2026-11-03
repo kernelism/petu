@@ -1,21 +1,34 @@
 // src/agent/twoStage.ts — one answer as one script stream, from two model calls (spec "Lessons v3" A):
 //
-//   scout (streamed) ── opener sentences ──────────────► played at once (visible page only)
+//   scout (streamed) ── pages ─► home ── opener sentences ─► played at once (on the home page)
 //                    └─ verdict (pages, plan) ─► build ─► stage 2 ─► played right after the opener
 //
 // Stage 2 starts the moment the verdict is in, while the opener is still being spoken, and is told
-// the opener verbatim so it continues instead of repeating. The player sees one stream: the opener's
-// text, a separating space, then stage 2's text, never interleaved.
+// the opener verbatim so it continues instead of repeating. The player sees one stream: an opening
+// move to the home page when the answer lives elsewhere, the opener's text, a separating space, then
+// stage 2's text, never interleaved.
+//
+// The home (moment.ts homePage) is where the answer is spoken from its first word: the page the
+// question was asked on when the scout's pages include it, else the first of them. The scout writes
+// its pages before its opener, so the home is known before the first word: the stream opens with
+// `{{scroll p=home}}` at word 0 (no journey beat: nothing was said yet; deriveParts makes it the first
+// part's page), stage 2 is built on the home page (its listing and image, "the student is looking at"
+// it, since by then they are), and the server's opener gate let the opener point only at the home page.
+// Was: the opener on the asked page and the first move only at stage 2's first scroll, ~10 s in.
 import type { AskContext, AskEvent } from './protocol';
 import { AskError, capNotice, type AskHandlers, type ScoutLive } from './client';
 import type { ScoutResult } from './scout';
 import type { PageGround } from './context/types';
+import { homePage } from './moment';
 
 export type TwoStage = {
   live: ScoutLive;
-  /** The visible page's ground: what the opener's tags resolve against. */
+  /** The visible page's ground (the page asked on): what the opener's tags resolve against. */
   visible: PageGround;
-  build(sc: ScoutResult): Promise<{ context: AskContext; grounds: PageGround[] }>;
+  /** The question is pinned to the page asked on (the student pointed or drew on it, or replies to a check offered there): it is the home whatever the pages. */
+  pinned?: boolean;
+  /** Stage 2's context, built on the answer's home page. */
+  build(sc: ScoutResult, home: number): Promise<{ context: AskContext; grounds: PageGround[] }>;
   /** Stage 2's script stream for a context (askStream). */
   ask(context: AskContext): AsyncGenerator<string>;
   onGrounding(pages: PageGround[]): void;
@@ -28,8 +41,20 @@ export type TwoStage = {
 
 export async function* twoStage(o: TwoStage, signal: AbortSignal): AsyncGenerator<string> {
   o.onGrounding([o.visible]);
+  const asked = o.visible.page;
+  /** Decided once, from the first pages known: the early ones before the first word, else the verdict's (no opener). */
+  let home: number | null = null;
+  const homeOf = (pages: number[] | null) => (home ??= homePage(asked, pages ?? [], o.pinned));
+  /** The opening move: before the first word, to the home page when it is not the page asked on. */
+  let moved = false;
+  const move = (): string => {
+    if (moved) return '';
+    moved = true;
+    return home != null && home !== asked ? `{{scroll p=${home}}} ` : '';
+  };
   const stage2 = o.live.verdict.then(async (sc) => {
     if (!sc || signal.aborted) return null;
+    homeOf(o.live.pages() ?? sc.pages);
     const atMs = o.since();
     void o.live.cost.then((c) => {
       if (signal.aborted) return;
@@ -37,12 +62,12 @@ export async function* twoStage(o: TwoStage, signal: AbortSignal): AsyncGenerato
         t: 'scout', pages: sc.pages, plan: sc.plan, ms: sc.ms, atMs, usd: c.usd, ...(sc.fallback ? { fallback: sc.fallback } : {}),
         ...(sc.openerMs != null ? { openerMs: sc.openerMs } : {}), ...(sc.opener ? { opener: sc.opener } : {}),
         ...(c.cached != null ? { cached: c.cached } : {}), ...(c.input != null ? { input: c.input } : {}),
-        ...(sc.find?.length ? { find: sc.find } : {}), ...(sc.relation ? { relation: sc.relation } : {}), ...(o.ctx ? { ctx: o.ctx } : {}),
+        ...(sc.find?.length ? { find: sc.find } : {}), ...(sc.relation ? { relation: sc.relation } : {}), ...(home !== asked ? { home: home! } : {}), ...(o.ctx ? { ctx: o.ctx } : {}),
       };
       o.handlers.onEvent?.(ev);
       o.handlers.onScout?.(ev);
     });
-    const { context, grounds } = await o.build(sc);
+    const { context, grounds } = await o.build(sc, home!);
     if (signal.aborted) return null;
     return { grounds, stream: o.ask(sc.opener ? { ...context, opener: sc.opener } : context) };
   });
@@ -52,6 +77,8 @@ export async function* twoStage(o: TwoStage, signal: AbortSignal): AsyncGenerato
   let opened = false;
   for await (const s of o.live.opener) {
     if (signal.aborted) return;
+    // The first sentence: the pages came before it (or never early: then the page asked on).
+    if (!opened) { homeOf(o.live.pages()); const m = move(); if (m) yield m; }
     opened = true;
     yield s;
   }
@@ -65,6 +92,9 @@ export async function* twoStage(o: TwoStage, signal: AbortSignal): AsyncGenerato
       if (signal.aborted) return;
       if (first) {
         first = false;
+        // No opener: stage 2's first text is the answer's first word, and the opening move goes before it.
+        const m = move();
+        if (m) yield m;
         const ev: Extract<AskEvent, { t: 'handoff' }> = { t: 'handoff', ms: o.since() };
         o.handlers.onHandoff?.(ev); // may add when the opener's words end
         o.handlers.onEvent?.(ev);
