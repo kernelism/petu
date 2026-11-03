@@ -21,9 +21,13 @@
 // trailing ", " until the next piece decides, so a cut never leaves a dangling comma). If every sentence
 // was numeric, the first is spoken after all at the end: silence is worse, and stage 2 is told to
 // correct the opener when its case disagrees (openerNote).
+// A sentence that uses a dropped tag as a word ("The {{highlight p=7 "…"}} uses…", quoting a page the
+// student is not on) is not spoken either: a tag is silent (src/script/quoteWords.ts), so without its mark
+// the sentence lacks a noun, and the deictic the parser would say there ("This uses…") would point at
+// nothing. It goes the numeric sentence's way (and is the fallback's first sentence, deictic and all).
 import { clean } from './scriptFilter';
 import { parseTag } from '../src/script/parseTag';
-import { clauseAfter, lookahead, markQuote, sentenceTail, spokenAt } from '../src/script/quoteWords';
+import { clauseAfter, deixisAt, isArticle, lookahead, markOf, replaceWord, sentenceTail } from '../src/script/quoteWords';
 
 type State = 'start' | 'key' | 'colon' | 'value' | 'string' | 'raw' | 'after' | 'done';
 
@@ -194,6 +198,8 @@ export class OpenerGate {
   /** The first dropped sentence (raw), spoken at the end only if nothing else was. */
   private first = '';
   private firstOpen = false;
+  /** The last emitted piece used a dropped tag as a word (emit). */
+  private lacks = false;
   /** `own`: the student's question (the numbers in it are theirs to hear back). */
   constructor(private visible: number, private own = '') {}
 
@@ -233,8 +239,8 @@ export class OpenerGate {
     const sep = end ? null : /[,;:]\s+$/.exec(text);
     const body = sep ? text.slice(0, sep.index) : text;
     const said = this.emit(body);
-    if (saysNumber(said, this.own)) {
-      this.notes.push(`opener: dropped a number ${JSON.stringify(text.trim().slice(0, 60))}`);
+    if (this.lacks || saysNumber(said, this.own)) {
+      this.notes.push(`opener: dropped ${this.lacks ? 'a sentence that needs a dropped tag' : 'a number'} ${JSON.stringify(text.trim().slice(0, 60))}`);
       this.skip = !end;
       this.pend = '';
       if (this.started) { this.started = false; this.said += '. '; return '. '; }
@@ -270,6 +276,7 @@ export class OpenerGate {
   }
 
   private emit(sentence: string): string {
+    this.lacks = false;
     let out = '';
     let i = 0;
     while (i < sentence.length) {
@@ -283,9 +290,11 @@ export class OpenerGate {
       if (this.allowed(tag)) out += tag;
       else {
         this.notes.push(`opener: dropped ${JSON.stringify(tag.slice(0, 40))}`);
-        // A dropped mark the sentence used as a word ("The {{highlight p=4 "kernel"}} slides…"): its words stay.
-        const w = this.quoteWords(tag, out, sentence.slice(b + 2));
-        if (w) out += (out && !/\s$/.test(out) ? ' ' : '') + w;
+        // A dropped mark the sentence used as a word ("The {{highlight p=4 "kernel"}} slides…"): the sentence
+        // is not spoken (piece); should it be after all, it says the parser's deictic there ("This slides…").
+        const w = this.deixis(tag, out, sentence.slice(b + 2));
+        if (w) { out = w.out; this.lacks = true; }
+        if (w?.say) out += (out && !/\s$/.test(out) ? ' ' : '') + w.say;
         // A dropped pointer between two spaces leaves one ("the  viewing ray" was sent as written).
         else if (/\s$/.test(this.said + out)) while (sentence[i] === ' ' || sentence[i] === '\t') i++;
       }
@@ -293,13 +302,21 @@ export class OpenerGate {
     return out;
   }
 
-  /** The words a dropped quote tag stood for in its sentence (src/script/quoteWords.ts), or ''. */
-  private quoteWords(tag: string, out: string, rest: string): string {
-    const q = markQuote(parseTag(tag.slice(2, -2)));
-    if (!q) return '';
+  /**
+   * A dropped mark its sentence uses as a word (quoteRole `slot`, src/script/quoteWords.ts): the text so
+   * far (its article replaced, when the deictic takes its place) and the deictic still to say. Null: the
+   * mark only pointed.
+   */
+  private deixis(tag: string, out: string, rest: string): { out: string; say: string } | null {
+    const m = markOf(parseTag(tag.slice(2, -2)));
+    if (!m) return null;
     const before = sentenceTail((this.said + out).replace(/\{\{[^}]*\}\}/g, ' ').split(/\s+/).filter(Boolean));
-    const clause = clauseAfter(rest, true, lookahead(q)) ?? rest;
-    return spokenAt(before, q, clause) ?? '';
+    const clause = clauseAfter(rest, true, lookahead(m.quote)) ?? rest;
+    const d = deixisAt(before, m, clause);
+    if (!d) return null;
+    const w = /(\S+)(\s*)$/.exec(out);
+    if (d.replacesPrev && w && isArticle(w[1])) return { out: out.slice(0, w.index) + replaceWord(w[1], d.words) + w[2], say: '' };
+    return { out, say: d.words };
   }
 
   private allowed(tag: string): boolean {

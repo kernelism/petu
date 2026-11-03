@@ -96,25 +96,33 @@ describe('OpenerGate (opener → spoken script)', () => {
     expect(g.said).toBe('So, the window slides over the corner, and {{highlight p=3 "a, b"}} both shift');
   });
 
-  it('a dropped mark the sentence used as a word keeps its words; a dropped pointer says nothing', () => {
-    // Synthetic: the opener quotes another page (dropped), but the sentence needs its words.
-    expect(run(['{{highlight p=7 "osmosis"}} moves water across the membrane. ']).g.said).toBe('Osmosis moves water across the membrane. ');
-    expect(run(['The {{highlight p=7 "cell membrane"}} lets water through, so cells swell. ']).g.said).toBe('The cell membrane lets water through, so cells swell. ');
-    expect(run(['Water crosses the {{underline p=7 "membrane"}}. ']).g.said).toBe('Water crosses the membrane. ');
+  it('a sentence that uses a dropped mark as a word is not spoken; a dropped pointer says nothing', () => {
+    // Synthetic: the opener quotes another page (dropped). A tag is silent, so the sentence lacks its noun,
+    // and a deictic there ("This moves water…") would point at nothing: it goes the numeric sentence's way.
+    expect(run(['{{highlight p=7 "osmosis"}} moves water across the membrane. Cells swell. ']).g.said).toBe('Cells swell. ');
+    expect(run(['Read on. The {{highlight p=7 "cell membrane"}} lets water through, so cells swell. ']).g.said).toBe('Read on. ');
+    expect(run(['Read on. Water crosses the {{underline p=7 "membrane"}}. ']).g.said).toBe('Read on. ');
+    // D18's shape, streamed in pieces, the tag on another page: the sentence is cut where it leaned on it.
+    expect(run(['Ordinary percent change uses the start. Here, the {{highl', 'ight p=8 "Midpoint method"}} uses', ' the average instead. ']).g.said)
+      .toBe('Ordinary percent change uses the start. ');
+    // Pointers: the sentence reads whole without them.
     expect(run(['The {{highlight p=7 "membrane"}} membrane lets water through. ']).g.said).toBe('The membrane lets water through. ');
     expect(run(['Read on. {{highlight p=7 "Osmosis"}} This page explains it. ']).g.said).toBe('Read on. This page explains it. ');
-    // a7's shape (diag C8): a long quote whose slot the next words fill says nothing, and leaves one space.
-    expect(run(['Page 3 starts with the {{highlight p=7 "A point x in image 1 back-projects to a ray in 3D"}} viewing ray: the first pixel fixes a direction. ']).g.said)
+    // a7's shape (diag C8): a dropped pointer between two spaces leaves one.
+    expect(run(['Page 3 starts with {{highlight p=7 "A point x in image 1 back-projects to a ray in 3D"}} the viewing ray: the first pixel fixes a direction. ']).g.said)
       .toBe('Page 3 starts with the viewing ray: the first pixel fixes a direction. ');
-    // D18's shape, streamed in pieces, the tag on another page: its words are spoken where it stood.
-    expect(run(['Ordinary percent change uses the start. Here, the {{highl', 'ight p=8 "Midpoint method"}} uses', ' the average instead. ']).g.said)
-      .toBe('Ordinary percent change uses the start. Here, the Midpoint method uses the average instead. ');
+    expect(run(['{{highlight p=7 "osmosis"}} moves water. ']).g.notes.join(' ')).toMatch(/dropped a sentence that needs a dropped tag/);
   });
 
-  it('a dropped long quote the sentence lacks is spoken', () => {
-    // D19's shape, quoting another page: the dangling "The" gets its words, the stop kept.
+  it('the opener that only leaned on dropped tags is still spoken, with the deictic, never the quote', () => {
+    // D19's shape, quoting another page: every sentence needed the tag, so the first is the fallback.
     expect(run(['The {{highlight p=9 "slope is constant; P/Q is not."}} Elasticity changes because it measures percentage changes. ']).g.said)
-      .toBe('The slope is constant; P/Q is not. Elasticity changes because it measures percentage changes. ');
+      .toBe('This line. Elasticity changes because it measures percentage changes. ');
+    expect(run(['The {{highlight p=7 "cell membrane"}} lets water through. ']).g.said).toBe('This lets water through. ');
+  });
+
+  it('a mark on the visible page passes through: the parser says its deictic', () => {
+    expect(run(['The {{highlight p=3 "cell membrane"}} lets water through. ']).g.said).toBe('The {{highlight p=3 "cell membrane"}} lets water through. ');
   });
 
   it('drops an unclosed tag at the end', () => {

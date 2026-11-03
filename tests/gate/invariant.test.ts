@@ -1,7 +1,7 @@
 // The live gate's invariants over every recorded answer (.petu/eval/runs), with random injected
 // faults and no repair: nothing released contains an action the (recorded) board skipped or the
 // session parser could not parse (I2); released text is the stream's units in order, each whole
-// or stripped of failed page pointing (a mark the sentence used as a word leaves its quoted words),
+// or stripped of failed page pointing (a mark the sentence used as a word leaves a deictic, never its quote),
 // never changed after release (I1/I3).
 import { describe, expect, it } from 'vitest';
 import { listRuns, loadRun, runsDir, type Recording } from '../../scripts/gate-beats/recordings';
@@ -10,6 +10,9 @@ import { tokenize, type Tag } from '../../src/gate/segment';
 import { ScriptParser } from '../../src/script/parser';
 import { NEW_INK } from '../../src/gate/segment';
 import type { GateEvent } from '../../src/gate/events';
+
+/** The words a strip may say in a mark's place (src/script/quoteWords.ts deixisAt). */
+const DEIXIS = /^(this|these|highlighted|underlined|circled|boxed|line|part)[.,;:!?]*$/;
 
 function rng(seed: number) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 32; }; }
 
@@ -72,15 +75,19 @@ describe('live gate invariants over recorded answers', () => {
       // Unit keys are released in increasing order (no unit overtakes an earlier one).
       const order = relEvents.map((e) => (e.k.startsWith('o') ? -100 + Number(e.k.slice(1)) : Number(e.k)));
       expect([...order].sort((a, b) => a - b)).toEqual(order);
-      // Released text is a subsequence of the stream (strips only remove tags, or leave a mark's quoted
-      // words where the sentence used it as a word; a number the board contradicts is said as the
-      // board's, and the gate logs each such change). Case aside: a quote spoken where it opens its
-      // sentence is capitalised ("{{highlight "the professor, cart…"}} accelerate" plays "The professor…").
-      const stream = rec.script.replace(/\{\{[^}]*\}\}/g, (m) => ` ${/"([^"]*)"/.exec(m)?.[1] ?? ''} `).replace(/\s+/g, ' ');
+      // Released text is a subsequence of the stream (strips only remove tags, or leave a deictic where
+      // the sentence used a mark as a word: "this", in an article's place or not, or "highlighted line";
+      // a number the board contradicts is said as the board's, and the gate logs each such change).
+      const stream = rec.script.replace(/\{\{[^}]*\}\}/g, ' ').replace(/\s+/g, ' ');
       let rel = releasedText.replace(/\{\{[^}]*\}\}/g, '').replace(/\s+/g, ' ').trim();
       for (const e of gates) for (const n of e.notes) for (const m of n.matchAll(/(\S+) → (\S+) \(/g)) if (n.startsWith('numbers said as the board')) rel = rel.replace(m[2], m[1]);
       let pos = 0;
-      for (const w of rel.toLowerCase().split(' ').filter(Boolean)) { const at = stream.toLowerCase().indexOf(w, pos); expect(at, `${res.label}: "${w}" not in the stream in order`).toBeGreaterThanOrEqual(0); pos = at + w.length; }
+      for (const w of rel.toLowerCase().split(' ').filter(Boolean)) {
+        if (DEIXIS.test(w)) continue; // said as written or as a deictic: either way, it moves nothing
+        const at = stream.toLowerCase().indexOf(w, pos);
+        expect(at, `${res.label}: "${w}" not in the stream in order`).toBeGreaterThanOrEqual(0);
+        pos = at + w.length;
+      }
     }
     expect(units).toBeGreaterThan(0);
     console.info(`[invariant] ${recs.length} scripts, ${units} units, ${drops} drops, ${injected} injected faults checked`);

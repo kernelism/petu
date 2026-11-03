@@ -1,57 +1,73 @@
-// src/script/quoteWords.ts — the words a page mark's quote stands for, when the sentence uses the tag as
-// a word. The model often writes `The {{highlight p=4 "filter kernel"}} supplies weights…`: the quote is
-// both the page target and part of the sentence. Without its words the student hears "The supplies
-// weights…". The parser (src/script/parser.ts) speaks them at the tag, so the mark lands as they are
-// said; the scout's opener filter (server/scoutStream.ts) speaks them in place of a tag it drops.
-// The rule reads only the narration around the tag, never the model's intent (calibrated on 321 recorded
-// quote tags in .petu/answers.jsonl, 2026-10-31):
-//   - the quoted words already said next to the tag (just before it, or in the clause after it): nothing;
-//   - the tag opens a sentence and a lowercase word follows ("{{highlight …}} changes an image"): the
-//     subject is missing; a capitalised word ("{{highlight …}} The kernel…") means the tag only points;
-//   - inside a sentence, right after a word that needs a noun (the, a, of, by, is, called, the image's):
-//     the noun is missing, unless a new noun phrase starts right after the tag ("by {{…}} the weights");
-//   - anything else is a pointer.
-// A long quote (a whole line pointed at, more than MAX_SPOKEN words) after a word that needs a noun is
-// spoken only where the sentence certainly lacks it (diag C8, D19: "The {{highlight "slope is constant;
-// P/Q is not."}} Elasticity changes…" was heard as "The Elasticity changes…"): with no words of the
-// clause after it, a verb right after it ("The {{…}} are like…", draw D8), or a new sentence after it when
-// the quote ends one. Opening a sentence before a lowercase word it is the subject whatever its length
-// ("{{highlight "Midpoint method: same answer in either direction"}} uses the average…", q2 D18; eval
-// 2026-11-02 heard five such openers without their subject). A long quote in a slot whose next word may
-// continue the sentence ("the {{…line…}} viewing ray", "The {{…}} distinction is") points.
+// src/script/quoteWords.ts — what a page mark's tag says when the sentence uses it as a word.
+//
+// The rule (design 2026-11-02, "a tag is a pure pointer"): a tag is silent. Its quote is the mark's
+// target on the page, never narration: the student hears only the words outside the tags, so the prompts
+// (server/prompt/scout.ts OPENER, server/prompt/system.ts POINTING) ask for sentences that read whole
+// with every tag taken out. The model still writes `The {{highlight p=4 "…"}} uses the average…`, using
+// the tag as the sentence's noun. The engine then voices a short deictic for what lights up, never the
+// page's text: "This uses the average…" (the mark lands on "This"). Before, the quote itself was spoken
+// there (PR #38), and a pointed-at line was read out verbatim, notation and capitals included ("The page's
+// Sensitivity: P (+ | D) = 0.95 means…"); before that, nothing was, and the sentence lost its subject.
+// A wrong guess about the slot now costs a stray "this", not a formula read aloud, so the quote's length
+// and shape no longer matter.
+//
+// What the tag is to its sentence (quoteRole), read only from the narration around it:
+//   - `said`: the quote's words are already said next to it (before it in the sentence, in the clause
+//     after it, or a content word of the quote right before or after it): nothing to add;
+//   - `slot`: the sentence lacks a noun at the tag: it opens the sentence before a lowercase word
+//     ("{{…}} uses…"), or follows a word that needs a noun (the, of, is, called, its, the page's) with no
+//     noun phrase of its own after it ("by {{…}} the weights" is filled); a demonstrative before it
+//     ("this {{…}} means") already stands as the noun;
+//   - `pointer`: anything else.
+// The deictic for a slot (deixisAt) depends only on the word before it, never on the quote:
+//   - after an article (a, an, the) it replaces the article: "The {{…}} uses" → "This uses", "the {{…}}
+//     viewing ray" → "this viewing ray" ("this" stands as a pronoun and as a determiner alike);
+//   - after a possessive or quantifier (its, the page's, each) it is the mark as a noun: "the page's
+//     highlighted line means…";
+//   - anywhere else (opening the sentence, after of / is / called): "this" ("Start with this: …").
+// "these" before a plural verb (are, were, have); a quote that ends a sentence before a new one ("The
+// {{…is not.}} Elasticity changes") closes it: "This line. Elasticity changes…".
+// Callers: the parser (src/script/parser.ts) emits the deictic at the tag, so the mark lands as it is
+// said; the gate (src/gate/live.ts) builds the same words when it strips a failed mark; the scout's
+// opener filter (server/scoutStream.ts) does not speak a sentence that needs a tag it dropped (the
+// deictic would point at nothing).
 import type { RawAction } from './types';
 
-/** Page marks whose quote may stand in the sentence. */
+/** Page marks whose tag may stand in the sentence. */
 const MARK_KINDS = new Set(['highlight', 'underline', 'circle', 'box']);
 
-/** Words that need a noun after them: a tag right after one of these stands for that noun. */
+const ARTICLES = new Set(['a', 'an', 'the']);
+/** Determiners after which the slot takes a noun ("its highlighted line"). */
+const POSSESSIVES = new Set(['its', 'their', 'our', 'your', 'his', 'her', 'my', 'each', 'every', 'any', 'some', 'no']);
+/** Other words that need a noun after them: a tag right after one of these stands for that noun. */
 const NEEDS_NOUN = new Set([
-  'a', 'an', 'the', 'this', 'these', 'those', 'its', 'their', 'our', 'your', 'his', 'her', 'my', 'each', 'every', 'any', 'some', 'no',
+  ...ARTICLES, ...POSSESSIVES,
   'of', 'to', 'in', 'on', 'at', 'by', 'for', 'with', 'from', 'into', 'onto', 'as', 'than', 'about', 'via', 'per',
   'is', 'are', 'was', 'were', 'be', 'been', 'called', 'named', 'termed', 'known',
 ]);
 /** A word after the tag that opens a noun phrase of its own: the slot is filled. */
 const OPENS_NOUN = new Set(['a', 'an', 'the', 'this', 'these', 'those', 'its', 'their', 'our', 'your', 'his', 'her', 'my']);
-/** Words that start a predicate, never a noun phrase: after "the {{…}}" the slot is certainly empty. */
-const STARTS_VERB = new Set([
-  'is', 'are', 'was', 'were', 'has', 'have', 'had', 'can', 'could', 'will', 'would', 'may', 'might', 'must', 'should', 'does', 'do', 'did',
-  'shows', 'describes', 'explains', 'means', 'says', 'states', 'gives', 'tells', 'uses', 'connects', 'compares', 'measures', 'depends', 'defines', 'makes', 'lets',
-]);
+/** Verbs that agree with a plural subject: the deictic before them is "these". */
+const PLURAL_VERB = new Set(['are', 'were', 'have', 'do', 'arent', 'werent', 'dont']);
 /** Words too common to tell whether the quote is already being said. */
 const STOP = new Set(['a', 'an', 'the', 'of', 'to', 'in', 'on', 'at', 'by', 'for', 'with', 'and', 'or', 'is', 'are', 'this', 'that', 'its']);
-/** A quote longer than this may be a line pointed at: spoken only where the sentence certainly lacks it. */
-export const MAX_SPOKEN = 4;
+/** The mark as a noun, after a possessive. */
+const NOUN: Record<string, string> = { highlight: 'highlighted line', underline: 'underlined line', circle: 'circled part', box: 'boxed part' };
 
 const norm = (w: string) => w.toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}]+/gu, '');
 const wordsOf = (s: string) => s.split(/\s+/).map(norm).filter(Boolean);
 const squash = (s: string) => wordsOf(s).join(' ');
+const possessive = (raw: string) => /\p{L}['’]s$/iu.test(raw) || POSSESSIVES.has(norm(raw));
 
-/** The quote of a page mark that could stand in the sentence (highlight / underline / circle / box on a page), else null. */
-export function markQuote(a: RawAction | null | undefined): string | null {
+/** A page mark whose tag could stand in the sentence: its kind and quote. */
+export type Mark = { kind: string; quote: string };
+
+/** The page mark (highlight / underline / circle / box on a page, with a quote) a tag is, else null. */
+export function markOf(a: RawAction | null | undefined): Mark | null {
   if (!a || !MARK_KINDS.has(a.kind)) return null;
   const x = a as { page?: number; region?: string; quote?: string };
   if (x.page == null || x.region != null || !x.quote) return null;
-  return wordsOf(x.quote).length ? x.quote : null;
+  return wordsOf(x.quote).length ? { kind: a.kind, quote: x.quote } : null;
 }
 
 /** Ends a sentence: a word whose last letter is followed by . ! or ? (closing quotes and brackets allowed). */
@@ -86,16 +102,15 @@ export function clauseAfter(after: string, final: boolean, maxWords: number): st
   return final ? after : null;
 }
 
-/** How many words after a tag decide it: the quote's length and one more. */
+/** How many words after a tag decide it: the quote's length and one more (a copy of it may follow). */
 export const lookahead = (quote: string) => wordsOf(quote).length + 1;
 
 /**
- * What a mark's quote is to its sentence: `said` (its words are said next to it), `speak` (the sentence
- * lacks them: speak them at the tag), or `pointer` (it only points; also a long quote in a slot the next
- * word may fill). `before`: the sentence's words before the tag (narration only); `clause`: the text
- * after the tag to its clause end (clauseAfter).
+ * What a mark's tag is to its sentence (see the header): `said`, `slot` (the sentence lacks a noun at
+ * the tag) or `pointer`. `before`: the sentence's words before the tag (narration only); `clause`: the
+ * text after the tag to its clause end (clauseAfter).
  */
-export type QuoteRole = 'said' | 'speak' | 'pointer';
+export type QuoteRole = 'said' | 'slot' | 'pointer';
 export function quoteRole(before: readonly string[], quote: string, clause: string): QuoteRole {
   const q = wordsOf(quote);
   if (!q.length) return 'pointer';
@@ -111,48 +126,43 @@ export function quoteRole(before: readonly string[], quote: string, clause: stri
   const first = norm(firstRaw);
   if (first && (content.has(first) || (!content.size && q.includes(first)))) return 'said';
   if (prev && content.has(prev)) return 'said';
-  const long = q.length > MAX_SPOKEN;
-  // A long quote whose words the clause goes on to paraphrase, three in a row ("{{"30 and 60 degrees land
-  // at the"}} launches land at the same spot", fu D3): the sentence says it its own way.
-  const cl = ` ${squash(clause)} `;
-  if (long && q.slice(2).some((_, i) => cl.includes(` ${q.slice(i, i + 3).join(' ')} `))) return 'said';
-  const capital = /^["'“‘(]?\p{Lu}/u.test(firstRaw);
-  if (before.length === 0) {
-    // Opening the sentence: its subject is missing unless a capitalised word starts it after the tag.
-    return capital ? 'pointer' : 'speak';
-  }
-  // A clause ending in a word that needs a noun ("the", "by", "the image's"), with no noun phrase of its own after the tag.
+  // Opening the sentence: its subject is missing unless a capitalised word starts it after the tag.
+  if (before.length === 0) return /^["'“‘(]?\p{Lu}/u.test(firstRaw) ? 'pointer' : 'slot';
+  // Inside it: right after a word that needs a noun, with no noun phrase of its own after the tag.
   if (/[,;:.!?]$/.test(prevRaw)) return 'pointer';
   if (OPENS_NOUN.has(first)) return 'pointer';
-  if (!NEEDS_NOUN.has(prev) && !/['’]s$/i.test(prevRaw)) return 'pointer';
-  if (!long) return 'speak';
-  // A long quote: the slot is certainly empty when nothing follows in the clause, when a verb follows
-  // ("The {{…}} are like"), or when a new sentence follows a quote that ends one ("The {{…is not.}}
-  // Elasticity changes"); else it may be a pointer.
-  return !first || STARTS_VERB.has(first) || (capital && /[.!?]["'”’)\]]*$/.test(quote.trim())) ? 'speak' : 'pointer';
-}
-
-/** Whether the quote's words must be spoken at the tag (quoteRole). */
-export const needsWords = (before: readonly string[], quote: string, clause: string): boolean => quoteRole(before, quote, clause) === 'speak';
-
-/**
- * The quote as spoken words: trailing punctuation dropped (the sentence's own follows the tag), except a
- * full stop when a new sentence starts after the tag (`ends`); capitalised when it opens the sentence.
- */
-export function quoteSpoken(quote: string, opens: boolean, ends = false): string {
-  let s = quote.replace(/\s+/g, ' ').trim();
-  if (!(ends && /[.!?]$/.test(s))) s = s.replace(/[.,;:!?]+$/, '');
-  if (opens) s = s.replace(/^\p{Ll}/u, (c) => c.toUpperCase());
-  return s;
+  return NEEDS_NOUN.has(prev) || possessive(prevRaw) ? 'slot' : 'pointer';
 }
 
 /**
- * The words to speak at the tag when the sentence lacks them (quoteRole `speak`), else null; an article
- * the sentence already said is not said twice ("The {{highlight "The slope…"}} is…").
+ * The words that fill a slot (deixisAt): `words` are said at the tag; `replacesPrev`: they take the
+ * place of the sentence's last word (an article: "The {{…}} uses" → "This uses").
  */
-export function spokenAt(before: readonly string[], quote: string, clause: string): string | null {
-  if (quoteRole(before, quote, clause) !== 'speak') return null;
-  const prev = before.length ? norm(before[before.length - 1]) : '';
-  const q = OPENS_NOUN.has(prev) && norm(quote.trim().split(/\s+/)[0]) === prev ? quote.trim().replace(/^\S+\s+/, '') : quote;
-  return quoteSpoken(q, before.length === 0, /^["'“‘(]?\p{Lu}/u.test(clause.trim()));
+export type Deixis = { words: string; replacesPrev: boolean };
+
+/** The deictic the engine says at a mark that fills a noun slot (see the header), else null. */
+export function deixisAt(before: readonly string[], mark: Mark, clause: string): Deixis | null {
+  if (quoteRole(before, mark.quote, clause) !== 'slot') return null;
+  const prevRaw = before.length ? before[before.length - 1] : '';
+  const prev = norm(prevRaw);
+  const next = clause.trim();
+  const plural = PLURAL_VERB.has(norm(next.split(/\s+/)[0] ?? ''));
+  // A quote that ends its sentence before a new one: the deictic closes the sentence as a noun.
+  const ends = /[.!?]["'”’)\]]*$/.test(mark.quote.trim()) && /^["'“‘(]?\p{Lu}/u.test(next);
+  const noun = NOUN[mark.kind] ?? 'marked part';
+  const cap = (s: string, up: boolean) => (up ? s.replace(/^\p{Ll}/u, (c) => c.toUpperCase()) : s);
+  const stop = ends ? '.' : '';
+  if (possessive(prevRaw)) return { words: noun + stop, replacesPrev: false };
+  const pro = ends ? `this ${noun.split(' ').pop()}` : plural ? 'these' : 'this';
+  if (ARTICLES.has(prev)) return { words: cap(pro, /^[^\p{L}]*\p{Lu}/u.test(prevRaw)) + stop, replacesPrev: true };
+  return { words: cap(pro, before.length === 0) + stop, replacesPrev: false };
 }
+
+/** Whether the sentence needs words at the tag (quoteRole `slot`). */
+export const needsWords = (before: readonly string[], quote: string, clause: string): boolean => quoteRole(before, quote, clause) === 'slot';
+
+/** The article a deictic replaces, with its case kept and any punctuation around it ("(The" → "(This"). */
+export const replaceWord = (word: string, by: string): string => word.replace(/\p{L}+/u, by);
+
+/** Whether a word is an article a deictic may replace. */
+export const isArticle = (word: string): boolean => ARTICLES.has(norm(word));
