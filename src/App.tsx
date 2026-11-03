@@ -1651,6 +1651,8 @@ export default function App() {
     const desk = new Desk(api.deskHost(), stageRef.current!, { onClose: () => { if (busyRef.current) closeRef.current(); void deskRef.current?.hide(); } });
     deskRef.current = desk;
     desk.subscribe((s) => { setDesk(s); setPaused(desk.follow.paused()); });
+    // Its layout from the start (the dock sits under the page column before any answer).
+    setDesk(desk.state());
     if (import.meta.env.DEV) { window.__viewer = api; window.__desk = desk; }
     setNumPages(api.numPages());
     const d = docRef.current;

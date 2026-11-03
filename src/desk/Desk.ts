@@ -1734,6 +1734,9 @@ export class Desk implements DeskApi {
       if (!lane && this.open) { if (this.split === 'none') this.split = 'normal'; void this.host.setSplit(this.split, 0); }
       for (const s of this.sections) for (const k of ['marginLeft', 'left', 'top', 'width', 'height'] as const) s.el.style[k] = '';
       for (const h of this.heads.values()) for (const k of ['marginLeft', 'left', 'top', 'width', 'height'] as const) h.el.style[k] = '';
+      // The dock's column follows the layout (DeskState.lane/page): told at once, not at the next answer
+      // event (on a fresh document the dock sat centred on the window, over the empty lane, until the first one).
+      this.emit();
     }
   }
 

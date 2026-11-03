@@ -96,3 +96,19 @@ describe('"Back to answer" in the lane', () => {
     expect(vi.mocked(host.glideTo).mock.calls[0][2]).toBe(6);
   });
 });
+
+describe('the desk tells its layout when the lane turns on', () => {
+  it('a subscriber hears lane: true on the first layout pass, before any answer', () => {
+    const lane = document.createElement('div'), stage = document.createElement('div');
+    document.body.append(lane, stage);
+    let layout: () => void = () => {};
+    const host = { ...laneHost(lane, 0), onLayout: (f: () => void) => { layout = f; return () => {}; } } as unknown as DeskHost;
+    const d = new Desk(host, stage);
+    const heard: boolean[] = [];
+    d.subscribe((s) => heard.push(!!s.lane));
+    (d as unknown as { wasLane: boolean }).wasLane = false;
+    layout();
+    expect(heard).toContain(true);
+    expect(d.state().lane).toBe(true);
+  });
+});
