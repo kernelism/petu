@@ -657,8 +657,8 @@ describe('Lessons v3: two stages', () => {
     expect(tail.length).toBeLessThan(900); // the previous answer is trimmed
     expect(tail.endsWith('QUESTION: How does it work?')).toBe(true);
     expect(b).toMatchObject({ stream: true, max_output_tokens: 600, reasoning: { effort: 'none' }, prompt_cache_key: scoutCacheKey(), text: { format: { type: 'json_schema', strict: true } } });
-    // The opener is first in the schema: it streams first.
-    expect(Object.keys(b.text.format.schema.properties)).toEqual(['relation', 'opener', 'pages', 'find', 'plan']);
+    // The pages come before the opener (they decide where it is spoken: moment.ts homePage), then it streams.
+    expect(Object.keys(b.text.format.schema.properties)).toEqual(['relation', 'pages', 'opener', 'find', 'plan']);
     // The prewarm is the same prefix (and the same output format, which is part of the prompt).
     const pre = buildScoutRequest(sreq, scfg, true) as any;
     expect(pre.input).toEqual(b.input.slice(0, 2));

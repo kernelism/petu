@@ -75,13 +75,14 @@ const FIND_CHARS = 80;
 export const SCOUT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['relation', 'opener', 'pages', 'find', 'plan'],
-  // Property order is output order: the relation (a few tokens), then the opener, so it can be spoken
-  // in the right way while the rest is written.
+  required: ['relation', 'pages', 'opener', 'find', 'plan'],
+  // Property order is output order: the relation (a few tokens), then the pages (a few more: they
+  // decide where the opener is spoken, moment.ts homePage), then the opener, so it can be spoken in the
+  // right way, on the right page, while the rest is written.
   properties: {
     relation: { type: 'string', enum: [...RELATIONS], description: 'How this question relates to your previous answer (the last in MEMORY): continue, revise-representation, simplify, new-example, deeper, or new-topic (also every first question).' },
-    opener: { type: 'string', description: 'The first one or two sentences of the spoken answer, with tags that point only at the visible page.' },
     pages: { type: 'array', items: { type: 'integer' }, description: 'At most 6 page numbers of the document, in teaching order.' },
+    opener: { type: 'string', description: 'The first one or two sentences of the spoken answer, with tags that point only at the visible page, and only when it is one of the pages.' },
     find: { type: 'array', items: { type: 'string' }, description: 'At most 3 labels or short phrases to look up (e.g. a figure, table or equation number the answer needs); usually empty.' },
     plan: { type: 'string', description: 'At most 100 words, ending with the numbered beats and the scope (narrow, standard or broad).' },
   },
