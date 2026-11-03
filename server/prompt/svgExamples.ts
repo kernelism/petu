@@ -1,4 +1,4 @@
-// server/prompt/svgExamples.ts — the svg answer format's few-shot examples (PROMPT_VERSION p6.13).
+// server/prompt/svgExamples.ts — the svg answer format's few-shot examples (PROMPT_VERSION p6.14).
 /**
  * Two invented documents (a river ferry, proofing dough): one a geometric figure built up beat by
  * beat, one a quantity over time read off its own chart. Each script is exactly what the model

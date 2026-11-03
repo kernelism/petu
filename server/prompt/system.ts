@@ -67,8 +67,12 @@ import { BOARD_W } from '../../src/svgboard/wire.ts';
  * branch's "answer first, in your first beat" and "computed by the board", main's "a case meant to show an
  * effect is chosen so the effect shows" (now in the board's numbers, not worked out by hand) and main's
  * labels-only composition paragraph.
+ * p6.14 (2026-11-02): EXACT DATA lists what a formula may use (the functions, if(), pi built in, integral()) and
+ * its 120-character cap. Eval draw D7 (pendulum period vs amplitude): the model, not knowing integral(),
+ * wrote ellipticK() and then a 16-term series, both a bad formula, and a beat was dropped; with the list it
+ * wrote integral(…, u, 0, pi/2) both times and the board drew the true period (judge 3.4 → 4.2, 4.2).
  */
-export const PROMPT_VERSION = 'p6.13';
+export const PROMPT_VERSION = 'p6.14';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -91,7 +95,7 @@ export const PROMPT_VERSION = 'p6.13';
  * engine from short formulas, fewer SVG tokens per group) go in this string; it is appended to THE
  * FORMAT. Empty until that work lands. Ask for the compact forms here.
  */
-const SVG_ENGINE_ATTRS = `EXACT DATA: write numbers that follow from a formula as formulas, never a coordinate or value worked out in your head: data-const="v=2.5 c=1.5 u=sqrt(v^2-c^2)" on a group names constants; a frame <g data-axes="ax" data-x="0,140" data-y="0,1300" data-box="x,y,w,h" data-frame="" data-ticks-x="0,70,140"/> maps data onto the board; <path data-fn="a-b*x" data-axes="ax"/> draws a curve; data-at="cross(d,s)", "at(d, y=pc)", "pt(ax, x, y)" place points, <line data-from="…" data-to="…">; <text id="crossing" data-val="W/u" data-fmt="0">crossing {} s</text> writes a computed number.
+const SVG_ENGINE_ATTRS = `EXACT DATA: write numbers that follow from a formula as formulas, never a coordinate or value worked out in your head: data-const="v=2.5 c=1.5 u=sqrt(v^2-c^2)" on a group names constants; a frame <g data-axes="ax" data-x="0,140" data-y="0,1300" data-box="x,y,w,h" data-frame="" data-ticks-x="0,70,140"/> maps data onto the board; <path data-fn="a-b*x" data-axes="ax"/> draws a curve; data-at="cross(d,s)", "at(d, y=pc)", "pt(ax, x, y)" place points, <line data-from="…" data-to="…">; <text id="crossing" data-val="W/u" data-fmt="0">crossing {} s</text> writes a computed number. A formula (up to 120 characters) may use + - * / ^, sqrt, sin, cos, tan (radians; rad(d) converts degrees), exp, ln, abs, min, max, if(cond, a, b), pi (built in, never a constant), and integral(f, u, a, b) for a quantity defined by an integral (f over u from a to b): never expand a series or an integral by hand.
 NUMBERS YOU SAY: a number the board computes is said by reference, never retyped: give its data-val text an id and say {{val id=crossing}} in that beat or a later one (a constant works too: {{val id=W}}); the student hears exactly what the board shows. Type only the page's and the question's own numbers. On a board with data, every point on a curve is placed by data-at (cross(d,s) where two curves meet, at(d, x=…) on one, pt(ax, x, y) anywhere else) and every number a label shows is a data-val: a number typed or a dot placed by eye beside them is the board contradicting itself. A sketch that is not a plot may be marked data-schematic.
 MOTION: to show a change, put {{tween name=value dur=3}} in a later beat on the word that causes it; everything built from that constant moves. Mark what moves data-ghost (its before stays faint) and a moving point data-trace.`;
 
