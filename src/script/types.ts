@@ -309,13 +309,18 @@ export type ConstAction = { kind: 'const'; defs: [string, string][] };
 // ------------------------------------------------------------------------------------------------
 // Gated beats, step 2 (src/values/*): numbers the narration states are bound to the engine's.
 
-/** How a bound number is said: `fmt` decimals; `as=percent` (×100, "%"); `as=abs` (the magnitude: "falls by 12"). */
+/**
+ * How a bound number is said: `fmt` decimals; `as=percent` (×100, "%"); `as=abs` (the magnitude: "falls by 12").
+ * A readout is said as the board writes it, with its text's affixes ("${}" → "$10", "{} units" → "100
+ * units"; one reader: src/values/quantity.ts), unless the narration writes that affix itself.
+ */
 export type ValFormat = { fmt?: number; as?: 'percent' | 'abs' };
 /**
  * {{val id=…}} in the narration: the engine's value, said as a word. ref: a block (`s`), a part
  * (`v[2]`, `o[1,2]`, `t[3].c` / `t[3].price`), a calc's result, a constant, a readout (`E`, `E.x`).
- * The parser resolves it against the value model (src/values/model.ts) when it is parsed: `said` is
- * the caption text, `spoken` the TTS form; both absent = unresolved (the caption shows `UNBOUND_TEXT`).
+ * The parser resolves it against the value model (src/gate/engine.ts) when it is parsed: `said` is
+ * the caption text ("$10"), `spoken` the TTS form ("ten dollars"); both absent = unresolved (the caption
+ * shows `UNBOUND_TEXT`).
  */
 /** `x`: a plot read at x (`{{val id=p.y x=0}}`), as `{{find … x=}}` would; the parser expands it into that find. */
 export type ValAction = { kind: 'val'; ref: string; x?: string; said?: string; spoken?: string } & ValFormat;
