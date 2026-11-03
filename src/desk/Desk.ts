@@ -1760,7 +1760,8 @@ export class Desk implements DeskApi {
     }
     for (const g of this.groups) g.h = g.away ? 0 : g.folded ? FOLDED_H : g.item.offsetHeight;
     const shown = this.groups.filter((g) => !g.away);
-    const packed = packLane(shown.map((g) => ({ want: g.live && g.lift === this.leadH(g) + 8 ? wantFor(this.anchorY(g.anchor), g.lift - 8) : this.anchorY(g.anchor) - g.lift, h: g.h })));
+    // The lane ends where the window, scrolled to the sheet's end, still shows above the dock.
+    const packed = packLane(shown.map((g) => ({ want: g.live && g.lift === this.leadH(g) + 8 ? wantFor(this.anchorY(g.anchor), g.lift - 8) : this.anchorY(g.anchor) - g.lift, h: g.h })), L ? L.total - safeBottom() - 12 : Infinity);
     const tops = this.groups.map((g) => (g.away ? 0 : packed[shown.indexOf(g)]));
     const { H } = this.host.viewport();
     this.groups.forEach((g, i) => {

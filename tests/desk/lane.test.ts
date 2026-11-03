@@ -36,6 +36,18 @@ describe('lane placement', () => {
   it('a group sits at its anchor; one whose slot is taken stacks below with a gap; earlier ones never move', () => {
     const tops = packLane([{ want: 100, h: 300 }, { want: 200, h: 100 }, { want: 1000, h: 50 }]);
     expect(tops).toEqual([100, 100 + 300 + LANE_GAP, 1000]);
+    expect(packLane([{ want: 100, h: 300 }, { want: 200, h: 100 }, { want: 1000, h: 50 }], 2000)).toEqual(tops);
+  });
+  it('the lane ends: a follow-up on the last page fits above it, the answers above rise to keep the gap', () => {
+    // fu D2 (econ p12, lane 7266 px, dock 198): the new group was packed to 7070–7429 and its sticky
+    // inset drew it over the docked answer at 6682.
+    const end = 7266 - 198;
+    const [old, next] = packLane([{ want: 6682, h: 364 }, { want: 6700, h: 359 }], end);
+    expect(next).toBe(end - 359);
+    expect(old).toBe(next - LANE_GAP - 364);
+    // An answer far above is untouched; more than fits runs past the end, never above 0 nor overlapping.
+    expect(packLane([{ want: 100, h: 50 }, { want: 900, h: 100 }], 950)).toEqual([100, 850]);
+    expect(packLane([{ want: 0, h: 300 }, { want: 0, h: 300 }], 400)).toEqual([0, 300 + LANE_GAP]);
   });
   it('a leader goes only to a real mark: the live page ink, or a marked anchor; never to an unmarked page', () => {
     expect(leaderFrom(320, 500, true)).toEqual([320, 500]);
