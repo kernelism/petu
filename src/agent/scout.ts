@@ -7,9 +7,19 @@
 // opener is spoken while the rest is still being written, and stage 2 starts as soon as the pages
 // and plan are known, told exactly what the opener said. Its JSON is parsed defensively: anything
 // unusable falls back to the visible page alone, so a scout failure never stops an answer.
-// On a follow-up it also decides how the question relates to the previous answer (`relation`), first,
-// so the opener can already speak in the new way.
+// On a follow-up it also decides how the question relates to the previous answer (`relation`), so the
+// opener can already speak in the new way.
+// Asked while an answer plays (the student typed over it, so it waits paused: `paused`), it decides first
+// where the question goes (`route`): `aside`, a side question answered briefly before the paused answer
+// goes on, or `new`, the student wants this answered instead and the paused answer ends where it is.
+// The route is the first field written and travels as its own event, so the app knows where the answer
+// will play before its first word, at no added latency (src/agent/route.ts decides with it).
 import { isRelation, RELATIONS, type Relation } from './context/memory';
+
+/** Where a question asked mid-answer goes: beside the paused answer, or in its place. */
+export const ROUTES = ['aside', 'new'] as const;
+export type Route = (typeof ROUTES)[number];
+export const isRoute = (v: unknown): v is Route => typeof v === 'string' && (ROUTES as readonly string[]).includes(v);
 
 /** What the browser sends to POST /api/scout. */
 export type ScoutRequest = {
@@ -42,12 +52,19 @@ export type ScoutRequest = {
    */
   check?: { q: string; page: number };
   about?: string;
+  /**
+   * Asked mid-answer: the answer that waits paused (its question, plan, what it has said, its board;
+   * moment.ts asideContext). The scout decides the route from it. Absent: no answer is playing.
+   */
+  paused?: string;
 };
 
 /** The scout's verdict. `fallback` says why the visible page alone is used. */
 export type ScoutResult = { pages: number[]; plan: string; ms: number; usd: number; fallback?: string;
   /** How the question relates to the previous answer (absent: unknown, e.g. a fallback). */
   relation?: Relation;
+  /** Asked mid-answer (`paused` sent): where it goes. Absent otherwise, or when the scout gave none. */
+  route?: Route;
   /** Labels or phrases the scout wants found (resolved locally into pages before stage 2). */
   find?: string[];
   /** The opener as spoken (tags included; only what passed the visible-page filter). */
@@ -56,12 +73,14 @@ export type ScoutResult = { pages: number[]; plan: string; ms: number; usd: numb
   openerMs?: number };
 
 /**
- * NDJSON lines of POST /api/scout, in order: `opener` sentences (zero or more), then one `scout`
- * verdict (as soon as pages and plan are parsed; `ms` from the request), then `end` with the cost.
+ * NDJSON lines of POST /api/scout, in order: the `route` (only when the request had `paused`, as soon as
+ * the field closes, before any opener), `opener` sentences (zero or more), then one `scout` verdict (as
+ * soon as pages and plan are parsed; `ms` from the request), then `end` with the cost.
  */
 export type ScoutEvent =
+  | { t: 'route'; route: Route; ms: number }
   | { t: 'opener'; d: string; ms: number }
-  | { t: 'scout'; pages: number[]; plan: string; ms: number; fallback?: string; notes?: string[]; find?: string[]; relation?: Relation }
+  | { t: 'scout'; pages: number[]; plan: string; ms: number; fallback?: string; notes?: string[]; find?: string[]; relation?: Relation; route?: Route }
   | { t: 'end'; usd: number; ms: number; cached?: number; input?: number };
 
 export const SCOUT_MAX_PAGES = 6;
@@ -75,10 +94,13 @@ const FIND_CHARS = 80;
 export const SCOUT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['relation', 'opener', 'pages', 'find', 'plan'],
-  // Property order is output order: the relation (a few tokens), then the opener, so it can be spoken
-  // in the right way while the rest is written.
+  required: ['route', 'relation', 'opener', 'pages', 'find', 'plan'],
+  // Property order is output order: the route and the relation (a few tokens each), then the opener, so
+  // the app knows where it plays and it can be spoken in the right way while the rest is written.
+  // One schema for every question (a second one would miss the cached prefix): with no paused answer the
+  // route is "new" and nothing reads it.
   properties: {
+    route: { type: 'string', enum: [...ROUTES], description: 'Only when a PAUSED ANSWER is given: aside (a side question, after which the paused answer goes on) or new (answer this instead; the paused answer ends). With no paused answer: new.' },
     relation: { type: 'string', enum: [...RELATIONS], description: 'How this question relates to your previous answer (the last in MEMORY): continue, revise-representation, simplify, new-example, deeper, or new-topic (also every first question).' },
     opener: { type: 'string', description: 'The first one or two sentences of the spoken answer, with tags that point only at the visible page.' },
     pages: { type: 'array', items: { type: 'integer' }, description: 'At most 6 page numbers of the document, in teaching order.' },
@@ -95,7 +117,7 @@ export const fallbackScout = (page: number, why: string, ms = 0, usd = 0): Scout
  * strings, duplicates and out-of-range pages (dropped), more than 6 pages (cut), a long plan (cut at
  * a word). No usable page → the visible page.
  */
-export function parseScout(text: string, numPages: number, visible: number): { pages: number[]; plan: string; fallback?: string; find?: string[]; relation?: Relation } {
+export function parseScout(text: string, numPages: number, visible: number): { pages: number[]; plan: string; fallback?: string; find?: string[]; relation?: Relation; route?: Route } {
   let raw: unknown;
   const s = text.trim();
   try { raw = JSON.parse(s); } catch {
@@ -104,8 +126,8 @@ export function parseScout(text: string, numPages: number, visible: number): { p
     try { raw = JSON.parse(s.slice(a, b + 1)); } catch { return { pages: [visible], plan: '', fallback: 'scout returned bad JSON' }; }
   }
   if (raw == null || typeof raw !== 'object') return { pages: [visible], plan: '', fallback: 'scout returned no object' };
-  const o = raw as { pages?: unknown; plan?: unknown; find?: unknown; relation?: unknown };
-  const rel = isRelation(o.relation) ? { relation: o.relation } : {};
+  const o = raw as { pages?: unknown; plan?: unknown; find?: unknown; relation?: unknown; route?: unknown };
+  const rel = { ...(isRelation(o.relation) ? { relation: o.relation } : {}), ...(isRoute(o.route) ? { route: o.route } : {}) };
   const pages: number[] = [];
   for (const v of Array.isArray(o.pages) ? o.pages : []) {
     const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v.replace(/^p/i, '')) : NaN;

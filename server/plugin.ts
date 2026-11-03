@@ -438,6 +438,7 @@ export function validateScout(b: any): string | null {
   for (const k of ['section', 'memory', 'candidates', 'about'] as const) if (b[k] != null && (!isStr(b[k]) || b[k].length > LIMITS[k])) return `${k} must be a string of at most ${LIMITS[k].toLocaleString('en-US')} characters`;
   if (b.check != null && !(isStr(b.check.q) && b.check.q.length <= LIMITS.check && isInt(b.check.page) && b.check.page >= 1 && b.check.page <= b.numPages)) return `check must be { q (at most ${LIMITS.check.toLocaleString('en-US')} characters), page }`;
   if (b.image != null && !isImage(b.image)) return 'image must be { b64, w, h }';
+  if (b.paused != null && (!isStr(b.paused) || b.paused.length > LIMITS.aside)) return `paused must be a string of at most ${LIMITS.aside.toLocaleString('en-US')} characters`;
   return null;
 }
 

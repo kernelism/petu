@@ -657,8 +657,8 @@ describe('Lessons v3: two stages', () => {
     expect(tail.length).toBeLessThan(900); // the previous answer is trimmed
     expect(tail.endsWith('QUESTION: How does it work?')).toBe(true);
     expect(b).toMatchObject({ stream: true, max_output_tokens: 600, reasoning: { effort: 'none' }, prompt_cache_key: scoutCacheKey(), text: { format: { type: 'json_schema', strict: true } } });
-    // The opener is first in the schema: it streams first.
-    expect(Object.keys(b.text.format.schema.properties)).toEqual(['relation', 'opener', 'pages', 'find', 'plan']);
+    // The route and relation (a few tokens) come first, then the opener: it streams before pages and plan.
+    expect(Object.keys(b.text.format.schema.properties)).toEqual(['route', 'relation', 'opener', 'pages', 'find', 'plan']);
     // The prewarm is the same prefix (and the same output format, which is part of the prompt).
     const pre = buildScoutRequest(sreq, scfg, true) as any;
     expect(pre.input).toEqual(b.input.slice(0, 2));
@@ -696,6 +696,43 @@ describe('Lessons v3: two stages', () => {
     expect(tail.endsWith('QUESTION: How does it work?')).toBe(true);
     // The cached prefix is untouched: a check reply reads the same digest and listing from cache.
     expect(b.input.slice(0, 2)).toEqual((buildScoutRequest({ ...sreq, page: 12, prior: undefined }, scfg) as any).input.slice(0, 2));
+  });
+
+  it('route: a question asked mid-answer gets the paused answer in the tail (the cached prefix is untouched); the schema writes the route first', () => {
+    const b = buildScoutRequest({ ...sreq, paused: 'The paused answer was to: "Why?"\nSaid so far: "First, the base rate"' }, scfg) as any;
+    const tail = b.input[2].content[0].text as string;
+    expect(tail).toContain('PAUSED ANSWER: the student typed this question while your answer below was playing');
+    expect(tail).toContain('Said so far: "First, the base rate"');
+    expect(tail.endsWith('QUESTION: How does it work?')).toBe(true);
+    expect(b.input.slice(0, 2)).toEqual((buildScoutRequest(sreq, scfg) as any).input.slice(0, 2));
+    expect((buildScoutRequest(sreq, scfg) as any).input[2].content[0].text).not.toContain('PAUSED ANSWER');
+    // One schema for every question (a second would miss the cached prefix), the route its first field.
+    expect(Object.keys(b.text.format.schema.properties)[0]).toBe('route');
+    expect(b.text.format.schema.required).toContain('route');
+    expect(b.text.format).toEqual((buildScoutRequest(sreq, scfg) as any).text.format);
+  });
+
+  it('route: streamed as its own event before any opener, only when the request had a paused answer', async () => {
+    const obj = { route: 'new', relation: 'new-topic', opener: 'The last page plots the posterior.', pages: [5], find: [], plan: 'p' };
+    const paused = fakeFetch([{ chunks: scoutSse(obj, 4) }]);
+    const ev: ScoutEvent[] = [];
+    const r = await scoutStream({ ...sreq, paused: 'The paused answer was to: "x"' }, scfg, deps(paused.f), (e) => ev.push(e));
+    expect(ev.map((e) => e.t)).toEqual(['route', 'opener', 'scout', 'end']);
+    expect(ev[0]).toMatchObject({ t: 'route', route: 'new' });
+    expect(ev[2]).toMatchObject({ t: 'scout', route: 'new' });
+    expect(r.route).toBe('new');
+    // Not mid-answer: the model still writes the field (one schema), and nothing carries it.
+    const plain = fakeFetch([{ chunks: scoutSse(obj, 4) }]);
+    const ev2: ScoutEvent[] = [];
+    const r2 = await scoutStream(sreq, scfg, deps(plain.f), (e) => ev2.push(e));
+    expect(ev2.map((e) => e.t)).toEqual(['opener', 'scout', 'end']);
+    expect(ev2[1]).not.toHaveProperty('route');
+    expect(r2.route).toBeUndefined();
+    // A value outside the enum is no route.
+    const bad = fakeFetch([{ chunks: scoutSse({ ...obj, route: 'replace' }, 4) }]);
+    const ev3: ScoutEvent[] = [];
+    await scoutStream({ ...sreq, paused: 'p' }, scfg, deps(bad.f), (e) => ev3.push(e));
+    expect(ev3.map((e) => e.t)).toEqual(['opener', 'scout', 'end']);
   });
 
   it('the scout verdict carries an optional find list (≤ 3 short strings)', () => {

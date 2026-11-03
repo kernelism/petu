@@ -14,7 +14,7 @@ function fakeScout() {
   const q = new Queue<string>();
   let decide!: (v: ScoutResult | null) => void;
   const verdict = new Promise<ScoutResult | null>((ok) => { decide = ok; });
-  const live: ScoutLive = { opener: q, verdict, cost: Promise.resolve({ usd: 0.001 }) };
+  const live: ScoutLive = { opener: q, verdict, cost: Promise.resolve({ usd: 0.001 }), route: Promise.resolve(null) };
   return { live, say: (s: string) => q.push(s), decide: (v: ScoutResult | null) => { q.close(); decide(v); } };
 }
 
