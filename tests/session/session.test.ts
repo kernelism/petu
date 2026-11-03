@@ -47,7 +47,7 @@ describe('conversations', () => {
   it('opens to its questions and asides; nothing to open with one question and no aside', () => {
     expect(linesOf(conv([{ question: 'q1', page: 1 }]))).toEqual([]);
     expect(linesOf(conv([{ question: 'q1', page: 1, asides: ['a1'] }, { question: 'f1', page: 1 }]))).toEqual([
-      { text: 'q1', aside: false }, { text: 'a1', aside: true }, { text: 'f1', aside: false },
+      { text: 'q1', aside: false, entry: 0 }, { text: 'a1', aside: true, entry: 0 }, { text: 'f1', aside: false, entry: 1 },
     ]);
   });
 

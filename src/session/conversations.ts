@@ -65,9 +65,10 @@ export function nameOf(c: Conversation, label: (page: number) => string | undefi
 }
 
 /** One line under an opened row: a question (the first as asked, then the follow-ups), or an aside under it. */
-export type RowLine = { text: string; aside: boolean };
+/** `entry`: the answer it belongs to (an aside, the answer it was asked in), the one a pick of it shows. */
+export type RowLine = { text: string; aside: boolean; entry: number };
 /** Its lines when opened; empty when it has nothing beyond its first question. */
 export function linesOf(c: Conversation): RowLine[] {
-  const lines = c.entries.flatMap((e) => [{ text: e.question, aside: false }, ...(e.asides ?? []).map((a) => ({ text: a, aside: true }))]);
+  const lines = c.entries.flatMap((e, entry) => [{ text: e.question, aside: false, entry }, ...(e.asides ?? []).map((a) => ({ text: a, aside: true, entry }))]);
   return lines.length > 1 ? lines : [];
 }

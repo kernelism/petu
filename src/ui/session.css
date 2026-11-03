@@ -67,6 +67,9 @@
 .session-sub { margin: -4px 0 0; padding: 0 12px 12px 10px; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .session-sub li { font-size: 12.5px; line-height: 1.45; color: var(--ink-2); overflow-wrap: anywhere; }
 .session-sub li.is-aside { padding-left: 12px; color: var(--muted); }
+.session-subrow { all: unset; display: block; width: 100%; box-sizing: border-box; cursor: pointer; border-radius: 4px; padding: 1px 4px; margin: -1px -4px; }
+.session-subrow:hover { color: var(--ink, #1D1D1F); background: rgba(0,0,0,.04); }
+.session-subrow:focus-visible { outline: 2px solid var(--accent, #7c3aed); outline-offset: 1px; }
 
 /* The edge marker (mockup C2): the answer's latest page mark is out of view; a click brings it back. */
 /* In the lane's free top band, just right of the page column as it shows (the lane keeps nothing under

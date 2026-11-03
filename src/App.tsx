@@ -1758,7 +1758,16 @@ export default function App() {
   };
 
   /** Puts a question on the board: a saved one comes back as it was left (no replay); a new one starts empty. */
-  const enterConv = (c: Conversation<TrailEntry>) => {
+  /**
+   * The header a pick shows: answer `entry`'s, else (or when it never reached the board: stopped before
+   * its first drawing) the latest one before it that did, else the latest on the board.
+   */
+  const headOf = (c: Conversation<TrailEntry>, entry?: number) => {
+    const on = (e: TrailEntry) => (e.head?.el.isConnected ? e.head : undefined);
+    return (entry != null ? c.entries.slice(0, entry + 1).reverse().map(on).find(Boolean) : undefined)
+      ?? [...c.entries].reverse().map(on).find(Boolean);
+  };
+  const enterConv = (c: Conversation<TrailEntry>, entry?: number) => {
     convRef.current = c;
     trailRef.current = c.entries;
     trailN.current = c.n;
@@ -1783,7 +1792,7 @@ export default function App() {
         // board sat out of view until the next layout pass (2026-10-31).
         if (left) await viewerRef.current?.scrollToPage(left.page);
         if (convRef.current !== c) return;
-        const head = [...c.entries].reverse().map((e) => e.head).find((h) => h?.el.isConnected);
+        const head = headOf(c, entry);
         if (head) void d.showHead(head.el);
       });
     }
@@ -1800,17 +1809,17 @@ export default function App() {
   };
 
   /** A row of the session list: the one on the board scrolls to its latest answer; another is brought back. */
-  const pickSession = (id: number) => {
+  const pickSession = (id: number, entry?: number) => {
     const c = convsRef.current.find((x) => x.id === id), cur = convRef.current!;
     if (!c) return;
     if (c === cur) {
-      const head = [...c.entries].reverse().map((e) => e.head).find((h) => h?.el.isConnected);
+      const head = headOf(c, entry);
       if (head) void deskRef.current?.showHead(head.el);
       return;
     }
     saveConv(!!c.board);
     if (!cur.entries.length) convsRef.current = convsRef.current.filter((x) => x !== cur);
-    enterConv(c);
+    enterConv(c, entry);
   };
 
   // The list names a question by its section title until its own title comes: the labels load when it opens.

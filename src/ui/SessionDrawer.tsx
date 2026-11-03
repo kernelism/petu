@@ -2,7 +2,7 @@
 // 280 px, toggled with S or the top bar's list button, closed until asked for. One row per question
 // (a conversation: the first question, its follow-ups and asides, on one board), by its title, in time
 // order; the one on the board is tinted. Picking a row brings its board back. A row with follow-ups or
-// asides opens to list them.
+// asides opens to list them; picking one of those brings its board back at that answer.
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { RowLine } from '../session/conversations';
@@ -10,7 +10,7 @@ import './session.css';
 
 export type SessionRow = { id: number; title: string; lines: RowLine[]; current: boolean };
 
-type Props = { open: boolean; rows: SessionRow[]; onPick(id: number): void; onClose(): void };
+type Props = { open: boolean; rows: SessionRow[]; onPick(id: number, entry?: number): void; onClose(): void };
 
 export function SessionDrawer({ open, rows, onPick, onClose }: Props) {
   const ref = useRef<HTMLElement>(null);
@@ -43,7 +43,11 @@ export function SessionDrawer({ open, rows, onPick, onClose }: Props) {
               </div>
               {opened && (
                 <ul className="session-sub">
-                  {r.lines.map((l, k) => <li key={k} className={l.aside ? 'is-aside' : undefined}>{l.text}</li>)}
+                  {r.lines.map((l, k) => (
+                    <li key={k} className={l.aside ? 'is-aside' : undefined}>
+                      <button type="button" className="session-subrow" onClick={() => onPick(r.id, l.entry)}>{l.text}</button>
+                    </li>
+                  ))}
                 </ul>
               )}
             </li>
