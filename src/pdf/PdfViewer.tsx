@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import type { RenderTask } from 'pdfjs-dist';
+import { TextLayer, type RenderTask } from 'pdfjs-dist';
 import type { PdfDoc } from './loadPdf';
 import type { GoReason, PageLayers, ViewerApi } from './viewerApi';
 import type { TextRun } from '../locate/locateQuote';
@@ -82,7 +82,7 @@ type Layout = PageLayout;
 // MAX_INFLIGHT at a time; cancels renders for pages that scroll away; frees far canvases.
 
 /** key = what the shown canvas was rendered at; taskKey = what an in-flight render targets ('' if none). */
-type PageState = { canvas: HTMLCanvasElement | null; key: string; task: RenderTask | null; taskKey: string };
+type PageState = { canvas: HTMLCanvasElement | null; key: string; task: RenderTask | null; taskKey: string; /** The page's selectable text (built once, sized by --scale-factor). */ text?: HTMLDivElement };
 
 export class PageRenderer {
   near = new Set<number>();
@@ -189,6 +189,7 @@ export class PageRenderer {
       s.canvas = canvas;
       s.key = key;
       canvas = null;
+      this.textLayer(p, s, page, base);
     } catch (err) {
       if ((err as { name?: string })?.name !== 'RenderingCancelledException') {
         // Not retried at this size (a page that can't render would otherwise re-render in a loop).
@@ -240,11 +241,32 @@ export class PageRenderer {
     return m;
   }
 
+  /**
+   * The page's text as invisible, selectable spans over the canvas (pdf.js TextLayer): a selection on a
+   * page is point-to-ask's "about" (App), as it is on the board. Built once per page at scale 1 and
+   * sized by `--scale-factor` (the slot's layout width over the page's), so a resize only updates it.
+   * It sits under the student-ink overlay, which takes the pointer only while the pen is on.
+   */
+  private textLayer(p: number, s: PageState, page: Awaited<ReturnType<PdfDoc['getPage']>>, base: { width: number; height: number }) {
+    const slot = this.slot(p);
+    if (!slot) return;
+    const scale = String(slot.el.offsetWidth / base.width);
+    if (s.text?.isConnected) { s.text.style.setProperty('--scale-factor', scale); return; }
+    const div = document.createElement('div');
+    div.className = 'textLayer pv-text';
+    div.style.setProperty('--scale-factor', scale);
+    slot.el.insertBefore(div, slot.canvasHost.nextSibling);
+    s.text = div;
+    void new TextLayer({ textContentSource: page.streamTextContent(), container: div, viewport: page.getViewport({ scale: 1 }) })
+      .render().catch(() => { div.remove(); });
+  }
+
   release(p: number) {
     const s = this.states.get(p);
     if (!s) return;
     s.task?.cancel();
     if (s.canvas) { s.canvas.remove(); zap(s.canvas); }
+    s.text?.remove();
     this.states.delete(p);
     // Drop the page's operator list and decoded images; getPage re-fetches cheaply later. A torn-down
     // viewer (or a document already destroyed: unmount, HMR) has nothing left to clean.
