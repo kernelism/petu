@@ -23,6 +23,8 @@ describe('validateScout: the moment (C5: the scout hears a check reply and what 
     expect(validateScout({ ...base, check: { q: 'Why?', page: 12 }, about: 'x' })).toBeNull();
     expect(validateScout({ ...base, check: { q: 'What happens if the rate doubles?', page: 12 } })).toBeNull();
     expect(validateScout({ ...base, check: 'Why?' })).toMatch(/check must be/);
+    expect(validateScout({ ...base, pinned: true })).toBeNull();
+    expect(validateScout({ ...base, pinned: 'yes' })).toMatch(/pinned must be/);
     expect(validateScout({ ...base, check: { q: 'Why?', page: 21 } })).toMatch(/check must be/);
     expect(validateScout({ ...base, about: 'x'.repeat(5000) })).toMatch(/about must be/);
   });

@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Scheduler, RESUME_GAP_MS, SEEK_LAG_MS } from '../../src/playback/scheduler';
 import { PacedClock } from '../../src/playback/clock';
 import { Director, JOURNEY_HOLD_MS, ARRIVAL_MS, type Journey } from '../../src/playback/director';
-import { deriveParts, partAt, partTitle, partText, MIN_PART_WORDS, journeyBeat, returnTarget } from '../../src/playback/parts';
+import { deriveParts, partAt, partTitle, partText, MIN_PART_WORDS, journeyBeat, returnTarget, taughtPages } from '../../src/playback/parts';
+import { pagesLabel } from '../../src/ui/trail';
 import { pageFrameTop, SAFE_TOP, STACK_PAD, frameFor } from '../../src/desk/layout';
 import type { ParsedScript } from '../../src/playback/session';
 import type { Action, InkAction, RawAction, ScriptEvent } from '../../src/script/types';
@@ -148,6 +149,30 @@ describe('deriveParts', () => {
 
   it('an answer that opens by moving to its page is one part on that page', () => {
     expect(deriveParts(script([scroll(3), ...n(50), END]), 1)).toEqual([{ start: 0, page: 3, back: false }]);
+  });
+
+  it('the opening move sets the first part\'s page even to the next page (its home, twoStage): not "Page 12" for an answer spoken on 13', () => {
+    expect(deriveParts(script([scroll(13), ...n(50), END]), 12)).toEqual([{ start: 0, page: 13, back: false }]);
+    // Stage 2's own first scroll right after the opening move (the same word) is where the part plays.
+    expect(deriveParts(script([scroll(87), scroll(88), ...n(50), END]), 1)).toEqual([{ start: 0, page: 88, back: false }]);
+    // A move after words were said stays a move within the part when it is not a journey.
+    expect(deriveParts(script([...n(20), scroll(13), ...n(30), END]), 12)).toEqual([{ start: 0, page: 12, back: false }]);
+  });
+});
+
+describe('taught pages (the trail header and the session list)', () => {
+  const hl = (page: number): ScriptEvent => ({ type: 'action', action: { kind: 'highlight', page, quote: 'x' } as Action });
+  const sk = (page: number): ScriptEvent => ({ type: 'action', action: { kind: 'sketch', id: 's', page, size: 'm' } as Action });
+  it('home first, then every page moved to or pointed at, in order; board sections do not count', () => {
+    const s = script([scroll(86), ...n(20), sk(1), hl(87), scroll(87), ...n(20), scroll(88), hl(88), ...n(20), END]);
+    expect(taughtPages(s, deriveParts(s, 1))).toEqual([86, 87, 88]);
+    expect(pagesLabel([86, 87, 88])).toBe('p.86–88');
+  });
+  it('an answer on the page asked on: that page; a walk with a gap names both runs', () => {
+    const s = script([...n(30), END]);
+    expect(taughtPages(s, deriveParts(s, 12))).toEqual([12]);
+    expect(pagesLabel([12])).toBe('p.12');
+    expect(pagesLabel([41, 12, 40, 12])).toBe('p.12, 40–41');
   });
 });
 

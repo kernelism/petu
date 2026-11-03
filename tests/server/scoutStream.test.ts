@@ -81,6 +81,23 @@ describe('OpenerGate (opener → spoken script)', () => {
     expect(g.notes).toHaveLength(4);
   });
 
+  it('anchored elsewhere (the answer is spoken on another page, moment.ts homePage): no tag points, words stay', () => {
+    const g = new OpenerGate(3);
+    g.anchor(87);
+    const said = g.push('{{circle p=3 mark=#d2}} A ceiling sits {{highlight p=3 "below equilibrium"}}below equilibrium. ') + g.end();
+    expect(said).toBe(' A ceiling sits below equilibrium. ');
+    expect(g.notes).toHaveLength(2);
+    // Anchored on the visible page: its tags stay, as before.
+    const h = new OpenerGate(3);
+    h.anchor(3);
+    expect(h.push('{{circle p=3 mark=#d2}} This dot. ')).toBe('{{circle p=3 mark=#d2}} This dot. ');
+    // Too late once something was said: what played pointed at the page in view, and the rest may too.
+    const k = new OpenerGate(3);
+    k.push('{{circle p=3 mark=#d2}} This dot. ');
+    k.anchor(87);
+    expect(k.push('{{box p=3 mark=#e1}} This box. ')).toBe('{{box p=3 mark=#e1}} This box. ');
+  });
+
   it('cleans markdown and TeX from the narration (not inside tags)', () => {
     const { g } = run(['The **key** is $x$ and `y`: {{highlight p=3 "**raw**"}} here.']);
     expect(g.said).toBe('The key is x and y: {{highlight p=3 "**raw**"}} here.');

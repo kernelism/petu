@@ -1,6 +1,6 @@
 // src/agent/client.ts — the browser side of POST /api/ask (NDJSON AskEvents) and GET /api/spend.
 import { formatUsd, HARD_STOP_USD, type AskErrorCode, type AskEvent, type AskRequest, type SpendSummary } from './protocol';
-import { fallbackScout, parseScout, type ScoutEvent, type ScoutRequest, type ScoutResult } from './scout';
+import { fallbackScout, parsePages, parseScout, type ScoutEvent, type ScoutRequest, type ScoutResult } from './scout';
 
 export class AskError extends Error {
   constructor(readonly code: AskErrorCode, message: string, readonly retryable: boolean) { super(message); }
@@ -103,6 +103,12 @@ export type ScoutLive = {
   verdict: Promise<ScoutResult | null>;
   /** The scout's cost and cache use, once its stream ends (0 when unknown). */
   cost: Promise<{ usd: number; cached?: number; input?: number }>;
+  /**
+   * The pages, as soon as they came (re-checked): before the first opener sentence, so whoever plays
+   * the opener knows where the answer is spoken (moment.ts homePage). Null until then, and for a scout
+   * that never sent them early. Read, never awaited: the opener must not wait on it.
+   */
+  pages(): number[] | null;
 };
 
 /**
@@ -115,6 +121,7 @@ export function scoutLive(req: ScoutRequest, signal: AbortSignal, f: typeof fetc
   const t0 = now();
   const q = new Queue<string>();
   let said = '', openerMs: number | undefined;
+  let early: number[] | null = null;
   let settle!: (v: ScoutResult | null) => void;
   let pay!: (c: { usd: number; cached?: number; input?: number }) => void;
   const verdict = new Promise<ScoutResult | null>((ok) => { settle = ok; });
@@ -126,7 +133,8 @@ export function scoutLive(req: ScoutRequest, signal: AbortSignal, f: typeof fetc
     q.close();
     settle(v && { ...v, ...(said ? { opener: said } : {}), ...(openerMs != null ? { openerMs } : {}) });
   };
-  const fallback = (why: string) => decide(signal.aborted ? null : fallbackScout(req.page, why, Math.round(now() - t0)));
+  // Pages that came early decided where the answer is spoken: a scout that fails after them keeps them.
+  const fallback = (why: string) => decide(signal.aborted ? null : { ...fallbackScout(req.page, why, Math.round(now() - t0)), ...(early ? { pages: early } : {}) });
   void (async () => {
     let usd = 0, cached: number | undefined, input: number | undefined;
     try {
@@ -140,7 +148,10 @@ export function scoutLive(req: ScoutRequest, signal: AbortSignal, f: typeof fetc
         if (!s) return;
         let e: ScoutEvent;
         try { e = JSON.parse(s) as ScoutEvent; } catch { return; }
-        if (e.t === 'opener' && !decided && typeof e.d === 'string' && e.d) {
+        if (e.t === 'pages' && !decided && !said && early == null) {
+          const p = parsePages(e.pages, req.numPages);
+          if (p.length) early = p;
+        } else if (e.t === 'opener' && !decided && typeof e.d === 'string' && e.d) {
           if (openerMs == null) openerMs = Math.round(now() - t0);
           said += e.d;
           q.push(e.d);
@@ -167,7 +178,7 @@ export function scoutLive(req: ScoutRequest, signal: AbortSignal, f: typeof fetc
       pay({ usd, ...(cached != null ? { cached } : {}), ...(input != null ? { input } : {}) });
     }
   })();
-  return { opener: q, verdict, cost };
+  return { opener: q, verdict, cost, pages: () => early };
 }
 
 /** Stage 1 as one result (tests, eval tools): the streamed scout, its opener collected. */

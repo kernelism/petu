@@ -11,7 +11,7 @@ import { titleInput, type TitleInput } from './title';
 /** What a conversation needs of a trail entry (App's TrailEntry). */
 export type ConvEntry = {
   question: string;
-  /** The page it was asked on, and the pages its answer's parts taught from (their section titles). */
+  /** The page it was asked on, and the pages its answer taught from, home first (src/playback/parts.ts taughtPages). */
   page: number; pages?: number[];
   /** Asides asked during it. */
   asides?: string[];

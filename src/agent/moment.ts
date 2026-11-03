@@ -28,6 +28,19 @@ export function askedPage(o: { point?: Pointed | null; check?: number | null; ma
 }
 
 /**
+ * The answer's home: the page it is spoken on from its first word. The asked page above is only where
+ * the student was; the answer lives where its content is, the first page the scout teaches from (its
+ * pages, in teaching order), and the asked page only when it is one of them, or when the student pinned
+ * the question to it (pointed at it, drew on it, replies to a check offered on it). Was: the asked page,
+ * always, until stage 2's first scroll: a question about p87 asked on the cover spoke its opening ~10 s
+ * over the cover, labelled "Page 1", and the trail kept "p.1". Pure: the server's opener gate, the
+ * two-stage stream's opening move and stage 2's context all decide it with this one rule.
+ */
+export function homePage(asked: number, pages: readonly number[], pinned = false): number {
+  return pinned || !pages.length || pages.includes(asked) ? asked : pages[0];
+}
+
+/**
  * The page a check question is about: the last page its answer pointed at or scrolled to (the page in
  * frame when it was offered), else the page the answer was asked on. A reply to it is asked on that
  * page, wherever the student has scrolled since (a reply about p12 went out with p6: recorded a28).

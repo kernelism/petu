@@ -72,7 +72,9 @@ export type AskEvent =
        * first opener sentence. `opener`: what the opener said (script). `cached`/`input`: its tokens. */
       atMs?: number; openerMs?: number; opener?: string; cached?: number; input?: number;
       /** The scout's `find` strings, and the context it read (?debug: tier, tokens per block, candidate pages). */
-      find?: string[]; relation?: Relation; ctx?: { mode: string; tier: string; tokens: Record<string, number>; candidates: string[]; printedOffset?: number; ms: number } }
+      find?: string[]; relation?: Relation;
+      /** Where the answer was spoken (moment.ts homePage), when not the page it was asked on: the view travelled there before the first word. */
+      home?: number; ctx?: { mode: string; tier: string; tokens: Record<string, number>; candidates: string[]; printedOffset?: number; ms: number } }
   /** Client-side: stage 2's first text reached the player (ms from Enter); the opener's words were then due to end at `openerEndMs`. */
   | { t: 'handoff'; ms: number; openerEndMs?: number }
   | { t: 'text'; d: string }

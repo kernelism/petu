@@ -111,7 +111,8 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
 
   /**
    * The answer source for AnswerSession, in two stages joined into one script stream:
-   *  1. the scout (streamed): its opener's sentences play as they arrive, pointing at the visible page;
+   *  1. the scout (streamed): its pages decide the answer's home (the page in view when relevant, else
+   *     the first of them: the view travels there first), then its opener's sentences play as they arrive;
    *  2. as soon as the scout's pages and plan are in, the answer's context is built and stage 2 is
    *     asked, told exactly what the opener said; its script follows the opener's last word.
    * A failed scout falls back to the visible page alone (no opener). Aborting stops both.
@@ -135,12 +136,16 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
       const sc0 = b.scout ? await b.scout(a.page, a.question, prior) : null;
       const [digest, vis] = sc0 ? [sc0.digest, { pageText: sc0.pageText, ground: sc0.ground }] : await Promise.all([b.digest(a.page, a.question), b.visible(a.page)]);
       if (signal.aborted) return;
+      // What the student pointed at, drew or replies to, and an aside about the paused answer, keep the
+      // answer on the page it was asked on (moment.ts homePage); the server's opener gate decides the same.
+      const pinned = !!(a.moment?.about || a.moment?.check || a.moment?.aside);
       const live = scoutLive({
         question: a.question, ...(prior ? { prior } : {}), docName: name, docHash: hash, numPages: doc?.numPages ?? a.page,
         page: a.page, digest, pageText: vis.pageText, ...(phase ? { phase } : {}),
         ...(sc0?.section ? { section: sc0.section } : {}), ...(mem ? { memory: mem } : {}),
         ...(sc0?.candidates ? { candidates: sc0.candidates } : {}), ...(sc0?.image ? { image: sc0.image } : {}),
         ...(a.moment?.check ? { check: { q: a.moment.check, page: a.checkPage ?? a.page } } : {}), ...(a.moment?.about ? { about: a.moment.about } : {}),
+        ...(pinned ? { pinned } : {}),
       }, signal);
       // The session memory records what this answer taught once it has played (or was stopped).
       let script = '';
@@ -154,8 +159,10 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
       const handlers: AskHandlers = { ...a.handlers, onDone: (e) => { answerPlan = e.plan ?? ''; check = e.check ?? ''; a.handlers.onDone?.(e); } };
       const stream = twoStage({
         live, visible: vis.ground, handlers, since, ...(sc0 ? { ctx: sc0.info } : {}),
-        build: async (sc) => {
-          const r = await b.build(a.page, a.question, a.ink(), { pages: sc.pages, plan: sc.plan, ...(sc.find?.length ? { find: sc.find } : {}) });
+        pinned,
+        // Stage 2 is built on the answer's home (twoStage): the page in view by the time it speaks.
+        build: async (sc, home) => {
+          const r = await b.build(home, a.question, a.ink(), { pages: sc.pages, plan: sc.plan, ...(sc.find?.length ? { find: sc.find } : {}) });
           for (const f of r.found ?? []) a.handlers.onNote?.(`find "${f.q}" → p${f.page} (${f.via})`);
           taught = r.context.scout?.pages ?? sc.pages;
           plan = sc.plan;
