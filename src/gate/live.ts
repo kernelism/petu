@@ -25,7 +25,7 @@ import type { Grounding } from '../geometry/resolve';
 import type { RawAction } from '../script/types';
 import { acceptGroups, checkGroups, newBoardState, type BoardState, type GroupGeo } from '../svgboard/check';
 import type { NarrationClock } from '../playback/clock';
-import { clauseAfter, lookahead, markQuote, sentenceTail, spokenAt } from '../script/quoteWords';
+import { clauseAfter, deixisAt, isArticle, lookahead, markOf, replaceWord, sentenceTail, type Deixis } from '../script/quoteWords';
 import { CHECK_WORDS } from '../agent/pacing';
 import type { FaultMode, Faults, GateFlag, GateLogEvent, GateMode, RepairFn, RepairReport, RepairResult } from './events';
 
@@ -115,15 +115,15 @@ export function pagePointingOk(a: RawAction, pageText: (p: number) => string | u
 }
 
 /**
- * The words the parser speaks at a page mark the sentence uses as a word (src/script/quoteWords.ts), read
+ * The deictic the parser says at a page mark the sentence uses as a word (src/script/quoteWords.ts), read
  * from the narration around the tag the way the session's parser reads it: `prior` is the text released
  * before the unit. Null: none.
  */
-function quoteSaid(prior: string, text: string, t: { start: number; end: number; action: RawAction | null }): string | null {
-  const q = markQuote(t.action);
-  if (!q) return null;
+function quoteSaid(prior: string, text: string, t: { start: number; end: number; action: RawAction | null }): Deixis | null {
+  const m = markOf(t.action);
+  if (!m) return null;
   const said = (prior.slice(-800) + text.slice(0, t.start)).replace(/\{\{[\s\S]*?\}\}/g, ' ').split(/\s+/).filter(Boolean);
-  return spokenAt(sentenceTail(said), q, clauseAfter(text.slice(t.end), true, lookahead(q)) ?? '');
+  return deixisAt(sentenceTail(said), m, clauseAfter(text.slice(t.end), true, lookahead(m.quote)) ?? '');
 }
 
 /** One unit as a beat (all of its sentences). */
@@ -676,10 +676,16 @@ export class LiveGate {
     }
     let text = u.text;
     for (const t of [...bad].sort((a, b) => b.start - a.start)) {
-      // A mark the sentence used as a word leaves its words (the parser spoke them at the tag): "The
-      // {{highlight p=8 "Midpoint method"}} uses…" stripped is "The Midpoint method uses…", not "The uses…".
-      const say = quoteSaid(this.releasedAll, u.text, t);
-      const before = text.slice(0, t.start), after = text.slice(t.end);
+      // A mark the sentence used as a word leaves the deictic the parser would have said at it: "The
+      // {{highlight p=8 "…"}} uses…" stripped is "This uses…", never "The uses…" nor the page's words.
+      const d = quoteSaid(this.releasedAll, u.text, t);
+      let before = text.slice(0, t.start);
+      const after = text.slice(t.end);
+      let say = d?.words ?? '';
+      if (d?.replacesPrev) {
+        const w = /(\S+)(\s*)$/.exec(before);
+        if (w && isArticle(w[1])) { before = before.slice(0, w.index) + replaceWord(w[1], say) + w[2]; say = ''; }
+      }
       if (say) text = before + (before && !/\s$/.test(before) ? ' ' : '') + say + (/^[\p{L}\p{N}]/u.test(after) ? ' ' : '') + after;
       else text = /\s$/.test(before) && /^\s/.test(after) ? before + after.replace(/^[ \t]+/, '') : before + after;
     }
