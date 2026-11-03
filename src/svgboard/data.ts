@@ -36,7 +36,7 @@
  */
 import { compileVars, freeNames } from '../desk/expr';
 import { drawText, readTemplate, type Affix } from '../values/quantity';
-import { isUnitWord, unitOf } from '../values/units';
+import { isUnitWord } from '../values/units';
 
 export type Axes = { name: string; x0: number; x1: number; y0: number; y1: number; box: { x: number; y: number; w: number; h: number } };
 type CurveSpec = { kind: 'fn'; src: string; ax: string | null; dom: string | null } | { kind: 'param'; src: [string, string]; ax: string | null; t: string };
@@ -615,8 +615,7 @@ export function valueLabel(tpl: string): string | undefined {
   return words.length && words.length <= 4 ? words.join(' ') : undefined;
 }
 
-/** The unit vocabulary is src/values/units.ts (shared with the narration's number check and with {{val}}). */
-export { unitOf };
+// The unit vocabulary is src/values/units.ts (shared with the narration's number check and with {{val}}).
 const FILLER = new Set(['a', 'an', 'the', 'of', 'at', 'is', 'in', 'on', 'to', 'by', 'for', 'and', 'or', 'it', 'its', 'per', 'now', 'than']);
 /** A readout's own words, lower-cased, its unit and filler dropped: what a sentence about it would say. */
 export const valueWords = (tpl: string): string[] =>

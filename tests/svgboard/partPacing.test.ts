@@ -93,6 +93,20 @@ describe('svg parts draw on the words that name them', () => {
     expect(Math.abs(t.factor - 18 * 300)).toBeLessThanOrEqual(40);
   });
 
+  it('a readout said with its affixes ("$85", "11.8%", "100 units": values/quantity.ts) draws on that word', async () => {
+    const s = setup('<line data-k="mark" x1="0" y1="0" x2="400" y2="0"/>'
+      + '<text data-k="keeps" id="b1-keeps" data-val="85" data-tpl="hotel keeps ${}">hotel keeps $85</text>'
+      + '<text data-k="share" id="b1-share" data-val="11.8" data-tpl="+{}%">+11.8%</text>'
+      + '<text data-k="qty" id="b1-qty" data-val="100" data-tpl="{} units">100 units</text>');
+    // As the parser now says them: "$85" word 4, "11.8%" word 10, "100" word 15.
+    const beat = narration('so the hotel keeps $85 and the guest share is 11.8% while sales stay at 100 units for the rest of it');
+    void drawGroup(s.b, s.g, 'tax', { signal: new AbortController().signal, stop: new AbortController().signal, color: '#000', beat });
+    const t = await starts(s.g, 8000);
+    expect(Math.abs(t.keeps - 4 * 300)).toBeLessThanOrEqual(40);
+    expect(Math.abs(t.share - 10 * 300)).toBeLessThanOrEqual(40);
+    expect(Math.abs(t.qty - 15 * 300)).toBeLessThanOrEqual(40);
+  });
+
   it('a stop still lands everything at once', async () => {
     const s = setup('<line data-k="water" x1="0" y1="0" x2="400" y2="0"/><line data-k="aim" data-say="heading" x1="0" y1="50" x2="400" y2="50"/>');
     const stop = new AbortController();
