@@ -107,6 +107,17 @@ describe('{{val}} says the board\'s quantity (economics transcript shapes)', () 
     expect(play('That gives {{val id=el}} here.').words).toBe('That gives 1.4 elastic here.');
   });
 
+  it('the val action goes out with its tag (the live gate reads each tag\'s action from that push); its said settles with its word', () => {
+    const p = new ScriptParser();
+    p.push(`{{svg ${RENT}}} The rent is `);
+    const evs = p.push('{{val id=pe}}');
+    const v = evs.find((e) => e.type === 'action' && e.action.kind === 'val');
+    expect(v, 'emitted in the tag\'s own push').toBeDefined();
+    const rest = [...p.push(' dollars a month.'), ...p.end()];
+    expect(rest.flatMap((e) => (e.type === 'word' ? [e.text] : [])).slice(0, 2)).toEqual(['10', 'dollars']);
+    expect((v as { action: ValAction }).action).toMatchObject({ said: '10', spoken: 'ten' });
+  });
+
   it('chunk-independent: the same words however the stream is cut', () => {
     const t = 'The curves meet at a rent of {{val id=pe}} and {{val id=qe}} units, and ${{val id=ceil}} below.';
     const whole = play(t).words;

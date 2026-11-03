@@ -73,8 +73,8 @@ function scanTag(buf: string, open: number, final: boolean): Scan {
  * board writes it (its affixes: "$10", "100 units", values/quantity.ts) — glued to the text touching
  * it ("${{val id=c}}." → "$4.5.") and never doubling an affix the narration writes itself ("{{val id=t}}
  * seconds", "${{val id=c}}") — and a `{{contrast}}` becomes the copy it draws. The val action is
- * emitted just before its word (with `said`/`spoken`, or neither when unresolved: the word is then
- * UNBOUND_TEXT and the director records the skip).
+ * emitted with its tag (with `said`/`spoken`, settled when its word is; or neither when unresolved: the
+ * word is then UNBOUND_TEXT and the director records the skip).
  */
 export class ScriptParser {
   private buf = '';
@@ -82,7 +82,7 @@ export class ScriptParser {
    * A val, waiting for the text after it: whether text touches it on the right, and (when the board
    * writes an affix around it) whether the narration says that unit itself. `left`: text glued on its left.
    */
-  private held: { a: ValAction; s: Said | null; left: string } | null = null;
+  private held: { v: ValAction; s: Said | null; left: string } | null = null;
   /**
    * A page mark whose quote may be a word of the sentence (src/script/quoteWords.ts), waiting for the
    * text after it: its words, when the sentence needs them, are spoken right after it (the mark lands
@@ -131,10 +131,15 @@ export class ScriptParser {
     }
     if (a.kind === 'val') {
       // The word: glued to a word touching the tag on its left ("$"); the right side is settled once seen.
+      const s = this.values.say(a);
+      const v: ValAction = s ? { ...a, said: saidText(s), spoken: spokenOf(s) } : a;
       const last = out[out.length - 1];
       let left = '';
       if (touchesLeft && last?.type === 'word') { out.pop(); left = last.text; }
-      this.held = { a, s: this.values.say(a), left };
+      // The action goes out with its tag (the gate reads each tag's action from that push); its said and
+      // spoken are settled with its word (release), once the narration shows which affixes it writes.
+      out.push({ type: 'action', action: v });
+      this.held = { v, s, left };
       return;
     }
     if (a.kind === 'plot' && a.axes && !a.domainSrc && !a.domain && !a.t && !a.onChart) a = this.hostDomain(a);
@@ -176,9 +181,9 @@ export class ScriptParser {
   }
 
   /**
-   * Emits a held val (its action, then its words), glued to a word touching it on the right. A value the
-   * board writes with affixes waits for the words after it too: a unit the narration says there is its
-   * own, so the board's is not said again. False: wait for more text.
+   * Emits a held val's words, glued to a word touching it on the right. A value the board writes with
+   * affixes waits for the words after it too: a unit the narration says there is its own, so the board's
+   * is not said again (the val's said/spoken follow). False: wait for more text.
    */
   private release(out: ScriptEvent[], final: boolean): boolean {
     const h = this.held;
@@ -193,10 +198,10 @@ export class ScriptParser {
       const next = /[,.;:!?…)\]]$/.test(touch) ? [] : wordsAhead(this.buf.slice(touch.length), final);
       if (next == null) return false;
       s = { ...s, ...inSentence(s, h.left, touch ? [touch, ...next] : next) };
+      h.v.said = saidText(s);
+      h.v.spoken = spokenOf(s);
     }
-    const said = s ? saidText(s) : null;
-    out.push({ type: 'action', action: s ? { ...h.a, said: said!, spoken: spokenOf(s) } : h.a });
-    out.push(...words(h.left + (said ?? UNBOUND_TEXT) + touch));
+    out.push(...words(h.left + (h.v.said ?? UNBOUND_TEXT) + touch));
     if (m) this.buf = this.buf.slice(touch.length);
     this.held = null;
     return true;
