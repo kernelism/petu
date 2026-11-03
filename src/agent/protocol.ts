@@ -55,10 +55,13 @@ export type AskContext = {
   /**
    * Volatile tail, the moment the question is asked in (v1 learner UX; src/agent/moment.ts):
    * `aside`: asked mid-answer, which waits paused (its plan, what it has said, its board);
+   * `replaced`: asked mid-answer, and it replaces that answer, which ended where it was (the same
+   * context: what the student heard of it; src/agent/route.ts);
    * `about`: what the student pointed at (a selection, or a region circled on a page or the board);
    * `check`: the answer ended on this question to the student, and the question is their reply.
    */
   aside?: string;
+  replaced?: string;
   about?: string;
   check?: string;
 };

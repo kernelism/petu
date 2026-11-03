@@ -212,8 +212,9 @@ export function relationNote(r: Relation): string {
  * The moment a question is asked in (v1 learner UX), as per-turn notes before the question: one short
  * general sentence each, true of any subject and any phrasing (the cached system block is untouched).
  */
-export function momentNotes(c: Pick<AskContext, 'aside' | 'about' | 'check'>): string[] {
+export function momentNotes(c: Pick<AskContext, 'aside' | 'replaced' | 'about' | 'check'>): string[] {
   const out: string[] = [];
+  if (c.replaced) out.push(`REPLACED: the student stopped your previous answer part-way to ask the question below instead. Answer this question in full, as a new answer in a new section with new ids; do not finish, resume or repeat the stopped answer, and refer back to it only where this question needs it. What they heard of it:\n${c.replaced}`);
   if (c.aside) out.push(`ASIDE: the student paused your answer mid-way to ask the question below. Answer just that, briefly, with a small drawing of its own in a new section with new ids; then the paused answer resumes on its own, so neither continue nor repeat it.\n${c.aside}`);
   if (c.about) out.push(`POINTED AT: the question is about this.\n${c.about}`);
   if (c.check) out.push(`OPEN CHECK QUESTION: your last answer ended on "${c.check}". The student's message below may answer it, or may be a new question of their own. If it answers it, judge it on the board: draw their answer and the correct one side by side, then say what the difference shows. If it is a new question, answer that question, and leave the check for later.`);
