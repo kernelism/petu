@@ -74,12 +74,13 @@ describe('live gate invariants over recorded answers', () => {
       expect([...order].sort((a, b) => a - b)).toEqual(order);
       // Released text is a subsequence of the stream (strips only remove tags, or leave a mark's quoted
       // words where the sentence used it as a word; a number the board contradicts is said as the
-      // board's, and the gate logs each such change).
+      // board's, and the gate logs each such change). Case aside: a quote spoken where it opens its
+      // sentence is capitalised ("{{highlight "the professor, cart…"}} accelerate" plays "The professor…").
       const stream = rec.script.replace(/\{\{[^}]*\}\}/g, (m) => ` ${/"([^"]*)"/.exec(m)?.[1] ?? ''} `).replace(/\s+/g, ' ');
       let rel = releasedText.replace(/\{\{[^}]*\}\}/g, '').replace(/\s+/g, ' ').trim();
       for (const e of gates) for (const n of e.notes) for (const m of n.matchAll(/(\S+) → (\S+) \(/g)) if (n.startsWith('numbers said as the board')) rel = rel.replace(m[2], m[1]);
       let pos = 0;
-      for (const w of rel.split(' ').filter(Boolean)) { const at = stream.indexOf(w, pos); expect(at, `${res.label}: "${w}" not in the stream in order`).toBeGreaterThanOrEqual(0); pos = at + w.length; }
+      for (const w of rel.toLowerCase().split(' ').filter(Boolean)) { const at = stream.toLowerCase().indexOf(w, pos); expect(at, `${res.label}: "${w}" not in the stream in order`).toBeGreaterThanOrEqual(0); pos = at + w.length; }
     }
     expect(units).toBeGreaterThan(0);
     console.info(`[invariant] ${recs.length} scripts, ${units} units, ${drops} drops, ${injected} injected faults checked`);

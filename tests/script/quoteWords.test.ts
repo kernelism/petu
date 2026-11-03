@@ -82,13 +82,39 @@ describe('quote words: nothing doubled, pointers stay silent', () => {
     expect(said('Use the {{highlight p=2 "integral of the signal over time"}} Fourier transform.')).toBe('Use the Fourier transform.');
   });
 
-  it('quoteRole: said, speak, pointer, unclear', () => {
+  it('a long quote that opens the sentence, or sits before its verb, is its subject (eval 2026-11-02, p6.13)', () => {
+    // Heard without its subject while the gate stripped the highlight: the first page mark came 14-19 s in.
+    expect(said('{{highlight p=8 "Midpoint method: same answer in either direction"}} uses the average of the starting and ending values as the base.'))
+      .toBe('Midpoint method: same answer in either direction uses the average of the starting and ending values as the base.');
+    expect(said('{{highlight p=12 "A Per-Unit Tax and Deadweight Loss"}} shows the lost gains from trades that no longer happen.'))
+      .toBe('A Per-Unit Tax and Deadweight Loss shows the lost gains from trades that no longer happen.');
+    expect(said('{{highlight p=4 "The inhibitor competes for the active site"}} describes why competitive inhibition changes the reaction rate.'))
+      .toBe('The inhibitor competes for the active site describes why competitive inhibition changes the reaction rate.');
+    expect(said('{{highlight p=6 "Range Depends on the Launch Angle"}} can be the same for different launch angles.'))
+      .toBe('Range Depends on the Launch Angle can be the same for different launch angles.');
+    expect(said('The {{highlight p=230 "forces between components of System 1"}} are like the forces between a horse and cart.'))
+      .toBe('The forces between components of System 1 are like the forces between a horse and cart.');
+    expect(said('The {{highlight p=8 "Midpoint method: same answer in either direction"}} uses the average of the starting and ending values as its baseline.'))
+      .toBe('The Midpoint method: same answer in either direction uses the average of the starting and ending values as its baseline.');
+    expect(said('The {{highlight p=9 "The slope is constant; P/Q is not."}} is what the page says.')).toBe('The slope is constant; P/Q is not is what the page says.');
+    // The clause paraphrases the line (three of its words in a row): it points, nothing doubled (fu D3, live after-run).
+    expect(said('{{highlight p=6 "30 and 60 degrees land at the"}} launches land at the same spot because their motions balance.'))
+      .toBe('launches land at the same spot because their motions balance.');
+  });
+
+  it('a long quote before a word that may fill its slot points: its mark plays, nothing is spoken (D19)', () => {
+    expect(summary(run(['The {{highlight p=9 "The slope is constant; P/Q is not."}} distinction is that slope measures units.'])))
+      .toEqual(['The', '<highlight>', 'distinction', 'is', 'that', 'slope', 'measures', 'units.']);
+  });
+
+  it('quoteRole: said, speak, pointer', () => {
     const long = 'the price they receive after the tax';
-    expect(quoteRole(['The'], long, ' gap is ten.')).toBe('unclear');
+    expect(quoteRole(['The'], long, ' gap is ten.')).toBe('pointer');
     expect(quoteRole(['The'], long, '.')).toBe('speak');
+    expect(quoteRole(['The'], long, ' is lower.')).toBe('speak');
     expect(quoteRole(['The'], 'slope is constant; P/Q is not.', ' Elasticity changes')).toBe('speak');
-    expect(quoteRole(['The'], 'slope is constant; P/Q is not', ' Elasticity changes')).toBe('unclear');
-    expect(quoteRole([], long, ' changes the gap')).toBe('unclear');
+    expect(quoteRole(['The'], 'slope is constant; P/Q is not', ' Elasticity changes')).toBe('pointer');
+    expect(quoteRole([], long, ' changes the gap')).toBe('speak');
     expect(quoteRole([], long, ' The gap')).toBe('pointer');
     expect(quoteRole(['Look', 'here'], long, ' and see.')).toBe('pointer');
     expect(quoteRole(['The'], long, ' the gap')).toBe('pointer');
