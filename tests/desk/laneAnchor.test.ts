@@ -71,3 +71,28 @@ describe('laneAnchorAt', () => {
     expect(laneAnchorAt(L, 100, 600, 150, 9)).toEqual({ page: 1, y: 150 });
   });
 });
+
+describe('"Back to answer" in the lane', () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
+  afterEach(() => vi.useRealTimers());
+
+  it('returns to the latest page mark, not the sticky drawing the pen is in', async () => {
+    const lane = document.createElement('div'), stage = document.createElement('div');
+    document.body.append(lane, stage);
+    const host = laneHost(lane, 0);
+    const d = new Desk(host, stage);
+    const p = d.addRegion({ id: 'b', page: 1, size: 'l', svg: true, h: 600 });
+    await vi.advanceTimersByTimeAsync(1500);
+    await p;
+    const inner = d as unknown as { inked: { page: number; r: object }[]; last: { t: object; r: object } };
+    inner.inked = [{ page: 6, r: { x: 100, y: 200, w: 300, h: 20 } }];
+    inner.last = { t: { region: 'b' }, r: { x: 0, y: 0, w: 100, h: 100 } };
+    d.follow.setAnswering(true);
+    d.follow.userTookOver();
+    vi.mocked(host.glideTo).mockClear();
+    await d.resume();
+    expect(d.following()).toBe(true);
+    expect(host.glideTo).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(host.glideTo).mock.calls[0][2]).toBe(6);
+  });
+});

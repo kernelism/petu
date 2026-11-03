@@ -961,7 +961,14 @@ export class Desk implements DeskApi {
   async resume(): Promise<void> {
     this.follow.resume();
     const l = this.last;
-    if (l) await this.reveal(l.t, l.r);
+    if (!l) return;
+    // The lane's playing drawing is sticky, in view wherever the student scrolled, so the pen being in
+    // it says nothing about the way back: there the answer is the passage it explains, its latest page mark.
+    const k = l.t.region != null && this.lane() ? this.inked[0] : undefined;
+    if (!k) { await this.reveal(l.t, l.r); return; }
+    const t = { page: k.page };
+    if (this.isVisible(t, k.r) || !this.host.layout()) return;
+    await this.host.glideTo(() => this.inkFrame(t, k.r), 450, t.page);
   }
 
   /**
