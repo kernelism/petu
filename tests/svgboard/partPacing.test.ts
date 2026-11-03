@@ -78,6 +78,21 @@ describe('svg parts draw on the words that name them', () => {
     expect(Math.abs(t.aim + 320 - 8 * 300)).toBeLessThanOrEqual(40); // "heading" is word 8 (watched from 0.32 s on)
   });
 
+  it('a readout draws on its value said, not on a word it shares with its neighbours or on its id (D18, D9)', async () => {
+    // As prepareGroup leaves them: data-val resolved into the text, its template kept in data-tpl.
+    const s = setup('<line data-k="mark" x1="0" y1="0" x2="400" y2="0"/>'
+      + '<text data-k="qbase" id="b1-qbase" data-val="qm" data-tpl="midpoint {}">midpoint 15</text>'
+      + '<text data-k="qmid" id="b1-qmid" data-val="dq/qm" data-tpl="midpoint change: +{}%">midpoint change: +66.7%</text>'
+      + '<text data-k="factor" id="b1-factor" data-val="1+f" data-tpl="×{} per 2 blocks">×1.5 per 2 blocks</text>');
+    // "midpoint" is word 1, 15 word 3, the template's own 2 word 7, 66.7 word 12, 1.5 word 18, "factors" (the id's word) 21.
+    const beat = narration('the midpoint is 15 here and over 2 blocks the change is 66.7 percent so each multiplies by 1.5 and the factors go on to the end');
+    void drawGroup(s.b, s.g, 'midpoint', { signal: new AbortController().signal, stop: new AbortController().signal, color: '#000', beat });
+    const t = await starts(s.g, 8000);
+    expect(Math.abs(t.qbase - 3 * 300)).toBeLessThanOrEqual(40);
+    expect(Math.abs(t.qmid - 12 * 300)).toBeLessThanOrEqual(40);
+    expect(Math.abs(t.factor - 18 * 300)).toBeLessThanOrEqual(40);
+  });
+
   it('a stop still lands everything at once', async () => {
     const s = setup('<line data-k="water" x1="0" y1="0" x2="400" y2="0"/><line data-k="aim" data-say="heading" x1="0" y1="50" x2="400" y2="50"/>');
     const stop = new AbortController();
