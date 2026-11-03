@@ -861,6 +861,20 @@ export class Desk implements DeskApi {
     const mid = this.midHeads.find((m) => m.el === el);
     if (!g && !mid && !el.isConnected) return;
     if (this.nextHead?.el === el) this.nextHead = null;
+    // Later answers drew on into this one (a follow-up extends its svg, its head mid-drawing; a check
+    // reply's header): the drawing is theirs too, and leaving with the replay took every follow-up off
+    // the board. It stays; only the head moves (to the replay's first section) and the ids are freed,
+    // so the replay draws afresh beside it.
+    if (g && (g.parts ?? []).some((p) => p !== el && p.classList.contains('trail-head') && !p.classList.contains('is-aside'))) {
+      el.remove();
+      g.parts = g.parts!.filter((p) => p !== el);
+      g.head = g.parts.find((p) => p.classList.contains('trail-head')) ?? null;
+      for (const [id, s] of this.ids) if (g.secs.includes(s)) this.ids.delete(id);
+      if (this.liveGroup === g) { this.liveGroup = null; this.penLane = false; }
+      this.position();
+      this.emit();
+      return;
+    }
     // A walked answer's slices leave with it (its head sits over the first of them).
     if (g) this.dropSlices(g);
     el.remove();

@@ -112,3 +112,31 @@ describe('the desk tells its layout when the lane turns on', () => {
     expect(d.state().lane).toBe(true);
   });
 });
+
+describe('replaying an answer whose board later answers drew on', () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
+  afterEach(() => vi.useRealTimers());
+
+  it('keeps the follow-up on the board; the replay draws afresh beside it', async () => {
+    const lane = document.createElement('div'), stage = document.createElement('div');
+    document.body.append(lane, stage);
+    const d = new Desk(laneHost(lane, 0), stage);
+    const head = (t: string) => { const e = document.createElement('div'); e.className = 'trail-head'; e.textContent = t; return e; };
+    const h1 = head('1'), h2 = head('2');
+    const add = async (o: object) => { const p = d.addRegion({ id: 'b', page: 1, size: 'l', svg: true, h: 400, ...o }); await vi.advanceTimersByTimeAsync(1500); return p; };
+    d.headNext(h1, 36);
+    await add({});
+    await d.reset(0);
+    // The follow-up extends answer 1's svg: its head rides mid-drawing in answer 1's group.
+    d.headNext(h2, 36);
+    await add({ extend: true });
+    expect(h2.isConnected).toBe(true);
+    await d.reset(0);
+    // Answer 1 replays: its head waits for the replay's first section, which takes it.
+    d.headNext(h1, 36);
+    expect(typeof (await add({}))).not.toBe('string');
+    expect(h1.isConnected).toBe(true);
+    expect(h2.isConnected).toBe(true);
+    expect(lane.querySelectorAll('.lane-group').length + stage.querySelectorAll('.lane-group').length).toBeGreaterThanOrEqual(2);
+  });
+});
