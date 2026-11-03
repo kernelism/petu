@@ -238,10 +238,10 @@ describe('twoStage: the answer is spoken on its home page (moment.ts homePage)',
   it('an opener that came before any pages (a scout that wrote it first) stays on the page asked on, and so does stage 2', async () => {
     const { o, s, log, release } = setup();
     const out: string[] = [];
-    const done = drain(twoStage(o, new AbortController().signal), out);
     s.say('It votes. ');
-    await tick();
+    // The verdict in before the stream has played the opener: still no move (the server's gate kept the opener's tags on this page).
     s.decide({ pages: [7], plan: 'p', ms: 900, usd: 0, opener: 'It votes. ' });
+    const done = drain(twoStage(o, new AbortController().signal), out);
     release();
     await done;
     expect(out.join('')).not.toContain('scroll');

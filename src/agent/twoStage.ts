@@ -54,7 +54,9 @@ export async function* twoStage(o: TwoStage, signal: AbortSignal): AsyncGenerato
   };
   const stage2 = o.live.verdict.then(async (sc) => {
     if (!sc || signal.aborted) return null;
-    homeOf(o.live.pages() ?? sc.pages);
+    // Pages that were not early, behind an opener, came too late: the opener is on the page asked on
+    // (the server's gate kept its tags there), whichever of the two the generator reaches first.
+    homeOf(o.live.pages() ?? (sc.opener ? [] : sc.pages));
     const atMs = o.since();
     void o.live.cost.then((c) => {
       if (signal.aborted) return;
