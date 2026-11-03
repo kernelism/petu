@@ -21,7 +21,7 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 | `server/sse.ts`, `scriptFilter.ts`, `lint.ts` | SSE → `ResponseEvents`; strips `<plan>…</plan>` (kept for debug/eval) and markdown/TeX from narration; grammar notes (`TAG_NAMES`). |
 | `server/svgBeats.ts` | The svg answer mode's stream filter (in front of ScriptFilter): plan → `{{svgboard h=}}`, each SVG group → one `{{svg …}}` tag as it closes (board-engine.md "The svg board"). Used by `ask` and repairs when `isSvgMode(promptVariant)`. |
 | `server/prompt/system.ts` | Stage-2 developer prompt, `PROMPT_VERSION` p6.2 (p6.2: the narration ends on the takeaway; an optional hidden `<check>…</check>` after the last beat, lifted by `svgBeats.ts` into `done.check`): the svg board format (`SVG_PARTS`, examples `svgExamples.ts`); the p5.7 tag prompt and its variants (`PETU_PROMPT_VARIANT`) were deleted 2026-11-01. |
-| `server/prompt/scout.ts` | `SCOUT_SYSTEM`, `SCOUT_VERSION` (s2.7): opener, ≤ 6 pages, ≤ 100-word plan ending with numbered beats and "Scope: narrow|standard|broad" (founder 2026-10-29: length by scope; ~35 spoken words a beat, narrow = two or three beats and the check), JSON order opener→pages→plan. `parseScout` clips a long plan in its prose, never its beats/scope (`clipPlan`). |
+| `server/prompt/scout.ts` | `SCOUT_SYSTEM`, `SCOUT_VERSION` (s2.10: ROUTE for a question asked mid-answer): opener, ≤ 6 pages, ≤ 100-word plan ending with numbered beats and "Scope: narrow|standard|broad" (founder 2026-10-29: length by scope; ~35 spoken words a beat, narrow = two or three beats and the check), JSON order route→relation→opener→pages→find→plan. `parseScout` clips a long plan in its prose, never its beats/scope (`clipPlan`). |
 | `src/agent/pacing.ts` | The length budget from the plan: `scopeOf`, `planBeats`, `budgetOf(plan, opener)` (2.4 spoken words/s measured; narrow 50 s target / 60 s cap, standard 75/95, broad 120/150, opener words taken off), `budgetNote` (the `BUDGET` line under stage 2's PLAN, `groundingTail`). The live gate gets it via `LiveGate.setBudget` (App `onScout`; `&budget=off` disables): past `capWords − CHECK_WORDS` it closes the answer at the next beat boundary, holds the rest and plays only the last beat that asks a question (gate events `action: 'cut'`). |
 | `server/prompt/examples.ts` | Few-shot `EXAMPLES` on invented documents (music notation, a village's coins, a lighthouse beam made to move, a service counter), each executable; every val bound by the engine. |
 | `src/agent/protocol.ts` | `AskRequest`, `AskContext`, `AskEvent` (NDJSON), `SpendSummary`, `HARD_STOP_USD` 60. |
@@ -44,12 +44,16 @@ word. All calls go through a Vite-middleware server on localhost, gated by a per
 ```
 Enter → useAgent.source
   ├ ContextBuilder.digest(page,q) + visible(page)      (digest waits ≤ 2.5s for the text index)
-  ├ POST /api/scout  → NDJSON: opener… → scout{pages,plan} → end{usd}
+  ├ POST /api/scout  → NDJSON: [route] → opener… → scout{pages,plan} → end{usd}
   │      opener sentences yield to the player immediately (tags on the visible page only)
   └ on verdict: ContextBuilder.build(page,q,ink,{pages,plan}) → POST /api/ask {context+opener}
          → NDJSON: meta → text… → done{usd,plan,lint} | error   → yielded after the opener
 ```
 Failed/slow scout (8s) → `fallbackScout`: visible page only, no opener, stage 2 alone.
+Asked mid-answer (`src/agent/route.ts`): App calls `useAgent.prescout` with the paused answer (`paused`);
+the scout writes `route` first (s2.10), streamed as `{t:'route'}` before any opener; `aside` → the aside
+session adopts that scout (`AgentAsk.started`), `new` → `runAnswer` adopts it and replaces the answer
+(stage 2 gets `context.replaced`). No route → aside. Stage 2's history and MEMORY are read when it is asked.
 
 ## Request layout and caching (stage 2, `buildRequest`)
 
@@ -112,7 +116,8 @@ curl -s localhost:<yourport>/api/spend                # never 5180/5181
 - Changing anything before the 30m breakpoints (digest format, listing format) invalidates every
   cached prefix; scout and answer must keep the digest byte-identical.
 - `LIMITS.images` is 3 (others) + the visible image; raising `imagePages` needs both sides.
-- Follow-ups: the scout's JSON starts with `relation` (continue / revise-representation / simplify / new-example / deeper / new-topic, s2.4); the desk continues a scene by its id (`Desk.addRegion`): a follow-up that reuses the scene's id draws on into it, a revision's new id starts a fresh section below (the old scene stays, untouched).
+- Mid-answer: the scout's JSON starts with `route` (aside / new; "new" when nothing is paused, never emitted then), one schema for every question so the cached prefix holds.
+- Follow-ups: the scout's JSON then has `relation` (continue / revise-representation / simplify / new-example / deeper / new-topic, s2.4); the desk continues a scene by its id (`Desk.addRegion`): a follow-up that reuses the scene's id draws on into it, a revision's new id starts a fresh section below (the old scene stays, untouched).
 - History (follow-ups) is live:
   ≤ 3 turns to stage 2, the last one (first 600 chars) to the scout as `prior`.
 - `?debug` panel shows cost, cache share, scout verdict, handoff gap and skipped actions — use it.
