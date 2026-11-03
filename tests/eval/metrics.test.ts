@@ -66,6 +66,10 @@ describe('computeMetrics', () => {
     expect(m.words).toBe(5); expect(m.longestSentence).toBe(3);
     expect(m.wordsBeforeFirstMark).toBe(0); // circle fires on the first word
     expect(m.leaks).toBe(2);
+    // A currency the caption writes as the board does is no TeX leak; a TeX delimiter is.
+    const cur = base();
+    cur.words = [{ text: 'It', t: 1 }, { text: 'costs', t: 2 }, { text: '$100,', t: 3 }, { text: 'and', t: 4 }, { text: '$x$', t: 5 }];
+    expect(computeMetrics(cur).leaks).toBe(2);
     expect(m.takeawayFirst).toBe(true);
     expect(m.planChars).toBe(3);
     expect(m.droppedMessages).toBe(1);

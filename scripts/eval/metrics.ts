@@ -208,7 +208,9 @@ export function labelStats(reg: RegistryRow[]): { hits: number; clipped: number 
 }
 
 const wordCount = (s: string) => (s.trim() ? s.trim().split(/\s+/).length : 0);
-const LEAK = [/\*\*/g, /`/g, /\\\(/g, /\$/g, /#/g];
+// Markdown and TeX left in the narration. A "$" glued to a number is a currency the board writes and the
+// caption shows as written ("$100": src/values/quantity.ts readTemplate), not TeX's math delimiter.
+const LEAK = [/\*\*/g, /`/g, /\\\(/g, /\$(?!\d)/g, /#/g];
 
 /**
  * `parsed` (scriptTags.ts `parseScript` over the answer's text) gives the parser's own count of
