@@ -4,14 +4,17 @@
 // "$6"). The cause was two formatting paths: the board drew the readout's template ("${}", "{} units"),
 // {{val}} said its bare number. Now one reader (src/values/quantity.ts readTemplate) splits a template
 // around its quantity, the board draws with it and {{val}} says it, never doubling an affix the
-// narration writes itself.
+// narration writes itself; the number check reads a narration number's unit with the same rule ("$10").
 import { describe, expect, it } from 'vitest';
-import { drawText, readTemplate } from '../../src/values/quantity';
+import { drawText, readTemplate, unitSaid } from '../../src/values/quantity';
 import { spokenOf } from '../../src/values/say';
 import { ScriptParser } from '../../src/script/parser';
+import { GateState } from '../../src/gate/engine';
+import { boardNumbers } from '../../src/gate/check';
+import { tokenize, type Word } from '../../src/gate/segment';
 import { newScope, resolveData } from '../../src/svgboard/data';
 import { parseGroup } from '../../src/svgboard/sanitize';
-import type { ValAction } from '../../src/script/types';
+import type { RawAction, ValAction } from '../../src/script/types';
 
 // The OpenStax rent-control board's shape (eval D10 / founder session): price in dollars, quantity in units.
 const RENT = '<g id="rent" data-const="a=20 b=0.1 c=2 d=0.08 pe=(a-c)/(b+d) qe=a-b*pe ceil=6 qs=c+d*ceil qd=a-b*ceil">'
@@ -122,5 +125,27 @@ describe('the board draws the same quantity it says', () => {
     expect(g.querySelector('#pe')!.textContent).toBe('rent $10');
     expect(g.querySelector('#qe')!.textContent).toBe('100 units');
     expect(sc.values.find((v) => v.id === 'pe')).toMatchObject({ text: '10', affix: { pre: '$', post: '' }, unit: '$' });
+  });
+});
+
+describe('the number check reads a unit written before the number', () => {
+  it('unitSaid: "$10" is in dollars, like "10 dollars"; "12%" in percent', () => {
+    expect(unitSaid(['a', 'rent', 'of', '$10.'], 3, 3)).toBe('$');
+    expect(unitSaid(['(€5)'], 0, 0)).toBe('€');
+    expect(unitSaid(['10', 'dollars'], 0, 0)).toBe('$');
+    expect(unitSaid(['5m'], 0, 0)).toBe('m');
+    expect(unitSaid(['−$3'], 0, 0)).toBe('$');
+    expect(unitSaid(['10', 'apples'], 0, 0)).toBeUndefined();
+  });
+
+  it('a dollar amount is never rewritten into a quantity readout close to it', () => {
+    const s = new GateState();
+    s.apply({ kind: 'svg', svg: '<g data-const="q=100"><text id="quantity" x="20" y="40" font-size="16" data-val="q" data-fmt="0">quantity {} units</text></g>' } as RawAction, 0);
+    const ws = tokenize('The quantity costs $104 in all.').filter((x): x is Word => x.kind === 'word');
+    const r = boardNumbers(ws, s.values, 0);
+    expect(r.fixes).toEqual([]);
+    expect(r.flags).toEqual([]);
+    // Said in its unit, the same number is that readout said off: a fix to the board's.
+    expect(boardNumbers(tokenize('The quantity is 104 units.').filter((x): x is Word => x.kind === 'word'), s.values, 0).fixes).toMatchObject([{ from: '104', to: '100' }]);
   });
 });

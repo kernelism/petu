@@ -82,3 +82,17 @@ export function inSentence(a: Affix, left: string, after: readonly string[]): Af
   if (pre && said && unitBefore(pre.slice(-1))) pre = pre.slice(0, -1);
   return { pre, post };
 }
+
+/**
+ * The unit a narration number is said in (the number check, src/gate/check.ts), read with the template's
+ * rule: a currency glued before its digits ("$10", "(€5"), a unit glued after them ("12%", "5m"), else the
+ * unit words right after it ("10 dollars", "6 metres per second"). `w0`..`w1`: the number's words.
+ */
+export function unitSaid(words: readonly string[], w0: number, w1: number): string | undefined {
+  const lead = /^[^\p{N}]*/u.exec(words[w0] ?? '')![0].replace(/[+\-−.]+$/, '');
+  const before = PRE.exec(lead)?.[0];
+  const cur = before ? unitBefore(before.slice(-1)) : undefined;
+  if (cur) return cur;
+  const glued = /\p{N}([^\s\p{N}.,]+)[)\]"'”’,;:.!?…]*$/u.exec(words[w1] ?? '')?.[1];
+  return (glued ? unitOf([glued]) : undefined) ?? unitOf(words.slice(w1 + 1, w1 + 4));
+}

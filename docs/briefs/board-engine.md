@@ -185,7 +185,8 @@ Prevention by construction: the narration never types a number the engine comput
   `{}`, else the next word when it is a unit (`src/values/units.ts`, the one unit vocabulary) or the
   template's last word. It glues to touching text (`${{val id=c}}.` → `$4.5.`) and never doubles an affix
   the narration writes itself (`{{val id=t}} seconds`, `${{val id=p}}`, `{{val id=r}}%`: the parser waits
-  for the next words, `quantity.ts inSentence`); it is chunk-independent. Refs: a block's single value, a calc, a part (`v[2]`, `g[1,2]`,
+  for the next words, `quantity.ts inSentence`); it is chunk-independent. The number check reads a
+  narration number's unit with the same rule (`unitSaid`: "$10" is in dollars, like "10 dollars"). Refs: a block's single value, a calc, a part (`v[2]`, `g[1,2]`,
   `t[3].c` / `t[3].price`), a constant, a readout (`E`, `E.x`, `E.y`). **Unresolved → the caption shows
   `UNBOUND_TEXT` (an em dash), never a guessed number**; the director records the val as skipped
   (`unbound value …`) and the gate fails its beat. A val must come after what it names (no
