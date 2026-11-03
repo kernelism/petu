@@ -34,6 +34,13 @@ describe('{{val}} reads the svg board', () => {
     expect(typeof s.value('nosuch')).toBe('string');
   });
 
+  it('a percent readout (data-fmt="0%") is drawn and said as a percent, a tag\'s decimals kept in percent', () => {
+    const s = new GateState();
+    expect(s.apply(svg('<g data-const="a=0.05"><text id="rate" x="20" y="40" font-size="16" data-val="1-a" data-fmt="0%">at least {}</text></g>'), 0)).toBeUndefined();
+    expect(saidText(s.say({ kind: 'val', ref: 'rate' })!)).toBe('95%');
+    expect(saidText(s.say({ kind: 'val', ref: 'rate', fmt: 1 })!)).toBe('95.0%');
+  });
+
   it('the session\'s parser says it as a word, glued to its punctuation, in the order the beat plays', () => {
     const r = said(`{{svg ${RIVER}}} So the crossing takes {{val id=crossing}} seconds, at {{val id=across}}.`);
     // "crossing {} s" said with "seconds" after it: the narration's unit, once; "{} m/s" alone: the board's.

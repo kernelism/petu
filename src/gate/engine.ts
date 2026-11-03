@@ -8,6 +8,7 @@
 // script parser (src/script/parser.ts) applies every tag as it is parsed, so a {{val}} is said with
 // the engine's value (`say`) and a {{contrast}} expands into the copy it draws (`expand`).
 import { computeSource, formula, colIndex, splitParts, tokenCount, tokenMoves } from '../desk/kit/kit';
+import { readFormat } from '../values/format';
 import * as C from '../desk/kit/compute';
 import { normalize } from '../desk/kit/ops';
 import { colRef } from '../script/parseKit';
@@ -371,7 +372,9 @@ export class GateState {
     if (typeof r === 'string') return null;
     // An svg readout is said as the board writes it: its data-fmt and its text's affixes ("$10", "100 units").
     if (r.text != null && a.as !== 'percent') {
-      const num = a.fmt == null && a.as == null ? r.text : fmtValue(a.as === 'abs' ? Math.abs(r.v) : r.v, a.fmt != null ? String(a.fmt) : r.fmt);
+      // A tag's decimals keep the readout's percent (a "0%" readout with fmt=1 is "95.0", never "0.9").
+      const fmt = a.fmt == null ? r.fmt : readFormat(r.fmt)?.percent ? `${a.fmt}%` : String(a.fmt);
+      const num = a.fmt == null && a.as == null ? r.text : fmtValue(a.as === 'abs' ? Math.abs(r.v) : r.v, fmt);
       return { num, ...(r.affix ?? NO_AFFIX) };
     }
     return sayNumber(r.v, { fmt: a.fmt ?? r.dp, as: a.as });
