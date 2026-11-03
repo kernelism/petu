@@ -9,7 +9,7 @@ import { routeGutter, maskBlocker } from './route';
 import { boardLayout, bodyPx, fitZoom, laneFrame, pageAt, zoomStepFrom, ZOOM_MAX, ZOOM_MIN, cropSpan, cropSpanX, frameFor, frameInk, frameTop, inView, laneAnchorAt, safeBottom, SAFE_TOP, type Frame, type SectionBox, type Split } from './layout';
 import type { BeforeMove, ConnectorEnd, ConnectorHandle, DeskApi, DeskHost, DeskRect, DeskState, RegionInfo, RegionSpec, SceneClaim, SceneSpace, ViewRect } from './types';
 import { BOARD_HEAD, boardPad, MIN_TEXT_PX, SECTION_W, TEXT_UNITS } from './layout';
-import { clearOfDocked, dockNow, dockTop, FOLDED_H, LANE_PAD, LEADER_INSET, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, visibleLane, walkSplit, wantFor, zoomedInsets } from './lane';
+import { clearOfDocked, covers, dockNow, dockTop, FOLDED_H, LANE_PAD, LEADER_INSET, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, visibleLane, walkSplit, wantFor, zoomedInsets } from './lane';
 import { camFor, overviewCam, type Cam } from './scene/camera';
 import { CONT_H, contTag, type ContTag } from '../ui/trail';
 
@@ -1855,6 +1855,11 @@ export class Desk implements DeskApi {
       el.style.setProperty('-webkit-mask-image', v);
     };
     if (!live) {
+      // Under the live drawing (it could not clear this one: lane.ts covers), the docked one hides, its leader too.
+      const on = this.groups.find((d) => d.live && !d.folded && !d.away)?.item.getBoundingClientRect();
+      const hide = !!on && covers({ top: on.top, h: on.height }, { top: r.top, h: r.height }) ? 'hidden' : '';
+      g.item.style.visibility = hide;
+      g.leader.style.visibility = hide;
       mask(g.item, clip);
       for (const el of [...g.item.children] as HTMLElement[]) if (el.style.maskImage || el.style.getPropertyValue('-webkit-mask-image')) mask(el, 0);
       return;

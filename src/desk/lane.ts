@@ -181,3 +181,13 @@ export function clearOfDocked(top: number, h: number, blockers: readonly Span[],
   }
   return t;
 }
+
+/**
+ * Whether the live group (`live`, window px) covers a docked one (`docked`): they overlap on screen by
+ * more than `min` px. The docked one then hides until they part (clearOfDocked could not move the live
+ * group off it): a follow-up that scrolls back to an earlier answer's page draws on top of that answer's
+ * board otherwise (eval fu D1, draw D1: new bars printed over the docked 'Competitive inhibition' board).
+ */
+export function covers(live: Span, docked: Span, min = 8): boolean {
+  return Math.min(live.top + live.h, docked.top + docked.h) - Math.max(live.top, docked.top) > min;
+}
