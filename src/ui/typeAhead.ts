@@ -5,7 +5,7 @@
 // of keys a typist presses within a few hundred ms. So, ahead of every other key handler:
 //   - a letter that is no shortcut starts the question in the bar at once;
 //   - a shortcut letter waits TYPE_GAP_MS: alone, it is replayed to the handlers as the shortcut;
-//     followed by another key in time, it and that key go to the bar as text.
+//     followed by a letter or space in time, both go to the bar as text (a digit is G's page number).
 // V (hold to talk) is never held back: its press and release time the hold.
 import { isTypingTarget } from './playbackKeys';
 import { shortcutRows } from './ShortcutsOverlay';
@@ -50,8 +50,9 @@ export function installTypeAhead(win: Window, sink: () => TypeSink | null, lette
     const s = sink();
     if (!s || isTypingTarget(e.target) || isTypingTarget(win.document.activeElement)) { if (held) release(); return; }
     if (held) {
-      // A second key in time: the two were the start of a question.
-      if (typed(e)) {
+      // A second letter (or a space) in time: the two were the start of a question. A digit is what a
+      // shortcut asks for next (G, then the page number): the shortcut acts and the digit goes on to it.
+      if (typed(e) && !/^\d$/.test(e.key)) {
         win.clearTimeout(timer);
         const text = held.key + e.key;
         held = null;

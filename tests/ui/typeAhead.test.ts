@@ -39,6 +39,12 @@ describe('typing with the bar unfocused', () => {
     expect(shortcuts).toEqual([]);
   });
 
+  it('G then a page number is still go-to-page: a digit lets the shortcut act first (round 7: "g430" was asked)', () => {
+    press('g'); vi.advanceTimersByTime(40); press('4');
+    expect(shortcuts).toEqual(['g', '4']);
+    expect(typed).toEqual([]);
+  });
+
   it('a letter that is no shortcut starts the question at once', () => {
     press('w');
     expect(typed).toEqual(['w']);
