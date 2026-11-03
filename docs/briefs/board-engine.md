@@ -108,13 +108,21 @@ and draws it. The tag kit above stays for the demo and dev scripts (the `tags` p
   every bound group each frame (`refreshData`, via `KitStore.onConsts`; `KitStore.svgBox` frames it).
   `data-ghost` on a moving element/group leaves a 28% copy of where it started (marks only, no text);
   `data-trace` on a moving point leaves its path (accent, 45%).
-- **Legibility floor** (renderer): no board text under `LEGIBLE_PX` (12) on screen. A label the raise
-  leaves no room is settled, not shrunk (`settle.ts`): a nudge of ≤ ½ em, a two-line wrap at its middle
-  word (a row of labels keeps its places), a nudge of ≤ 2 em; only collisions the raise created count
-  (a label the model put on its own curve stays). Evidence: docs/superpowers/reference/lane-legibility.md.
+- **Legibility floor** (renderer): no board text under `LEGIBLE_PX` (12) on screen. A text with no room
+  moves, never shrinks (`settle.ts`, gate and renderer alike): one collision model for every text on the
+  board, the model's labels, data-at labels, the engine's tick numbers and earlier groups' text alike.
+  Containment always counts (canvas edge; a text half across a rect/circle/ellipse; an axis's number band,
+  owned by the frame below its x axis for what is anchored on that axis), so do earlier groups; within a
+  group a pair counts unless the model wrote both ends where they are and they already met (a label on
+  its own curve stays): anything engine-placed counts from either side. The freest text moves (model x/y,
+  then data-at by dx/dy; an engine tick never). A label too wide for its shape is placed whole beside it
+  (leader when not adjacent, ink when it leaves a fill), never wrapped and its shape never grown; other
+  labels nudge ≤ ½ em, a free row label may wrap at its middle word, then nudge ≤ 2 em.
+  Evidence: docs/superpowers/reference/lane-legibility.md; the price-ceiling and Bayes boards (2026-11-02).
 - **Polish** (`src/svgboard/polish.ts`, gate and renderer alike): text raised to the board minimum
-  reflows: tspan steps scale, a line wider than its card wraps at words, stacked lines are pushed
-  down, the card grows; a label crossed by its own group's stroke is nudged off (≤ 1.25 em, never
+  reflows: tspan steps scale, stacked lines are pushed down, a card of two or more lines grows to hold
+  them (a single label is never wrapped and its shape never grown: settle places it whole); engine-placed
+  text (data-at, ticks) is left to settle; a label crossed by its own group's stroke is nudged off (≤ 1.25 em, never
   onto text). Sanitize: text opacity ≥ 0.8 and never lighter than the muted ink; stroke opacity ≥ 0.4;
   large fills (rect sides > 40, areas > 2400 u²) softened to a wash (accent 0.2, grey 0.16); bars
   and dots stay solid.

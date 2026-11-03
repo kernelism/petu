@@ -134,6 +134,10 @@ describe('system prompt (svg, default)', () => {
     expect(s).not.toMatch(/compute yourself|its computed numbers/);
   });
 
+  it('p6.15 (Bayes bar): a shape too narrow for its label gets the whole label on it, never split into two texts', () => {
+    expect(s).toMatch(/a shape too narrow for its label, such as a thin bar segment, still gets the whole label centred on it: the engine sets it beside the shape/);
+  });
+
   it('p6.14 (draw D7): a formula\'s vocabulary is listed, integral() included, so no series is typed by hand', () => {
     expect(s).toMatch(/A formula \(up to 120 characters\) may use/);
     expect(s).toMatch(/if\(cond, a, b\), pi \(built in, never a constant\), and integral\(f, u, a, b\)/);

@@ -353,9 +353,10 @@ describe('a label at a data-at point is not crossing its own curves (a32: "E1" b
     const eq = checkGroups(['<g id="equilibrium"><circle data-at="cross(demand,supply)" r="4" fill="#222"/><text data-at="cross(demand,supply)" font-size="16" text-anchor="middle">E1 here</text></g>'], b, 16, curves.scope);
     expect(eq.flags).toEqual([]);
     expect(eq.notes.filter((n) => /crosses text "E1 here"/.test(n))).toEqual([]);
-    // E1 sits at (310, 185) on the board; a later rule drawn through it is a real crossing (it notes).
+    // A later rule drawn through the label (where it settled: beside its dot, not over it) is a real crossing (it notes).
     acceptGroups(b, eq.geos);
-    const later = checkGroups(['<g id="rule"><line x1="60" y1="181" x2="560" y2="181" stroke="#222"/></g>'], b, 16, curves.scope);
+    const e1 = eq.geos[0].texts.find((t) => t.text === 'E1 here')!, y = Math.round(e1.y + e1.h / 2);
+    const later = checkGroups([`<g id="rule"><line x1="60" y1="${y}" x2="560" y2="${y}" stroke="#222"/></g>`], b, 16, curves.scope);
     expect(later.flags).toEqual([]);
     expect(later.notes.join()).toMatch(/a line of rule crosses text "E1 here"/);
   });

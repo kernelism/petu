@@ -3,9 +3,10 @@
  * Pure over the parsed XML (the gate and the renderer run the same steps, so the gate checks what is
  * drawn):
  *  - fit: text under the board's minimum size is raised to it (founder rule) and its layout follows:
- *    tspan line steps grow with it; a line that no longer fits its card (a rect around it) wraps at
- *    words; texts stacked as a list are pushed down so lines never collide; the card grows to hold
- *    them. Nothing is ever shrunk below the minimum.
+ *    tspan line steps grow with it; texts stacked as a list are pushed down so lines never collide; a
+ *    card holding two or more of them grows to hold them. A single label is never wrapped and its
+ *    shape never grown: one that no longer fits is placed whole by settle.ts. Nothing is ever shrunk
+ *    below the minimum.
  *  - clear: a label crossed by a stroke of its own group is nudged off it (≤ 1.25 em, the smallest
  *    clear offset, never onto other text); labels it cannot clear keep the paper halo.
  * Only texts and cards whose transforms are translations are moved (rotated text is left as written).
@@ -13,7 +14,6 @@
 import { core, groupGeometry, I, mul, overlapArea, parseTransform, segHitsBox, textEm, type Box, type M } from './check';
 import { stripProse } from './prose';
 
-const SVGNS = 'http://www.w3.org/2000/svg';
 const num = (v: string | null | undefined, d = 0): number => { const n = v == null ? NaN : parseFloat(v); return Number.isFinite(n) ? n : d; };
 const r2 = (v: number) => String(Math.round(v * 100) / 100);
 const tag = (e: Element) => e.nodeName.toLowerCase().replace(/^svg:/, '');
@@ -76,7 +76,8 @@ function fit(g: Element, minFont: number, sizes?: Map<Element, number>): void {
     const m = matOf(el, g);
     const fs0 = num(inherit(el, 'font-size'), 16);
     const want = sizes?.get(el) ?? Math.max(minFont, fs0);
-    if (!isShift(m) || el.hasAttribute('data-at')) { if (Math.abs(want - fs0) > 0.01) el.setAttribute('font-size', r2(want)); continue; }
+    // An engine-placed text (a data point's label, a tick number) keeps its place: settle.ts moves only by its rule.
+    if (!isShift(m) || el.hasAttribute('data-at') || el.hasAttribute('data-engine')) { if (Math.abs(want - fs0) > 0.01) el.setAttribute('font-size', r2(want)); continue; }
     const x = num(el.getAttribute('x')?.split(/[\s,]+/)[0]), y = num(el.getAttribute('y')?.split(/[\s,]+/)[0]);
     const px = x + m[4], py = y + m[5];
     // Its card: the smallest rect around where it is written.
@@ -97,21 +98,6 @@ function fit(g: Element, minFont: number, sizes?: Map<Element, number>): void {
   }
   if (sizes) setCards(g, ts, cards);
   if (!ts.some((t) => t.raised)) return;
-  // Wrap: a raised line wider than its card breaks at words.
-  for (const t of ts) {
-    if (!t.raised || !t.card || t.el.children.length) continue;
-    const pad = Math.max(6, 0.45 * t.fs), c = t.card, px = t.x + t.m[4];
-    const avail = t.anchor === 'middle' ? 2 * Math.min(px - c.x, c.x + c.w - px) - 2 * pad : t.anchor === 'end' ? px - c.x - pad : c.x + c.w - pad - px;
-    const words = (t.el.textContent ?? '').replace(/\s+/g, ' ').trim().split(' ');
-    if (avail <= 0 || textEm(words.join(' ')) * t.fs <= avail || words.length < 2) continue;
-    const lines: string[] = [];
-    let cur = '';
-    for (const w of words) { const nx = cur ? `${cur} ${w}` : w; if (cur && textEm(nx) * t.fs > avail) { lines.push(cur); cur = w; } else cur = nx; }
-    if (cur) lines.push(cur);
-    if (lines.length < 2) continue;
-    while (t.el.firstChild) t.el.removeChild(t.el.firstChild);
-    lines.forEach((s, i) => { const sp = t.el.ownerDocument.createElementNS(SVGNS, 'tspan'); sp.setAttribute('x', r2(t.x)); if (i) sp.setAttribute('dy', r2(1.2 * t.fs)); sp.textContent = s; t.el.appendChild(sp); });
-  }
   // Stack: in reading order, a text that now runs into the one above it (a list, a card's lines) moves down.
   const order = ts.slice().sort((a, b) => a.y + a.m[5] - (b.y + b.m[5]));
   const placed: { t: T; b: Box; y0: number }[] = [];
@@ -133,9 +119,11 @@ function fit(g: Element, minFont: number, sizes?: Map<Element, number>): void {
     placed.push({ t, b, y0 });
   }
   // Cards grow to hold their text (right and down).
+  // Only a text block grows its card: a single label that no longer fits its shape is placed whole by settle.ts
+  // (centred in it, or beside it): a bar's width is data, and a label split into lines read as two labels.
   for (const c of cards) {
     const inside = placed.filter((p) => p.t.cardEl === c.el);
-    if (!inside.length || !inside.some((p) => p.t.raised)) continue;
+    if (inside.length < 2 || !inside.some((p) => p.t.raised)) continue;
     const pad = Math.max(6, 0.4 * Math.max(...inside.map((p) => p.t.fs)));
     const bottom = Math.max(...inside.map((p) => p.b.y + p.b.h)) + pad, right = Math.max(...inside.map((p) => p.b.x + p.b.w)) + pad;
     if (bottom > c.box.y + c.box.h) c.el.setAttribute('height', r2(bottom - c.box.y));
