@@ -8,8 +8,8 @@ import { groundingOf, type PageGround } from './context/types';
 import type { ScoutContext } from './context/build';
 import type { AskContext, SpendSummary } from './protocol';
 import { twoStage } from './twoStage';
-import { AskError, askStream, capLine, capNotice, getSpend, scoutLive, spendBlocked, spendPhase, type AskHandlers } from './client';
-import type { ScoutResult } from './scout';
+import { AskError, askStream, capLine, capNotice, getSpend, scoutLive, spendBlocked, spendPhase, type AskHandlers, type ScoutLive } from './client';
+import type { Route, ScoutResult } from './scout';
 import { History } from './history';
 import { SessionMemory, recordOf } from './context/memory';
 import { checkPageOf } from './moment';
@@ -44,7 +44,7 @@ export type AgentAsk = {
   /** The text the live gate released (what played): memory records it rather than the raw stream. */
   released?(): string;
   /** The moment the question is asked in (an aside, what the student points at, a check reply): sent with stage 2, and (check, about) to the scout. */
-  moment?: Pick<AskContext, 'aside' | 'about' | 'check'>;
+  moment?: Pick<AskContext, 'aside' | 'replaced' | 'about' | 'check'>;
   /** The page the open check (moment.check) was offered on (moment.ts checkPageOf). Default: `page`. */
   checkPage?: number;
   /**
@@ -54,7 +54,26 @@ export type AgentAsk = {
    */
   history?: History;
   memory?: SessionMemory;
+  /** Its scout, already started (prescout: a question asked mid-answer, whose route chose this session). */
+  started?: Prescout;
 };
+
+/** What the scout of a question needs, before any session exists to play its answer. */
+export type ScoutAsk = Pick<AgentAsk, 'question' | 'page' | 'moment' | 'checkPage' | 'history' | 'memory'> & {
+  /** Asked mid-answer: the answer waiting paused (moment.ts asideContext): the scout decides the route from it. */
+  paused?: string;
+};
+
+/**
+ * A scout started ahead of its answer (src/agent/route.ts): `route` settles as soon as the scout wrote it,
+ * before any opener, and the session the route picks adopts it (`AgentAsk.started`), so the question is
+ * sent once. `abort` drops it (Stop, another Enter, a new document); once adopted, the session's own
+ * abort does.
+ */
+export type Prescout = { route: Promise<Route | null>; abort(): void; /** @internal the scout under way */ live: Promise<StartedScout | null>; release(): void };
+
+/** A scout under way, with what its stage 2 reads. */
+type StartedScout = { live: ScoutLive; vis: { pageText: string; ground: PageGround }; info?: ScoutContext['info']; t0: number };
 
 export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
   doc: PdfDoc | null; name: string; enabled: boolean; make: MakeContext | null;
@@ -116,32 +135,68 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
    *     asked, told exactly what the opener said; its script follows the opener's last word.
    * A failed scout falls back to the visible page alone (no opener). Aborting stops both.
    */
+  /** Starts stage 1 for a question: its context (digest, visible listing, memory, the moment), then the streamed scout. Null on abort. */
+  const startScout = useCallback(async (a: ScoutAsk, b: ContextSource, signal: AbortSignal): Promise<StartedScout | null> => {
+    const t0 = performance.now();
+    const phase = spendPhase(spendRef.current);
+    const H = a.history ?? history, M = a.memory ?? memory;
+    const hist = H.last();
+    const prior = hist[hist.length - 1];
+    const hash = doc?.fingerprints?.[0] ?? name;
+    const mem = M.text();
+    const sc0 = b.scout ? await b.scout(a.page, a.question, prior) : null;
+    const [digest, vis] = sc0 ? [sc0.digest, { pageText: sc0.pageText, ground: sc0.ground }] : await Promise.all([b.digest(a.page, a.question), b.visible(a.page)]);
+    if (signal.aborted) return null;
+    const live = scoutLive({
+      question: a.question, ...(prior ? { prior } : {}), docName: name, docHash: hash, numPages: doc?.numPages ?? a.page,
+      page: a.page, digest, pageText: vis.pageText, ...(phase ? { phase } : {}),
+      ...(sc0?.section ? { section: sc0.section } : {}), ...(mem ? { memory: mem } : {}),
+      ...(sc0?.candidates ? { candidates: sc0.candidates } : {}), ...(sc0?.image ? { image: sc0.image } : {}),
+      ...(a.moment?.check ? { check: { q: a.moment.check, page: a.checkPage ?? a.page } } : {}), ...(a.moment?.about ? { about: a.moment.about } : {}),
+      ...(a.paused ? { paused: a.paused } : {}),
+    }, signal);
+    return { live, vis, ...(sc0 ? { info: sc0.info } : {}), t0 };
+  }, [history, memory, doc, name]);
+
+  /**
+   * A question asked mid-answer: its scout starts now, with the paused answer, before App knows which
+   * session will play it (src/agent/route.ts). Never throws; with no builder the route is null (aside).
+   */
+  const prescout = useCallback((a: ScoutAsk): Prescout => {
+    const ctl = new AbortController();
+    const b = builder.current;
+    inFlight.current++;
+    let held = true;
+    const release = () => { if (held) { held = false; inFlight.current--; } };
+    const live = b ? startScout(a, b, ctl.signal).catch(() => null) : Promise.resolve(null);
+    return {
+      live,
+      route: live.then((s) => (s ? s.live.route : null)),
+      abort: () => { ctl.abort(); release(); },
+      release,
+    };
+  }, [startScout]);
+
   const source = useCallback((a: AgentAsk) => async function* (signal: AbortSignal): AsyncGenerator<string> {
     const b = builder.current;
     // E1 integration point: without Lane G's builder there is no context to send.
-    if (!b) throw new AskError('network', "Couldn't reach the tutor.", true);
-    inFlight.current++;
-    const t0 = performance.now();
-    const since = () => Math.round(performance.now() - t0);
+    if (!b) { a.started?.abort(); throw new AskError('network', "Couldn't reach the tutor.", true); }
+    if (!a.started) inFlight.current++;
+    // An adopted scout ends with this session.
+    const drop = () => a.started?.abort();
+    signal.addEventListener('abort', drop);
     try {
       const phase = spendPhase(spendRef.current);
       // Answer quality: a choice token only, and only when the server says Best can run (the model is the server's to pick).
       const best = getSettings().quality === 'best' && !!spendRef.current?.best;
       const H = a.history ?? history, M = a.memory ?? memory;
-      const hist = H.last();
-      const prior = hist[hist.length - 1];
-      const hash = doc?.fingerprints?.[0] ?? name;
-      const mem = M.text();
-      const sc0 = b.scout ? await b.scout(a.page, a.question, prior) : null;
-      const [digest, vis] = sc0 ? [sc0.digest, { pageText: sc0.pageText, ground: sc0.ground }] : await Promise.all([b.digest(a.page, a.question), b.visible(a.page)]);
-      if (signal.aborted) return;
-      const live = scoutLive({
-        question: a.question, ...(prior ? { prior } : {}), docName: name, docHash: hash, numPages: doc?.numPages ?? a.page,
-        page: a.page, digest, pageText: vis.pageText, ...(phase ? { phase } : {}),
-        ...(sc0?.section ? { section: sc0.section } : {}), ...(mem ? { memory: mem } : {}),
-        ...(sc0?.candidates ? { candidates: sc0.candidates } : {}), ...(sc0?.image ? { image: sc0.image } : {}),
-        ...(a.moment?.check ? { check: { q: a.moment.check, page: a.checkPage ?? a.page } } : {}), ...(a.moment?.about ? { about: a.moment.about } : {}),
-      }, signal);
+      const st = a.started ? await a.started.live : await startScout(a, b, signal);
+      if (!st || signal.aborted) return;
+      const { live, vis, t0 } = st;
+      const since = () => Math.round(performance.now() - t0);
+      // Read when stage 2 is asked, not when the scout started: an answer this one replaced has ended
+      // since, and its exchange and record are the previous answer now.
+      const mem = () => M.text();
       // The session memory records what this answer taught once it has played (or was stopped).
       let script = '';
       let taught: number[] = [];
@@ -153,7 +208,7 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
       let check = '';
       const handlers: AskHandlers = { ...a.handlers, onDone: (e) => { answerPlan = e.plan ?? ''; check = e.check ?? ''; a.handlers.onDone?.(e); } };
       const stream = twoStage({
-        live, visible: vis.ground, handlers, since, ...(sc0 ? { ctx: sc0.info } : {}),
+        live, visible: vis.ground, handlers, since, ...(st.info ? { ctx: st.info } : {}),
         build: async (sc) => {
           const r = await b.build(a.page, a.question, a.ink(), { pages: sc.pages, plan: sc.plan, ...(sc.find?.length ? { find: sc.find } : {}) });
           for (const f of r.found ?? []) a.handlers.onNote?.(`find "${f.q}" → p${f.page} (${f.via})`);
@@ -162,9 +217,10 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
           relation = sc.relation;
           // A follow-up: stage 2 gets the MEMORY block and how this question relates to the last answer.
           const scout = r.context.scout && relation ? { scout: { ...r.context.scout, relation } } : {};
-          return { ...r, context: { ...r.context, ...scout, ...(mem ? { memory: mem } : {}), ...a.moment } };
+          const m = mem();
+          return { ...r, context: { ...r.context, ...scout, ...(m ? { memory: m } : {}), ...a.moment } };
         },
-        ask: (context) => askStream({ question: a.question, history: hist, context, ...(phase ? { phase } : {}), ...(best ? { quality: 'best' as const } : {}) }, signal, handlers),
+        ask: (context) => askStream({ question: a.question, history: H.last(), context, ...(phase ? { phase } : {}), ...(best ? { quality: 'best' as const } : {}) }, signal, handlers),
         onGrounding: (pages) => { a.onGrounding(groundingOf(pages)); a.onGrounds?.(pages); },
       }, signal);
       try {
@@ -175,9 +231,10 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
         if (said.trim()) M.add(recordOf({ question: a.question, page: a.page, pages: taught, plan, script: said, ...(answerPlan ? { answerPlan } : {}), ...(check ? { check, checkPage: checkPageOf(said, a.page) } : {}), ...(relation ? { relation } : {}), ...(signal.aborted ? { stopped: true } : {}) }));
       }
     } finally {
-      inFlight.current--;
+      signal.removeEventListener('abort', drop);
+      if (a.started) a.started.release(); else inFlight.current--;
     }
-  }, [history, memory, doc, name]);
+  }, [history, memory, startScout]);
 
   // The student's line; the developer's (which cap, the knob) only in ?debug and the console.
   const blocked = useMemo(() => (spendBlocked(spend) ? capNotice(spend) : undefined), [spend]);
@@ -190,5 +247,5 @@ export function useAgent({ doc, name, enabled, make, warmSystem = true }: {
     return b ? (await b.build(page, '', [], { pages, plan: '' })).grounds : [];
   }, []);
 
-  return { spend, blocked, blockedDetail, refreshSpend, pageChanged, intent, source, history, memory, grounds };
+  return { spend, blocked, blockedDetail, refreshSpend, pageChanged, intent, source, prescout, history, memory, grounds };
 }
