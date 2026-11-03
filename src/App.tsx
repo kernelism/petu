@@ -1401,6 +1401,7 @@ export default function App() {
     routingRef.current = r;
     setRouting(q);
     void pre.route.then((route) => {
+      if (DEBUG) console.info('[route]', JSON.stringify(q), route ?? '(none: aside)', routingRef.current === r ? '' : '(dropped)');
       if (routingRef.current !== r) return; // stopped, or another question asked since
       if (routeOf(route) === 'new') void runAnswer(q, { asked: { ...asked, scout: pre } });
       else askAside(q, { ...asked, scout: pre });

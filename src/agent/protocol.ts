@@ -1,6 +1,7 @@
 // src/agent/protocol.ts — shared by the browser (src/agent/client.ts) and the dev server (server/).
 import type { Usage } from '../../server/prices';
 import type { Relation } from './context/memory';
+import type { Route } from './scout';
 import type { GateEvent, RepairEvent, RepairRequest } from '../gate/events';
 
 /** What the browser sends to POST /api/ask (and /api/prewarm, without question/history/ink). */
@@ -75,7 +76,9 @@ export type AskEvent =
        * first opener sentence. `opener`: what the opener said (script). `cached`/`input`: its tokens. */
       atMs?: number; openerMs?: number; opener?: string; cached?: number; input?: number;
       /** The scout's `find` strings, and the context it read (?debug: tier, tokens per block, candidate pages). */
-      find?: string[]; relation?: Relation; ctx?: { mode: string; tier: string; tokens: Record<string, number>; candidates: string[]; printedOffset?: number; ms: number } }
+      find?: string[]; relation?: Relation;
+      /** Asked mid-answer: the route the scout wrote (src/agent/route.ts). */
+      route?: Route; ctx?: { mode: string; tier: string; tokens: Record<string, number>; candidates: string[]; printedOffset?: number; ms: number } }
   /** Client-side: stage 2's first text reached the player (ms from Enter); the opener's words were then due to end at `openerEndMs`. */
   | { t: 'handoff'; ms: number; openerEndMs?: number }
   | { t: 'text'; d: string }

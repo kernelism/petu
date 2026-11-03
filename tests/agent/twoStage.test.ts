@@ -41,6 +41,16 @@ function setup(over: Partial<TwoStage> = {}) {
 async function drain(g: AsyncGenerator<string>, out: string[]) { for await (const c of g) out.push(c); }
 
 describe('twoStage: opener, then stage 2, as one stream', () => {
+  it('a mid-answer question\'s route rides the scout event (recordings and Reports show where it went)', async () => {
+    const { o, s, events, release } = setup();
+    const out: string[] = [];
+    const done = drain(twoStage(o, new AbortController().signal), out);
+    s.decide({ pages: [3], plan: 'p', ms: 5, usd: 0, route: 'new' });
+    release();
+    await done;
+    await tick();
+    expect(events.find((e) => e.t === 'scout')).toMatchObject({ route: 'new' });
+  });
   it('plays the opener at once; stage 2 is built and asked as soon as the verdict is in (while the opener plays); its text follows the opener with no overlap', async () => {
     const { o, s, log, events, asked, release } = setup();
     const ctl = new AbortController();
