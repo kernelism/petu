@@ -193,7 +193,12 @@ export class ScriptParser {
       out.push(...words(before));
       this.buf = this.buf.slice(open);
       const s = scanTag(this.buf, 0, final);
-      if (s.kind === 'wait') return out;
+      if (s.kind === 'wait') {
+        // A word touching the tag waits with it: it glues to a val ("${{val id=p}}"), however the stream is cut.
+        const glue = /\S+$/.exec(before)?.[0];
+        if (glue) { out.pop(); this.buf = glue + this.buf; }
+        return out;
+      }
       if (s.kind === 'cut') {
         // An svg group keeps its whole children (completeSvg); any other half tag is dropped.
         const body = cutTagBody(this.buf.slice(2));

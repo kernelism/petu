@@ -63,6 +63,10 @@ describe('bound numbers in the parser', () => {
     for (const n of [1, 2, 3, 7]) expect(run(s, n).words).toEqual(run(s).words);
     expect(run(s).words).toContain('4.08s,');
   });
+  it('a word touching a tag on its left glues to its val however the stream is cut (it waited apart when the tag was still streaming)', () => {
+    const s = 'Prices {{bars on=s id=p vals=2,4.5,7}} rise to ${{val id=p[2]}} and (${{val id=p[3]}}).';
+    for (const n of [1, 2, 3, 5, 7]) expect(run(s, n).words, `chunk ${n}`).toEqual(['Prices', 'rise', 'to', '$4.5', 'and', '($7).']);
+  });
   it('an unknown reference shows the neutral dash, with no said text', () => {
     const r = run('It costs {{val id=nope}} dollars.');
     expect(r.words).toEqual(['It', 'costs', UNBOUND_TEXT, 'dollars.']);
