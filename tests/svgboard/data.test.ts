@@ -35,6 +35,12 @@ describe('svg data: exact geometry', () => {
     expect(JSON.stringify(resolveData(none, newScope()))).toMatch(/has no value/);
   });
 
+  it('a quantity defined by an integral is a data-fn (draw D7: the pendulum\'s true period, which the model typed as a series)', () => {
+    const el = g(`<g data-const="L=1 g=9.8 T0=2*pi*sqrt(L/g)"><g data-axes="ax" data-x="1,170" data-y="0,4" data-box="80,60,500,300"/><path id="T" data-fn="4*sqrt(L/g)*integral(1/sqrt(1-sin(rad(x)/2)^2*sin(u)^2), u, 0, pi/2)" data-axes="ax" fill="none"/><circle id="p" data-at="at(T, x=90)" r="5"/><text id="r" data-val="yof(p)/T0" data-fmt="3" x="10" y="20">{}</text></g>`);
+    expect(resolveData(el, newScope())).toEqual([]);
+    expect(el.querySelector('text')!.textContent).toBe('1.180'); // T(90°)/T0 = 2K(1/√2)/π
+  });
+
   it('places the equilibrium exactly on the crossing, and the shortage from the curves', () => {
     const el = g(MARKET), sc = newScope();
     expect(resolveData(el, sc)).toEqual([]);

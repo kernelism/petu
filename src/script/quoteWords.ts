@@ -11,12 +11,14 @@
 //   - inside a sentence, right after a word that needs a noun (the, a, of, by, is, called, the image's):
 //     the noun is missing, unless a new noun phrase starts right after the tag ("by {{…}} the weights");
 //   - anything else is a pointer.
-// A long quote (a whole line pointed at, more than MAX_SPOKEN words) is spoken only where the sentence
-// certainly lacks it (diag C8, D19: "The {{highlight "slope is constant; P/Q is not."}} Elasticity
-// changes…" was heard as "The Elasticity changes…"): after a word that needs a noun, with no words of
-// the clause after it, or with a new sentence after it when the quote ends one. A long quote in a slot
-// whose next word may continue the sentence ("the {{…line…}} viewing ray") cannot be told from a pointer
-// by the words alone: that is `unclear`, which the live gate strips (the highlighted words are not said).
+// A long quote (a whole line pointed at, more than MAX_SPOKEN words) after a word that needs a noun is
+// spoken only where the sentence certainly lacks it (diag C8, D19: "The {{highlight "slope is constant;
+// P/Q is not."}} Elasticity changes…" was heard as "The Elasticity changes…"): with no words of the
+// clause after it, a verb right after it ("The {{…}} are like…", draw D8), or a new sentence after it when
+// the quote ends one. Opening a sentence before a lowercase word it is the subject whatever its length
+// ("{{highlight "Midpoint method: same answer in either direction"}} uses the average…", q2 D18; eval
+// 2026-11-02 heard five such openers without their subject). A long quote in a slot whose next word may
+// continue the sentence ("the {{…line…}} viewing ray", "The {{…}} distinction is") points.
 import type { RawAction } from './types';
 
 /** Page marks whose quote may stand in the sentence. */
@@ -30,9 +32,14 @@ const NEEDS_NOUN = new Set([
 ]);
 /** A word after the tag that opens a noun phrase of its own: the slot is filled. */
 const OPENS_NOUN = new Set(['a', 'an', 'the', 'this', 'these', 'those', 'its', 'their', 'our', 'your', 'his', 'her', 'my']);
+/** Words that start a predicate, never a noun phrase: after "the {{…}}" the slot is certainly empty. */
+const STARTS_VERB = new Set([
+  'is', 'are', 'was', 'were', 'has', 'have', 'had', 'can', 'could', 'will', 'would', 'may', 'might', 'must', 'should', 'does', 'do', 'did',
+  'shows', 'describes', 'explains', 'means', 'says', 'states', 'gives', 'tells', 'uses', 'connects', 'compares', 'measures', 'depends', 'defines', 'makes', 'lets',
+]);
 /** Words too common to tell whether the quote is already being said. */
 const STOP = new Set(['a', 'an', 'the', 'of', 'to', 'in', 'on', 'at', 'by', 'for', 'with', 'and', 'or', 'is', 'are', 'this', 'that', 'its']);
-/** A quote longer than this is a line pointed at, never a word of the sentence. */
+/** A quote longer than this may be a line pointed at: spoken only where the sentence certainly lacks it. */
 export const MAX_SPOKEN = 4;
 
 const norm = (w: string) => w.toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}]+/gu, '');
@@ -84,11 +91,11 @@ export const lookahead = (quote: string) => wordsOf(quote).length + 1;
 
 /**
  * What a mark's quote is to its sentence: `said` (its words are said next to it), `speak` (the sentence
- * lacks them: speak them at the tag), `pointer` (it only points), or `unclear` (a long quote in a slot
- * that needs a noun, and the next word may or may not fill it). `before`: the sentence's words before
- * the tag (narration only); `clause`: the text after the tag to its clause end (clauseAfter).
+ * lacks them: speak them at the tag), or `pointer` (it only points; also a long quote in a slot the next
+ * word may fill). `before`: the sentence's words before the tag (narration only); `clause`: the text
+ * after the tag to its clause end (clauseAfter).
  */
-export type QuoteRole = 'said' | 'speak' | 'pointer' | 'unclear';
+export type QuoteRole = 'said' | 'speak' | 'pointer';
 export function quoteRole(before: readonly string[], quote: string, clause: string): QuoteRole {
   const q = wordsOf(quote);
   if (!q.length) return 'pointer';
@@ -105,19 +112,24 @@ export function quoteRole(before: readonly string[], quote: string, clause: stri
   if (first && (content.has(first) || (!content.size && q.includes(first)))) return 'said';
   if (prev && content.has(prev)) return 'said';
   const long = q.length > MAX_SPOKEN;
+  // A long quote whose words the clause goes on to paraphrase, three in a row ("{{"30 and 60 degrees land
+  // at the"}} launches land at the same spot", fu D3): the sentence says it its own way.
+  const cl = ` ${squash(clause)} `;
+  if (long && q.slice(2).some((_, i) => cl.includes(` ${q.slice(i, i + 3).join(' ')} `))) return 'said';
   const capital = /^["'“‘(]?\p{Lu}/u.test(firstRaw);
   if (before.length === 0) {
     // Opening the sentence: its subject is missing unless a capitalised word starts it after the tag.
-    return capital ? 'pointer' : long ? 'unclear' : 'speak';
+    return capital ? 'pointer' : 'speak';
   }
   // A clause ending in a word that needs a noun ("the", "by", "the image's"), with no noun phrase of its own after the tag.
   if (/[,;:.!?]$/.test(prevRaw)) return 'pointer';
   if (OPENS_NOUN.has(first)) return 'pointer';
   if (!NEEDS_NOUN.has(prev) && !/['’]s$/i.test(prevRaw)) return 'pointer';
   if (!long) return 'speak';
-  // A long quote: the slot is certainly empty when nothing follows in the clause, or when a new sentence
-  // follows a quote that ends one ("The {{…is not.}} Elasticity changes"); else it may be a pointer.
-  return !first || (capital && /[.!?]["'”’)\]]*$/.test(quote.trim())) ? 'speak' : 'unclear';
+  // A long quote: the slot is certainly empty when nothing follows in the clause, when a verb follows
+  // ("The {{…}} are like"), or when a new sentence follows a quote that ends one ("The {{…is not.}}
+  // Elasticity changes"); else it may be a pointer.
+  return !first || STARTS_VERB.has(first) || (capital && /[.!?]["'”’)\]]*$/.test(quote.trim())) ? 'speak' : 'pointer';
 }
 
 /** Whether the quote's words must be spoken at the tag (quoteRole). */
@@ -134,8 +146,13 @@ export function quoteSpoken(quote: string, opens: boolean, ends = false): string
   return s;
 }
 
-/** The words to speak at the tag when the sentence lacks them (quoteRole `speak`), else null. */
+/**
+ * The words to speak at the tag when the sentence lacks them (quoteRole `speak`), else null; an article
+ * the sentence already said is not said twice ("The {{highlight "The slope…"}} is…").
+ */
 export function spokenAt(before: readonly string[], quote: string, clause: string): string | null {
   if (quoteRole(before, quote, clause) !== 'speak') return null;
-  return quoteSpoken(quote, before.length === 0, /^["'“‘(]?\p{Lu}/u.test(clause.trim()));
+  const prev = before.length ? norm(before[before.length - 1]) : '';
+  const q = OPENS_NOUN.has(prev) && norm(quote.trim().split(/\s+/)[0]) === prev ? quote.trim().replace(/^\S+\s+/, '') : quote;
+  return quoteSpoken(q, before.length === 0, /^["'“‘(]?\p{Lu}/u.test(clause.trim()));
 }

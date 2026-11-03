@@ -146,8 +146,9 @@ export class KitStore {
    * Defines constants, in order. A name already defined keeps its value: a later definition never changes
    * what was drawn from the first (two svg groups both writing `data-const="k=…"`: the second redrew the
    * first's readouts on the next refresh, 20 → 50). The gate flags it (src/gate/live.ts); a change on
-   * purpose is a {{tween}} (setConst). Only this answer's own names: one a follow-up inherits from the
-   * board it extends (element.ts linkStore) takes the follow-up's new value (its gate state never had it).
+   * purpose is a {{tween}} (setConst). Only this answer's own names (they reset with the registry, at each
+   * answer): one a follow-up inherits from the board it extends (element.ts linkStore), or one the last
+   * answer defined, takes the follow-up's new value (its gate state never had it).
    */
   defineConsts(defs: [string, string][]): void {
     for (const [k, v] of defs) {
@@ -163,7 +164,7 @@ export class KitStore {
       } else console.warn('[kit] const dropped:', `${k}=${v}`);
     }
   }
-  /** Names this answer defined itself (defineConsts), as against ones inherited from an extended board. */
+  /** Names this answer defined itself (defineConsts), as against ones inherited from an extended board. Reset by clear(). */
   private own = new Set<string>();
   /** Constants written as formulas, in definition order: they follow the constants they read (C.rederive). */
   private derived: [string, string][] = [];
@@ -232,7 +233,7 @@ export class KitStore {
     return out;
   }
   settle(): void { this.anim.settle(); }
-  clear(): void { this.blocks.clear(); this.n = 0; this.consts = {}; this.derived = []; this.subs.clear(); this.finds.clear(); this.constSubs.clear(); }
+  clear(): void { this.blocks.clear(); this.n = 0; this.consts = {}; this.own = new Set(); this.derived = []; this.subs.clear(); this.finds.clear(); this.constSubs.clear(); }
   /** Board v2: things showing a block's values (a node's value, a link's weight) follow it. */
   private subs = new Map<string, Set<() => void>>();
   listen(id: string, f: () => void): void { const s = this.subs.get(id) ?? new Set(); s.add(f); this.subs.set(id, s); }

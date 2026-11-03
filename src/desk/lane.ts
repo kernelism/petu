@@ -23,11 +23,14 @@ export type Span = { top: number; h: number };
 
 /**
  * Places groups in order: each at its wanted top, or the first top below it where it overlaps no group
- * placed before it (with LANE_GAP air). Earlier groups never move for later ones.
+ * placed before it (with LANE_GAP air). Earlier groups never move for later ones, unless the lane ends:
+ * nothing may sit below `end` (the lowest point the window can show above the dock), so a group that
+ * would run past it rises, and the groups above it rise to keep the gap. Past it the live group's
+ * sticky inset pulled it up over the docked one (a follow-up on the last page drew over the answer before).
  */
-export function packLane(items: { want: number; h: number }[]): number[] {
+export function packLane(items: { want: number; h: number }[], end = Infinity): number[] {
   const placed: Span[] = [];
-  return items.map(({ want, h }) => {
+  const tops = items.map(({ want, h }) => {
     let top = Math.max(0, want);
     // Each collision pushes the group under the one it hits; repeat until it fits a gap.
     for (let moved = true; moved;) {
@@ -39,6 +42,14 @@ export function packLane(items: { want: number; h: number }[]): number[] {
     placed.push({ top, h });
     return top;
   });
+  // Bottom up: each group ends above `end`, or above the next one down with LANE_GAP air (never above 0;
+  // a lane holding more than fits runs past its end instead).
+  const order = tops.map((_, i) => i).sort((a, b) => tops[b] - tops[a]);
+  let floor = end;
+  for (const i of order) { tops[i] = Math.max(0, Math.min(tops[i], floor - items[i].h)); floor = tops[i] - LANE_GAP; }
+  let below = -Infinity;
+  for (const i of order.reverse()) { tops[i] = Math.max(tops[i], below); below = tops[i] + items[i].h + LANE_GAP; }
+  return tops;
 }
 
 /** Where a new group wants its top: its head sits just above the anchor, so the drawing starts level with it. */
@@ -169,4 +180,14 @@ export function clearOfDocked(top: number, h: number, blockers: readonly Span[],
     t = next;
   }
   return t;
+}
+
+/**
+ * Whether the live group (`live`, window px) covers a docked one (`docked`): they overlap on screen by
+ * more than `min` px. The docked one then hides until they part (clearOfDocked could not move the live
+ * group off it): a follow-up that scrolls back to an earlier answer's page draws on top of that answer's
+ * board otherwise (eval fu D1, draw D1: new bars printed over the docked 'Competitive inhibition' board).
+ */
+export function covers(live: Span, docked: Span, min = 8): boolean {
+  return Math.min(live.top + live.h, docked.top + docked.h) - Math.max(live.top, docked.top) > min;
 }

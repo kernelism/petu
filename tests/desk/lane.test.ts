@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { frameFor, laneFrame, LANE_MIN_W, pageFrameTop, SAFE_TOP } from '../../src/desk/layout';
-import { dockTop, LANE_GAP, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, wantFor, walkSplit } from '../../src/desk/lane';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Desk, type DeskHost } from '../../src/desk/Desk';
+import { computeLayout, frameFor, laneFrame, LANE_MIN_W, pageFrameTop, SAFE_TOP } from '../../src/desk/layout';
+import { clearOfDocked, covers, dockTop, LANE_GAP, LEADER_MAX, leaderFrom, leaderPath, packLane, stickyInsets, wantFor, walkSplit } from '../../src/desk/lane';
 import { dockPlacement } from '../../src/ui/layout';
 
 describe('laneFrame (layout C geometry)', () => {
@@ -36,6 +37,18 @@ describe('lane placement', () => {
   it('a group sits at its anchor; one whose slot is taken stacks below with a gap; earlier ones never move', () => {
     const tops = packLane([{ want: 100, h: 300 }, { want: 200, h: 100 }, { want: 1000, h: 50 }]);
     expect(tops).toEqual([100, 100 + 300 + LANE_GAP, 1000]);
+    expect(packLane([{ want: 100, h: 300 }, { want: 200, h: 100 }, { want: 1000, h: 50 }], 2000)).toEqual(tops);
+  });
+  it('the lane ends: a follow-up on the last page fits above it, the answers above rise to keep the gap', () => {
+    // fu D2 (econ p12, lane 7266 px, dock 198): the new group was packed to 7070–7429 and its sticky
+    // inset drew it over the docked answer at 6682.
+    const end = 7266 - 198;
+    const [old, next] = packLane([{ want: 6682, h: 364 }, { want: 6700, h: 359 }], end);
+    expect(next).toBe(end - 359);
+    expect(old).toBe(next - LANE_GAP - 364);
+    // An answer far above is untouched; more than fits runs past the end, never above 0 nor overlapping.
+    expect(packLane([{ want: 100, h: 50 }, { want: 900, h: 100 }], 950)).toEqual([100, 850]);
+    expect(packLane([{ want: 0, h: 300 }, { want: 0, h: 300 }], 400)).toEqual([0, 300 + LANE_GAP]);
   });
   it('a leader goes only to a real mark: the live page ink, or a marked anchor; never to an unmarked page', () => {
     expect(leaderFrom(320, 500, true)).toEqual([320, 500]);
@@ -135,5 +148,65 @@ describe('walkSplit (a multi-page svg answer leaves each stretch beside its page
 
   it('a mark with no new group (pointing mid-beat) places nothing and moves nothing', () => {
     expect(walkSplit([4, 21], 0, 33)).toEqual({ placed: [], runs: null, at: 0 });
+  });
+});
+
+describe('covers (a docked drawing the live one cannot clear hides under it)', () => {
+  // Eval fu D1 / draw D1 turn 2: the follow-up scrolled back to p.3, where the first answer's board is
+  // docked: the new board, taller than the band, sticks with its newest part in view whatever top
+  // clearOfDocked asks for, and sat over the old one.
+  it('a live group taller than the band, stuck over a docked board, covers it', () => {
+    const H = 813, board = { top: 110, h: 380 }, h = 800;
+    const ins = stickyInsets(h, H, clearOfDocked(64, h, [board], H - 76 - 160), 76);
+    expect(covers({ top: ins.top, h }, board)).toBe(true);
+  });
+  it('a card it cleared, or one that only grazes it, stays shown', () => {
+    const card = { top: 60, h: 36 };
+    const t = clearOfDocked(64, 300, [card], 600);
+    expect(covers({ top: t, h: 300 }, card)).toBe(false);
+    expect(covers({ top: 100, h: 300 }, { top: 395, h: 200 })).toBe(false);
+    expect(covers({ top: 100, h: 300 }, { top: 380, h: 200 })).toBe(true);
+  });
+});
+
+describe('Desk lane: the live drawing never prints over a docked one', () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.stubGlobal('matchMedia', () => ({ matches: true })); });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); document.body.replaceChildren(); });
+
+  it('a docked board under the live one hides (its leader too) while they overlap, and shows again at the end', async () => {
+    const lane = document.createElement('div'), stage = document.createElement('div');
+    document.body.append(lane, stage);
+    const aspects = new Float64Array(4).fill(9 / 16);
+    const layout = () => computeLayout(frameFor(1440, 900, 'none', 9 / 16, true).page, aspects, 900);
+    let scrolled = () => {};
+    const host = {
+      viewport: () => ({ W: 1440, H: 900 }), layout, scrollTop: () => 0, maxScroll: () => Math.max(0, layout().total - 900), aspect: () => 9 / 16,
+      setSplit: vi.fn(async () => {}), glideTo: vi.fn(async () => {}), cancelGlide: vi.fn(), scrollToPage: vi.fn(async () => {}),
+      onLayout: () => () => {}, onScroll: (f: () => void) => { scrolled = f; return () => {}; }, onUserIntent: () => () => {}, laneEl: () => lane,
+    } as unknown as DeskHost;
+    const d = new Desk(host, stage);
+    const answer = async (id: string) => {
+      const p = d.addRegion({ id, page: 1, size: 'l', svg: true, h: 600 });
+      await vi.advanceTimersByTimeAsync(1500);
+      if (typeof await p === 'string') throw new Error(id);
+      d.noteInk({ page: 1 }, { x: 100, y: 200, w: 300, h: 30 });
+    };
+    await answer('a');
+    await d.overview();
+    await d.reset(0);
+    await answer('b');
+    const [old, now] = [...lane.querySelectorAll<HTMLElement>('.lane-item')];
+    // The follow-up scrolled back to the page the first board docks beside: on screen, they overlap.
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return (this === old || this === now ? new DOMRect(900, 120, 500, 420) : new DOMRect()) as DOMRect;
+    });
+    scrolled();
+    const leaders = [...lane.querySelectorAll<SVGGElement>('.lane-leaders > g')];
+    expect(old.style.visibility).toBe('hidden');
+    expect(leaders[0].style.visibility).toBe('hidden');
+    expect(now.style.visibility).toBe('');
+    await d.overview();
+    expect(old.style.visibility).toBe('');
+    expect(leaders[0].style.visibility).toBe('');
   });
 });

@@ -212,6 +212,7 @@ export function groupBox(b: SvgBoard, g: SVGGElement): SRect | null {
 }
 
 const SHAPES = 'path,line,polyline,polygon,rect,circle,ellipse';
+const isNum = (w: string) => /\d/.test(w);
 const frame = () => new Promise<number>((r) => requestAnimationFrame(r));
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.max(0, ms)));
 
@@ -255,6 +256,17 @@ export function partNames(el: Element, ns: string, groupId?: string): { words: s
   if (el.hasAttribute('data-axes') && (el.hasAttribute('data-frame') || el.hasAttribute('data-ticks-x') || el.hasAttribute('data-ticks-y'))) return { words: partWords(id, groupId) };
   const tag = el.nodeName.toLowerCase();
   const t = tag === 'text' ? (el.textContent ?? '') : tag === 'g' ? Array.from(el.querySelectorAll('text'), (x) => x.textContent ?? '').join(' ') : '';
+  // A readout (a data-val text) is said by its value ({{val id=…}}): that is its name, before its id's
+  // words and its prose, which drew it early: "midpoint 15", "midpoint 9", "midpoint change: +66.7%" all
+  // on the beat's first "midpoint" (D18), "×1.5 per block" (id factor) on a later "factors" (D9). The
+  // value only: "+$10: 50.0%" is said on "50.0", not on the "$10" its template typed.
+  if (tag === 'text') {
+    const vals = [el, ...Array.from(el.querySelectorAll('[data-val]'))].filter((e) => e.hasAttribute('data-val')).flatMap((e) => {
+      const typed = labelNames(e.getAttribute('data-tpl') ?? '').filter(isNum);
+      return labelNames(e.textContent ?? '').filter((w) => { const i = typed.indexOf(w); if (i >= 0) typed.splice(i, 1); return isNum(w) && i < 0; });
+    });
+    if (vals.length) return { words: vals, label: [...partWords(id, groupId), ...labelNames(t).filter((w) => !vals.includes(w))] };
+  }
   return { words: partWords(id, groupId), label: labelNames(t) };
 }
 

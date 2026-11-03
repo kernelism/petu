@@ -202,6 +202,12 @@ describe('pace: each part draws across its share of the words', () => {
     expect(paceParts([part(['gone'], labelNames('120 m')), part(['x'])], w)![0].at).toBe(900); // else its label
   });
 
+  it('a number said once names one part: two labels of the same value draw on its mentions in turn (D8)', () => {
+    const w = beat('the horse pulls with 52.5 newtons and the cart pulls back with 52.5 newtons too');
+    const t = paceParts([part([], labelNames('52.5 N')), part([], labelNames('52.5 N'))], w)!;
+    expect(t.map((x) => [x.i, x.at])).toEqual([[0, 4 * 300], [1, 12 * 300]]);
+  });
+
   it('a naming word already spoken when the group starts draws the part now', () => {
     // Held by the look: the beat began 1 s ago and "cap" was its second word (clamped to now).
     const w: BeatWord[] = [{ text: 'the', inMs: 0, endMs: 0 }, { text: 'cap', inMs: 0, endMs: 0 }, ...beat('is high and then it falls away slowly here').map((x) => ({ ...x, inMs: x.inMs + 300, endMs: x.endMs! + 300 }))];
