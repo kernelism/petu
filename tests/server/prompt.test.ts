@@ -65,7 +65,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.14');
+    expect(PROMPT_VERSION).toBe('p6.15');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -131,6 +131,10 @@ describe('system prompt (svg, default)', () => {
     expect(s).toMatch(/every point on a curve is placed by data-at \(cross\(d,s\) where two curves meet/);
     expect(s).toMatch(/data-schematic/);
     expect(s).not.toMatch(/compute yourself|its computed numbers/);
+  });
+
+  it('p6.15 (Bayes bar): a shape too narrow for its label gets the whole label on it, never split into two texts', () => {
+    expect(s).toMatch(/a shape too narrow for its label, such as a thin bar segment, still gets the whole label centred on it: the engine sets it beside the shape/);
   });
 
   it('p6.14 (draw D7): a formula\'s vocabulary is listed, integral() included, so no series is typed by hand', () => {
