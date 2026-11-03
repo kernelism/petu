@@ -179,6 +179,24 @@ describe('B1: the dock in its moments', () => {
     expect(host.querySelector('.pb-title')!.textContent).toBe('Paused');
   });
 
+  it('an aside offers "Answer instead" before the way back: the student overrides the route (src/agent/route.ts)', () => {
+    const base = { titles: [], label: 'Why?', current: 0, progress: 0, speed: 1, paused: false, onJump: vi.fn(), onTogglePause: vi.fn(), onReplay: vi.fn(), onSpeed: vi.fn(), onStop: vi.fn() };
+    const onResume = vi.fn(), onInstead = vi.fn();
+    act(() => root.render(createElement(PartsBar, { ...base, aside: { onResume, onInstead } })));
+    const instead = host.querySelector<HTMLButtonElement>('.pb-instead')!;
+    expect(instead.textContent).toBe('Answer instead');
+    expect(instead.closest('.pb-more')).toBeNull(); // always shown, not folded away
+    const buttons = [...host.querySelectorAll('.pb button')];
+    expect(buttons.at(-2)).toBe(instead);
+    expect(buttons.at(-1)).toBe(host.querySelector('.pb-resume'));
+    act(() => instead.click());
+    expect(onInstead).toHaveBeenCalledOnce();
+    expect(onResume).not.toHaveBeenCalled();
+    // Without it (no handler), the strip is as before.
+    act(() => root.render(createElement(PartsBar, { ...base, aside: { onResume } })));
+    expect(host.querySelector('.pb-instead')).toBeNull();
+  });
+
   it('an aside never echoes its question in the dock: the caption shows the strip and the narration only', () => {
     const parts: PartsView = { titles: [], label: 'Why?', current: 0, progress: 0, paused: false, speed: 1, onJump: vi.fn(), onTogglePause: vi.fn(), onReplay: vi.fn(), onSpeed: vi.fn(), onStop: vi.fn(), aside: { onResume: vi.fn() } };
     const question = 'Get. How you set up the arrows and the gradients. Like I think I need a basic understanding';
