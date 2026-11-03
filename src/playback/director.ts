@@ -160,8 +160,14 @@ export class Director {
       }
       if (!this.svgBoard) { this.report({ action: raw as Action, firedAt: at, queuedAt: now(), startedAt: now(), endedAt: now() }, { skipped: 'no svg board' }); return; }
       raw = { ...raw, region: this.svgBoard };
-      // A withheld beat's definitions (src/svgboard/defs.ts): taken into the board's data, never drawn.
-      if (isDefsGroup(raw.svg)) { const env = this.env(); if (env) void defineSvgGroup(raw, env).then((r) => { if (r) console.warn('[director] svg definitions not taken:', r); }); return; }
+      // A withheld beat's definitions (src/svgboard/defs.ts): taken into the board's data, never drawn. A
+      // layout step: after the board they go on is laid out (a follow-up's opens behind begin()'s fade), and
+      // before the groups that build on them draw.
+      if (isDefsGroup(raw.svg)) {
+        const env = this.env(), d = raw;
+        if (env) this.track(this.enqueueLayout('sketch', async () => { const r = await defineSvgGroup(d, env); if (r) console.warn('[director] svg definitions not taken:', r); }, this.ctrl.signal).done);
+        return;
+      }
     }
     if (raw.kind === 'let' || raw.kind === 'beat') return; // definitions were taken when it was parsed (prefetch); a beat boundary is the scheduler's
     if (raw.kind === 'const') { if (!this.seen.has(raw)) kitStore(this.registry).defineConsts(raw.defs); return; }
