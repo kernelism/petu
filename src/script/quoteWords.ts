@@ -19,7 +19,7 @@
 //     noun phrase of its own after it ("by {{…}} the weights" is filled); a demonstrative before it
 //     ("this {{…}} means") already stands as the noun;
 //   - `pointer`: anything else.
-// The deictic for a slot (deixisAt) depends only on the word before it, never on the quote:
+// The deictic for a slot (deixisAt) depends only on the word before it, never on the quote's words:
 //   - after an article (a, an, the) it replaces the article: "The {{…}} uses" → "This uses", "the {{…}}
 //     viewing ray" → "this viewing ray" ("this" stands as a pronoun and as a determiner alike);
 //   - after a possessive or quantifier (its, the page's, each) it is the mark as a noun: "the page's
