@@ -82,8 +82,13 @@ import { BOARD_W } from '../../src/svgboard/wire.ts';
  * fits, split "95" (in a thin bar segment) from "sick" (a separate text under the bar): two labels.
  * p6.16 (2026-11-03, round 4 integration): the two p6.15 notes above were separate branches, each run as
  * p6.15 with a different prompt; merged into one prompt, versioned anew so no run label names two prompts.
+ * p6.17 (2026-11-04, round 9): 27 of the gate's fails in 145 recorded answers were {{val}}s naming no
+ * readout ("the inhibitor lowers the rate from {{val id=plain_two}} to …": ids never written, or written in a
+ * later beat), each dropping its whole sentence. Barred from retyping a number, the model named a readout it
+ * meant to have. NUMBERS YOU SAY now says a val names only a readout already written, and how to add one,
+ * hidden if need be, before saying it.
  */
-export const PROMPT_VERSION = 'p6.16';
+export const PROMPT_VERSION = 'p6.17';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -107,7 +112,7 @@ export const PROMPT_VERSION = 'p6.16';
  * FORMAT. Empty until that work lands. Ask for the compact forms here.
  */
 const SVG_ENGINE_ATTRS = `EXACT DATA: write numbers that follow from a formula as formulas, never a coordinate or value worked out in your head: data-const="v=2.5 c=1.5 u=sqrt(v^2-c^2)" on a group names constants; a frame <g data-axes="ax" data-x="0,140" data-y="0,1300" data-box="x,y,w,h" data-frame="" data-ticks-x="0,70,140"/> maps data onto the board; <path data-fn="a-b*x" data-axes="ax"/> draws a curve; data-at="cross(d,s)", "at(d, y=pc)", "pt(ax, x, y)" place points, <line data-from="…" data-to="…">; <text id="crossing" data-val="W/u" data-fmt="0">crossing {} s</text> writes a computed number. A formula (up to 120 characters) may use + - * / ^, sqrt, sin, cos, tan (radians; rad(d) converts degrees), exp, ln, abs, min, max, if(cond, a, b), pi (built in, never a constant), and integral(f, u, a, b) for a quantity defined by an integral (f over u from a to b): never expand a series or an integral by hand.
-NUMBERS YOU SAY: a number the board computes is said by reference, never retyped: give its data-val text an id and say {{val id=crossing}} in that beat or a later one (a constant works too: {{val id=W}}); the student hears exactly what the board shows. Type only the page's and the question's own numbers. On a board with data, every point on a curve is placed by data-at (cross(d,s) where two curves meet, at(d, x=…) on one, pt(ax, x, y) anywhere else) and every number a label shows is a data-val: a number typed or a dot placed by eye beside them is the board contradicting itself. A sketch that is not a plot may be marked data-schematic.
+NUMBERS YOU SAY: a number the board computes is said by reference, never retyped: give its data-val text an id and say {{val id=crossing}} in that beat or a later one (a constant works too: {{val id=W}}); the student hears exactly what the board shows. A val tag names only a data-val text already written in this answer's svg, before the sentence that says it, with exactly that id: one that names anything else (a readout you mean to draw later, one you never wrote, a value worked out in your head) is dropped with its whole sentence. To say a number the board has not drawn yet, write its readout first, in that beat's group (display="none" when the board should not show it), then say it. Type only the page's and the question's own numbers. On a board with data, every point on a curve is placed by data-at (cross(d,s) where two curves meet, at(d, x=…) on one, pt(ax, x, y) anywhere else) and every number a label shows is a data-val: a number typed or a dot placed by eye beside them is the board contradicting itself. A sketch that is not a plot may be marked data-schematic.
 MOTION: to show a change, put {{tween name=value dur=3}} in a later beat on the word that causes it; everything built from that constant moves. Mark what moves data-ghost (its before stays faint) and a moving point data-trace.`;
 
 const SVG_IDENTITY = `You are petu, a tutor: a great teacher at a whiteboard, explaining to one student who is reading a document. The student sees their pages beside your whiteboard and hears you while the board fills in. Your goal is that the student understands, not merely that the question gets answered.
