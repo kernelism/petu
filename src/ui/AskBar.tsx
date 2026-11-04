@@ -6,6 +6,7 @@ import { TranscriptPanel, type Transcript } from './Transcript';
 import type { LiveTranscript } from './transcriptLive';
 import './ui.css';
 import { setTypeSink } from './typeAhead';
+import { QUESTION_MAX } from '../agent/limits';
 
 const isTypingTarget = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
@@ -260,10 +261,11 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
     if (isTall !== tall) setTall(isTall);
   }, [text, listening, tall]);
 
+  const tooLong = text.trim().length > QUESTION_MAX;
   const submit = () => {
     const q = text.trim() || (emptyAsk && !listening ? emptyAsk : '');
     if (!q && mode === 'aside') { onResume?.(); release(); return; }
-    if (!q || blocked) return;
+    if (!q || blocked || q.length > QUESTION_MAX) return;
     dropMic();
     typingRef.current = false;
     onAsk(q);
@@ -336,6 +338,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
         : chipEls}
       {/* Asking is paused (a spending cap): a status row that wraps, in the field's place, never a clipped placeholder. */}
       {blocked && !busy && <p className="askbar-status" role="status">{blocked}</p>}
+      {tooLong && <p className="askbar-status askbar-note" role="status">{`A question is up to ${QUESTION_MAX.toLocaleString('en-US')} characters; this one is ${text.trim().length.toLocaleString('en-US')}. Ask about one part, or select it on the page.`}</p>}
       <textarea
         ref={inputRef}
         rows={1}
@@ -400,7 +403,7 @@ export function AskBar({ onAsk, onStop, busy, mode = busy ? 'during' : 'ask', sh
       <div className="askbar-trail">
         {/* While listening the mic is the send; the answer's stop stays. */}
         {hasText && !blocked && !listening ? (
-          <button type="submit" className="askbar-btn is-send" aria-label={mode === 'check' ? 'Send your answer' : 'Ask'}>
+          <button type="submit" className="askbar-btn is-send" disabled={tooLong} aria-label={mode === 'check' ? 'Send your answer' : 'Ask'}>
             <ArrowUp size={18} strokeWidth={2} />
           </button>
         ) : busy && showStop ? (
