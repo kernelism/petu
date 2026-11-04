@@ -4,6 +4,56 @@
 
 ---
 
+## 0. Revision after founder review (2026-11-04)
+
+Two decisions change the design. Everything below this section stands unless it conflicts with them.
+
+**1. A flexible canvas.** The board becomes a free canvas a teacher would use. Derivations
+("take a slice dx: dm = λ dx, dI = x² dm, I = ∫ x² dm"), worked arithmetic, equations, arrows, side
+sketches and short hand-written-style annotations are all allowed, anywhere on the board. This
+replaces the labels-only rule (p6.8) and decision 1 in section 7.
+
+The one thing still removed is paragraph prose: whole sentences or lists of sentences, the
+"random lines of text" from the 2026-10-31 complaint. The voice keeps the reasoning, the board keeps
+the working. `prose.ts` already treats math lines as non-prose, because it counts only runs of
+letters. The change is mostly in the prompt, plus math rendering for derivation lines, using the
+KaTeX the board already loads lazily.
+
+**2. Numbers come from programs.** Every computed number, on the board or in speech, comes from code
+the engine runs, never from the model's head. The model writes a small `<calc>` program. It is plain
+JavaScript-style code, run in a sandbox (a Web Worker with no DOM and no network, with a step and time
+cap; QuickJS-in-wasm if we need stronger isolation). The program exports named values, arrays and
+step traces. This replaces the 120-character formula language as the place where arithmetic lives,
+so any calculation a student can bring is computable: loops, sorting, matrices, recurrences, numeric
+integration, statistics. A `<proc>` step rule (section 3) is just a calc function.
+
+```
+<calc id="rod">
+  const M = 1, L = 1;
+  const slices = n => { let I = 0; for (let i = 0; i < n; i++) { const x = -L/2 + (i + .5) * L/n; I += x*x * M/n; } return I; };
+  export const I4 = slices(4), I10 = slices(10), I100 = slices(100);
+  export const exact = M*L*L/12;
+</calc>
+```
+
+The board and the narration refer to the results by name: a derivation line `I ≈ {rod.I4}`, and in
+speech "with four slices the sum is {{val rod.I4}}". The engine fills in the numbers.
+
+**What "not strict" means for checking.** Today the gate drops a whole sentence when a number
+doesn't check. Instead:
+
+- A typed number that a program computes is **replaced** with the program's value, not dropped.
+- A number the page or the question gives (a slide's pixel values, "478 + 356") is accepted as data.
+- Anything else is drawn and noted in the eval log, not hidden from the student.
+
+Dropping is kept only for a calc that fails to run, and that goes to repair first.
+
+**Effect on the plan.** Phase 1 adds the calc sandbox and derivation rendering. The
+`expr.ts` list extensions in section 5 shrink to what the engine needs for drawing; arithmetic moves
+into calc. Phase 1 grows by one to two days.
+
+---
+
 ## 1. What is wrong today, and why
 
 ### What you saw
