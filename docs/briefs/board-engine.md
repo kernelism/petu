@@ -190,8 +190,9 @@ Prevention by construction: the narration never types a number the engine comput
   reader of its text template (`src/values/quantity.ts readTemplate`) gives what the board draws and what
   is said, so `${}` is said "$10" (spoken "ten dollars"), `{} units` "100 units", `{}%` "12%"; a sign in
   the template is wording, not said ("price −${}" → "falls by $1"). The quantity takes what is glued to
-  `{}`, else the next word when it is a unit (`src/values/units.ts`, the one unit vocabulary) or the
-  template's last word. It glues to touching text (`${{val id=c}}.` → `$4.5.`) and never doubles an affix
+  `{}`, else the next word when it is a unit (`src/values/units.ts`, the one unit vocabulary) or, as the
+  template's last word, what the number counts (a plural noun: `{} rooms` "40 rooms"; `{} demanded` is
+  drawn, said "140"). It glues to touching text (`${{val id=c}}.` → `$4.5.`) and never doubles an affix
   the narration writes itself (`{{val id=t}} seconds`, `${{val id=p}}`, `{{val id=r}}%`: the parser waits
   for the next words, `quantity.ts inSentence`); it is chunk-independent. The number check reads a
   narration number's unit with the same rule (`unitSaid`: "$10" is in dollars, like "10 dollars"). Refs: a block's single value, a calc, a part (`v[2]`, `g[1,2]`,
