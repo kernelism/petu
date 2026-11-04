@@ -14,6 +14,11 @@ const VOCAB: [code: string, forms: string, one: string, many: string][] = [
   ['cm', 'cm centimetre centimetres centimeter centimeters', 'centimetre', 'centimetres'],
   ['mm', 'mm millimetre millimetres millimeter millimeters', 'millimetre', 'millimetres'],
   ['kg', 'kg kilogram kilograms kilo kilos', 'kilogram', 'kilograms'],
+  // Physics boards (OpenStax University Physics: "52.5 N" was said only by the old last-word rule).
+  ['N', 'n newton newtons', 'newton', 'newtons'],
+  ['J', 'j joule joules', 'joule', 'joules'],
+  ['W', 'w watt watts', 'watt', 'watts'],
+  ['Hz', 'hz hertz', 'hertz', 'hertz'],
   ['%', '% percent', 'percent', 'percent'],
   ['°', '° deg degree degrees', 'degree', 'degrees'],
   ['$', '$ dollar dollars', 'dollar', 'dollars'],

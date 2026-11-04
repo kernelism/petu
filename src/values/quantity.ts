@@ -22,11 +22,21 @@ export const NO_AFFIX: Affix = { pre: '', post: '' };
 const PRE = /[^\s\p{L}\p{N}+\-−=:;,.!?()[\]{}'"“”‘’/<>|&*^_~@#\\]+$/u;
 const TRAIL_PUNCT = /[)\]"'”’,;:.!?…]+$/;
 
+/** Irregular plurals a count can name ("100 people"). */
+const PLURAL = /^(people|children|men|women|mice|geese|feet|teeth|data)$/i;
 /**
- * A readout's template ("price ${}", "{} units", "+{}%", "lands {} m downstream", "{} elastic"), or none (a
+ * The word is what a number counts: a plural noun ("100 apartments", "590 positives", "40 trades"), not
+ * wording about it ("140 demanded", "1.4 elastic", "3 more", "95 sick"). Read by form: a plural ends in
+ * s, not ss/us/is/ous ("less", "bonus", "axis", "various" are not counts).
+ */
+const counted = (w: string): boolean => PLURAL.test(w) || (/^\p{L}{2,}s$/u.test(w) && !/(ss|us|is|ous)$/i.test(w));
+
+/**
+ * A readout's template ("price ${}", "{} units", "+{}%", "lands {} m downstream", "{} rooms"), or none (a
  * bare data-val: its data-unit), split around its quantity. After the number, the quantity takes what is
- * glued to it, else the next word when it is a unit (units.ts) or the template's last word: the board
- * writes "1.4 elastic", so it is said "1.4 elastic"; "{} both ways" keeps "both ways" as wording.
+ * glued to it, else the next word when it is a unit (units.ts) or, as the template's last word, what the
+ * number counts ("{} rooms" is said "40 rooms"). Any other word is the board's wording, drawn and not
+ * said with the number: "{} demanded" in "buyers want {{val}}" was heard "buyers want 140 demanded".
  */
 export function readTemplate(tpl: string | null | undefined, dataUnit?: string | null): Template {
   const du = dataUnit?.trim() || undefined;
@@ -48,7 +58,7 @@ export function readTemplate(tpl: string | null | undefined, dataUnit?: string |
       const u = readUnit(ws);
       const rest = after.slice(m[1].length).split(/\s+/).filter(Boolean);
       const last = rest.length === 1 || rest.slice(1).every((w) => !w.replace(TRAIL_PUNCT, ''));
-      const n = u?.n ?? (last ? 1 : 0);
+      const n = u?.n ?? (last && counted(ws[0].replace(TRAIL_PUNCT, '')) ? 1 : 0);
       if (n) post = m[1].replace(/\s+/g, ' ') + ws.slice(0, n).join(' ').replace(TRAIL_PUNCT, '');
     }
   }
