@@ -409,3 +409,16 @@ describe('AskBar focus after asking (QA M1)', () => {
     expect(document.activeElement).not.toBe(b.input);
   });
 });
+
+describe('AskBar: a question over the limit', () => {
+  it('says the limit at the bar and does not send (a pasted page of notes was refused as "couldn\'t be sent")', () => {
+    const b = mount();
+    b.type('x'.repeat(2100));
+    expect(host!.querySelector('.askbar-status')?.textContent).toMatch(/up to 2,000 characters; this one is 2,100/);
+    expect(host!.querySelector<HTMLButtonElement>('.is-send')?.disabled).toBe(true);
+    b.key(b.input, 'Enter');
+    expect(b.props.onAsk).not.toHaveBeenCalled();
+    b.type('a short question');
+    expect(host!.querySelector('.askbar-status')).toBeNull();
+  });
+});

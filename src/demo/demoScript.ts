@@ -112,12 +112,16 @@ export const DEMO_PLANE_SCRIPT =
   `and image 2 {{line on=big from=610,560 to=783,245 em id=lp}} along {{label id=lp "l′" dir=ne em}} l-prime. ` +
   `{{write on=big at=664,172 "so a match for x sits on l′" em}} So a match for x has to sit on l-prime.`;
 
-export type Demo = { question: string; script: string };
+/** `followUp`: it asks about an answer already given ("Sketch it…"), so it is suggested only after one. */
+export type Demo = { question: string; script: string; followUp?: boolean };
 export const DEMOS: Demo[] = [
   { question: DEMO_QUESTION, script: DEMO_SCRIPT },
-  { question: DEMO_SIDE_QUESTION, script: DEMO_SIDE_SCRIPT },
-  { question: DEMO_PLANE_QUESTION, script: DEMO_PLANE_SCRIPT },
+  { question: DEMO_SIDE_QUESTION, script: DEMO_SIDE_SCRIPT, followUp: true },
+  { question: DEMO_PLANE_QUESTION, script: DEMO_PLANE_SCRIPT, followUp: true },
 ];
+
+/** The sample's suggested questions now: stand-alone ones before any answer, follow-ups after one. */
+export const suggestionsFor = (answered: boolean): string[] => DEMOS.filter((d) => !!d.followUp === answered).map((d) => d.question);
 
 const words = (s: string) => new Set(s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
 

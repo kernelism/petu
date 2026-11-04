@@ -46,7 +46,13 @@ describe('readTemplate: what of a readout\'s text is its quantity', () => {
     ['lands {} m downstream', '', ' m', 'm'],
     ['30°: {} s', '', ' s', 's'],
     ['{} metres a second', '', ' metres a second', 'm/s'],
-    ['{} elastic', '', ' elastic', undefined], // the board writes it: said as written
+    ['{} elastic', '', '', undefined], // wording, drawn and not said with the number
+    ['{} demanded', '', '', undefined], // round 3: "buyers want 140 demanded"
+    ['{} more', '', '', undefined],
+    ['{} rooms', '', ' rooms', undefined], // what the number counts: said with it
+    ['{} people', '', ' people', undefined],
+    ['{} less', '', '', undefined],
+    ['{} N', '', ' N', 'N'], // a unit (newtons): "52.5 N" was said only by the old last-word rule, as "52.5 N newtons"
     ['Midpoint elasticity: {} both ways', '', '', undefined],
     ['E={}', '', '', undefined],
     ['[S] = {}', '', '', undefined],
@@ -103,8 +109,8 @@ describe('{{val}} says the board\'s quantity (economics transcript shapes)', () 
     expect(r.spoken).toEqual(['one dollar']);
   });
 
-  it('a word the board writes after the number is said with it', () => {
-    expect(play('That gives {{val id=el}} here.').words).toBe('That gives 1.4 elastic here.');
+  it('a word the board writes after the number is said with it only when it is what the number counts', () => {
+    expect(play('That gives {{val id=el}} here.').words).toBe('That gives 1.4 here.');
   });
 
   it('the val action goes out with its tag (the live gate reads each tag\'s action from that push); its said settles with its word', () => {

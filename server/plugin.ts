@@ -31,6 +31,7 @@
 //
 // Logging: route + message only. Never request headers, bodies or the key.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { QUESTION_MAX } from '../src/agent/limits';
 import { appendFileSync, createReadStream, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -428,13 +429,13 @@ export function validateContext(c: any): string | null {
 
 export function validateScout(b: any): string | null {
   if (b == null || typeof b !== 'object') return 'body must be an object';
-  if (!isStr(b.question) || !b.question.trim() || b.question.length > 2000) return 'question must be 1–2,000 characters';
+  if (!isStr(b.question) || !b.question.trim() || b.question.length > QUESTION_MAX) return `question must be 1–${QUESTION_MAX.toLocaleString('en-US')} characters`;
   if (!isStr(b.docName) || !isStr(b.docHash) || !b.docHash) return 'docName and docHash are required';
   if (!isInt(b.numPages) || b.numPages < 1) return 'numPages must be a positive integer';
   if (!isInt(b.page) || b.page < 1 || b.page > b.numPages) return 'page is out of range';
   if (!isStr(b.digest) || !b.digest || b.digest.length > LIMITS.docText) return 'digest must be a string of at most 120,000 characters';
   if (b.pageText != null && (!isStr(b.pageText) || b.pageText.length > LIMITS.pageText)) return 'pageText must be a string of at most 60,000 characters';
-  if (b.prior != null && !(isStr(b.prior.q) && isStr(b.prior.a) && isInt(b.prior.page) && b.prior.q.length <= 2000 && b.prior.a.length <= 20_000)) return 'prior must be { q, a, page }';
+  if (b.prior != null && !(isStr(b.prior.q) && isStr(b.prior.a) && isInt(b.prior.page) && b.prior.q.length <= QUESTION_MAX && b.prior.a.length <= 20_000)) return 'prior must be { q, a, page }';
   for (const k of ['section', 'memory', 'candidates', 'about'] as const) if (b[k] != null && (!isStr(b[k]) || b[k].length > LIMITS[k])) return `${k} must be a string of at most ${LIMITS[k].toLocaleString('en-US')} characters`;
   if (b.check != null && !(isStr(b.check.q) && b.check.q.length <= LIMITS.check && isInt(b.check.page) && b.check.page >= 1 && b.check.page <= b.numPages)) return `check must be { q (at most ${LIMITS.check.toLocaleString('en-US')} characters), page }`;
   if (b.image != null && !isImage(b.image)) return 'image must be { b64, w, h }';
@@ -445,7 +446,7 @@ export function validateScout(b: any): string | null {
 
 export function validateAsk(b: any): string | null {
   if (b == null || typeof b !== 'object') return 'body must be an object';
-  if (!isStr(b.question) || !b.question.trim() || b.question.length > 2000) return 'question must be 1–2,000 characters';
+  if (!isStr(b.question) || !b.question.trim() || b.question.length > QUESTION_MAX) return `question must be 1–${QUESTION_MAX.toLocaleString('en-US')} characters`;
   if (!Array.isArray(b.history) || b.history.length > 3) return 'history must be an array of at most 3';
   if (!b.history.every((h: any) => h && isStr(h.q) && isStr(h.a) && isInt(h.page))) return 'history items need { q, a, page }';
   if (b.quality != null && !isQuality(b.quality)) return 'quality must be standard | best';
