@@ -20,7 +20,7 @@ import { PacedClock, type NarrationClock } from './playback/clock';
 import { VoiceClock, fetchVoice, warmVoice, webAudioOut } from './playback/voiceClock';
 import { SwitchClock } from './playback/switchClock';
 import { BASE_WPM, getSettings, setSettings, SPEEDS, stepSpeed, useSettings, type VoiceSetting } from './settings/settings';
-import { DEMOS, DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo } from './demo/demoScript';
+import { DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo, suggestionsFor } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
 import type { DevStep } from './demo/learner';
 import { Desk, GLIDE_MS } from './desk/Desk';
@@ -84,7 +84,6 @@ const scriptParam = import.meta.env.DEV ? params.get('script') : null;
 const DEV_SCRIPT = scriptParam ? SCRIPTS[scriptParam] ?? null : null;
 const DEV_SRC = import.meta.env.DEV ? params.get('src') ?? DEV_SCRIPT?.src ?? null : null;
 if (scriptParam && !DEV_SCRIPT) console.warn('[dev] unknown ?script=; known:', Object.keys(SCRIPTS).join(', '));
-const SUGGESTIONS = DEV_SCRIPT ? [DEV_SCRIPT.question] : DEMOS.map((d) => d.question);
 // Dev-only: ?fail=<n> cuts the answer stream after n chunks, as a dropped connection does (none: an
 // error; some: a cut-off, what arrived plays). ?failat=<c> cuts it after c characters (the demo's
 // chunking is random; this is the same cut every run).
@@ -2032,7 +2031,7 @@ export default function App() {
           onDismissCheck={dismissCheck}
           onTestYourself={offerCheck ? openCheck : undefined}
           focusSeq={barFocus + focusSeq}
-          suggestions={(isSample || DEV_SCRIPT) && !captionVisible && !answered ? SUGGESTIONS : undefined}
+          suggestions={DEV_SCRIPT ? (!captionVisible && !answered ? [DEV_SCRIPT.question] : undefined) : isSample && !captionVisible ? suggestionsFor(answered) : undefined}
           restore={restore}
           transcript={transcript}
           live={live}
