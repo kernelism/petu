@@ -688,6 +688,8 @@ export default function App() {
     // An open check question belongs to the answer (and document) it closed; it never carries over.
     setCheck(null);
     setCheckOpen(false);
+    // Nothing has been answered on the new document: the bar asks ("Ask about this PDF…"), not "Follow up…".
+    setAnswered(false);
   }, []);
 
   // ---------------------------------------------------------------------------------------------
