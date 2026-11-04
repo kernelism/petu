@@ -12,7 +12,7 @@ import { deriveParts, nextSentence, partAt, partProgress, partText, partTitle, r
 import { SectionLabels } from './pdf/sections';
 import { RouteChip, upcomingPage, type Route } from './ui/RouteChip';
 import type { PartsView } from './ui/PartsBar';
-import { barMode, closingQuestion } from './ui/barMode';
+import { barMode } from './ui/barMode';
 import { answerHead, asideHead, clockOf, pagesLabel, trailTitle, type TrailHead } from './ui/trail';
 import { aboutContext, askedPage, asideContext, bboxOf, checkPageOf, isLoop, pointedLabel, type Pointed } from './agent/moment';
 import { isTyping, playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
@@ -442,9 +442,10 @@ export default function App() {
   /** The bar's moment (src/ui/barMode.ts): an answer has played; the last one closed on this question. */
   const [answered, setAnswered] = useState(false);
   /**
-   * The answer's check question (p6.2: the model's hidden <check>, done.check; an older or tag-prompt
-   * answer that closed on a spoken question offers that one). Offered as a collapsed "Test yourself"
-   * chip; `checkOpen` once the student opens it: then it is pinned and the bar takes their answer.
+   * The answer's check question: the model's hidden <check> (p6.2, done.check), and only that. A spoken
+   * closing question is the tutor asking the student something ("which page do you mean?"), never a test.
+   * Offered as a collapsed "Test yourself" chip; `checkOpen` once the student opens it: then it is pinned
+   * and the bar takes their answer.
    */
   const [check, setCheck] = useState<string | null>(null);
   const [checkOpen, setCheckOpen] = useState(false);
@@ -1078,9 +1079,8 @@ export default function App() {
         if (!again) entry.grounding = groundingRef.current;
         if (spoken.length) setAnswered(true);
         if (st === 'done') {
-          // A check question to offer ("Test yourself", collapsed): the model's hidden one (p6.2), else
-          // the spoken question an older or tag-prompt answer closed on.
-          setCheck(cutOff == null ? offered ?? closingQuestion(joinWords(spoken)) : null);
+          // A check question to offer ("Test yourself", collapsed): the model's hidden one (p6.2), if any.
+          setCheck(cutOff == null ? offered ?? null : null);
           // Where the check was offered: the last page this answer pointed at as it played.
           checkPageRef.current = checkPageOf(gate ? gate.releasedText() : entry.script, page);
           setCheckOpen(false);

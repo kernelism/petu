@@ -47,21 +47,3 @@ export const BAR_LABEL: Record<BarMode, string> = {
   check: 'Your answer to the check question',
 };
 
-/**
- * The question an answer closes on, if it does: its last sentence ends with "?". Any subject, any
- * phrasing: it is the shape of the ending, never its words. Null when the answer ends otherwise.
- */
-export function closingQuestion(text: string): string | null {
-  const t = text.trim();
-  if (!t.endsWith('?')) return null;
-  // The last sentence: after the last . ! ? that ends an earlier sentence (followed by a space).
-  const body = t.slice(0, -1);
-  const cut = Math.max(body.lastIndexOf('. '), body.lastIndexOf('! '), body.lastIndexOf('? '));
-  let q = t.slice(cut + 1).trim();
-  // A lead-in before a colon ("Now try one yourself: …") is not the question.
-  const colon = q.lastIndexOf(': ');
-  if (colon > 0 && q.length - colon > 14) q = q.slice(colon + 2);
-  q = q.charAt(0).toUpperCase() + q.slice(1);
-  return q.length >= 6 ? q : null;
-}
-

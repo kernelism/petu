@@ -1,7 +1,7 @@
 // v1 learner UX: the bar's moment, check questions, point-to-ask context, aside context, trail heads,
 // and the server's per-turn notes.
 import { describe, it, expect, vi } from 'vitest';
-import { barMode, closingQuestion, PLACEHOLDER } from '../../src/ui/barMode';
+import { barMode, PLACEHOLDER } from '../../src/ui/barMode';
 import { aboutContext, asideContext, bboxOf, isLoop, pointedLabel } from '../../src/agent/moment';
 import { answerHead, asideHead, clockOf, trailTitle } from '../../src/ui/trail';
 import { boardLayout } from '../../src/desk/layout';
@@ -16,13 +16,6 @@ describe('bar mode', () => {
     expect(PLACEHOLDER[barMode({ ...base, answered: true, check: 'What would buyers pay?' })]).toBe('Your answer…');
     // A new answer playing outranks a pending check.
     expect(barMode({ ...base, busy: true, check: 'x?' })).toBe('during');
-  });
-  it('a check question is the shape of the ending, never its words', () => {
-    expect(closingQuestion('Each side pays half. With a tax of four, what would buyers pay?')).toBe('With a tax of four, what would buyers pay?');
-    expect(closingQuestion('Was ist die Elastizität? Sie misst die Reaktion.')).toBeNull();
-    expect(closingQuestion('So the cell divides.')).toBeNull();
-    expect(closingQuestion('Gains vanish. Now try one yourself: with a tax of four, what would buyers pay?')).toBe('With a tax of four, what would buyers pay?');
-    expect(closingQuestion('Why?')).toBeNull();
   });
 });
 
