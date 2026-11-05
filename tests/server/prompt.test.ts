@@ -75,7 +75,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.19');
+    expect(PROMPT_VERSION).toBe('p6.20');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -185,6 +185,7 @@ describe('system prompt (svg, default)', () => {
     expect(s).toMatch(/<calc id="win">[\s\S]*export const out[\s\S]*<\/calc>/);
     expect(s).toMatch(/\{\{val win\.out\[0\]\}\}/);
     expect(s).toMatch(/STEPS: to walk a process one step at a time/);
+    expect(s).toMatch(/When the PLAN walks a process a step at a time, the student must see it move: draw it with STEPS/);
     expect(s).toMatch(/data-const="k=0"/);
     expect(s).toMatch(/\{\{tween k=3 dur=0\.8\}\}/);
   });
