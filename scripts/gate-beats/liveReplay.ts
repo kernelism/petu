@@ -5,6 +5,8 @@
 // in latency (first word, opener→stage-2 seam), modelled the same way with and without the gate.
 //   node --import ./scripts/lib/tsResolve.mjs --experimental-transform-types --no-warnings scripts/gate-beats/liveReplay.ts <runId…> [--gatefail 2,o1] [--json out]
 import { readFileSync } from 'node:fs';
+import { withCalcs } from '../../src/calc/stream.ts';
+import { runCalcNode } from '../../src/calc/node.ts';
 import { join } from 'node:path';
 import { LiveGate, GatePreflight, type Preflight } from '../../src/gate/live.ts';
 import { parseFaults } from '../../src/gate/faults.ts';
@@ -84,7 +86,8 @@ export async function replayGate(rec: Recording, o: { gatefail?: string; seed?: 
     }
   };
   let done = false;
-  const it = gate.wrap(src)(new AbortController().signal)[Symbol.asyncIterator]();
+  // Calcs run before the gate reads the stream, as in the app (App.tsx: withCalcs before gate.wrap).
+  const it = gate.wrap(() => withCalcs(src(), runCalcNode))(new AbortController().signal)[Symbol.asyncIterator]();
   const consume = (async () => {
     for (;;) {
       const r = await it.next();

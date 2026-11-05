@@ -122,3 +122,11 @@ describe('calc fences', () => {
     expect(() => run('x', 'const a = []; export const b = a[0].c;')).toThrow(/undefined/);
   });
 });
+
+describe('the node runner (eval harness)', () => {
+  it('runs a calc with the same lockdown, and stops an endless loop', async () => {
+    const { runCalcNode } = await import('../../src/calc/node');
+    expect((await runCalcNode('a', 'export const x = [1, 2].map(v => v * 21);')).values.x).toEqual([21, 42]);
+    await expect(runCalcNode('b', 'let i = 0; while (true) i++; export const y = i;', 100)).rejects.toThrow(/calc b/);
+  });
+});
