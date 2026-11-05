@@ -1,4 +1,5 @@
 import { ScriptParser } from '../script/parser';
+import { withCalcs } from '../calc/stream';
 import { Scheduler, actionLeadMs } from './scheduler';
 import type { NarrationClock } from './clock';
 import type { RawAction as Action, ScriptEvent } from '../script/types';
@@ -94,7 +95,8 @@ export class AnswerSession {
       scheduler.push(events);
     };
     try {
-      for await (const chunk of source(signal)) {
+      // Calc programs run as they close; the parser reads the numbers they computed (src/calc/stream.ts).
+      for await (const chunk of withCalcs(source(signal))) {
         if (signal.aborted) return;
         feed(parser.push(chunk));
       }

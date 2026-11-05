@@ -169,6 +169,11 @@ export class Director {
         return;
       }
     }
+    // A calc's numbers are words, not ink (the parser said them); one that failed is recorded as a skip.
+    if (raw.kind === 'computed') {
+      if (raw.failed != null) this.report({ action: raw as unknown as Action, firedAt: at, queuedAt: now(), startedAt: now(), endedAt: now() }, { skipped: `calc ${raw.id} failed: ${raw.failed}` });
+      return;
+    }
     if (raw.kind === 'let' || raw.kind === 'beat') return; // definitions were taken when it was parsed (prefetch); a beat boundary is the scheduler's
     if (raw.kind === 'const') { if (!this.seen.has(raw)) kitStore(this.registry).defineConsts(raw.defs); return; }
     if (raw.kind === 'find') { if (!this.seen.has(raw)) { this.figures.note(raw); kitStore(this.registry).finds.set(raw.id, raw); } return; }

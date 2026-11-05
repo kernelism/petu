@@ -7,6 +7,7 @@
 // Two users, one implementation: the commit gate replays a recorded answer beat by beat, and the
 // script parser (src/script/parser.ts) applies every tag as it is parsed, so a {{val}} is said with
 // the engine's value (`say`) and a {{contrast}} expands into the copy it draws (`expand`).
+import { pickNumber, type CalcTable } from '../calc/stream';
 import { computeSource, formula, colIndex, splitParts, tokenCount, tokenMoves } from '../desk/kit/kit';
 import { readFormat } from '../values/format';
 import * as C from '../desk/kit/compute';
@@ -67,6 +68,8 @@ export class GateState {
   readonly values: Value[] = [];
   /** Named numbers, lowercase (the expression language reads names lowercased). */
   readonly consts: Record<string, number> = {};
+  /** Calc programs' numbers by calc id (src/calc/stream.ts): what {{val rod.I4}} says. */
+  readonly calcs = new Map<string, CalcTable>();
   /** When each constant was declared (the beat, or for the parser the tag index). */
   readonly declared = new Map<string, number>();
   readonly blocks = new Map<string, Block>();
@@ -116,6 +119,13 @@ export class GateState {
       case 'sketch': this.regions.add(a.id); return;
       case 'scroll': case 'clear': return;
       case 'let': this.note(a); return;
+      case 'computed': {
+        if (a.failed != null) return `calc ${a.id} failed: ${a.failed}`;
+        this.calcs.set(a.id.toLowerCase(), a.values);
+        // Every number it exported is computed (the board and the narration may show any of them).
+        for (const [k, v] of Object.entries(a.values)) this.addValues(typeof v === 'number' ? [v] : (v as (number | number[])[]).flat(), 'computed', `${a.id}.${k}`, beat);
+        return;
+      }
       case 'const': {
         for (const [k, src] of a.defs) {
           const f = formula(src, [], this.consts);
@@ -320,6 +330,11 @@ export class GateState {
     const m = /^([^.[]+)(\[[^\]]+\])?(?:\.(.+))?$/.exec(ref);
     if (!m) return `bad reference ${ref}`;
     const [, id, idx, field] = m;
+    const calc = this.calcs.get(id.toLowerCase());
+    if (calc) {
+      const v = pickNumber(calc, ref.slice(id.length).replace(/^\./, ''));
+      return v != null && Number.isFinite(v) ? { v } : `${ref}: calc ${id} exports no such number`;
+    }
     if (this.finds.has(id) && !idx) {
       const r = this.reading(id);
       if (typeof r === 'string') return r;

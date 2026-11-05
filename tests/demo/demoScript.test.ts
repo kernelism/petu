@@ -159,7 +159,8 @@ describe('every script', () => {
   });
   it('defines every id before referencing it', () => {
     for (const s of ALL) {
-      const seen = new Set<string>();
+      // A calc program (src/calc/stream.ts) defines its id before the parser sees the script.
+      const seen = new Set<string>([...s.matchAll(/<calc id="(\w+)"/g)].map((m) => m[1]));
       for (const a of parseAll(s)) {
         // a kit part (o[1,2]) or a table column (t.c) names its block
         // a bound number may also name a constant, a readout's field (E.x) or a tokens state (coins.tax)
