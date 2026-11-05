@@ -7,6 +7,8 @@
 import { readFileSync } from 'node:fs';
 import { runCalcsIn, withCalcs } from '../../src/calc/stream.ts';
 import { runCalcNode } from '../../src/calc/node.ts';
+import { runPixelsIn, withPixels } from '../../src/pixels/stream.ts';
+import { nodePixels } from '../lib/pixels.ts';
 import { join } from 'node:path';
 import { LiveGate, GatePreflight, type Preflight } from '../../src/gate/live.ts';
 import { parseFaults } from '../../src/gate/faults.ts';
@@ -74,7 +76,8 @@ export async function replayGate(rec: Recording, o: { gatefail?: string; seed?: 
     accept: (u) => pre.accept(u), reject: (u) => pre.reject(u),
   };
   const events: GateLogEvent[] = [];
-  const gate = new LiveGate({ clock, preflight: timed, faults: parseFaults(o.gatefail), onEvent: (e) => events.push(e), sleep: time.sleep, calcs: (t) => runCalcsIn(t, runCalcNode) });
+  const px = nodePixels(rec.src, rec.page);
+  const gate = new LiveGate({ clock, preflight: timed, faults: parseFaults(o.gatefail), onEvent: (e) => events.push(e), sleep: time.sleep, calcs: (t) => runPixelsIn(t, px).then((x) => runCalcsIn(x, runCalcNode)) });
   const released: Released[] = [];
   const s2 = rec.stage2At > 0 ? rec.stage2Chunk : 0;
   const src = async function* () {
@@ -87,7 +90,7 @@ export async function replayGate(rec: Recording, o: { gatefail?: string; seed?: 
   };
   let done = false;
   // Calcs run before the gate reads the stream, as in the app (App.tsx: withCalcs before gate.wrap).
-  const it = gate.wrap(() => withCalcs(src(), runCalcNode))(new AbortController().signal)[Symbol.asyncIterator]();
+  const it = gate.wrap(() => withCalcs(withPixels(src(), px), runCalcNode))(new AbortController().signal)[Symbol.asyncIterator]();
   const consume = (async () => {
     for (;;) {
       const r = await it.next();

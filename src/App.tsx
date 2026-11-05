@@ -24,6 +24,7 @@ import { BASE_WPM, getSettings, setSettings, SPEEDS, stepSpeed, useSettings, typ
 import { DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo, suggestionsFor } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
 import { runCalcsIn, withCalcs } from './calc/stream';
+import { runPixelsIn, withPixels, type PixelSource } from './pixels/stream';
 import type { DevStep } from './demo/learner';
 import { Desk, GLIDE_MS } from './desk/Desk';
 import type { DeskState } from './desk/types';
@@ -132,6 +133,16 @@ const clockFor = (voice: VoiceSetting) => (): NarrationClock => {
 const PART_RESTART_WORDS = 8;
 /** Demos and dev scripts send no page marks: every `mark=` is skipped. */
 const NO_MARKS: Grounding = { mark: () => undefined };
+
+/** Reads a page image's pixels from the open document (`page`: the answer's page, unless the board names one). */
+const pixelsFrom = (doc: () => PdfDoc | null, page: number): PixelSource => async (mark, cols, pg) => {
+  const d = doc();
+  if (!d) throw new Error('no document is open');
+  const at = pg ?? page;
+  if (at < 1 || at > d.numPages) throw new Error(`there is no page ${at}`);
+  const [{ pagePixels }, { OPS }] = await Promise.all([import('./pixels/page'), import('pdfjs-dist')]);
+  return pagePixels(await d.getPage(at), OPS as unknown as Record<string, number>, mark, cols);
+};
 
 /** The grounding of the pages a dev script names (p=N, pN:), when it points with page marks. */
 async function devGrounding(doc: PdfDoc, script: string): Promise<Grounding> {
@@ -913,7 +924,7 @@ export default function App() {
         svgMinFont: () => { const m = deskRef.current?.metrics?.('wide'); return m && m.boardPx > 0 ? Math.max(12, m.bodyPx(null)) / (m.boardPx / 1000) : 16; } });
       gate = new LiveGate({
         clock: { now: () => performance.now(), endsAt: () => clock.endsAt() }, preflight,
-        repair: repairFor(), calcs: (t) => runCalcsIn(t),
+        repair: repairFor(), calcs: (t) => runPixelsIn(t, pixelsFrom(() => docRef.current, page)).then((x) => runCalcsIn(x)),
         faults: GATE_FAULTS, onEvent: gateEvent,
         headroomMs: HEADROOM_MS,
       });
@@ -1136,7 +1147,8 @@ export default function App() {
       shadow = null;
     };
     // Calc programs run before the gate reads the stream: the gate checks the numbers they computed, as the session says them.
-    const computed = (signal: AbortSignal) => withCalcs(source(signal));
+    // A window over a page image gets the image's pixels first (src/pixels/stream.ts), as a computed table.
+    const computed = (signal: AbortSignal) => withCalcs(withPixels(source(signal), pixelsFrom(() => docRef.current, page)));
     void session.start(gate ? gate.wrap(computed) : computed).finally(finishGate);
   }), [director, flash]);
 
@@ -1371,7 +1383,7 @@ export default function App() {
       },
     });
     asideSession.current = sess;
-    void sess.start(source);
+    void sess.start((signal) => withPixels(source(signal), pixelsFrom(() => docRef.current, page)));
   };
   askAsideRef.current = askAside;
 
