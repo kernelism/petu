@@ -54,7 +54,9 @@ export function drawSlide(el: Element, sc: SlideScope, k: number): C.Mat {
   let kernel: C.Mat | null = null;
   if (el.hasAttribute('data-kernel')) {
     kernel = matrix(el.getAttribute('data-kernel')!, sc, 'data-kernel');
-    spec = { kind: 'weights', w: kernel, ...(el.hasAttribute('data-flip') ? { flip: true } : {}), ...(same ? { same: true } : {}) };
+    // Weights that are simple fractions (a box's 1/9) are written as fractions, in the grid and the working.
+    const frac = kernel.flat().some((v) => !Number.isInteger(v)) && kernel.flat().every((v) => Number.isInteger(v) || C.fmt(v, undefined, true).includes('/'));
+    spec = { kind: 'weights', w: kernel, ...(frac ? { frac: true } : {}), ...(el.hasAttribute('data-flip') ? { flip: true } : {}), ...(same ? { same: true } : {}) };
   } else {
     const op = (el.getAttribute('data-op') ?? '').toLowerCase();
     if (!['mean', 'median', 'max', 'min', 'sum'].includes(op)) throw new SlideError('data-slide needs data-kernel, or data-op="mean|median|max|min" with data-size');
@@ -101,10 +103,10 @@ export function drawSlide(el: Element, sc: SlideScope, k: number): C.Mat {
     return e;
   };
   const fs = r2(Math.max(14, cs * 0.42)), cap = r2(Math.max(14, cs * 0.38));
-  const grid = (x0: number, y0: number, m: C.Mat, show: (r: number, c: number) => boolean, color = INK) => {
+  const grid = (x0: number, y0: number, m: C.Mat, show: (r: number, c: number) => boolean, color = INK, frac = false) => {
     m.forEach((row, r) => row.forEach((v, c) => {
       add('rect', { x: r2(x0 + c * cs), y: r2(y0 + r * cs), width: r2(cs), height: r2(cs), fill: CELL, stroke: MUTED, 'stroke-width': '1' });
-      if (show(r, c) && Number.isFinite(v)) add('text', { x: r2(x0 + c * cs + cs / 2), y: r2(y0 + r * cs + cs / 2), 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': fs, fill: color }, C.fmt(v, dp));
+      if (show(r, c) && Number.isFinite(v)) add('text', { x: r2(x0 + c * cs + cs / 2), y: r2(y0 + r * cs + cs / 2), 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': frac ? r2(Math.min(Number(fs), cs * 0.34)) : fs, fill: color }, C.fmt(v, dp, frac));
     }));
   };
   // The step: k = j has the frame on output j (1-based), outputs 1…j filled; between steps the frame glides.
@@ -115,7 +117,7 @@ export function drawSlide(el: Element, sc: SlideScope, k: number): C.Mat {
   if (kernel) {
     // Convolution's kernel is shown as it is used: turned around (the working multiplies by these).
     const shown = el.hasAttribute('data-flip') ? kernel.slice().reverse().map((row) => row.slice().reverse()) : kernel;
-    grid(kx, oy, shown, () => true);
+    grid(kx, oy, shown, () => true, INK, spec.kind === 'weights' && !!spec.frac);
     add('text', { x: r2(kx), y: r2(oy - cs * 0.3), 'font-size': cap, fill: MUTED }, el.hasAttribute('data-flip') ? 'kernel, turned' : 'kernel');
   }
   grid(outX, outY, outs, (r, c) => r * g.C + c < done, ACCENT);

@@ -71,4 +71,14 @@ describe('data-slide', () => {
     const b = r.geos[0].box!;
     expect(b.x + b.w).toBeLessThanOrEqual(560);
   });
+
+  it('a box kernel of ninths is written 1/9, in its grid and in the working (live: "0.11" crowded the cells)', () => {
+    const sc = scope(1);
+    sc.calcs!.set('box', { k: [[1 / 9, 1 / 9, 1 / 9], [1 / 9, 1 / 9, 1 / 9], [1 / 9, 1 / 9, 1 / 9]] });
+    const el = g('data-slide="img.f" data-kernel="box.k"');
+    resolveData(el, sc);
+    expect(texts(el).filter((t) => t === '1/9')).toHaveLength(9);
+    expect(el.querySelector('[data-slide-line]')!.textContent).toMatch(/^1\/9·1 \+ 1\/9·2/);
+    expect(slideOut(sc, 'conv', 'out[0][0]')).toBeCloseTo(7, 9);
+  });
 });
