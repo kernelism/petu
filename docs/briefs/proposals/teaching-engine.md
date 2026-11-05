@@ -60,6 +60,34 @@ writes is run before its beat is checked, and the note shows a calc that ran by 
 - ~~A `<calc>` inside a repaired beat is not run~~: done (the gate's `calcs` hook, repair note r3).
 - STEPS use is measured on single answers so far; sample the same question several times before claims.
 
+**Phase 1 evaluation, automated part (2026-11-05, p6.23, gpt-6.1-terra, no judge).** Question set
+`teach` (`scripts/eval/teach.ts`: the plan's filtering, median, correlation-vs-convolution, 5x5 convolution,
+addition and rod questions, plus two unseen: a standard deviation and a Riemann sum), 3 samples each,
+table by `scripts/eval/teachReport.ts`.
+
+| | round 1 (24 answers) | rerun D2, D4 after fixes (6) |
+|---|---|---|
+| answers with a calc | 16 | 6 |
+| calcs that failed to run | 0 of 16 | 0 of 6 |
+| numerals typed in the narration | 0 | 0 |
+| gate number flags | 0 | 0 |
+| answers that stepped / engine windows | 8 / 8 | 6 / 6 |
+| beats dropped | 10 | 3 |
+| median first word | 2.0 s | 1.8 s |
+| mean cost per answer | $0.016 | $0.010 |
+
+- Spoken numbers spot-checked: the standard deviation (mean 5, squared deviations 32, σ 2, s 2.14), the
+  rectangle sums (0.4688, 0.3984) and the output sizes (3×3 / 5×5 / 7×7) are right.
+- Round 1's drops were mostly two engine bugs, fixed since: a window's outputs lost their rows when the
+  window fit one row down (and a one-row matrix lost its rows on the wire), and a dropped beat took its
+  calc with it, so every later beat failed on "no calc img".
+- What is left: the model sometimes says a window's output before drawing the window (the beat is
+  dropped, correctly), and names a readout id it never gave (`{{val id=result}}`).
+- The addition question (D5) on `examples.pdf` is refused as off the document every time: that page has
+  no arithmetic, so the refusal is right and D5 measures nothing. The rod (D6) and one Riemann answer use
+  constant formulas instead of a calc: still engine-computed, not typed.
+- Not done (founder work): the ChatGPT arm, the human rubric and the learning check.
+
 **Effect on the plan.** Phase 1 adds the calc sandbox and derivation rendering. The
 `expr.ts` list extensions in section 5 shrink to what the engine needs for drawing; arithmetic moves
 into calc. Phase 1 grows by one to two days.
