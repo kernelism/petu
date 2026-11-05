@@ -104,6 +104,9 @@ table by `scripts/eval/teachReport.ts`.
   kernel's 1 lands, from those numbers.
 - **Gate check (c), one dataset.** A second engine window over another input is noted (failed under
   `&gatecheck=all`) until its precision is measured.
+- **Eval after Phase 2** (teach, 2 samples each, 16 answers): 12 calcs, 0 failed; 0 typed numerals and
+  0 gate number flags; 1 beat dropped (10 in round 1's 24); median first word 2.0 s; $0.016 an answer;
+  no one-dataset notes. The drop was "x: …, y: …" in a data-set (commas for semicolons), now accepted.
 - Not built: (f) conventions needs a conventions line from the scout first; the prediction prompt is
   optional and waits on the pacing decision in §7.
 
