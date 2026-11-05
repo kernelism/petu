@@ -32,6 +32,8 @@ export const PART_GAP_MS = 80;
 export const SPAN_MIN_MS = 1200;
 /** The narration's rest after a drawn beat, before the next beat's first sentence (scheduler). */
 export const REST_MS = 400;
+/** The hold after a sentence a process step moved in (a tween, a window's step or sweep): teaching-engine §3.4, 600–800 ms. */
+export const STEP_HOLD_MS = 700;
 /** Words assumed for a word whose time isn't known yet. */
 export const WORD_EST_MS = 300;
 

@@ -325,3 +325,18 @@ describe('Scheduler: the look after a page mark (teaching rhythm)', () => {
     expect(log).toEqual(['hide three', 'hide two', '<svg two>', 'b.', '<svg three>', 'c.', 'd.']);
   });
 });
+
+describe('holds after a process step (teaching-engine §3.4)', () => {
+  it('the sentence a step moves in ends on STEP_HOLD_MS; one without a step on no hold', async () => {
+    const { STEP_HOLD_MS } = await import('../../src/playback/pace');
+    const rests: [string, number | undefined][] = [];
+    const clock = fixedClock();
+    const enqueue = clock.enqueue.bind(clock);
+    clock.enqueue = ((word: string, rest?: number) => { rests.push([word, rest]); return enqueue(word, rest); }) as typeof clock.enqueue;
+    const s = new Scheduler(clock, { onWord: () => {}, onAction: () => {}, onDone: () => {} });
+    const tw: ScriptEvent = { type: 'action', action: { kind: 'tween', defs: [['k', '1']] } as unknown as Action };
+    s.push([w('Here'), w('it'), w('is.'), tw, w('Put'), w('it'), w('down.'), w('Then'), w('more.'), w('End.'), { type: 'end' }]);
+    const held = rests.filter(([, r]) => r).map(([x, r]) => `${x}:${r}`);
+    expect(held).toEqual([`Then:${STEP_HOLD_MS}`]);
+  });
+});
