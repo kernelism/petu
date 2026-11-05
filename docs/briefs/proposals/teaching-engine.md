@@ -49,13 +49,15 @@ doesn't check. Instead:
 Dropping is kept only for a calc that fails to run, and that goes to repair first.
 
 **Built so far (Phase 1, round 10).** The calc sandbox and wire, steps on a constant, step back, three
-hand-written demos, prompt p6.18–p6.20 and scout s2.13. Open items:
+hand-written demos, prompt p6.18–p6.23 and scout s2.13. The engine-owned sliding window (`data-slide`,
+`src/svgboard/slide.ts`): the model writes the data in a calc and the step tweens; the engine lays out
+input, kernel (and the turned kernel for convolution) and output, moves the frame, fills each output and
+writes its working, and registers the outputs as `<id>.out` for `{{val}}`. Repairs (r3): a calc a repair
+writes is run before its beat is checked, and the note shows a calc that ran by its value names. Open items:
 
-- A model-written frame computes its own x (`x: 164 + 36*k`); one live answer drew it one cell off its
-  working line. Next: an engine-laid row from a calc array and a frame bound to a cell index.
+- ~~A model-written frame computes its own x~~: done, the engine window (`data-slide`) owns the frame.
 - `grounded()` accepts any typed number equal to any calc export: §0 said replace, this only accepts.
-- A repair's prompt sees `{{computed …}}` where the model wrote `<calc>`, and a `<calc>` inside a repaired
-  beat is not run (repairs are injected downstream of the calc runner).
+- ~~A `<calc>` inside a repaired beat is not run~~: done (the gate's `calcs` hook, repair note r3).
 - STEPS use is measured on single answers so far; sample the same question several times before claims.
 
 **Effect on the plan.** Phase 1 adds the calc sandbox and derivation rendering. The
