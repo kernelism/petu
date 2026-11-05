@@ -84,12 +84,31 @@ export function aboutContext(p: Pointed): string {
  * The `aside` context: the paused answer as the student has it so far: its plan (if the scout gave
  * one), the words said up to the pause (the last ~1200 characters), and what is on the board.
  */
-export function asideContext(o: { question: string; plan?: string; said: string; board: string[] }): string {
+/** A calc table's numbers in the computed tag's notation (rows with ";"), or null when there are none. */
+type Nums = number | number[] | number[][];
+const numsText = (v: Nums): string => typeof v === 'number' ? String(+v.toPrecision(6)) : Array.isArray(v[0]) ? (v as number[][]).map((r) => r.map((x) => +x.toPrecision(6)).join(',')).join(';') : (v as number[]).map((x) => +x.toPrecision(6)).join(',');
+
+/**
+ * The process on the board as it stands (teaching-engine Phase 2, "re-explain this step"): every calc's
+ * numbers (the program's and an engine window's outputs, `conv.out`) and the step constants where they
+ * are now. An aside runs on a board of its own, where these names do not resolve: it copies the numbers it
+ * needs into a calc of its own.
+ */
+export function boardState(calcs: ReadonlyMap<string, Record<string, Nums>>, consts: Record<string, number>, max = 1200): string {
+  const parts: string[] = [];
+  for (const [id, t] of calcs) for (const [k, v] of Object.entries(t)) if (k !== 'n') parts.push(`${id}.${k}=${numsText(v)}`);
+  const cs = Object.entries(consts).map(([k, v]) => `${k}=${+v.toPrecision(6)}`);
+  if (!parts.length && !cs.length) return '';
+  return clip([parts.length ? `computed: ${parts.join(' ')}` : '', cs.length ? `constants now: ${cs.join(' ')}` : ''].filter(Boolean).join('; '), max);
+}
+
+export function asideContext(o: { question: string; plan?: string; said: string; board: string[]; state?: string }): string {
   const lines = [`The paused answer was to: "${clip(words(o.question), 300)}"`];
   if (o.plan) lines.push(`Its plan: ${clip(words(o.plan), 1200)}`);
   const said = words(o.said);
   lines.push(`Said so far (it paused after the last word): "${said.length > 1200 ? `…${said.slice(-1200)}` : said}"`);
   if (o.board.length) lines.push(`On the board now: ${clip(o.board.join('; '), 1500)}`);
+  if (o.state) lines.push(`Its numbers as they stand (the steps went this far; copy what you need into a calc of your own, the names do not carry over): ${o.state}`);
   return lines.join('\n');
 }
 

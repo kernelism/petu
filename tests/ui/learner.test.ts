@@ -2,7 +2,7 @@
 // and the server's per-turn notes.
 import { describe, it, expect, vi } from 'vitest';
 import { barMode, PLACEHOLDER } from '../../src/ui/barMode';
-import { aboutContext, asideContext, bboxOf, isLoop, pointedLabel } from '../../src/agent/moment';
+import { aboutContext, asideContext, bboxOf, boardState, isLoop, pointedLabel } from '../../src/agent/moment';
 import { answerHead, asideHead, clockOf, trailTitle } from '../../src/ui/trail';
 import { boardLayout } from '../../src/desk/layout';
 
@@ -76,3 +76,12 @@ describe('session trail', () => {
   });
 });
 
+
+describe('boardState (re-explain this step)', () => {
+  it('lists every calc number and the step constants, rows with ";", for the aside to copy', () => {
+    const st = boardState(new Map([['img', { f: [[1, 2], [3, 4]] }], ['conv', { out: [[6, 6]], n: 2 }]]), { k: 2 });
+    expect(st).toBe('computed: img.f=1,2;3,4 conv.out=6,6; constants now: k=2');
+    expect(asideContext({ question: 'q', said: 's', board: [], state: st })).toMatch(/Its numbers as they stand .*: computed: img\.f=1,2;3,4/);
+    expect(boardState(new Map(), {})).toBe('');
+  });
+});
