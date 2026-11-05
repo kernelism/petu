@@ -89,7 +89,7 @@ describe('animations: one state animation per block', () => {
     await Promise.all([a, b]);
     expect(doneA && doneB).toBe(true);
   });
-  it('motion runs on the narration clock: still while paused, faster at a higher speed', async () => {
+  it('motion runs on the narration clock: still while paused, compressed with a backlog', async () => {
     const A = new Animations();
     let paused = true;
     let seen = -1;
@@ -100,7 +100,7 @@ describe('animations: one state animation per block', () => {
     await run;
     expect(seen).toBe(1);
     const t0 = performance.now();
-    await A.run({ speed: 2 }, ['w'], async (ctl) => { await pause(300, ctl); });
+    await A.run({ speed: 0.5 }, ['w'], async (ctl) => { await pause(300, ctl); });
     const took = performance.now() - t0;
     expect(took).toBeGreaterThanOrEqual(140);
     expect(took).toBeLessThan(280);

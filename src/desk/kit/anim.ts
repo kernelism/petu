@@ -7,15 +7,20 @@
  * Overlays (emph, fade) never interrupt anything. Reduced motion: tweens land at once; a sweep still
  * steps (discrete changes, no gliding).
  *
- * Motion runs on the narration's clock: a run carries its answer's pace (speed, paused), its tweens
- * and holds take ms / speed of ink time, and ink time stands still while the answer is paused
- * (src/playback/inkTime.ts). A window mid-glide stops with the voice and goes on with it.
+ * Motion runs on the narration's clock: a run carries its answer's pace, its tweens and holds take
+ * ms × the backlog factor (Pace.speed ≤ 1: an action behind its word compresses) ÷ the student's
+ * playback speed (1.5x: the window glides as much faster as the voice), in ink time, which stands
+ * still while the answer is paused (src/playback/inkTime.ts). A window mid-glide stops with the voice.
  */
 import { prefersReducedMotion } from '../../ink/agent/animate';
 import { InkTime } from '../../playback/inkTime';
+import { getSettings } from '../../settings/settings';
 
-/** What a run needs of its answer's pace (desk Pace). */
+/** What a run needs of its answer's pace (desk Pace): the backlog factor and whether it is paused. */
 export type MotionPace = { speed?: number; paused?: () => boolean } | undefined;
+
+/** The student's playback speed (settings), 1 when unreadable. */
+const playback = (): number => { try { const s = getSettings().speed; return s > 0 ? s : 1; } catch { return 1; } };
 
 export const easeInOut = (t: number) => 0.5 - 0.5 * Math.cos(Math.PI * Math.min(1, Math.max(0, t)));
 export const easeOut = (t: number) => 1 - (1 - Math.min(1, Math.max(0, t))) ** 3;
@@ -28,12 +33,13 @@ export class Ctl {
   done: Promise<void>;
   /** The clock its motion runs on (paused with the answer) and the speed that divides its durations. */
   readonly clock: InkTime;
-  readonly speed: number;
+  /** What every duration in this run is multiplied by. */
+  readonly scale: number;
   private resolve!: () => void;
   constructor(pace?: MotionPace) {
     this.done = new Promise((r) => { this.resolve = r; });
     this.clock = new InkTime(pace?.paused);
-    this.speed = pace?.speed && pace.speed > 0 ? pace.speed : 1;
+    this.scale = (pace?.speed && pace.speed > 0 ? pace.speed : 1) / playback();
   }
   finish(): void { this.resolve(); }
 }
@@ -41,7 +47,7 @@ export class Ctl {
 /** Calls f(eased t) every frame for `ms`, ending on f(1). Instant when ms ≤ 0, fast-forwarded, or reduced motion. */
 export async function tween(ms: number, f: (t: number) => void, ctl?: Ctl, ease = easeInOut): Promise<void> {
   if (ms <= 0 || ctl?.ff || prefersReducedMotion()) { f(1); return; }
-  const span = ms / (ctl?.speed ?? 1);
+  const span = ms * (ctl?.scale ?? 1);
   const now = () => (ctl ? ctl.clock.now() : performance.now());
   const t0 = now();
   for (;;) {
@@ -55,7 +61,7 @@ export async function tween(ms: number, f: (t: number) => void, ctl?: Ctl, ease 
 /** Waits `ms`, or less if fast-forwarded. */
 export async function pause(ms: number, ctl?: Ctl): Promise<void> {
   if (ms <= 0 || ctl?.ff) return;
-  const span = ms / (ctl?.speed ?? 1);
+  const span = ms * (ctl?.scale ?? 1);
   const now = () => (ctl ? ctl.clock.now() : performance.now());
   const t0 = now();
   while (!ctl?.ff && now() - t0 < span) { if (ctl) await ctl.clock.frame(); else await frame(); }
