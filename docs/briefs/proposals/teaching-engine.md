@@ -88,6 +88,25 @@ table by `scripts/eval/teachReport.ts`.
   constant formulas instead of a calc: still engine-computed, not typed.
 - Not done (founder work): the ChatGPT arm, the human rubric and the learning check.
 
+**Phase 2 built so far (2026-11-05, branch `iter/r11`).**
+
+- **Seek-to-state for free SVG.** A seek back hides the svg groups drawn after the target (kept, not
+  erased) and they show again on their words, with a short fade, never drawn twice; windows and tweens
+  rewind as before. Verified in the rod demo. I1 now reads: page ink stays; the board follows the words.
+- **Holds at step boundaries.** A sentence a process step moved in (a tween, a window's step or sweep)
+  ends on a 700 ms hold (`STEP_HOLD_MS`), after the sentence, not before it; measured 1.4 s between
+  words after "…the sum is 6." against 0.32 s elsewhere. The gate's length budget counts each hold.
+- **The data bridge.** Already there: a free readout reads an engine window's outputs
+  (`data-val="conv.out[0][0]"`); now under test.
+- **Re-explain this step.** E (once a step has played) opens an aside: "Explain the step on the board
+  again, more slowly…". Every aside now carries the board's computed numbers and step constants. Live on
+  lec06: the aside drew the window the frame was on ([2,3,4 / 3,4,5 / 4,5,6]) and said where the turned
+  kernel's 1 lands, from those numbers.
+- **Gate check (c), one dataset.** A second engine window over another input is noted (failed under
+  `&gatecheck=all`) until its precision is measured.
+- Not built: (f) conventions needs a conventions line from the scout first; the prediction prompt is
+  optional and waits on the pacing decision in §7.
+
 **Effect on the plan.** Phase 1 adds the calc sandbox and derivation rendering. The
 `expr.ts` list extensions in section 5 shrink to what the engine needs for drawing; arithmetic moves
 into calc. Phase 1 grows by one to two days.
