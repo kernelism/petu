@@ -72,7 +72,11 @@ export function paintedFromOperatorList(ol: { fnArray: number[]; argsArray: unkn
       if (images.length >= MAX_IMAGES) continue;
       const c = [ap(0, 0), ap(1, 0), ap(0, 1), ap(1, 1)];
       const xs = c.map((q) => q.x), ys = c.map((q) => q.y);
-      images.push({ rect: { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) } });
+      // The image's own object (its pixels: src/pixels/page.ts) and whether the page paints it mirrored.
+      // Image space has its first row at y = 1: on the page (y down) that row is normally on top.
+      const name = f === OPS.paintImageXObject && typeof a?.[0] === 'string' ? { name: a[0] as string } : {};
+      const flip = { ...(c[2].y > c[0].y ? { flipY: true } : {}), ...(c[1].x < c[0].x ? { flipX: true } : {}) };
+      images.push({ rect: { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) }, ...name, ...flip });
     }
   }
   return { paths, images };

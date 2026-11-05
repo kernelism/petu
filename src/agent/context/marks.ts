@@ -5,7 +5,7 @@ import type { TextLine } from './textLines';
 
 /** A painted path in model coords (0–1000 both axes). `ops`: M L C R Z per point step. */
 export type PaintedPath = { paint: 'stroke' | 'fill' | 'both'; ops: string; pts: Pt[] };
-export type PaintedImage = { rect: PageRect };
+export type PaintedImage = { rect: PageRect; name?: string; flipX?: boolean; flipY?: boolean };
 
 /**
  * Figure marks: handles on the page's own drawing, so the model can point at a dot, retrace a
