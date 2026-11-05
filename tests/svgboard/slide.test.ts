@@ -45,8 +45,11 @@ describe('data-slide', () => {
     const sc = scope(1.5), el = g('data-slide="img.f" data-kernel="img.k" data-flip=""');
     resolveData(el, sc);
     expect(frame(el)).toEqual([20 + 18 - 2, 60 - 2]);
-    expect(texts(el)).toContain('kernel, turned');
-    expect(texts(el).slice(26, 29)).toEqual(['−1', '0', '1']); // the kernel as used: turned around
+    // The kernel as given, then turned around (the one the working uses).
+    expect(texts(el)).toEqual(expect.arrayContaining(['kernel', 'turned']));
+    const k = texts(el).indexOf('kernel'), t = texts(el).indexOf('turned');
+    expect(texts(el).slice(k - 9, k - 6)).toEqual(['1', '0', '−1']);
+    expect(texts(el).slice(t - 9, t - 6)).toEqual(['−1', '0', '1']);
     expect(slideOut(sc, 'conv', 'out[0][0]')).toBe(6); // turned: right column minus left, 3 rows × 2
   });
 

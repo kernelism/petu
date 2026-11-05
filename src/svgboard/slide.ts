@@ -86,7 +86,10 @@ export function drawSlide(el: Element, sc: SlideScope, k: number): C.Mat {
   const gap = cs * 0.9, W = 560;
   const inW = Cn * cs, inH = R * cs;
   const kx = ox + inW + gap, kW = kernel ? kernel[0].length * cs : 0, kH = kernel ? kernel.length * cs : 0;
-  const right = (kernel ? kx + kW + gap : ox + inW + gap);
+  // Convolution shows the kernel as given, then turned around (the one the working uses), an arrow between.
+  const flip = !!kernel && el.hasAttribute('data-flip');
+  const tx = flip ? kx + kW + gap * 1.2 : kx;
+  const right = (kernel ? tx + kW + gap : ox + inW + gap);
   const outW = g.C * cs, outH = g.R * cs;
   const outBeside = right + outW <= W - 8;
   const outX = outBeside ? right : ox, outY = outBeside ? oy : oy + Math.max(inH, kH) + cs * 0.9;
@@ -116,9 +119,16 @@ export function drawSlide(el: Element, sc: SlideScope, k: number): C.Mat {
   add('text', { x: r2(ox), y: r2(oy - cs * 0.3), 'font-size': cap, fill: MUTED }, 'input');
   if (kernel) {
     // Convolution's kernel is shown as it is used: turned around (the working multiplies by these).
-    const shown = el.hasAttribute('data-flip') ? kernel.slice().reverse().map((row) => row.slice().reverse()) : kernel;
-    grid(kx, oy, shown, () => true, INK, spec.kind === 'weights' && !!spec.frac);
-    add('text', { x: r2(kx), y: r2(oy - cs * 0.3), 'font-size': cap, fill: MUTED }, el.hasAttribute('data-flip') ? 'kernel, turned' : 'kernel');
+    const fr = spec.kind === 'weights' && !!spec.frac;
+    grid(kx, oy, kernel, () => true, INK, fr);
+    add('text', { x: r2(kx), y: r2(oy - cs * 0.3), 'font-size': cap, fill: MUTED }, 'kernel');
+    if (flip) {
+      const turned = kernel.slice().reverse().map((row) => row.slice().reverse());
+      const ay = oy + kH / 2;
+      add('path', { d: `M${r2(kx + kW + gap * 0.2)} ${r2(ay)}H${r2(tx - gap * 0.25)}M${r2(tx - gap * 0.45)} ${r2(ay - 5)}L${r2(tx - gap * 0.25)} ${r2(ay)}L${r2(tx - gap * 0.45)} ${r2(ay + 5)}`, fill: 'none', stroke: MUTED, 'stroke-width': '1.5' });
+      grid(tx, oy, turned, () => true, INK, fr);
+      add('text', { x: r2(tx), y: r2(oy - cs * 0.3), 'font-size': cap, fill: MUTED }, 'turned');
+    }
   }
   grid(outX, outY, outs, (r, c) => r * g.C + c < done, ACCENT);
   add('text', { x: r2(outX), y: r2(outY - cs * 0.3), 'font-size': cap, fill: MUTED }, 'output');
