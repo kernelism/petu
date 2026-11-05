@@ -86,3 +86,6 @@ html.petu-lane .pv-page { border-radius: 0; box-shadow: 0 0 0 .5px rgba(0, 0, 0,
 .debug-head { margin-top: 5px; padding-top: 5px; border-top: 1px solid rgba(255,255,255,.14); color: rgba(255,255,255,.5); }
 .debug-act { overflow: hidden; text-overflow: ellipsis; }
 .debug-row.is-skipped { color: #FF9F8A; }
+
+/* What if (src/svgboard/whatIf.ts): an engine window's kernel weights can be edited once the answer is paused or over. */
+svg [data-kcell] { cursor: pointer; }

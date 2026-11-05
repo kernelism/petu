@@ -64,6 +64,8 @@ export type DataScope = {
   axes: Map<string, { name: string; src: [string, string, string] }>;
   curves: Map<string, CurveSpec>;
   points: Map<string, DPt>;
+  /** A student's edited kernels by window id (whatIf.ts): drawn, never registered as the answer's numbers. */
+  whatIf?: Map<string, number[][]>;
   /** Computed values written this pass (data-val), for the gate's number check. */
   values: { v: number; of: string; /** The words the text puts before the number ("SSD = {}" → "SSD"): what the narration calls it. */ label?: string;
     /** The readout's name (its data-name or id): what `{{val id=…}}` says. */ id?: string; /** The number as the board writes it (fmtValue, data-fmt): what is seen. */ text: string;

@@ -20,6 +20,7 @@ import { EXPLAIN_STEP_QUESTION, isTyping, playbackKey, type PlaybackHandlers } f
 import { PacedClock, type NarrationClock } from './playback/clock';
 import { VoiceClock, fetchVoice, warmVoice, webAudioOut } from './playback/voiceClock';
 import { SwitchClock } from './playback/switchClock';
+import { attachWhatIf, clearAllWhatIf } from './svgboard/whatIf';
 import { BASE_WPM, getSettings, setSettings, SPEEDS, stepSpeed, useSettings, type VoiceSetting } from './settings/settings';
 import { DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo, suggestionsFor } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
@@ -1140,6 +1141,7 @@ export default function App() {
         finish();
       },
     });
+    clearAllWhatIf(document);
     sessionRef.current = session;
     const finishGate = () => {
       if (gate) { const t = gate.releasedText(); if (t.trim()) boardScripts.current.push(t); }
@@ -1226,7 +1228,7 @@ export default function App() {
     const s = sessionRef.current;
     if (!s) return;
     typingPaused.current = false;
-    if (s.isPaused()) { if (s.resume()) setUserPaused(false); return; }
+    if (s.isPaused()) { clearAllWhatIf(document); if (s.resume()) setUserPaused(false); return; }
     if (s.pause()) { setUserPaused(true); clearPause(); }
   }, []);
 
@@ -1235,6 +1237,7 @@ export default function App() {
     const s = sessionRef.current, p = partsRef.current[i];
     if (!s || !p || asideRef.current) return;
     const back = p.start < s.position();
+    clearAllWhatIf(document);
     if (!s.seek(p.start)) return;
     setUserPaused(false);
     setPartIdx(i);
@@ -1256,6 +1259,7 @@ export default function App() {
   const seekWord = useCallback((w: number | null) => {
     const s = asideRef.current ? asideSession.current : sessionRef.current;
     if (!s || w == null) return;
+    clearAllWhatIf(document);
     if (!s.seek(w)) return;
     if (asideRef.current) { setAside((d) => d && { ...d, paused: false }); return; }
     typingPaused.current = false;
@@ -1461,6 +1465,10 @@ export default function App() {
     if (typing && !s.isPaused() && s.pause()) { typingPaused.current = true; setUserPaused(true); clearPause(); }
     else if (!typing && typingPaused.current) { typingPaused.current = false; if (s.resume()) setUserPaused(false); }
   }, []);
+
+  // What if (src/svgboard/whatIf.ts): with the answer paused or over and no aside open, a click on an engine
+  // window's kernel weight edits it and the window recomputes; playing on resets it.
+  useEffect(() => attachWhatIf(document.body, () => !asideRef.current && (!sessionRef.current || sessionRef.current.isPaused())), []);
 
   // Playback keys (src/ui/playbackKeys.ts): Space, R, ←/→, Shift+←/→, < >; Esc / Return close an aside.
   // Capture phase, so the keys never also scroll the slides (follow mode would read that as the
