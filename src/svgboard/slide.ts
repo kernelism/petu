@@ -198,7 +198,11 @@ function drawRaster(el: Element, d: Raster, k: number) {
   const R = input.length, Cn = input[0].length, n = g.R * g.C, W = 560;
   const [ox, oy] = (el.getAttribute('data-origin') ?? '20,60').split(',').map(Number);
   const cellA = Number(el.getAttribute('data-cell'));
-  const p = cellA > 0 ? cellA : Math.min(10, 230 / Cn, 230 / R);
+  // The input and the output side by side must fit the board's width: a data-cell that would push the
+  // output off the board (live D9: data-cell="16" on 24 columns) is shrunk to fit.
+  const gap = 36;
+  const fit = (W - 8 - ox - gap) / (Cn + g.C + (spec.same ? 0 : Math.floor(kc / 2)));
+  const p = Math.min(cellA > 0 ? cellA : Math.min(10, 230 / Cn, 230 / R), fit);
   const doc = el.ownerDocument;
   for (const old of Array.from(el.querySelectorAll(':scope > [data-engine]'))) old.remove();
   const add = (name: string, attrs: Record<string, string>, text?: string) => {
@@ -229,7 +233,6 @@ function drawRaster(el: Element, d: Raster, k: number) {
   pixels(ox, oy, input, () => true);
   add('text', { x: r2(ox), y: r2(oy - 8), 'font-size': cap, fill: MUTED }, fromPage ? `the slide's image (${Cn}×${R})` : `input (${Cn}×${R})`);
   // The output beside the input, each pixel under the window's centre (valid output starts pr, pc in).
-  const gap = 36;
   const outX = ox + inW + gap + (spec.same ? 0 : Math.floor(kc / 2) * p), outY = oy + (spec.same ? 0 : Math.floor(kr / 2) * p);
   const outW = g.C * p, outH = g.R * p;
   add('rect', { x: r2(outX - 1), y: r2(outY - 1), width: r2(outW + 2), height: r2(outH + 2), fill: '#F5F5F7', stroke: MUTED, 'stroke-width': '1' });
@@ -275,7 +278,7 @@ function drawRaster(el: Element, d: Raster, k: number) {
     x += used[0].length * zc + 14;
   } else if (spec.kind === 'reduce') {
     add('text', { x: r2(x), y: r2(mid), 'dominant-baseline': 'central', 'font-size': '16', fill: INK }, `→ ${spec.op}`);
-    x += 16 + spec.op.length * 10;
+    x += 14 + (2 + spec.op.length) * 9.5;
   }
   const e = cells[ar][ac];
   if (e) {

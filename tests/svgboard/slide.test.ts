@@ -157,3 +157,14 @@ describe('data-slide over a picture (raster)', () => {
     expect(JSON.stringify(errs)).toMatch(/page image #i1 could not be read/);
   });
 });
+
+describe('raster layout', () => {
+  it('a data-cell too large for the board is shrunk so the output stays on it (live D9)', () => {
+    const PIC = Array.from({ length: 24 }, () => Array.from({ length: 24 }, () => 100));
+    const sc = newScope(); sc.consts.k = 0; sc.calcs = new Map<string, CalcTable>([['px_i1_24', { f: PIC }]]);
+    const el = parseGroup('<g id="eye" data-slide="#i1" data-op="mean" data-size="3x3" data-origin="20,55" data-cell="16"/>') as Element;
+    resolveData(el, sc);
+    const right = Math.max(...Array.from(el.querySelectorAll('rect')).map((r) => Number(r.getAttribute('x')) + Number(r.getAttribute('width'))));
+    expect(right).toBeLessThanOrEqual(560);
+  });
+});
