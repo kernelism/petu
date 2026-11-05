@@ -7,6 +7,7 @@ import { boardIn, drawGroup, groupBox, growBoard, hasBound, partBox, prepareGrou
 /** Air (section units) kept around the part being drawn when the board follows the pen: room for its label. */
 const PEN_AIR = 48;
 import { kitStore, type KitStore } from '../desk/kit/kit';
+import { groupIdOf } from './beat';
 import type { SRect } from '../geometry/space';
 
 /** Stores a board already follows (a follow-up's answer has its own store). */
@@ -56,6 +57,9 @@ export async function defineSvgGroup(a: SvgAction, env: BuildEnv): Promise<strin
 }
 
 /** Builds the plan: sanitized and measured now (hidden), drawn on its word. A string is a skip reason. */
+/** A drawn group's key for a seek back (KitStore.svgDrawn): its id (ids are unique on a board), else its source. Two empty step-only groups (<g id="walk"></g>, <g id="walk2"></g>) differ by id. */
+export const svgKey = (a: Pick<SvgAction, 'id' | 'svg'>): string => a.id ?? groupIdOf(a.svg) ?? a.svg;
+
 export async function buildSvgGroup(a: SvgAction, env: BuildEnv): Promise<ElementPlan | string> {
   if (!a.region) return 'no svg board';
   const target = { region: a.region };
@@ -85,7 +89,7 @@ export async function buildSvgGroup(a: SvgAction, env: BuildEnv): Promise<Elemen
   return {
     target, bbox: box, el: g,
     draw: async (signal, k) => {
-      kitStore(env.registry).svgDrawn.set(a.svg, g);
+      kitStore(env.registry).svgDrawn.set(svgKey(a), g);
       env.registry.define({ ...(id ? { id } : {}), kind: 'svg', target, bbox: box!, boxes: [box!], anchor: { x: box!.x + box!.w / 2, y: box!.y + box!.h / 2 }, group: g });
       // A group taller than the view: the board follows the pen, part by part (each with room for the
       // label beside it), while the student follows; a part already in view moves nothing.

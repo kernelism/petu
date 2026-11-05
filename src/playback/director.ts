@@ -1,7 +1,7 @@
 // src/playback/director.ts
 import { mountBoard, WITHDRAW } from '../svgboard/render';
-import { defineSvgGroup } from '../svgboard/element';
 import { isDefsGroup } from '../svgboard/wire';
+import { defineSvgGroup, svgKey } from '../svgboard/element';
 import { REGION_H, REGION_W, targetOf, type Action, type InkAction, type LayoutAction, type RawAction, type Target } from '../script/types';
 import { Figures, type Grounding } from '../geometry/resolve';
 import type { ViewerApi } from '../pdf/viewerApi';
@@ -196,9 +196,10 @@ export class Director {
     const store = kitStore(this.registry);
     // A drawn svg group after the target: hidden (its words come again and show it), never erased.
     if (raw.kind === 'svg') {
-      const g = store.svgDrawn.get(raw.svg);
-      if (g?.isConnected) { if (!store.svgHidden.has(raw.svg)) { g.style.transition = ''; g.style.opacity = '0'; g.style.visibility = 'hidden'; store.svgHidden.add(raw.svg); } }
-      else store.svgKept.add(raw.svg);
+      const key = svgKey(raw);
+      const g = store.svgDrawn.get(key);
+      if (g?.isConnected) { if (!store.svgHidden.has(key)) { g.style.transition = ''; g.style.opacity = '0'; g.style.visibility = 'hidden'; store.svgHidden.add(key); } }
+      else store.svgKept.add(key);
       return;
     }
     rewindStep(store, raw as object);
@@ -207,17 +208,18 @@ export class Director {
   /** A group a seek back hid, its words come round again: it shows (a short fade), not drawn twice. */
   private reshow(raw: RawAction & { kind: 'svg' }, at: number): boolean {
     const store = kitStore(this.registry);
-    const kept = store.svgKept.delete(raw.svg);
-    if (!kept && !store.svgHidden.delete(raw.svg)) return false;
-    const g = store.svgDrawn.get(raw.svg);
+    const key = svgKey(raw);
+    const kept = store.svgKept.delete(key);
+    if (!kept && !store.svgHidden.delete(key)) return false;
+    const g = store.svgDrawn.get(key);
     if (g?.isConnected) {
       g.style.visibility = '';
       g.style.transition = 'opacity 0.35s ease-out';
       // The next frame, so the transition runs from 0.
       (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (f: () => void) => setTimeout(f, 0))(() => { g.style.opacity = ''; });
     }
-    const t = now();
-    this.report({ action: raw as Action, firedAt: at, queuedAt: t, startedAt: t, endedAt: t }, {});
+    void at;
+    // No timing of its own: the first draw recorded it, and recordings match timings to tags in order (liveSkips).
     return true;
   }
 
