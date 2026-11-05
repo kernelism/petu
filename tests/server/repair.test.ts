@@ -33,15 +33,22 @@ const ask = (over: Partial<AskRequest> = {}): AskRequest => ({
 });
 const terra: ModelConfig = { model: 'gpt-6.1-terra', effort: 'none', maxOutput: 3200 };
 
-describe('repairNote r2-svg', () => {
+describe('repairNote r3-svg', () => {
   it('the svg note asks for the order the prompt teaches (the group, then its sentences) and never for words alone', () => {
     const n = repairNote({ ...report(), beat: '{{beat}} {{svg <g id="eq"><circle cx="5" cy="5" r="3"/></g>}} The curves meet here.' });
-    expect(n).toContain('GATE REPORT (r2-svg)');
+    expect(n).toContain('GATE REPORT (r3-svg)');
     expect(n).not.toContain('{{beat}}');
     expect(n).toMatch(/its <g id="…"> group first \(the same id unless the problem is the id\), then the same point in ≤ \d+ spoken words/);
     expect(n).toMatch(/Keep a drawing: if the group can't be fixed, draw less \(a simpler group\), never words alone/);
     expect(n).not.toMatch(/say the point plainly with no group/);
-    expect(REPAIR_VERSION).toBe('r2');
+    expect(REPAIR_VERSION).toBe('r3');
+  });
+  it('a calc that ran shows by its value names, and a failed one as failed', () => {
+    const n = repairNote({ ...report(), beat: '{{computed id=rod I4=0.078125 out=1,2;3,4}} {{computed id=bad failed="x"}} {{svg <g id="eq"><circle cx="5" cy="5" r="3"/></g>}} Four slices give {{val rod.I4}}.' });
+    expect(n).toContain('<calc id="rod"> (ran; values: rod.I4, rod.out) </calc>');
+    expect(n).toContain('<calc id="bad"> (failed to run) </calc>');
+    expect(n).not.toContain('0.078125');
+    expect(n).toMatch(/a number no calc has yet comes from a new <calc>/);
   });
   it('the board report is capped', () => {
     const items = Array.from({ length: 200 }, (_, i) => ({ id: `n${i}`, kind: 'node', label: 'a long label for the element' }));
@@ -211,7 +218,7 @@ describe('POST /api/repair', () => {
     expect(entry).toMatchObject({ kind: 'repair', model: 'gpt-6.1-terra', phase: 'dev', estimated: false });
     expect(spend().open ?? {}).toEqual({});
     const rec = records().find((x) => x.kind === 'repair');
-    expect(rec).toMatchObject({ kind: 'repair', reqId, k: 2, text: 'Point {{point on=s id=Z at=4,2}} Z sits here.', version: 'r2' });
+    expect(rec).toMatchObject({ kind: 'repair', reqId, k: 2, text: 'Point {{point on=s id=Z at=4,2}} Z sits here.', version: REPAIR_VERSION });
     expect(rec.report.later).toEqual(['Z']);
   });
 
