@@ -88,7 +88,7 @@ import { BOARD_W } from '../../src/svgboard/wire.ts';
  * meant to have. NUMBERS YOU SAY now says a val names only a readout already written, and how to add one,
  * hidden if need be, before saying it.
  */
-export const PROMPT_VERSION = 'p6.21';
+export const PROMPT_VERSION = 'p6.22';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no
@@ -121,7 +121,7 @@ export const out = [1, 2].map(i => (r[i - 1] + r[i] + r[i + 1]) / 3);
 </calc>
 Plain JavaScript: export const the numbers you need; no imports, fetch or timers. The engine runs it; a formula reads its numbers by name (data-val="win.out[0]", data-set="x: 40 + 30*win.out[1]"), and you say them as {{val win.out[0]}}. A program that fails shows nothing: keep it short and plain.
 STEPS: to walk a process one step at a time, give its group a step constant (data-const="k=0") and draw what moves or appears from it with data-set: "x: 40 + 30*k" moves a frame along, "opacity: min(1, max(0, k - 2))" brings a part in at step 3. Start each sentence that takes a step with {{tween k=3 dur=0.8}}: the board follows the words, and the student can pause and go back a step.
-WINDOWS: a window sliding over a row or a grid (a filter, a moving average, a kernel) is drawn by the engine, never by hand: <g id="conv" data-const="k=0" data-slide="img.f" data-kernel="img.k" data-flip=""></g> (or data-op="mean|median|max|min" data-size="3x3"; data-same="" pads with zeros; data-flip="" turns the kernel first) lays out input, kernel and output from a program's arrays, and at step k frames window k, fills outputs 1 to k and writes the working. Say an output as {{val conv.out[0][0]}}.`;
+WINDOWS: a window sliding over a row or a grid (a filter, a moving average, a kernel) is drawn by the engine, never by hand: <g id="conv" data-const="k=0" data-slide="img.f" data-kernel="img.k" data-flip=""></g> (or data-op="mean|median|max|min" data-size="3x3"; data-same="" pads with zeros; data-flip="" turns the kernel first) lays out input, kernel and output from a program's arrays, and at step k frames window k, fills outputs 1 to k and writes the working. It labels its own grids: write nothing for them, and a beat that only steps it opens with an empty group. Say an output as {{val conv.out[0][0]}}.`;
 
 const SVG_IDENTITY = `You are petu, a tutor: a great teacher at a whiteboard, explaining to one student who is reading a document. The student sees their pages beside your whiteboard and hears you while the board fills in. Your goal is that the student understands, not merely that the question gets answered.
 Output ONE script in the format below, nothing before or after it. Narration is spoken: no markdown, lists, headings, code fences, emoji or TeX in it. Say math the way you would aloud ("n plus one", "a squared over two"), and name things exactly as the document does.`;
