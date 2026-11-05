@@ -410,9 +410,10 @@ export function aggregate(ms: Metrics[]): RunMetrics {
  *   `tweens`: step moves ({{tween …}}); `stepped`: tweens > 0;
  * - `typedNumbers`: numerals the narration typed itself (tags, groups and the plan left out). Data the
  *   page or question gives counts here too (478, 356), so it is an upper bound on untraced numbers;
- * - `numberFlags`: gate flags on numbers (`number`, `unbound`), the gate's own count of untraced ones.
+ * - `numberFlags`: gate flags on numbers (`number`, `unbound`), the gate's own count of untraced ones;
+ * - `conventions`: check (f)'s notes (and flags): the words' operation or a slide's printed numbers disagree.
  */
-export type TeachMetrics = { calcs: number; calcFailed: number; vals: number; dataVals: number; slides: number; pageSlides: number; grids: number; series: number; tweens: number; stepped: boolean; typedNumbers: number; numberFlags: number };
+export type TeachMetrics = { calcs: number; calcFailed: number; vals: number; dataVals: number; slides: number; pageSlides: number; grids: number; series: number; tweens: number; stepped: boolean; typedNumbers: number; numberFlags: number; conventions: number };
 
 export function teachMetrics(r: Pick<EvalResult, 'chunks' | 'events' | 'timings'>): TeachMetrics {
   const text = r.chunks.map((c) => c.d).join('');
@@ -433,6 +434,7 @@ export function teachMetrics(r: Pick<EvalResult, 'chunks' | 'events' | 'timings'
     series: (text.match(/data-series=/g) ?? []).length,
     tweens, stepped: tweens > 0,
     typedNumbers: (spoken.match(/(?<![\w.])\d+(?:\.\d+)?(?![\w])/g) ?? []).length,
+    conventions: gates.reduce((s, g) => s + (g.notes ?? []).filter((n) => n.startsWith('conventions:')).length + (g.flags ?? []).filter((f) => f.check === 'conventions').length, 0),
     numberFlags: gates.filter((g) => !g.repaired).reduce((s, g) => s + (g.flags ?? []).filter((f) => f.check === 'number' || f.check === 'unbound').length, 0),
   };
 }
