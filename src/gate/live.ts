@@ -360,6 +360,9 @@ export function remnantOf(text: string, except: Set<string> = new Set(), constsO
   for (const t of tokenize(text, { end: true })) {
     if (t.kind !== 'tag') continue;
     if (/^\s*(?:svgboard|const)\b/.test(t.body)) { out.push(`{{${t.body}}}`); continue; }
+    // A calc that ran is a definition too: the beats after it name its values (eval teach D4, 2026-11-05: the
+    // beat carrying <calc id="img"> was dropped and every later beat failed on "data-slide: no calc img").
+    if (/^\s*computed\b/.test(t.body) && !/\bfailed="/.test(t.body)) { out.push(`{{${t.body}}}`); continue; }
     if (!isSvgTagBody(t.body.slice(0, 6))) continue;
     const d = defsOf(unescapeSvg(t.body.replace(/^svg\s*/, '')), except, constsOnly);
     if (d) out.push(`{{svg ${escapeSvg(d)}}}`);

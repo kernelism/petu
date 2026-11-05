@@ -58,3 +58,32 @@ describe('a repair that echoes the note', () => {
     expect(await runCalcsIn(echoed, runCalcNode)).not.toContain('{{computed');
   });
 });
+
+describe('a dropped beat keeps its calc', () => {
+  it('remnantOf keeps a computed tag, not a failed one', async () => {
+    const { remnantOf } = await import('../../src/gate/live');
+    expect(remnantOf('{{computed id=img f=1,2;3,4}} Words {{val x}}.')).toBe(' {{computed id=img f=1,2;3,4}} ');
+    expect(remnantOf('{{computed id=img failed="no"}} Words.')).toBe('');
+  });
+
+  it('eval teach D4: beat 1 is dropped (a val before its window), the window in beat 2 still finds the calc', async () => {
+    const events: GateLogEvent[] = [];
+    let t = 0, ends = 0;
+    const gate = new LiveGate({ clock: { now: () => t, endsAt: () => ends }, preflight: new GatePreflight({}), onEvent: (e) => events.push(e), sleep: async () => {} });
+    const raw = [
+      'One two three four five six seven eight nine ten eleven twelve. {{svgboard w=560 h=410}} {{beat}} ',
+      '{{computed id=img f=1,2,3,4,5;6,7,8,9,10;11,12,13,14,15;16,17,18,19,20;21,22,23,24,25 k=1,1,1;1,1,1;1,1,1}} ',
+      '{{svg <g id="setup"><text x="20" y="28" font-size="19">Sliding</text></g>}} The first window gives {{val slide.out[0][0]}} here. ',
+      '{{beat}} {{svg <g id="slide" data-const="k=0" data-slide="img.f" data-kernel="img.k" data-origin="20,60" data-cell="32"></g>}} Here is the image and the kernel. ',
+      '{{beat}} {{svg <g id="walk"></g>}} {{tween k=1 dur=0.8}} The first window sums to {{val slide.out[0][0]}}. ',
+    ].join('');
+    const src = async function* () { gate.handoff(); for (const c of raw.match(/[\s\S]{1,29}/g)!) { t += 30; yield c; } };
+    let out = '';
+    for await (const s of gate.wrap(src)(new AbortController().signal)) { out += s; ends = t + 3000 * s.split(/\s+/).length; }
+    const flags = events.filter((e) => e.t === 'gate').flatMap((e) => (e as { flags?: { detail: string }[] }).flags ?? []).map((f) => f.detail);
+    expect(flags.join('\n')).not.toMatch(/no calc img/);
+    expect(out).toContain('{{computed id=img');
+    expect(out).toContain('Here is the image and the kernel.');
+    expect(out).toContain('The first window sums to {{val slide.out[0][0]}}.');
+  });
+});
