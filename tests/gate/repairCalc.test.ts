@@ -47,3 +47,14 @@ describe('a repair that writes a calc', () => {
     expect(await runCalcsIn('plain {{val x}} words.', runCalcNode)).toBe('plain {{val x}} words.');
   });
 });
+
+describe('a repair that echoes the note', () => {
+  it('the note\'s "calc ran" line is words, not a program: nothing runs and the values stay', async () => {
+    const { repairNote } = await import('../../server/prompt/repair');
+    const note = repairNote({ beat: '{{computed id=rod I4=0.078125}} {{svg <g id="a"><text x="5" y="20">x</text></g>}} Four slices give {{val rod.I4}}.', problems: [], board: [], consts: {}, finds: [], later: [], tail: 'so', maxWords: 20 });
+    const line = /\(calc rod ran: [^)]*\)/.exec(note)![0];
+    const echoed = wire(`${line} <g id="a"><text x="5" y="20">x</text></g> Four slices give {{val rod.I4}}.`, { opened: true });
+    expect(echoed).not.toContain('{{calcsrc');
+    expect(await runCalcsIn(echoed, runCalcNode)).not.toContain('{{computed');
+  });
+});

@@ -45,8 +45,9 @@ describe('repairNote r3-svg', () => {
   });
   it('a calc that ran shows by its value names, and a failed one as failed', () => {
     const n = repairNote({ ...report(), beat: '{{computed id=rod I4=0.078125 out=1,2;3,4}} {{computed id=bad failed="x"}} {{svg <g id="eq"><circle cx="5" cy="5" r="3"/></g>}} Four slices give {{val rod.I4}}.' });
-    expect(n).toContain('<calc id="rod"> (ran; values: rod.I4, rod.out) </calc>');
-    expect(n).toContain('<calc id="bad"> (failed to run) </calc>');
+    expect(n).toContain('(calc rod ran: rod.I4, rod.out)');
+    expect(n).toContain('(calc bad failed to run)');
+    expect(n.slice(0, n.indexOf('PROBLEMS'))).not.toMatch(/<calc/);
     expect(n).not.toContain('0.078125');
     expect(n).toMatch(/a number no calc has yet comes from a new <calc>/);
   });

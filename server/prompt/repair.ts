@@ -19,7 +19,8 @@ const q = (s: string) => JSON.stringify(s);
 export const ranCalcs = (beat: string): string => beat.replace(/\{\{computed\s+id=([A-Za-z]\w*)((?:\s+[^}\s]+)*)\s*\}\}/g, (_m, id: string, rest: string) => {
   const failed = /failed="/.test(rest);
   const names = failed ? [] : rest.trim().split(/\s+/).filter(Boolean).map((p) => p.slice(0, p.indexOf('=')));
-  return failed ? `<calc id="${id}"> (failed to run) </calc>` : `<calc id="${id}"> (ran; values: ${names.map((n) => `${id}.${n}`).join(', ')}) </calc>`;
+  // Not a tag: a repair that echoes the line back must not hand the calc runner a program with no exports.
+  return failed ? `(calc ${id} failed to run)` : `(calc ${id} ran: ${names.map((n) => `${id}.${n}`).join(', ')})`;
 });
 
 /** ON THE BOARD NOW: the failed beat's section in full (id kind "label"), the others as counts; consts; finds. */
