@@ -18,12 +18,13 @@ import type { RawAction } from '../script/types';
  * boardNumbers) fails: it is not a right number said unbound but a wrong one beside the board's, and the
  * one-candidate case is rewritten before it can fail (live.ts). Deixis, the number family, geometry and every layout check note until
  * their precision on the recorded corpus is measured (gate-beats: 19% false flags on clean beats).
+ * `dataset` (teaching-engine §3.6 (c): engine windows that compare operators slide over one input) notes until measured.
  * `design` is the design's table (2026-10-29 §3; `&gatecheck=all`).
  */
 export type Severity = 'default' | 'design';
 export const SEVERITY: Record<Severity, Record<Flag['check'], 'fail' | 'note'>> = {
-  default: { tag: 'fail', unbound: 'note', erasure: 'fail', named: 'fail', deixis: 'note', number: 'note', threshold: 'note', direction: 'note', geometry: 'note', layout: 'note', order: 'note', svg: 'fail', drift: 'fail' },
-  design: { tag: 'fail', unbound: 'fail', erasure: 'fail', named: 'fail', deixis: 'fail', number: 'fail', threshold: 'fail', direction: 'fail', geometry: 'fail', layout: 'fail', order: 'note', svg: 'fail', drift: 'fail' },
+  default: { tag: 'fail', unbound: 'note', erasure: 'fail', named: 'fail', deixis: 'note', number: 'note', threshold: 'note', direction: 'note', geometry: 'note', layout: 'note', order: 'note', svg: 'fail', drift: 'fail', dataset: 'note' },
+  design: { tag: 'fail', unbound: 'fail', erasure: 'fail', named: 'fail', deixis: 'fail', number: 'fail', threshold: 'fail', direction: 'fail', geometry: 'fail', layout: 'fail', order: 'note', svg: 'fail', drift: 'fail', dataset: 'fail' },
 };
 
 /** A verdict under a severity: flags whose check only notes move to the notes. */
