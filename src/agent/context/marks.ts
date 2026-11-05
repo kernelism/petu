@@ -341,6 +341,7 @@ export function formatMarks(ms: FigureMark[]): string {
     if (m.kind === 'dot') return `${m.id} dot ${P(m.at)}${L(m)}`;
     if (m.kind === 'line' || m.kind === 'arrow') return `${m.id} ${m.kind} ${m.ends?.[0] ?? P(m.from)}→${m.ends?.[1] ?? P(m.to)}${L(m)}`;
     const r = m as Extract<FigureMark, { rect: PageRect }>;
-    return `${r.id} ${r.kind} ${r.rect.x},${r.rect.y} ${r.rect.w}×${r.rect.h}${r.n && r.n >= 2 ? ` (${r.n} paths)` : ''}${L(r)}`;
+    // A picture's pixels are readable by an engine window (src/pixels): said where the model sees the mark.
+    return `${r.id} ${r.kind} ${r.rect.x},${r.rect.y} ${r.rect.w}×${r.rect.h}${r.n && r.n >= 2 ? ` (${r.n} paths)` : ''}${L(r)}${r.kind === 'image' ? ' (pixels readable)' : ''}`;
   }).join('\n');
 }
