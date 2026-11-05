@@ -58,6 +58,6 @@ describe('Lint: what to write instead, for slips the engine cannot recover', () 
   it('a calc program on the wire is one long tag, not words', () => {
     const code = `const r = [${Array.from({ length: 120 }, (_, i) => i).join(', ')}];&#10;export const s = r.reduce((a, b) =&gt; a + b, 0);`;
     const s = `Sum. {{calcsrc id=t ${code}}} Then {{val t.s}}.`;
-    expect(run(s).notes.filter((n) => /over 800/.test(n))).toEqual([]);
+    expect(run(s).notes).toEqual([]);
   });
 });

@@ -1,6 +1,6 @@
 // server/lint.ts
 import { parseTag } from '../src/script/parseTag';
-import { isSvgTagBody, tagLimit } from '../src/svgboard/wire';
+import { isCalcTagBody, isSvgTagBody, tagLimit } from '../src/svgboard/wire';
 /** Every tag name the parser knows (src/script/parseTag.ts). */
 export const TAG_NAMES = new Set(['beat', 'scroll', 'highlight', 'underline', 'circle', 'box', 'line', 'arrow', 'point', 'label', 'curve', 'shade', 'angle', 'brace', 'write', 'math', 'axes', 'plot', 'let', 'sketch', 'connect', 'emph', 'move', 'fade', 'clear',
   // the visual kit (src/script/parseKit.ts)
@@ -51,6 +51,8 @@ export class Lint {
   private tag(t: string): string {
     // An svg group: the gate checks it (src/svgboard/check.ts); its quotes and numbers are SVG's.
     if (isSvgTagBody(t.slice(2))) return t;
+    // A calc program or its numbers (src/svgboard/wire.ts isCalcTagBody): code and number lists, not tag arguments.
+    if (isCalcTagBody(t.slice(2))) return t;
     const name = /^\{\{\s*([A-Za-z]+)/.exec(t)?.[1]?.toLowerCase();
     if (!name || !TAG_NAMES.has(name)) this.notes.push(`unknown tag ${JSON.stringify(t.slice(0, 40))}`);
     const quotes = (t.match(/"/g) ?? []).length;
