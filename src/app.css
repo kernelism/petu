@@ -89,3 +89,12 @@ html.petu-lane .pv-page { border-radius: 0; box-shadow: 0 0 0 .5px rgba(0, 0, 0,
 
 /* What if (src/svgboard/whatIf.ts): an engine window's kernel weights can be edited once the answer is paused or over. */
 svg [data-kcell] { cursor: pointer; }
+
+/* The prediction prompt (src/ui/PredictPrompt.tsx): above the caption bar, the answer paused under it. */
+.predict-card { position: fixed; left: 50%; bottom: 210px; transform: translateX(-50%); z-index: 45; width: min(420px, calc(100vw - 32px)); padding: 14px 16px; border-radius: 12px; background: #fff; border: 1.5px solid #7c3aed; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12); font: 15px system-ui, sans-serif; color: #1d1d1f; }
+.predict-q { margin: 0 0 10px; }
+.predict-row { display: flex; gap: 8px; align-items: center; }
+.predict-input { flex: 1; min-width: 0; font: inherit; padding: 6px 10px; border: 1px solid #c7c7cc; border-radius: 8px; }
+.predict-btn { font: inherit; padding: 6px 14px; border-radius: 8px; border: none; background: #7c3aed; color: #fff; cursor: pointer; }
+.predict-btn:disabled { opacity: 0.5; cursor: default; }
+.predict-verdict { margin: 0; color: #7c3aed; font-weight: 600; }
