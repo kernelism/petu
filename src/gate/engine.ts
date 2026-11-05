@@ -68,6 +68,8 @@ export class GateState {
   readonly values: Value[] = [];
   /** Named numbers, lowercase (the expression language reads names lowercased). */
   readonly consts: Record<string, number> = {};
+  /** Each constant's defining source as first written (a re-read of the same definition is not a redefinition). */
+  private readonly constSrc = new Map<string, string>();
   /** Calc programs' numbers by calc id (src/calc/stream.ts): what {{val rod.I4}} says. */
   readonly calcs = new Map<string, CalcTable>();
   /** When each constant was declared (the beat, or for the parser the tag index). */
@@ -132,11 +134,14 @@ export class GateState {
           const v = f ? f({}) : NaN;
           // A constant written as a number is the model's own literal; one written as a formula (T=2*v/g) is computed.
           const lit = /^[-−+]?\d*\.?\d+$/.test(src.trim());
+          // The same definition again (a group's data-const re-read after a tween moved it, k=0 then {{tween k=1}}):
+          // the constant it already is, never a redefinition.
+          if (this.constSrc.get(k.toLowerCase()) === src.trim()) continue;
           // A name already defined keeps its value (as on the board: KitStore.defineConsts); the gate flags it.
           if (k.toLowerCase() in this.consts && this.consts[k.toLowerCase()] !== v) { this.redefined.push(`${k}=${src} (it is ${+this.consts[k.toLowerCase()].toPrecision(6)})`); continue; }
           if (Number.isFinite(v)) {
             const key = k.toLowerCase();
-            this.consts[key] = v; this.declared.set(key, beat); this.addValues([v], lit ? 'const' : 'computed', k, beat);
+            this.consts[key] = v; this.declared.set(key, beat); this.constSrc.set(key, src.trim()); this.addValues([v], lit ? 'const' : 'computed', k, beat);
             // A formula constant follows the constants it reads when they change (as on the board: KitStore.setConst).
             this.derived = this.derived.filter(([d]) => d !== key);
             if (!lit) this.derived.push([key, src]);

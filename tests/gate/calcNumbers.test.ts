@@ -39,4 +39,11 @@ describe('the gate over calc numbers', () => {
     expect(r.out).not.toContain('{{val rod.I4}}');
     expect(r.events.some((e) => e.result === 'fail')).toBe(true);
   });
+
+  it('a step constant and its tween in one beat: the group data-const re-read is not a redefinition (live p6.20 answer)', async () => {
+    const win = '<g id="window" data-const="k=0"><rect x="20" y="20" width="132" height="46" fill="none" stroke="#222" data-set="x: 20+44*k"/><text id="first" x="20" y="120" font-size="18" data-val="rod.I4" data-set="opacity: max(0,1-abs(k))">first {}</text><text id="next" x="20" y="150" font-size="18" data-val="rod.I10" data-set="opacity: min(1,max(0,k))">next {}</text></g>';
+    const r = await gate(`${head}{{svg ${win}}} This frame is the window on the first slices, giving {{val id=first}}. {{tween k=1 dur=0.8}} Slide it one step and it gives {{val id=next}}. `);
+    expect(r.events.filter((e) => e.result === 'fail').map((e) => e.flags.map((f) => f.detail))).toEqual([]);
+    expect(r.out).toContain('{{tween k=1 dur=0.8}}');
+  });
 });
