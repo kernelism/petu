@@ -75,7 +75,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.20');
+    expect(PROMPT_VERSION).toBe('p6.21');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -185,6 +185,7 @@ describe('system prompt (svg, default)', () => {
     expect(s).toMatch(/<calc id="win">[\s\S]*export const out[\s\S]*<\/calc>/);
     expect(s).toMatch(/\{\{val win\.out\[0\]\}\}/);
     expect(s).toMatch(/STEPS: to walk a process one step at a time/);
+    expect(s).toMatch(/WINDOWS: a window sliding over a row or a grid[^\n]*drawn by the engine, never by hand: <g id="conv" data-const="k=0" data-slide="img\.f"/);
     expect(s).toMatch(/When the PLAN walks a process a step at a time, the student must see it move: draw it with STEPS/);
     expect(s).toMatch(/data-const="k=0"/);
     expect(s).toMatch(/\{\{tween k=3 dur=0\.8\}\}/);
@@ -252,7 +253,8 @@ describe('system prompt (svg, default)', () => {
           const fs = el.getAttribute('font-size');
           if (fs) expect(Number(fs), b.id).toBeGreaterThanOrEqual(16);
         }
-        expect(doc.querySelectorAll('text').length + doc.querySelectorAll('[font-size] text').length, b.id).toBeGreaterThan(0); // every group is labelled
+        // every group is labelled (an engine view, data-slide, labels its own grids)
+        expect(doc.querySelectorAll('text').length + doc.querySelectorAll('[font-size] text').length + doc.querySelectorAll('[data-slide]').length, b.id).toBeGreaterThan(0);
       }
     });
 
@@ -288,7 +290,8 @@ describe('system prompt (svg, default)', () => {
     it('p6.12: the first group is frame- or title-sized (nothing is spoken until it is written); the heavy drawing comes in a later beat', () => {
       const bs = beatsOf(ex.script);
       expect(bs[0].svg.length, bs[0].id).toBeLessThanOrEqual(400);
-      expect(Math.max(...bs.slice(1).map((b) => b.svg.length))).toBeGreaterThan(2 * bs[0].svg.length);
+      // An engine view (data-slide) is the heavy drawing in a few attributes: the engine draws its grids.
+      expect(bs.slice(1).some((b) => /data-slide=/.test(b.svg)) || Math.max(...bs.slice(1).map((b) => b.svg.length)) > 2 * bs[0].svg.length).toBe(true);
       // The plan is a few compact lines (it is written before the first word too).
       expect((/<plan>([\s\S]*?)<\/plan>/.exec(ex.script)![1]).length).toBeLessThanOrEqual(400);
     });

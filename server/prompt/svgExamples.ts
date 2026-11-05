@@ -118,47 +118,38 @@ It pays in time: only {{val id=across}} of its 2.5 metres per second carry it ac
 <check>If the current ran at 3 metres per second, faster than the ferry, could any aim still take it straight to B?</check>`,
   },
   {
-    title: 'a process in steps: a window sliding along a series, each output computed by a program and said from it',
+    title: 'a process in steps: a window the engine slides along a series, each mean computed and said from it',
     question: 'How does the moving average get rid of the storm day?',
     page: 2,
     pages: [2],
-    plan: 'The student sees the storm vanish and does not know where it went. Picture: the week as cells, a three-day window stepping along, the averages appearing under it. Beats: 1 the idea; 2 the week; 3 the window, step by step; 4 the storm spread over three days. Scope: narrow.',
+    plan: 'The student sees the storm vanish and does not know where it went. Picture: the week as cells, a three-day window stepping along, the means filling in under it. Beats: 1 the idea; 2 the week and the window; 3 step by step past the storm; 4 the storm spread over three days. Scope: narrow.',
     listing: String.raw`PAGE 2 (visible; 16:9 slide; image attached)
 t1 60 40–520: Smoothing a noisy series
 t2 170 40–900: A 3-day moving average replaces each day by the mean of it and its two neighbours.
 t3 205 40–760: Rain per day (mm): 4, 4, 22, 4, 4, 10, 10
 #g1 figure 520,320 420×380 "rain"`,
     script: String.raw`<plan>
-Case: the page's week r = 4, 4, 22, 4, 4, 10, 10. A program computes the five 3-day means; a step constant k walks the window over them.
+Case: the page's week r = 4, 4, 22, 4, 4, 10, 10 in a program; the engine slides a 3-day mean along it, step constant k.
 BOARD viewBox="0 0 560 300"
-regions: week (40–460, 56–96); means (100–400, 120–156); working (40–460, 176–206); takeaway (40–520, 240–280)
-groups: average; days; window; spread
+regions: week and means (30–530, 60–230); takeaway (30–530, 250–290)
+groups: average; window; storm; spread
 </plan>
-<g id="average" data-const="k=0">
-<text x="40" y="36" font-size="18" fill="#222">rain per day (mm)</text>
+<g id="average">
+<text x="30" y="36" font-size="18" fill="#222">rain per day (mm)</text>
 </g>
 {{highlight p=2 "replaces each day by the mean of it and its two neighbours"}} The average gets rid of the storm by sharing it: each day becomes the mean of itself and its two neighbours.
-<calc id="avg">
+<calc id="rain">
 export const r = [4, 4, 22, 4, 4, 10, 10];
-export const out = [1, 2, 3, 4, 5].map(i => (r[i - 1] + r[i] + r[i + 1]) / 3);
-export const peak = Math.max(...out);
 </calc>
-<g id="days">
-<g fill="none" stroke="#888" stroke-width="1.5"><rect x="40" y="56" width="56" height="40"/><rect x="100" y="56" width="56" height="40"/><rect x="160" y="56" width="56" height="40"/><rect x="220" y="56" width="56" height="40"/><rect x="280" y="56" width="56" height="40"/><rect x="340" y="56" width="56" height="40"/><rect x="400" y="56" width="56" height="40"/></g>
-<g font-size="18" fill="#222" text-anchor="middle"><text x="68" y="83" data-val="avg.r[0]">{}</text><text x="128" y="83" data-val="avg.r[1]">{}</text><text x="188" y="83" data-val="avg.r[2]">{}</text><text x="248" y="83" data-val="avg.r[3]">{}</text><text x="308" y="83" data-val="avg.r[4]">{}</text><text x="368" y="83" data-val="avg.r[5]">{}</text><text x="428" y="83" data-val="avg.r[6]">{}</text></g>
-<text x="470" y="83" font-size="16" fill="#888">days</text>
+<g id="window" data-const="k=0" data-slide="rain.r" data-op="mean" data-size="1x3" data-origin="30,78" data-cell="56"></g>
+Here is the window over the week from the slide: dry days of four millimetres, one storm day of twenty two, then ten.
+<g id="storm">
+<text x="170" y="160" font-size="16" fill="#888" text-anchor="middle">storm</text>
 </g>
-Here is the week from the slide: dry days of four millimetres, one storm day of twenty two, then a wetter spell of ten.
-<g id="window">
-<rect id="frame" y="52" width="176" height="48" rx="6" fill="none" stroke="#7c3aed" stroke-width="2.5" data-set="x: 38 + 60*max(0, k - 1); opacity: min(1, max(0, k))"/>
-<g font-size="18" fill="#7c3aed" text-anchor="middle"><text x="128" y="147" data-val="avg.out[0]" data-fmt="0" data-set="opacity: min(1, max(0, k - 0))">{}</text><text x="188" y="147" data-val="avg.out[1]" data-fmt="0" data-set="opacity: min(1, max(0, k - 1))">{}</text><text x="248" y="147" data-val="avg.out[2]" data-fmt="0" data-set="opacity: min(1, max(0, k - 2))">{}</text><text x="308" y="147" data-val="avg.out[3]" data-fmt="0" data-set="opacity: min(1, max(0, k - 3))">{}</text><text x="368" y="147" data-val="avg.out[4]" data-fmt="0" data-set="opacity: min(1, max(0, k - 4))">{}</text></g>
-<text x="470" y="147" font-size="16" fill="#888">means</text>
-<text x="40" y="196" font-size="18" fill="#222" data-val="avg.out[0]" data-fmt="0" data-set="opacity: max(0, 1 - abs(k - 1))">(4 + 4 + 22) / 3 = {}</text><text x="40" y="196" font-size="18" fill="#222" data-val="avg.out[1]" data-fmt="0" data-set="opacity: max(0, 1 - abs(k - 2))">(4 + 22 + 4) / 3 = {}</text><text x="40" y="196" font-size="18" fill="#222" data-val="avg.out[2]" data-fmt="0" data-set="opacity: max(0, 1 - abs(k - 3))">(22 + 4 + 4) / 3 = {}</text><text x="40" y="196" font-size="18" fill="#222" data-val="avg.out[3]" data-fmt="0" data-set="opacity: max(0, 1 - abs(k - 4))">(4 + 4 + 10) / 3 = {}</text><text x="40" y="196" font-size="18" fill="#222" data-val="avg.out[4]" data-fmt="0" data-set="opacity: max(0, 1 - abs(k - 5))">(4 + 10 + 10) / 3 = {}</text>
-</g>
-{{tween k=1 dur=0.8}} The frame is the window: on the first three days, four, four and twenty two average to {{val avg.out[0]}}. {{tween k=2 dur=0.8}} Slide it one day, and the storm is still inside, so the mean stays {{val avg.out[1]}}. {{tween k=5 dur=2.4}} Run it to the end: once the storm leaves the window, the mean falls to {{val avg.out[3]}}.
+{{tween k=1 dur=0.8}} On the first three days, four, four and the storm average to {{val window.out[0]}}. {{tween k=2 dur=0.8}} Slide one day: the storm is still inside, so the mean stays {{val window.out[1]}}. {{tween k=5 dur=2.4}} Run it to the end: once the storm leaves, the mean falls to {{val window.out[3]}}.
 <g id="spread">
-<text x="40" y="262" font-size="18" fill="#7c3aed" data-val="avg.peak" data-fmt="0">storm: 22 becomes three days of {}</text>
+<text x="30" y="276" font-size="18" fill="#7c3aed" data-val="window.out[0]" data-fmt="0">storm: 22 becomes three days of {}</text>
 </g>
-The storm's twenty two never shows up in the means: it is spread over three days of {{val avg.peak}} each, which is all a moving average does.`,
+The storm's twenty two never shows up in the means: it is spread over three days of {{val window.out[2]}} each, which is all a moving average does.`,
   },
 ];
