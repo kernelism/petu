@@ -5,6 +5,7 @@ import {
   DEMO_SCRIPT, DEMO_SIDE_SCRIPT, DEMO_PLANE_SCRIPT, DEMO_QUESTION, DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, pickDemo,
 } from '../../src/demo/demoScript';
 import { SCRIPTS } from '../../src/demo/scripts';
+import { TEACH_SCRIPTS } from '../../src/demo/teach';
 import type { Action, Pt, RawAction } from '../../src/script/types';
 import type { GroundMark } from '../../src/geometry/resolve';
 
@@ -14,7 +15,8 @@ function parseAll(script: string): Action[] {
   // Demo scripts use only literal coordinates: their raw actions are plain actions.
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const p = new ScriptParser();
-  const events = [...p.push(script), ...p.end()];
+  // A calc program runs before the parser reads the script (src/calc/stream.ts withCalcs): never narration.
+  const events = [...p.push(script.replace(/<calc\b[\s\S]*?<\/calc>|\{\{calcsrc [^}]*\}\}/g, ' ')), ...p.end()];
   expect(warn).not.toHaveBeenCalled();
   return events.flatMap((e) => (e.type === 'action' ? [e.action as Action] : []));
 }
@@ -22,7 +24,8 @@ const em = (as: Action[]) => as.filter((a) => 'em' in a && a.em).map((a) => a.ki
 // The prompt's examples (`ex-*`) are model-facing scripts played as they are: tests/server/examples.test.ts
 // checks them against their own listings and the prompt's rules, not the hand-written demos' style.
 /** Answers kept exactly as a model wrote them (founder live tests): agent grammar and tag stacking included. */
-const VERBATIM = new Set(['tunnel', 'live-econ', 'live-calc', 'live-calc-zoom']);
+const VERBATIM = new Set(['tunnel', 'live-econ', 'live-calc', 'live-calc-zoom', ...Object.keys(TEACH_SCRIPTS)]);
+// TEACH_SCRIPTS (src/demo/teach.ts) are written as stage-2 output and sent through the server's filter: the svg wire's rules.
 // ex- and svg- scripts are verbatim model output (prompt examples, the svgboard experiment's answers):
 // tests/server/examples.test.ts and tests/svgboard/beats.test.ts hold them to their own format's rules.
 const noBeats = (s: string) => s.replace(/\{\{beat\}\}\s*/g, '');

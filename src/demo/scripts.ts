@@ -18,6 +18,7 @@ import { LEARNER_SCRIPT, type DevStep } from './learner';
 import { SVG_DEMOS } from './svg';
 import { LANE_SCRIPTS } from './lane';
 import { NEWQ_SCRIPT } from './newQuestion';
+import { TEACH_SCRIPTS } from './teach';
 
 /**
  * Dev-only named scripts for real PDFs: `?script=<name>` (optionally `&src=<pdf url>`) opens the
@@ -77,6 +78,8 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number;
       `{{grid on=c id=co over=s slide=sk same below=s "correlation"}} Filtering as the slide writes it {{sweep id=co dur=3}} picks each pixel's right neighbour, so the row moves left: {{val id=co[1]}} lands where eleven was. ` +
       `{{grid on=c id=cv over=s slide=sk same flip below=co "convolution"}} Convolution turns the kernel around first, {{sweep id=cv dur=3}} so the same weights move the row right. For a symmetric kernel, like the box and the Gaussian, turning it around changes nothing.`,
   },
+  /** Teaching-engine demos written as model output (src/demo/teach.ts). */
+  ...TEACH_SCRIPTS,
   /** The live commit gate's demo (src/demo/gate.ts): beat 3 names a point nothing carries. */
   gate: GATE_SCRIPT,
   /** The v1 learner UX storyboard as one simulated session on econ.pdf p12 (src/demo/learner.ts). */
