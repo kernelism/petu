@@ -40,7 +40,7 @@ export class Lint {
       }
       this.buf += c;
       if (this.buf.endsWith('}}')) { out += this.tag(this.buf); this.buf = ''; this.inTag = false; }
-      else if (this.buf.length > tagLimit(this.buf.slice(2, 8), 800) || c === '\n') { // not a tag (parser rule)
+      else if (this.buf.length > tagLimit(this.buf.slice(2, 12), 800) || c === '\n') { // not a tag (parser rule)
         if (this.buf.length > 800) this.notes.push(`tag over 800 characters (spoken as words, not drawn): ${this.buf.slice(0, 60)} — ${/^\{\{\s*curve\b/i.test(this.buf) ? 'draw a curve from its formula with {{plot fn=}}' : 'split it into several tags'}`);
         out += this.buf; this.buf = ''; this.inTag = false;
       }
