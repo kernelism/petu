@@ -66,7 +66,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.17');
+    expect(PROMPT_VERSION).toBe('p6.18');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -167,6 +167,26 @@ describe('system prompt (svg, default)', () => {
   it('p6.8 (founder: "random lines of text"): board text is labels only, never a sentence or stacked words; one label one element; a case shows its effect', () => {
     for (const p of [/Text on the board is a label/, /Never a sentence/, /never lines of words stacked under each other/, /the engine removes any it finds/, /one text element on one line/, /the effect shows in the numbers the board will compute/]) expect(s).toMatch(p);
     expect(s).not.toMatch(/takeaway written once/);
+  });
+
+  it('p6.18 (teaching engine): working on the board, numbers from programs, processes in steps', () => {
+    expect(s).toMatch(/or the working a teacher writes: an equation, a derivation one step per line, a worked sum/);
+    expect(s).not.toMatch(/no derivation steps/);
+    expect(s).toMatch(/PROGRAMS: anything computed past one short formula/);
+    expect(s).toMatch(/<calc id="win">[\s\S]*export const out[\s\S]*<\/calc>/);
+    expect(s).toMatch(/\{\{val win\.out\[0\]\}\}/);
+    expect(s).toMatch(/STEPS: to walk a process one step at a time/);
+    expect(s).toMatch(/data-const="k=0"/);
+    expect(s).toMatch(/\{\{tween k=3 dur=0\.8\}\}/);
+  });
+
+  it('p6.18: the prompt\'s calc example runs to the numbers it implies', async () => {
+    const vm = await import('node:vm');
+    const { prepareCalc } = await import('../../src/calc/prepare');
+    const src = /<calc id="win">([\s\S]*?)<\/calc>/.exec(s)![1];
+    const p = prepareCalc('win', src);
+    const out = vm.runInNewContext(`(function(){${p.body}})()`) as { out: number[] };
+    expect(Array.from(out.out)).toEqual([6, 6]);
   });
 
   it('p6.2: the narration ends on the takeaway; a check question is optional and hidden (<check>), never spoken', () => {
