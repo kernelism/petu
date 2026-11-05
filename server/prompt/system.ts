@@ -88,7 +88,7 @@ import { BOARD_W } from '../../src/svgboard/wire.ts';
  * meant to have. NUMBERS YOU SAY now says a val names only a readout already written, and how to add one,
  * hidden if need be, before saying it.
  */
-export const PROMPT_VERSION = 'p6.18';
+export const PROMPT_VERSION = 'p6.19';
 
 /*
  * The developer prompt for stage 2 (perform): one stable block (no dates, no document names, no

@@ -2,6 +2,7 @@
 // experiment's four recorded answers, each streamed as the model's raw beats through the server's own
 // filter (server/svgBeats.ts), so the gallery shows exactly what a live answer would draw. Page
 // pointing is dropped (they were written for other documents); the backdrop is the examples deck.
+import { DOUGH } from './dough';
 import { SvgBeatFilter } from '../../../server/svgBeats';
 import { SVG_EXAMPLES } from '../../../server/prompt/svgExamples';
 import { toBeats } from '../../svgboard/convert';
@@ -29,7 +30,8 @@ function example(word: string): SvgDemo {
 
 export const SVG_DEMOS: Record<string, SvgDemo> = {
   'svg-ferry': example('river'),
-  'svg-dough': example('yeast'),
+  'svg-dough': demo(DOUGH.question, DOUGH.script),
+  'svg-rain': example('window'),
   // The exact-data engine: computed curves, crossings and readouts, constants tweened.
   ...Object.fromEntries(Object.entries(SVG_ENGINE_DEMOS).map(([k, v]) => [`svg-${k}`, demo(v.question, v.raw)])),
   // A session (src/demo/svg/session.ts): a board taller than the view, an aside, a follow-up that extends

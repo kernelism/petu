@@ -5,6 +5,7 @@
 // are the svg demos' (src/demo/svg); the page marks quote public/fixtures/examples.pdf.
 import { SVG_EXAMPLES } from '../../server/prompt/svgExamples';
 import { wireOf } from './svg';
+import { DOUGH } from './svg/dough';
 import { SESSION_Q, SESSION_RAW } from './svg/session';
 
 const example = (word: string) => {
@@ -12,7 +13,7 @@ const example = (word: string) => {
   if (!ex) throw new Error(`no svg example with a group ${word}`);
   return ex;
 };
-const dough = example('yeast'), ferry = example('river');
+const dough = DOUGH, ferry = example('river');
 /** The svg examples open their board and draw on the same word; a session's later answers never stack tags. */
 const unstacked = (script: string) => wireOf(script).replace(/\}\}\s*\{\{svg /, '}} Watch. {{svg ');
 
