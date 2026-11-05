@@ -10,7 +10,7 @@ import { rng } from '../ink/agent/strokes';
 import { fadeOut, retireOut } from '../ink/agent/marks';
 import type { Settings } from '../settings/settings';
 import { Registry } from '../desk/registry';
-import { kitStore } from '../desk/kit/kit';
+import { kitStore, rewindStep } from '../desk/kit/kit';
 import { liveGeo } from '../desk/live';
 import { regionRuns } from '../desk/runs';
 import { buildElement } from '../desk/elements';
@@ -183,6 +183,9 @@ export class Director {
     const a = (isInk ? raw : this.figures.resolve(raw)) as Action;
     this.runResolved(a, raw, at, live);
   }
+
+  /** A seek back replays a fired step: its block goes back to how it stood before it (src/desk/kit/kit.ts rewindStep). */
+  rewind(raw: RawAction): void { rewindStep(kitStore(this.registry), raw as object); }
 
   /**
    * The page the answer is on: the asked page (App: askedPage, set by ask()), then each page it scrolls

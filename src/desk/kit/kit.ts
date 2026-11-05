@@ -135,6 +135,8 @@ export type Block = {
 
 export class KitStore {
   readonly anim = new Animations();
+  /** A window's state just before each step or sweep fired (keyed by the action): what a seek back restores (rewindStep). */
+  readonly winSnaps = new WeakMap<object, { out: string; filled: boolean[][]; vals: C.Mat; accent: string }>();
   private blocks = new Map<string, Block>();
   private waiters = new Map<string, ((b: Block) => void)[]>();
   private n = 0;
@@ -2127,6 +2129,8 @@ async function stepOrSweep(v: Extract<KitVerb, { kind: 'step' | 'sweep' }>, env:
       const started = new Promise<void>((r) => { first = r; });
       void store.anim.run(k, [out.id], async (ctl) => {
         if (signal.aborted) ctl.ff = true;
+        // Before it changes anything (an earlier step on the block has landed): how a seek back finds it.
+        store.winSnaps.set(v, { out: out.id, filled: w.filled.map((r) => r.slice()), vals: out.vals!.map((r) => r.slice()), accent: env.settings.inkColor });
         if (target) { first(); await winGo(p, target[0], target[1], ctl, GLIDE_MS, c, env); return; }
         const order = C.sweepOrder(w.filled);
         // At most ~120 window moves: past that (a large image), each move fills a run of cells.
@@ -2148,6 +2152,36 @@ async function stepOrSweep(v: Extract<KitVerb, { kind: 'step' | 'sweep' }>, env:
       await Promise.race([started, new Promise((r) => setTimeout(r, 400))]);
     },
   };
+}
+
+/**
+ * A seek back replays a step or sweep (src/playback/scheduler.ts replays): its window goes back to the
+ * state it found when it fired. The output cells it filled empty again, the window, its frames and
+ * an emphasis on the output lift, the calc line clears; the step then plays again on its words. A step that never fired (or a
+ * block gone) is left alone.
+ */
+export function rewindStep(store: KitStore, action: object): void {
+  const snap = store.winSnaps.get(action);
+  const out = snap && store.get(snap.out);
+  if (!snap || !out?.win) return;
+  const w = out.win;
+  void store.anim.run(undefined, [out.id], async (ctl) => {
+    ctl.ff = true;
+    const o = out.el.winEls as { win: SVGRectElement; ghosts: SVGGElement; kf?: SVGRectElement; of: SVGRectElement } | undefined;
+    [o?.win, o?.ghosts, o?.kf, o?.of].forEach((e) => e?.remove());
+    out.el.winEls = undefined;
+    w.rect = null; w.cur = null; w.pos = null;
+    w.filled = snap.filled.map((r) => r.slice());
+    const c = col();
+    await setGridVals(out, snap.vals, 0, ctl, c);
+    const els = out.el.grid as GridEls | undefined;
+    // An emphasis on the output pointed at cells the rewind empties: it lifts with them.
+    if (els?.emph) { els.emph.remove(); els.emph = undefined; }
+    if (els) els.emCells = [];
+    if (els) for (let r = 0; r < els.texts.length; r++) for (let q = 0; q < els.texts[r].length; q++) restCell(out, r, q, c, snap.accent);
+    const calc = w.calc ? store.get(w.calc) : undefined;
+    calc?.g?.replaceChildren();
+  });
 }
 
 // ------------------------------------------------------------------------------------------------

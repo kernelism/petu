@@ -282,4 +282,28 @@ describe('Scheduler: the look after a page mark (teaching rhythm)', () => {
     const { fired } = run([...words('Look here.'), svg('one'), ...words('The curve falls.'), mark(), ...words('See it.'), END]);
     expect(fired.find((f) => f.kind === 'svg')!.at).toBe(200);
   });
+
+  it('a seek back rewinds the steps after the target and replays them on their words; other ink stays', () => {
+    const log: string[] = [];
+    const step = (ref: string): ScriptEvent => ({ type: 'action', action: { kind: 'step', ref } as Action });
+    const s = new Scheduler(fixedClock(), {
+      onWord: (t) => log.push(t),
+      onAction: (a) => log.push(`<${a.kind}${'ref' in a ? ` ${(a as { ref: string }).ref}` : ''}>`),
+      onRewind: (a) => log.push(`rewind ${(a as { ref: string }).ref}`),
+      onDone: () => log.push('done'),
+    });
+    s.push([w('a.'), act('sketch'), w('b.'), step('o[1]'), w('c.'), step('o[2]'), w('d.')]); // the stream still open: the answer plays on
+    while (!log.includes('d.')) vi.advanceTimersByTime(50);
+    expect(log).toEqual(['a.', '<sketch>', 'b.', '<step o[1]>', 'c.', '<step o[2]>', 'd.']);
+    log.length = 0;
+    expect(s.seek(1)).toBe(true); // back to "b."
+    expect(log).toEqual(['rewind o[2]', 'rewind o[1]']); // latest first: the earliest one's state wins
+    vi.advanceTimersByTime(3000);
+    // The sketch is not drawn again; each step plays again with its word.
+    expect(log).toEqual(['rewind o[2]', 'rewind o[1]', 'b.', '<step o[1]>', 'c.', '<step o[2]>', 'd.']);
+    // A second seek back rewinds again from the replayed state.
+    log.length = 0;
+    expect(s.seek(3)).toBe(true); // back to "d.", which o[2] fires with
+    expect(log).toEqual(['rewind o[2]']);
+  });
 });

@@ -1039,6 +1039,7 @@ export default function App() {
         if (a.kind !== 'scroll' && a.kind !== 'clear') drew = true;
         director.run(a, at, live);
       },
+      onRewind: (a) => { if (sessionRef.current === session) director.rewind(a); },
       idle: () => director.finale(),
       onWord: (words) => {
         if (sessionRef.current !== session) return;
@@ -1352,6 +1353,7 @@ export default function App() {
       clock: asideClock,
       onParsed: (a) => dir.prefetch(a),
       onAction: (a, at, live) => { if (asideSession.current === sess) dir.run(a, at, live); },
+      onRewind: (a) => { if (asideSession.current === sess) dir.rewind(a); },
       idle: () => dir.finale(),
       onWord: (words) => { if (asideSession.current === sess) setAside((d) => d && { ...d, words, state: 'playing' }); },
       onState: (st) => {
