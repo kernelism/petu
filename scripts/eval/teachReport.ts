@@ -1,14 +1,16 @@
 // scripts/eval/teachReport.ts — the teaching-engine table for one run (teaching-engine.md §6, Phase 1):
 //   node --import ./scripts/lib/tsResolve.mjs --experimental-transform-types --no-warnings scripts/eval/teachReport.ts <runId>
-// One row per answer (D4.2 is D4's second sample) and a total. Reads .petu/eval/runs/<runId>/*/result.json.
+// One row per answer (D4.2 is D4's second sample) and a total. Reads <runs>/<runId>/*/result.json (runsDir: PETU_RUNS_DIR, the worktree's, else the main checkout's).
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { computeMetrics, gateMetrics, percentile, teachMetrics } from './metrics.ts';
 import type { StoredQuestion } from './run.ts';
+import { runsDir } from '../gate-beats/recordings.ts';
 
 const runId = process.argv[2];
 if (!runId) { console.error('usage: teachReport.ts <runId>'); process.exit(2); }
-const dir = join(process.cwd(), '.petu/eval/runs', runId);
+// The worktree's runs, else the main checkout's (as the gate-beats tools find them).
+const dir = join(runsDir(), runId);
 const ids = readdirSync(dir).filter((d) => existsSync(join(dir, d, 'result.json'))).sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
 const rows: string[][] = [['answer', 'calcs', 'failed', 'vals', 'data-val', 'slides', 'tweens', 'typed #', 'gate # flags', 'drops', 'repairs ok/sent', 'first word s', 'usd']];
 const firstWords: (number | null)[] = [], usd: number[] = [];
