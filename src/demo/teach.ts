@@ -66,6 +66,55 @@ The rod is uniform, so its mass per length is M over L, and the slice's mass is 
 </g>
 Check it with real slices. With four, the sum is {{val rod.I4 fmt=4}} times M L squared; with ten, {{val rod.I10 fmt=4}}; with a hundred, {{val rod.I100 fmt=5}}. They close in on one twelfth, {{val rod.exact fmt=5}}: that is what the integral adds up.`;
 
+
+/**
+ * Column addition, 478 + 356, with carries: one step constant `s` drives the board (the column frame
+ * glides right to left, each sum digit and carry appears on its step), the numbers come from a calc,
+ * and going back replays a step (the tween rewinds). The digits being added are the question's own.
+ */
+const reveal = (n: number) => `min(1, max(0, s - ${n - 1}))`;
+const only = (n: number) => `max(0, 1 - abs(s - ${n}))`;
+const ADD = `Add column by column from the right, and carry whenever a column reaches ten.
+<plan>
+478 + 356 in columns; s steps ones, tens, hundreds; carries 1 and 1; sum 834 from a calc.
+BOARD viewBox="0 0 560 320"
+groups: sum
+</plan>
+<calc id="add">
+  const a = [4, 7, 8], b = [3, 5, 6];
+  const cs = [0, 0, 0], d = [0, 0, 0, 0], c = [0, 0, 0];
+  let carry = 0;
+  for (let i = 2; i >= 0; i--) { const t = a[i] + b[i] + carry; cs[i] = t; d[i + 1] = t % 10; carry = Math.floor(t / 10); c[i] = carry; }
+  d[0] = carry;
+  export { cs, d, c };
+  export const sum = Number(d.join(''));
+</calc>
+{{const s=0}} Write them in columns: hundreds, tens and ones.
+<g id="sum">
+  <rect y="96" width="52" height="186" rx="6" fill="none" stroke="${ACCENT}" stroke-width="2" data-set="x: 324 - 60*(s - 1); opacity: ${reveal(1)} * min(1, max(0, 4 - s))"/>
+  <text x="230" y="40" font-size="16" fill="${MUTED}" text-anchor="middle">H</text>
+  <text x="290" y="40" font-size="16" fill="${MUTED}" text-anchor="middle">T</text>
+  <text x="350" y="40" font-size="16" fill="${MUTED}" text-anchor="middle">O</text>
+  <text x="290" y="80" font-size="22" fill="${ACCENT}" text-anchor="middle" data-val="add.c[2]" data-set="opacity: add.c[2] * ${reveal(1)}">{}</text>
+  <text x="230" y="80" font-size="22" fill="${ACCENT}" text-anchor="middle" data-val="add.c[1]" data-set="opacity: add.c[1] * ${reveal(2)}">{}</text>
+  <text x="230" y="134" font-size="40" fill="${INK}" text-anchor="middle">4</text>
+  <text x="290" y="134" font-size="40" fill="${INK}" text-anchor="middle">7</text>
+  <text x="350" y="134" font-size="40" fill="${INK}" text-anchor="middle">8</text>
+  <text x="170" y="194" font-size="40" fill="${INK}" text-anchor="middle">+</text>
+  <text x="230" y="194" font-size="40" fill="${INK}" text-anchor="middle">3</text>
+  <text x="290" y="194" font-size="40" fill="${INK}" text-anchor="middle">5</text>
+  <text x="350" y="194" font-size="40" fill="${INK}" text-anchor="middle">6</text>
+  <line x1="150" y1="214" x2="390" y2="214" stroke="${INK}" stroke-width="2.5"/>
+  <text x="350" y="266" font-size="40" fill="${ACCENT}" text-anchor="middle" data-val="add.d[3]" data-set="opacity: ${reveal(1)}">{}</text>
+  <text x="290" y="266" font-size="40" fill="${ACCENT}" text-anchor="middle" data-val="add.d[2]" data-set="opacity: ${reveal(2)}">{}</text>
+  <text x="230" y="266" font-size="40" fill="${ACCENT}" text-anchor="middle" data-val="add.d[1]" data-set="opacity: ${reveal(3)}">{}</text>
+  <text x="420" y="160" font-size="22" fill="${INK}" data-val="add.cs[2]" data-set="opacity: ${only(1)}">8 + 6 = {}</text>
+  <text x="420" y="160" font-size="22" fill="${INK}" data-val="add.cs[1]" data-set="opacity: ${only(2)}">7 + 5 + 1 = {}</text>
+  <text x="420" y="160" font-size="22" fill="${INK}" data-val="add.cs[0]" data-set="opacity: ${only(3)}">4 + 3 + 1 = {}</text>
+</g>
+Four seventy eight on top, three fifty six below. {{tween s=1 dur=0.8}} Start on the right: eight plus six is {{val add.cs[2]}}. Write the {{val add.d[3]}}, and carry the one into the tens. {{tween s=2 dur=0.8}} Tens: seven plus five, plus the one you carried, is {{val add.cs[1]}}. Write the {{val add.d[2]}} and carry one again. {{tween s=3 dur=0.8}} Hundreds: four plus three plus one is {{val add.cs[0]}}. {{tween s=4 dur=0.6}} So four seventy eight plus three fifty six is {{val add.sum}}.`;
+
 export const TEACH_SCRIPTS = {
+  'add-proc': { src: '/fixtures/examples.pdf', page: 1, question: 'How does 478 + 356 work, with carrying?', script: wire(ADD) },
   'rod-proc': { src: '/dev/openstax-university-physics-volume-1.pdf', page: 491, question: 'Derive the moment of inertia of a thin rod about its centre', script: wire(ROD) },
 };
