@@ -75,6 +75,14 @@ describe('data-slide', () => {
     expect(slideOut(sc, 'conv', 'out[0][2]')).toBe(5);
   });
 
+  it('the data bridge: a free readout after the window reads its outputs (data-val="conv.out[r][c]")', () => {
+    const sc = scope(), el = g(MEAN);
+    resolveData(el, sc);
+    const t = parseGroup('<g id="note"><text x="20" y="300" data-val="conv.out[0][0], conv.out[2][2]" data-fmt="0">first {} last {}</text></g>') as Element;
+    expect(resolveData(t, sc)).toEqual([]);
+    expect(t.querySelector('text')!.textContent).toBe('first 7 last 19');
+  });
+
   it('names what is missing, never draws a guess', () => {
     const sc = scope();
     expect(resolveData(g('data-slide="img.nope" data-op="mean" data-size="3x3"'), sc)[0].detail).toMatch(/exports no array nope/);
