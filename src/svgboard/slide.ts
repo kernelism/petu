@@ -35,7 +35,7 @@ export type SlideScope = { calcs?: Map<string, CalcTable>; values?: { v: number;
 export class SlideError extends Error {}
 
 /** A matrix from a calc path ("img.f") or literal rows; `signal`: the data was written as one row ([1, 2, 3]). */
-function matrix(src: string, sc: SlideScope, what: string, el?: Element): C.Mat & { signal?: boolean } {
+export function matrix(src: string, sc: SlideScope, what: string, el?: Element): C.Mat & { signal?: boolean } {
   const s = src.trim();
   const ask = el && what === 'data-slide' ? pixelAsk({ get: (n) => el.getAttribute(n) }) : null;
   if (ask) {
