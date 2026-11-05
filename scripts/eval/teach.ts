@@ -17,4 +17,6 @@ export const TEACH: Question[] = [
   q('D6', 'ost-physics', 491, 'derive', 'Derive the moment of inertia of a thin rod about its centre.'),
   q('D7', 'ost-stats', 121, 'derive', 'Work out the standard deviation of 2, 4, 4, 4, 5, 5, 7, 9 step by step.', { tags: ['unseen'] }),
   q('D8', 'ost-calc', 456, 'derive', 'Approximate the area under y = x² from 0 to 1 with rectangles, and show how it closes in on 1/3.', { tags: ['unseen'] }),
+  q('D9', 'lec06', 16, 'derive', 'Show me how the box filter blurs the eye on this slide, pixel by pixel.', { tags: ['raster'] }),
+  q('D10', 'lec06', 13, 'why', 'What will this kernel do to the image?', { tags: ['raster', 'unseen'] }),
 ];

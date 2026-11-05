@@ -405,12 +405,13 @@ export function aggregate(ms: Metrics[]): RunMetrics {
  * - `calcs`: <calc> programs written; `calcFailed`: ones that failed to run (a board skip "calc x failed",
  *   or a gate flag of the same words on a withheld beat);
  * - `vals`: numbers said by reference ({{val …}}); `dataVals`: board readouts bound to a formula;
- * - `slides`: engine sliding windows; `tweens`: step moves ({{tween …}}); `stepped`: tweens > 0;
+ * - `slides`: engine sliding windows; `pageSlides`: those over a picture on the page (data-slide="#i1", Phase 3);
+ *   `tweens`: step moves ({{tween …}}); `stepped`: tweens > 0;
  * - `typedNumbers`: numerals the narration typed itself (tags, groups and the plan left out). Data the
  *   page or question gives counts here too (478, 356), so it is an upper bound on untraced numbers;
  * - `numberFlags`: gate flags on numbers (`number`, `unbound`), the gate's own count of untraced ones.
  */
-export type TeachMetrics = { calcs: number; calcFailed: number; vals: number; dataVals: number; slides: number; tweens: number; stepped: boolean; typedNumbers: number; numberFlags: number };
+export type TeachMetrics = { calcs: number; calcFailed: number; vals: number; dataVals: number; slides: number; pageSlides: number; tweens: number; stepped: boolean; typedNumbers: number; numberFlags: number };
 
 export function teachMetrics(r: Pick<EvalResult, 'chunks' | 'events' | 'timings'>): TeachMetrics {
   const text = r.chunks.map((c) => c.d).join('');
@@ -426,6 +427,7 @@ export function teachMetrics(r: Pick<EvalResult, 'chunks' | 'events' | 'timings'
     vals: (text.match(/\{\{val\b/g) ?? []).length,
     dataVals: (text.match(/data-val=/g) ?? []).length,
     slides: (text.match(/data-slide=/g) ?? []).length,
+    pageSlides: (text.match(/data-slide=\\?["']\s*#i\d/g) ?? []).length,
     tweens, stepped: tweens > 0,
     typedNumbers: (spoken.match(/(?<![\w.])\d+(?:\.\d+)?(?![\w])/g) ?? []).length,
     numberFlags: gates.filter((g) => !g.repaired).reduce((s, g) => s + (g.flags ?? []).filter((f) => f.check === 'number' || f.check === 'unbound').length, 0),
