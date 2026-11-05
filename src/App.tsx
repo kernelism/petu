@@ -22,7 +22,7 @@ import { SwitchClock } from './playback/switchClock';
 import { BASE_WPM, getSettings, setSettings, SPEEDS, stepSpeed, useSettings, type VoiceSetting } from './settings/settings';
 import { DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo, suggestionsFor } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
-import { withCalcs } from './calc/stream';
+import { runCalcsIn, withCalcs } from './calc/stream';
 import type { DevStep } from './demo/learner';
 import { Desk, GLIDE_MS } from './desk/Desk';
 import type { DeskState } from './desk/types';
@@ -909,7 +909,7 @@ export default function App() {
         svgMinFont: () => { const m = deskRef.current?.metrics?.('wide'); return m && m.boardPx > 0 ? Math.max(12, m.bodyPx(null)) / (m.boardPx / 1000) : 16; } });
       gate = new LiveGate({
         clock: { now: () => performance.now(), endsAt: () => clock.endsAt() }, preflight,
-        repair: repairFor(),
+        repair: repairFor(), calcs: (t) => runCalcsIn(t),
         faults: GATE_FAULTS, onEvent: gateEvent,
         headroomMs: HEADROOM_MS,
       });

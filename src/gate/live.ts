@@ -302,6 +302,12 @@ export type LiveGateDeps = {
   minRepairMs?: number;
   maxRepairs?: number;
   onEvent(e: GateLogEvent): void;
+  /**
+   * Runs the calc programs in a repair's text (src/calc/stream.ts `runCalcsIn`). The answer's own calcs run
+   * before the gate reads the stream; a repair arrives here, downstream of that, so a <calc> it writes would
+   * otherwise reach the board as source and its vals stay unbound.
+   */
+  calcs?(text: string): Promise<string>;
   /** Timers (tests: a fake clock's). */
   sleep?(ms: number, signal?: AbortSignal): Promise<void>;
 };
@@ -736,6 +742,7 @@ export class LiveGate {
     // out of the frame its coordinates are in). Only a unit that opened the board keeps its tag.
     const opened = /\{\{svgboard\b[^}]*\}\}/.exec(u.text);
     let text = opened ? res.text : res.text.replace(/\{\{svgboard\b[^}]*\}\}\s*/g, '');
+    if (this.d.calcs && /<calc[\s>]|\{\{calcsrc/.test(text)) { text = await this.d.calcs(text); if (signal.aborted) return; }
     // The unit that opened the board keeps its own BOARD tag even when the repair wrote none (founder lec06
     // 2026-10-31, turn 3: the first beat failed, its repair came back without {{svgboard}}, and every group
     // of the answer was then skipped, "unknown region": the board had never opened).

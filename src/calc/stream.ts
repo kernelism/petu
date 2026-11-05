@@ -156,3 +156,10 @@ export async function* withCalcs(src: AsyncIterable<string>, run: (id: string, c
   for await (const chunk of src) { buf += chunk; yield* step(false); }
   yield* step(true);
 }
+
+/** One finished text with its calcs run (a repair's replacement beat). */
+export async function runCalcsIn(text: string, run?: (id: string, code: string) => Promise<CalcResult>): Promise<string> {
+  let out = '';
+  for await (const s of withCalcs((async function* () { yield text; })(), run)) out += s;
+  return out;
+}
