@@ -114,7 +114,26 @@ groups: sum
 </g>
 Four seventy eight on top, three fifty six below. {{tween s=1 dur=0.8}} Start on the right: eight plus six is {{val add.cs[2]}}. Write the {{val add.d[3]}}, and carry the one into the tens. {{tween s=2 dur=0.8}} Tens: seven plus five, plus the one you carried, is {{val add.cs[1]}}. Write the {{val add.d[2]}} and carry one again. {{tween s=3 dur=0.8}} Hundreds: four plus three plus one is {{val add.cs[0]}}. {{tween s=4 dur=0.6}} So four seventy eight plus three fifty six is {{val add.sum}}.`;
 
+/**
+ * A 5x5 image convolved with a 3x3 kernel, on the engine's sliding window (src/svgboard/slide.ts): the
+ * model writes the data and the steps; the engine lays out the grids, moves the frame, fills the outputs
+ * and writes each one's working. The outputs are said from what the engine computed ({{val conv.out[…]}}).
+ */
+const CONV = `Slide the kernel over the image one position at a time; at each stop, multiply the overlapping numbers and add them up.
+<plan>
+5x5 image 1..25, 3x3 vertical-edge kernel turned around (convolution); valid output 3x3; walk 2 steps, then sweep.
+BOARD viewBox="0 0 560 330"
+groups: conv
+</plan>
+<calc id="img">
+export const f = [1, 2, 3, 4, 5].map(r => [1, 2, 3, 4, 5].map(c => 5 * (r - 1) + c));
+export const k = [[1, 0, -1], [1, 0, -1], [1, 0, -1]];
+</calc>
+<g id="conv" data-const="k=0" data-slide="img.f" data-kernel="img.k" data-flip="" data-step="k" data-origin="20,50" data-cell="36"/>
+Here is the image, the kernel, and an empty output: convolution turns the kernel around before it slides. {{tween k=1 dur=0.8}} Put it on the top-left corner: the right column counts plus, the left column minus, and the sum is {{val conv.out[0][0]}}. {{tween k=2 dur=0.8}} Slide one step right, and every pair grows by the same amount, so the sum stays {{val conv.out[0][1]}}. {{tween k=9 dur=4}} Sweep the rest: the image rises at the same rate everywhere, so every output is {{val conv.out[2][2]}}.`;
+
 export const TEACH_SCRIPTS = {
+  'conv-proc': { src: '/dev/lec06_conv.pdf', page: 5, question: 'Convolve a 5x5 image with a 3x3 kernel and show the sliding window', script: wire(CONV) },
   'add-proc': { src: '/fixtures/examples.pdf', page: 1, question: 'How does 478 + 356 work, with carrying?', script: wire(ADD) },
   'rod-proc': { src: '/dev/openstax-university-physics-volume-1.pdf', page: 491, question: 'Derive the moment of inertia of a thin rod about its centre', script: wire(ROD) },
 };

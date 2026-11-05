@@ -23,6 +23,8 @@
  *                                    with an id it is a readout the narration says as {{val id=…}},
  *                                    with the affixes the text writes around it ("${}" → "$10",
  *                                    "{} units" → "100 units": src/values/quantity.ts, one reading)
+ *  <g data-slide="img.f" data-kernel="img.k" data-step="k"/>   a sliding window the engine lays out,
+ *                                    steps and works (slide.ts); its outputs are said as {{val id.out[i]}}
  *  data-schematic                    a sketch, not a plot: its hand-placed dots and typed numbers are
  *                                    left alone (snapMarkers, svgboard/check.ts grounded)
  *
@@ -36,6 +38,7 @@
  */
 import { compileVars, freeNames } from '../desk/expr';
 import { pickNumber, type CalcTable } from '../calc/stream';
+import { drawSlide, SlideError } from './slide';
 import { drawText, readTemplate, type Affix } from '../values/quantity';
 import { isUnitWord } from '../values/units';
 import { readFormat } from '../values/format';
@@ -337,7 +340,7 @@ export function fmtValue(v: number, fmt?: string | null): string {
 /** A number with its unit, as a bare data-val or a tick writes it ("12%", "$10", "5 m"): quantity.ts. */
 const withUnit = (v: string, u: string | null, fmt?: string | null) => drawText(readFormat(fmt)?.percent ? `${v}%` : v, readTemplate(null, u));
 
-const ATTRS_DATA = ['data-const', 'data-axes', 'data-fn', 'data-param', 'data-between', 'data-at', 'data-from', 'data-to', 'data-points', 'data-set', 'data-rotate', 'data-translate', 'data-val'];
+const ATTRS_DATA = ['data-const', 'data-axes', 'data-fn', 'data-param', 'data-between', 'data-at', 'data-from', 'data-to', 'data-points', 'data-set', 'data-rotate', 'data-translate', 'data-val', 'data-slide'];
 /** Whether an element (or its subtree) uses the data attributes. */
 export const hasData = (el: Element): boolean => ATTRS_DATA.some((a) => el.hasAttribute(a)) || !!el.querySelector(ATTRS_DATA.map((a) => `[${a}]`).join(','));
 /** Whether an element's geometry depends on the constants (re-resolved each frame). */
@@ -485,6 +488,13 @@ function resolveOne(el: Element, sc: DataScope): void {
     if (!defs.length) fail(`data-const "${dc}" defines nothing (write name=value pairs)`);
     if (sc.define) sc.define(defs); else for (const [k, v] of defs) sc.consts[lc(k)] = evalF(v, sc);
     el.setAttribute('data-const-done', '');
+  }
+  // A sliding window the engine draws (slide.ts), at its step constant.
+  if (el.hasAttribute('data-slide')) {
+    const step = el.getAttribute('data-step') ?? 'k';
+    if (!(lc(step) in sc.consts)) fail(`data-slide steps on ${step}: define it first (data-const="${step}=0")`);
+    sc.calcs ??= new Map();
+    try { drawSlide(el, sc, sc.consts[lc(step)]); } catch (e) { if (e instanceof SlideError) fail(e.message); throw e; }
   }
   // A frame.
   if (el.hasAttribute('data-box') && el.hasAttribute('data-axes')) {
