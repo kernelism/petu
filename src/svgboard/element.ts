@@ -22,6 +22,7 @@ function linkStore(board: SvgBoard, store: KitStore, region: string): void {
     board.scope.consts = store.consts;
   }
   board.scope.define = (defs) => store.defineConsts(defs);
+  board.scope.calcs = store.calcs;
   if (following.get(board) === store) return;
   following.set(board, store);
   store.onConsts(() => refreshData(board));

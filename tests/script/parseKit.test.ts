@@ -49,7 +49,7 @@ describe('kit blocks', () => {
       'grid on=s id=k vals=1 right=a below=b',
       'grid on=s id=k vals=1 op=⊛', // a glyph needs a neighbour
       'grid on=s id=o over=g win=3x3', // a window needs reduce or fn
-      'grid on=s id=o over=g win=1x3 reduce=median',
+      'grid on=s id=o over=g win=1x3 reduce=mode',
       'bars on=s vals=1,2;3,4', // bars are one row
       'calc on=s of=u,v reduce=sum', // two blocks need dot, cos or a fn
       'calc on=s of=u reduce=dot',

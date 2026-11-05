@@ -23,8 +23,14 @@ const eid = (s?: string) => { const n = s ? normName(s.trim().replace(/-/g, '_')
 const formula = (s?: string) => (s != null && FORMULA.test(s.trim()) ? s.trim() : undefined);
 const num = (s?: string) => (s == null || s === '' ? undefined : Number.isFinite(Number(s)) ? Number(s) : undefined);
 
-export function parseVal(args: Record<string, string>): ValAction | null {
-  const r = ref(args.id);
+/** A calc export's path (src/calc/stream.ts): `rod.I4`, `box.out[3]`, `P.rows[1][2]`, `best.sum`. Case kept. */
+const CALC_REF = /^[A-Za-z][A-Za-z0-9_]{0,23}(?:\.[A-Za-z_][A-Za-z0-9_]{0,23}|\[\d{1,5}\])+$/;
+
+export function parseVal(args: Record<string, string>, flags: Set<string> = new Set()): ValAction | null {
+  // {{val rod.I4}}: a calc's number named on its own (no id=), its case as written.
+  const lone = args.id == null && flags.size === 1 ? [...flags][0] : undefined;
+  const calcRef = [args.id, lone].find((s) => s != null && CALC_REF.test(s.trim()) && /[.[]/.test(s));
+  const r = calcRef?.trim() ?? ref(args.id);
   if (!r) return null;
   // Any notation of decimals (values/format.ts); a percent one ("0%") says the value as a percent.
   const f = readFormat(args.fmt ?? args.dp);

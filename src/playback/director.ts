@@ -10,7 +10,7 @@ import { rng } from '../ink/agent/strokes';
 import { fadeOut, retireOut } from '../ink/agent/marks';
 import type { Settings } from '../settings/settings';
 import { Registry } from '../desk/registry';
-import { kitStore } from '../desk/kit/kit';
+import { kitStore, rewindStep } from '../desk/kit/kit';
 import { liveGeo } from '../desk/live';
 import { regionRuns } from '../desk/runs';
 import { buildElement } from '../desk/elements';
@@ -169,6 +169,12 @@ export class Director {
         return;
       }
     }
+    // A calc's numbers are words, not ink (the parser said them); one that failed is recorded as a skip.
+    if (raw.kind === 'computed') {
+      if (raw.failed != null) this.report({ action: raw as unknown as Action, firedAt: at, queuedAt: now(), startedAt: now(), endedAt: now() }, { skipped: `calc ${raw.id} failed: ${raw.failed}` });
+      else kitStore(this.registry).calcs.set(raw.id.toLowerCase(), raw.values);
+      return;
+    }
     if (raw.kind === 'let' || raw.kind === 'beat') return; // definitions were taken when it was parsed (prefetch); a beat boundary is the scheduler's
     if (raw.kind === 'const') { if (!this.seen.has(raw)) kitStore(this.registry).defineConsts(raw.defs); return; }
     if (raw.kind === 'find') { if (!this.seen.has(raw)) { this.figures.note(raw); kitStore(this.registry).finds.set(raw.id, raw); } return; }
@@ -183,6 +189,9 @@ export class Director {
     const a = (isInk ? raw : this.figures.resolve(raw)) as Action;
     this.runResolved(a, raw, at, live);
   }
+
+  /** A seek back replays a fired step: its block goes back to how it stood before it (src/desk/kit/kit.ts rewindStep). */
+  rewind(raw: RawAction): void { rewindStep(kitStore(this.registry), raw as object); }
 
   /**
    * The page the answer is on: the asked page (App: askedPage, set by ask()), then each page it scrolls

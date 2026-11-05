@@ -24,6 +24,9 @@
  *    an id-less group;
  *  - wrappers the model may add around groups (`<svg …>`, `</svg>`, ``` fences, `{{svg}}`/`{{/svg}}`)
  *    are dropped.
+ *  - a calc program, `<calc id="rod">…</calc>` (src/calc/stream.ts), goes out as one wire tag,
+ *    `{{calcsrc id=rod …}}` (src/svgboard/wire.ts escapeCalc): its code is never narration; the client
+ *    runs it and says the numbers it exported;
  *  - p6.2: the optional hidden check question after the last beat, `<check>…</check>`, is lifted out
  *    (kept in `check`, sent with the `done` event): it is never spoken; the student may open it after
  *    the answer ("Test yourself").
@@ -31,7 +34,7 @@
  * hears beat 1 while its group is still being written: no silence waiting for the whole board.
  */
 import { ScriptFilter } from './scriptFilter.ts';
-import { BEAT_TAG, BOARD_W, completeSvg, escapeSvg } from '../src/svgboard/wire.ts';
+import { BEAT_TAG, BOARD_W, completeSvg, escapeCalc, escapeSvg } from '../src/svgboard/wire.ts';
 
 /** A group longer than this is dropped (the client sanitizer caps it again). */
 export const GROUP_MAX = 20000;
@@ -198,6 +201,21 @@ export class SvgBeatFilter extends ScriptFilter {
         continue;
       }
       if (/^<check\s*>/i.test(this.sbuf)) { this.sbuf = this.sbuf.replace(/^<check\s*>/i, ''); this.st = 'check'; continue; }
+      if (/^<calc\b/i.test(this.sbuf)) {
+        const close = this.sbuf.search(/<\/calc\s*>/i);
+        if (close < 0) {
+          if (!final && this.sbuf.length < GROUP_MAX) return out;
+          this.notes.push(`calc never closed, dropped: ${this.sbuf.slice(0, 60)}`);
+          this.sbuf = '';
+          return out;
+        }
+        const whole = this.sbuf.slice(0, close);
+        this.sbuf = this.sbuf.slice(close).replace(/^<\/calc\s*>/i, '');
+        const m = /^<calc\s+id\s*=\s*["']?([A-Za-z][A-Za-z0-9_]{0,23})["']?\s*>/i.exec(whole);
+        if (!m) { this.notes.push(`calc with no id dropped: ${whole.slice(0, 60)}`); continue; }
+        out += ` {{calcsrc id=${m[1]} ${escapeCalc(whole.slice(m[0].length))}}} `;
+        continue;
+      }
       const w = WRAPPERS.exec(this.sbuf);
       if (w) { this.sbuf = this.sbuf.slice(w[0].length); continue; }
       const m = OPEN.exec(this.sbuf);
@@ -225,7 +243,7 @@ export class SvgBeatFilter extends ScriptFilter {
       }
       // Could it still become a marker? Wait for more text (bounded); else it is narration ("x < 3").
       if (!final && this.sbuf.length < 16 && !/[\s>]/.test(this.sbuf.slice(1)) ) return out;
-      if (!final && /^<(svg|plan|check|!--|\?xml|\/svg)/i.test(this.sbuf) && this.sbuf.length < 400) return out;
+      if (!final && /^<(svg|plan|check|calc|!--|\?xml|\/svg)/i.test(this.sbuf) && this.sbuf.length < 400) return out;
       if (!final && /^```/.test(this.sbuf) && this.sbuf.length < 12 && !/\n/.test(this.sbuf)) return out;
       if (!final && /^\{\{\s*\/?s?v?g?\s*\}?$/i.test(this.sbuf)) return out;
       out += this.speak(this.sbuf[0]);

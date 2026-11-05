@@ -314,7 +314,8 @@ export function typedNumbers(el: Element): { v: number; dp: number; text: string
  *    it but not equal at the coarser precision is a flag: the board would show two numbers for one thing;
  *    unless a contrast word stands before it ("was 140 s", "not 160 s": a before/after shown on purpose).
  * Exempt: [data-schematic] parts (a sketch, not a plot), the engine's own ticks (data-engine), letter
- * labels and names, counts ≤ 12. Ungrounded parts only note until the prompt teaches the rule and the
+ * labels and names, counts ≤ 12, and a number a calc program carries (a worked line typing its inputs,
+ * "(4 + 4 + 22) / 3 = {}", where the program holds 22: the teaching-engine proposal's not-strict rule). Ungrounded parts only note until the prompt teaches the rule and the
  * corpus is measured again (60/101 dots and most digit labels were hand-made before it).
  */
 export function grounded(g: Element, sc: DataScope, readouts: DataScope['values']): Grounded {
@@ -335,11 +336,13 @@ export function grounded(g: Element, sc: DataScope, readouts: DataScope['values'
   const vals = Array.from(g.querySelectorAll('[data-val]:not([data-bad])'));
   const at = (e: Element) => { const t = e.closest('text') ?? e; return { x: num(t.getAttribute('x')), y: num(t.getAttribute('y')), t }; };
   const shown = vals.length === readouts.length ? readouts.map((r, i) => ({ ...r, ...at(vals[i]) })).filter((r) => Number.isFinite(r.v)) : [];
+  const carried = calcNumbersIn(sc);
   for (const el of Array.from(g.querySelectorAll('text')).filter(free)) {
     const p = at(el);
     // Beside: the same text, or one within GROUND_BESIDE units (a label typed next to the readout).
     const beside = shown.filter((r) => r.t === el || Math.hypot(r.x - p.x, r.y - p.y) <= GROUND_BESIDE);
     for (const n of typedNumbers(el)) {
+      if (carried.some((v) => Math.abs(v - n.v) <= 0.5 * 10 ** -n.dp + 1e-9)) continue;
       // A contrast label ("was 140 s" beside "now 150 s") is a tween's or a contrast beat's other state: a note.
       const off = !n.contrast && beside.find((r) => {
         const dp = Math.min(n.dp, (r.text.replace(/,/g, '').split('.')[1] ?? '').length);
@@ -350,6 +353,13 @@ export function grounded(g: Element, sc: DataScope, readouts: DataScope['values'
     }
   }
   return { flags, notes };
+}
+
+/** Every number the scope's calc programs export (flattened). */
+function calcNumbersIn(sc: DataScope): number[] {
+  const out: number[] = [];
+  for (const t of sc.calcs?.values() ?? []) for (const v of Object.values(t)) out.push(...(typeof v === 'number' ? [v] : (v as (number | number[])[]).flat()));
+  return out.filter(Number.isFinite);
 }
 
 export const overlapArea = (a: Box, b: Box) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));

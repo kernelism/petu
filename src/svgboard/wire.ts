@@ -31,8 +31,18 @@ export const isDefsGroup = (svg: string): boolean => /^\s*(?:svg\s*)?<g\b[^>]*\s
 /** Whether the text right after `{{` opens an svg group tag (`{{svg <…`). */
 export const isSvgTagBody = (s: string): boolean => /^svg\s*</.test(s);
 
-/** A tag's length limit given the text after its `{{` (svg group tags are long). */
-export const tagLimit = (afterOpen: string, normal: number): number => (isSvgTagBody(afterOpen) ? SVG_TAG_MAX : normal);
+/**
+ * A calc program on the wire (src/calc/stream.ts): the server filter turns `<calc id="rod">…</calc>`
+ * into `{{calcsrc id=rod …}}`, its code's `&`, braces and line breaks as character references (the
+ * code keeps its line breaks: JavaScript reads them), so no filter or parser on the way reads it as
+ * narration or as tags. Its numbers come back as `{{computed id=rod …}}`, which may also be long.
+ */
+export const isCalcTagBody = (s: string): boolean => /^(?:calcsrc|computed)\s/.test(s);
+export const escapeCalc = (code: string): string => code.replace(/&/g, '&#38;').replace(/\{/g, '&#123;').replace(/\}/g, '&#125;').replace(/\r?\n/g, '&#10;').replace(/\r/g, '');
+export const unescapeCalc = (s: string): string => s.replace(/&#10;/g, '\n').replace(/&#123;/g, '{').replace(/&#125;/g, '}').replace(/&#38;/g, '&');
+
+/** A tag's length limit given the text after its `{{` (svg group and calc tags are long). */
+export const tagLimit = (afterOpen: string, normal: number): number => (isSvgTagBody(afterOpen) || isCalcTagBody(afterOpen) ? SVG_TAG_MAX : normal);
 
 /** Raw SVG → the body of its wire tag. */
 export function escapeSvg(svg: string): string {

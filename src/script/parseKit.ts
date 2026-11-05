@@ -24,7 +24,7 @@ const MAX_LABEL = 40;
 const MAX_POINTS = 40;
 const REDUCES = new Set<KitReduce>(['sum', 'mean', 'max', 'min', 'norm', 'count', 'dot', 'cos', 'wavg', 'argmax', 'quantile']);
 const OPS = new Set(['softmax', 'normalize', 'l2', 'cumsum', 'rank', 'matmul', 'scale']);
-const WIN_REDUCES = new Set<WinReduce>(['sum', 'mean', 'max', 'min']);
+const WIN_REDUCES = new Set<WinReduce>(['sum', 'mean', 'max', 'min', 'median']);
 /** Operator glyphs between blocks; ASCII spellings map to the glyph. */
 const GLYPHS: Record<string, string> = {
   '↓': '↓', '⊛': '⊛', '*': '⊛', '·': '·', '.': '·', '×': '×', x: '×', '=': '=', '→': '→', '->': '→', '−': '−', '-': '−', '+': '+', '÷': '÷', '/': '÷', '≈': '≈',

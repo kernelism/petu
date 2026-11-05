@@ -11,8 +11,21 @@ export type SchedulerCallbacks = {
    * (pause, speed); absent for actions a forward seek fast-forwards (they are behind on purpose).
    */
   onAction(action: Action, at: number, word?: number): void;
+  /**
+   * A seek back is about to replay `action` (a step of a process: replays()): the board goes back to
+   * how it stood before it fired, so the step plays again with its words. Called latest first.
+   */
+  onRewind?(action: Action): void;
   onDone(): void;
 };
+
+/**
+/**
+ * Actions a seek back plays again: the steps of a process (a window's step and sweep, a tween of the
+ * constants a board is drawn from), whose state the board can restore exactly. Everything else fired
+ * stays as drawn (ink is never withdrawn).
+ */
+export const replays = (a: Action): boolean => a.kind === 'step' || a.kind === 'sweep' || a.kind === 'tween';
 
 export type SchedulerOptions = {
   /** How far ahead of its word an action may fire, in ms. Default 0. */
@@ -87,6 +100,15 @@ export class Scheduler {
   private released = 0;
   private spoken = 0;
   private fired = 0;
+  /** After a seek back: acts below this index were fired already, and only those in `refire` fire again. */
+  private replayTo = 0;
+  private refire = new Set<number>();
+  /** Skips an already-fired act a seek back does not replay. True when it skipped. */
+  private skipFired(): boolean {
+    if (this.fired >= this.replayTo || this.refire.has(this.fired)) return false;
+    this.fired++;
+    return true;
+  }
   private lastFire = -Infinity;
   private started = false;
   private ended = false;
@@ -338,8 +360,9 @@ export class Scheduler {
   /**
    * Plays on from word `target`. Forward: the words in between are shown at once and their actions
    * fire fast (they land quickly, so the board is what it would have been). Back: the narration
-   * repeats from there; actions already fired are not fired again (the ink is still on the page).
-   * Unpauses. False when the clock can't seek.
+   * repeats from there; actions already fired are not fired again (the ink is still on the page),
+   * except the steps of a process (replays): the board rewinds them (onRewind) and they play again
+   * on their words, so going back shows the window where the words say it is. Unpauses. False when the clock can't seek.
    */
   seek(target: number): boolean {
     if (this.stopped || !this.clock.retime) return false;
@@ -350,12 +373,25 @@ export class Scheduler {
       while (this.released < to) this.release();
       this.started = true;
       while (this.fired < this.acts.length && this.acts[this.fired].word < to) {
+        if (this.skipFired()) continue;
         // With its beat and slot as tick() gives them: without them it read the target beat's words and drew over them.
         this.cb.onAction(this.withBeat(this.fired++), now - SEEK_LAG_MS);
         if (this.stopped) return true;
       }
       while (this.spoken < to) { this.cb.onWord(this.words[this.spoken], this.spoken); this.spoken++; if (this.stopped) return true; }
-    } else this.spoken = to;
+    } else {
+      this.spoken = to;
+      // The steps of a process after the target play again with their words: the board goes back first.
+      const again: number[] = [];
+      const upTo = Math.max(this.fired, this.replayTo);
+      for (let j = 0; j < upTo; j++) if (this.acts[j].word >= to && replays(this.acts[j].action)) again.push(j);
+      if (again.length && this.cb.onRewind) {
+        for (let k = again.length - 1; k >= 0; k--) this.cb.onRewind(this.acts[again[k]].action);
+        this.replayTo = upTo;
+        this.refire = new Set(again);
+        this.fired = again[0];
+      }
+    }
     this.lastFire = Math.min(this.lastFire, now);
     this.retimeFrom(to, now + RESUME_GAP_MS);
     this.tick();
@@ -473,6 +509,7 @@ export class Scheduler {
     let next = Infinity;
     // Actions first, so their ink can start in the same frame as the word's caption.
     while (this.fired < this.acts.length) {
+      if (this.skipFired()) continue;
       const a = this.acts[this.fired];
       if (drawsBoard(a.action)) {
         // The look: a board drawing waits for the page marks the student is still reading.

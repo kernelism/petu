@@ -103,3 +103,12 @@ describe('integral()', () => {
     expect(() => compile('integral(t, 1, 0, 1)')).toThrow(ExprError);
   });
 });
+
+describe('remainder', () => {
+  it('% walks a step over a grid\'s columns and rows (a live 5x5 answer wrote x: 20 + 40*(k%3))', () => {
+    const col = compileVars('20 + 40*(k%3)', ['k']), row = compileVars('78 + 40*floor(k/3)', ['k']);
+    expect([0, 1, 2, 3, 4, 8].map((k) => [col({ k }), row({ k })])).toEqual([[20, 78], [60, 78], [100, 78], [20, 118], [60, 118], [100, 158]]);
+    expect(compileVars('-1 % 3', [])({})).toBe(2);
+    expect(compileVars('2*7%4', [])({})).toBe(2);
+  });
+});

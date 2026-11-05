@@ -10,6 +10,7 @@
  * halo behind text so a label stays legible where it meets a line. A full-board white backing rect is
  * dropped (the board is the paper).
  */
+import { setAttrs } from './data';
 import { FONT_FIGURE, INK, mapColor, mapFont, mapStrokeWidth, parseColor, type Palette } from './style';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -149,7 +150,9 @@ export function sanitizeGroup(src: string, o: SanitizeOpts): Sanitized | string 
     if (fs != null) { const v = num(fs); if (v != null && !/%|em/.test(fs)) font = v; }
     if (isText) {
       // Legible ink: text never fades below 0.8 (a faint label is a missed label).
-      for (const k of ['opacity', 'fill-opacity'] as const) { const v = num(el.getAttribute(k)); if (v != null && v < 0.8) el.setAttribute(k, '0.8'); }
+      // (A data-set opacity is the engine's: a step's reveal, 0 until its step.)
+      const owned = setAttrs(el);
+      for (const k of ['opacity', 'fill-opacity'] as const) { const v = num(el.getAttribute(k)); if (v != null && v < 0.8 && !owned.has(k)) el.setAttribute(k, '0.8'); }
       const eff = font ?? 16;
       if (eff < o.minFont) { el.setAttribute('font-size', String(Math.round(o.minFont * 10) / 10)); font = o.minFont; }
       if (name === 'text') {

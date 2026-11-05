@@ -13,6 +13,7 @@
  * computes every number (compute.ts) and animates (anim.ts). A block's geometry is in section units,
  * fixed when it is built: the section scales as one picture.
  */
+import type { CalcTable } from '../../calc/stream';
 import type { SRect } from '../../geometry/space';
 import type { ColRef, DrawAction, FindAction, InkAction, KitBlock, KitSource, KitVerb, Pt, RefAction, Target } from '../../script/types';
 import { blockPart, isBlockRef, type BlockPart } from '../../script/pointExpr';
@@ -135,6 +136,12 @@ export type Block = {
 
 export class KitStore {
   readonly anim = new Animations();
+  /** Calc programs' numbers by lowercase calc id ({{computed}}): the svg board's formulas read them. */
+  readonly calcs = new Map<string, CalcTable>();
+  /** A window's state just before each step or sweep fired (keyed by the action): what a seek back restores (rewindStep). */
+  readonly winSnaps = new WeakMap<object, { out: string; filled: boolean[][]; vals: C.Mat; accent: string }>();
+  /** The constants a tween moves, as they stood just before it fired (keyed by the action): what a seek back restores. */
+  readonly constSnaps = new WeakMap<object, Record<string, number>>();
   private blocks = new Map<string, Block>();
   private waiters = new Map<string, ((b: Block) => void)[]>();
   private n = 0;
@@ -2116,7 +2123,7 @@ async function stepOrSweep(v: Extract<KitVerb, { kind: 'step' | 'sweep' }>, env:
   const c = col();
   return {
     target: tgtOf(out), bbox,
-    draw: async (signal) => {
+    draw: async (signal, k) => {
       await Promise.all([out.ready, input.ready, w.kernel ? store.get(w.kernel)?.ready : null]);
       calc.g ??= svg(out.g!.parentNode as SVGGElement, 'g', { class: 'kit-block', 'data-kit': 'calc' });
       calc.markReady();
@@ -2125,8 +2132,10 @@ async function stepOrSweep(v: Extract<KitVerb, { kind: 'step' | 'sweep' }>, env:
       // The narration goes on: the sweep runs on its own; this resolves once the first cell is under way.
       let first!: () => void;
       const started = new Promise<void>((r) => { first = r; });
-      void store.anim.run([out.id], async (ctl) => {
+      void store.anim.run(k, [out.id], async (ctl) => {
         if (signal.aborted) ctl.ff = true;
+        // Before it changes anything (an earlier step on the block has landed): how a seek back finds it.
+        store.winSnaps.set(v, { out: out.id, filled: w.filled.map((r) => r.slice()), vals: out.vals!.map((r) => r.slice()), accent: env.settings.inkColor });
         if (target) { first(); await winGo(p, target[0], target[1], ctl, GLIDE_MS, c, env); return; }
         const order = C.sweepOrder(w.filled);
         // At most ~120 window moves: past that (a large image), each move fills a run of cells.
@@ -2137,10 +2146,10 @@ async function stepOrSweep(v: Extract<KitVerb, { kind: 'step' | 'sweep' }>, env:
         const glide = per > 1 ? 0 : Math.min(GLIDE_MS, slot * 0.4);
         for (const [i, run] of runs.entries()) {
           if (i === 0) first();
-          const t0 = performance.now();
+          const t0 = ctl.clock.now(); // ink time: a pause mid-sweep is not time spent
           const [r, q] = run[run.length - 1];
           await winGo(p, r, q, ctl, prefersReducedMotion() ? 0 : glide, c, env, run.slice(0, -1));
-          await pause(slot - (performance.now() - t0), ctl);
+          await pause(slot - (ctl.clock.now() - t0) / ctl.scale, ctl);
         }
         first();
         await winDone(p, ctl, c, env.settings.inkColor);
@@ -2148,6 +2157,48 @@ async function stepOrSweep(v: Extract<KitVerb, { kind: 'step' | 'sweep' }>, env:
       await Promise.race([started, new Promise((r) => setTimeout(r, 400))]);
     },
   };
+}
+
+/**
+ * A seek back replays a step, sweep or tween (src/playback/scheduler.ts replays). A tween's constants
+ * go back to where they stood (kit plots drawn from them keep their last frame until it replays). A
+ * step's or sweep's window goes back to the
+ * state it found when it fired. The output cells it filled empty again, the window, its frames and
+ * an emphasis on the output lift, the calc line clears; the step then plays again on its words. A step that never fired (or a
+ * block gone) is left alone.
+ */
+export function rewindStep(store: KitStore, action: object): void {
+  // A tween: its constants go back, and everything drawn from them follows (the svg board, live geometry).
+  const cs = store.constSnaps.get(action);
+  if (cs) {
+    void store.anim.run(undefined, Object.keys(cs).map((k) => `const:${k}`), async (ctl) => {
+      ctl.ff = true;
+      for (const [k, v] of Object.entries(cs)) store.setConst(k, v);
+      store.constsChanged();
+    });
+    return;
+  }
+  const snap = store.winSnaps.get(action);
+  const out = snap && store.get(snap.out);
+  if (!snap || !out?.win) return;
+  const w = out.win;
+  void store.anim.run(undefined, [out.id], async (ctl) => {
+    ctl.ff = true;
+    const o = out.el.winEls as { win: SVGRectElement; ghosts: SVGGElement; kf?: SVGRectElement; of: SVGRectElement } | undefined;
+    [o?.win, o?.ghosts, o?.kf, o?.of].forEach((e) => e?.remove());
+    out.el.winEls = undefined;
+    w.rect = null; w.cur = null; w.pos = null;
+    w.filled = snap.filled.map((r) => r.slice());
+    const c = col();
+    await setGridVals(out, snap.vals, 0, ctl, c);
+    const els = out.el.grid as GridEls | undefined;
+    // An emphasis on the output pointed at cells the rewind empties: it lifts with them.
+    if (els?.emph) { els.emph.remove(); els.emph = undefined; }
+    if (els) els.emCells = [];
+    if (els) for (let r = 0; r < els.texts.length; r++) for (let q = 0; q < els.texts[r].length; q++) restCell(out, r, q, c, snap.accent);
+    const calc = w.calc ? store.get(w.calc) : undefined;
+    calc?.g?.replaceChildren();
+  });
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -2183,9 +2234,9 @@ async function setVerb(v: Extract<KitVerb, { kind: 'set' }>, env: BuildEnv, stor
   const bbox = union([b.placed.rect, ...deps.filter((d) => d.region === b.region).map((d) => d.placed.rect)]);
   return {
     target: tgtOf(b), bbox,
-    draw: async (signal) => {
+    draw: async (signal, k) => {
       await b.ready;
-      void store.anim.run([b.id, ...deps.map((d) => d.id)], async (ctl) => {
+      void store.anim.run(k, [b.id, ...deps.map((d) => d.id)], async (ctl) => {
         if (signal.aborted) ctl.ff = true;
         b.src = { vals: next };
         const jobs: Promise<void>[] = [];
@@ -2365,7 +2416,7 @@ function setTokenVerb(b: Block, v: Extract<KitVerb, { kind: 'set' }>, part: Bloc
     target: tgtOf(b), bbox: pad(b.placed.rect, b.m.u(8)),
     draw: async (signal, k) => {
       await b.ready;
-      await store.anim.run([b.id], async (ctl) => {
+      await store.anim.run(k, [b.id], async (ctl) => {
         if (signal.aborted || k.fadeMs != null) ctl.ff = true;
         await setTokens(b, st, prefersReducedMotion() ? 0 : SET_MS * 1.6, ctl, c);
         store.notify(b.id);
@@ -2393,9 +2444,9 @@ function setParts(b: Block, v: Extract<KitVerb, { kind: 'set' }>, part: BlockPar
   const deps = store.dependents(b.id), c = col();
   return {
     target: tgtOf(b), bbox: b.placed.rect,
-    draw: async (signal) => {
+    draw: async (signal, k) => {
       await b.ready;
-      void store.anim.run([b.id, ...deps.map((d) => d.id)], async (ctl) => {
+      void store.anim.run(k, [b.id, ...deps.map((d) => d.id)], async (ctl) => {
         if (signal.aborted) ctl.ff = true;
         b.src = { vals: totals }; b.full = totals; b.parts = parts; b.el.partsFrom = from;
         await Promise.all([setBarVals(b, totals, SET_MS, ctl, c), refreshDeps([b.id], store, SET_MS, ctl, env, c)]);
@@ -2422,7 +2473,7 @@ async function splitVerb(v: Extract<KitVerb, { kind: 'splitBar' }>, env: BuildEn
     target: tgtOf(b), bbox: b.placed.rect,
     draw: async (signal, k) => {
       await b.ready;
-      await store.anim.run([b.id], async (ctl) => {
+      await store.anim.run(k, [b.id], async (ctl) => {
         if (signal.aborted || k.fadeMs != null) ctl.ff = true;
         b.parts = b.parts ?? totals.map((x) => [x]);
         b.parts[i] = got;
@@ -2825,7 +2876,7 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
   const dur = v.dur;
   return {
     target: tgtOf(t), bbox: union([t.placed.rect, cb.placed.rect]),
-    draw: async (signal) => {
+    draw: async (signal, k) => {
       await t.ready;
       if (!cb.g) cb.g = svg(t.g!.parentNode as SVGGElement, 'g', { class: 'kit-block', 'data-kit': 'calc' });
       cb.markReady();
@@ -2839,12 +2890,12 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
       } else e.heads[j].textContent = shown(tb.heads[j]);
       let first!: () => void;
       const started = new Promise<void>((r) => { first = r; });
-      void store.anim.run([t.id], async (ctl) => {
+      void store.anim.run(k, [t.id], async (ctl) => {
         if (signal.aborted) ctl.ff = true;
         const slot = C.sweepStepMs(R, dur ?? Math.min(6, Math.max(1.5, R * 0.7)));
         const hl = svg(e.over, 'rect', { x: t.placed.body.x, y: t.placed.body.y, width: t.placed.body.w, height: tb.rh, fill: accent, 'fill-opacity': 0.08, rx: px(t, 3), opacity: 0 });
         for (let r = 0; r < R; r++) {
-          const t0 = performance.now();
+          const t0 = ctl.clock.now(); // ink time: a pause mid-sweep is not time spent
           if (r === 0) first();
           const y0 = Number(hl.getAttribute('y')), y1 = t.placed.body.y + r * tb.rh;
           if (r === 0) { hl.setAttribute('y', String(y1)); await tween(ctl.ff ? 0 : 150, (k) => hl.setAttribute('opacity', String(k)), ctl); }
@@ -2854,7 +2905,7 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
           paintTable(t, c, accent, [r, j]);
           await drawCalc(cb, store, c, env, { speed: 1, fadeMs: 0 }, false, exps[r]);
           await refreshDeps([t.id], store, Math.min(slot * 0.6, 360), ctl, env, c);
-          await pause(slot - (performance.now() - t0), ctl);
+          await pause(slot - (ctl.clock.now() - t0) / ctl.scale, ctl);
         }
         first();
         paintTable(t, c, accent, null);
@@ -3164,12 +3215,12 @@ async function limitMove(v: Extract<MoveV, { kind: 'limit' }>, env: BuildEnv, st
   };
   return {
     target: tgtOf(host), bbox: host.placed.rect,
-    draw: async (signal) => {
+    draw: async (signal, k) => {
       await w.ready;
       let first!: () => void;
       const started = new Promise<void>((r) => { first = r; });
       const ids = [...plots, ...blocks].map((b) => b.id).concat(`const:${key}`);
-      void store.anim.run(ids, async (ctl) => {
+      void store.anim.run(k, ids, async (ctl) => {
         if (signal.aborted) ctl.ff = true;
         const t = moveReadout(w, label(from), c, accent);
         // One frame for the whole sweep: the axes settle first, so the curves move on fixed axes.
@@ -3229,11 +3280,12 @@ async function tweenMove(v: Extract<RefAction, { kind: 'tween' }>, env: BuildEnv
   const c = col();
   return {
     target: live ? live.target : tgtOf(host!), bbox: live ? live.bbox : host!.placed.rect,
-    draw: async (signal) => {
+    draw: async (signal, k) => {
       let first!: () => void;
       const started = new Promise<void>((r) => { first = r; });
-      void store.anim.run(keys.map((k) => `const:${k}`), async (ctl) => {
+      void store.anim.run(k, keys.map((k) => `const:${k}`), async (ctl) => {
         if (signal.aborted) ctl.ff = true;
+        store.constSnaps.set(v, Object.fromEntries(keys.map((key) => [key, store.consts[key]])));
         const pls = [...new Set(plots.map((b) => b.plot!))];
         first();
         let last = 0;
@@ -3276,7 +3328,7 @@ async function beforeAfter(v: Extract<MoveV, { kind: 'beforeafter' }>, env: Buil
     draw: async (signal, k) => {
       await w.ready;
       const ms = signal.aborted || k.fadeMs != null ? 0 : SET_MS * 1.4;
-      await store.anim.run([...plots, ...blocks].map((b) => b.id), async (ctl) => {
+      await store.anim.run(k, [...plots, ...blocks].map((b) => b.id), async (ctl) => {
         if (signal.aborted) ctl.ff = true;
         const before = w.vals!.map((r) => r.slice()), beforeXs = w.xs?.slice();
         // On a slide's chart the curve that changes is the one in ink (traced curves are drawn in any order).

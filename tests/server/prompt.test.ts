@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { quantity } from '../../src/values/quantity';
 import { describe, it, expect, vi } from 'vitest';
+import { computedTag } from '../../src/calc/stream';
+import { calcsOf } from '../helpers/calc';
 import { systemPrompt, PROMPT_VERSION } from '../../server/prompt/system';
 import { SVG_EXAMPLES } from '../../server/prompt/svgExamples';
 import { BOARD_W } from '../../src/svgboard/wire';
@@ -52,21 +54,28 @@ function beatsOf(script: string): { narration: string; id: string; svg: string }
       if (depth === 0) { end = open + m.index! + 4; break; }
     }
     expect(end, 'unbalanced <g>').toBeGreaterThan(open);
-    if (out.length) out[out.length - 1].narration = body.slice(pos, open);
+    // A calc program between beats is code, not narration (src/calc/stream.ts).
+    if (out.length) out[out.length - 1].narration = body.slice(pos, open).replace(/<calc\b[\s\S]*?<\/calc>/g, ' ');
     else expect(body.slice(0, open).trim(), 'a beat starts with its group').toBe('');
     out.push({ narration: '', id: /<g id="([^"]+)"/.exec(body.slice(open))![1], svg: body.slice(open, end) });
     pos = end;
   }
-  if (out.length) out[out.length - 1].narration = body.slice(pos);
+  if (out.length) out[out.length - 1].narration = body.slice(pos).replace(/<calc\b[\s\S]*?<\/calc>/g, ' ');
   return out;
 }
+
+/** The wire with each calc replaced by its computed tag, as the client's withCalcs makes it. */
+const computedWire = (script: string): string => {
+  const calcs = calcsOf(script);
+  return wireOf(script).replace(/\{\{calcsrc id=(\w+) [^}]*\}\}/g, (_m, id: string) => computedTag({ id, values: calcs.get(id.toLowerCase())! }));
+};
 
 describe('system prompt (svg, default)', () => {
   const s = systemPrompt();
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.17');
+    expect(PROMPT_VERSION).toBe('p6.23');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -169,6 +178,29 @@ describe('system prompt (svg, default)', () => {
     expect(s).not.toMatch(/takeaway written once/);
   });
 
+  it('p6.18 (teaching engine): working on the board, numbers from programs, processes in steps', () => {
+    expect(s).toMatch(/or the working a teacher writes: an equation, a derivation one step per line, a worked sum/);
+    expect(s).not.toMatch(/no derivation steps/);
+    expect(s).toMatch(/PROGRAMS: anything computed past one short formula/);
+    expect(s).toMatch(/<calc id="win">[\s\S]*export const out[\s\S]*<\/calc>/);
+    expect(s).toMatch(/\{\{val win\.out\[0\]\}\}/);
+    expect(s).toMatch(/STEPS: to walk a process one step at a time/);
+    expect(s).toMatch(/It labels its own grids: write nothing for them, and a beat that only steps it opens with an empty group/);
+    expect(s).toMatch(/WINDOWS: a window sliding over a row or a grid[^\n]*drawn by the engine, never by hand: <g id="conv" data-const="k=0" data-slide="img\.f"/);
+    expect(s).toMatch(/When the PLAN walks a process a step at a time, the student must see it move: draw it with STEPS/);
+    expect(s).toMatch(/data-const="k=0"/);
+    expect(s).toMatch(/\{\{tween k=3 dur=0\.8\}\}/);
+  });
+
+  it('p6.18: the prompt\'s calc example runs to the numbers it implies', async () => {
+    const vm = await import('node:vm');
+    const { prepareCalc } = await import('../../src/calc/prepare');
+    const src = /<calc id="win">([\s\S]*?)<\/calc>/.exec(s)![1];
+    const p = prepareCalc('win', src);
+    const out = vm.runInNewContext(`(function(){${p.body}})()`) as { out: number[] };
+    expect(Array.from(out.out)).toEqual([6, 6]);
+  });
+
   it('p6.2: the narration ends on the takeaway; a check question is optional and hidden (<check>), never spoken', () => {
     expect(s).toMatch(/end on the takeaway, never on a question/);
     expect(s).toMatch(/<check>[^<]+<\/check>/);
@@ -222,12 +254,14 @@ describe('system prompt (svg, default)', () => {
           const fs = el.getAttribute('font-size');
           if (fs) expect(Number(fs), b.id).toBeGreaterThanOrEqual(16);
         }
-        expect(doc.querySelectorAll('text').length + doc.querySelectorAll('[font-size] text').length, b.id).toBeGreaterThan(0); // every group is labelled
+        // every group is labelled (an engine view, data-slide, labels its own grids)
+        expect(doc.querySelectorAll('text').length + doc.querySelectorAll('[font-size] text').length + doc.querySelectorAll('[data-slide]').length, b.id).toBeGreaterThan(0);
       }
     });
 
     it('p6.10: grounded: every number and point on the board is the engine\'s, and drawn inside the viewBox', () => {
       const H = boardH(ex.script), board = newBoardState(BOARD_W, H), sc = newScope();
+      sc.calcs = calcsOf(ex.script);
       for (const g of wireOf(ex.script).matchAll(/\{\{svg (<g[\s\S]*?)\}\}/g)) {
         const r = checkGroups([unescapeSvg(g[1])], board, 16, sc);
         acceptGroups(board, r.geos, r.grow);
@@ -241,7 +275,7 @@ describe('system prompt (svg, default)', () => {
     });
 
     it('p6.10: a computed number is said by reference: each {{val}} says what the board shows, and no spoken number is near a readout', () => {
-      const wire = wireOf(ex.script);
+      const wire = computedWire(ex.script);
       const p = new ScriptParser();
       const evs = [...p.push(wire), ...p.end()];
       const vals = evs.flatMap((e) => (e.type === 'action' && e.action.kind === 'val' ? [e.action] : []));
@@ -257,7 +291,8 @@ describe('system prompt (svg, default)', () => {
     it('p6.12: the first group is frame- or title-sized (nothing is spoken until it is written); the heavy drawing comes in a later beat', () => {
       const bs = beatsOf(ex.script);
       expect(bs[0].svg.length, bs[0].id).toBeLessThanOrEqual(400);
-      expect(Math.max(...bs.slice(1).map((b) => b.svg.length))).toBeGreaterThan(2 * bs[0].svg.length);
+      // An engine view (data-slide) is the heavy drawing in a few attributes: the engine draws its grids.
+      expect(bs.slice(1).some((b) => /data-slide=/.test(b.svg)) || Math.max(...bs.slice(1).map((b) => b.svg.length)) > 2 * bs[0].svg.length).toBe(true);
       // The plan is a few compact lines (it is written before the first word too).
       expect((/<plan>([\s\S]*?)<\/plan>/.exec(ex.script)![1]).length).toBeLessThanOrEqual(400);
     });
@@ -282,11 +317,11 @@ describe('system prompt (svg, default)', () => {
       expect(ex.script).toMatch(/data-val="/);
     });
 
-    it('the board never writes out the narration: no derivation lines, short labels only', () => {
+    it('the board never writes out the narration: labels and working (p6.18), never a sentence', () => {
       for (const b of beatsOf(ex.script)) {
         for (const m of b.svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)) {
-          expect(m[1].split(/\s+/).length, `${b.id}: ${m[1]}`).toBeLessThanOrEqual(6);
-          expect(m[1], b.id).not.toMatch(/=.*=|[×÷].*=/); // a worked step is spoken, not written
+          // Words, not symbols: a worked line ("(4 + 4 + 22) / 3 = {}") is working, a run of words is a sentence.
+          expect(m[1].split(/\s+/).filter((w) => /[A-Za-z]{2,}/.test(w)).length, `${b.id}: ${m[1]}`).toBeLessThanOrEqual(6);
         }
       }
     });

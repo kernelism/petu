@@ -63,14 +63,14 @@ describe('animations: one state animation per block', () => {
     const A = new Animations();
     const log: string[] = [];
     let first!: Promise<void>;
-    first = A.run(['o'], async (ctl) => {
+    first = A.run(undefined, ['o'], async (ctl) => {
       for (let i = 0; i < 50; i++) { await pause(40, ctl); log.push(`a${i}`); }
       log.push('a-end');
     });
     await new Promise((r) => setTimeout(r, 60));
     expect(A.busy('o')).toBe(true);
     const t0 = performance.now();
-    await A.run(['o', 'p'], async () => { log.push('b'); });
+    await A.run(undefined, ['o', 'p'], async () => { log.push('b'); });
     await first;
     // the first ran to its end state at once (all 50 steps, no waiting), before the second began
     expect(log.indexOf('a-end')).toBeLessThan(log.indexOf('b'));
@@ -81,13 +81,29 @@ describe('animations: one state animation per block', () => {
   it('different blocks run side by side; settle() lands everything', async () => {
     const A = new Animations();
     let doneA = false, doneB = false;
-    const a = A.run(['a'], async (ctl) => { await pause(5000, ctl); doneA = true; });
-    const b = A.run(['b'], async (ctl) => { await pause(5000, ctl); doneB = true; });
+    const a = A.run(undefined, ['a'], async (ctl) => { await pause(5000, ctl); doneA = true; });
+    const b = A.run(undefined, ['b'], async (ctl) => { await pause(5000, ctl); doneB = true; });
     await new Promise((r) => setTimeout(r, 0));
     expect(A.busy('a') && A.busy('b')).toBe(true);
     A.settle();
     await Promise.all([a, b]);
     expect(doneA && doneB).toBe(true);
+  });
+  it('motion runs on the narration clock: still while paused, compressed with a backlog', async () => {
+    const A = new Animations();
+    let paused = true;
+    let seen = -1;
+    const run = A.run({ speed: 1, paused: () => paused }, ['w'], async (ctl) => { await tween(200, (t) => { seen = t; }, ctl, (t) => t); });
+    await new Promise((r) => setTimeout(r, 250));
+    expect(seen).toBe(0); // paused from the start: the window has not moved
+    paused = false;
+    await run;
+    expect(seen).toBe(1);
+    const t0 = performance.now();
+    await A.run({ speed: 0.5 }, ['w'], async (ctl) => { await pause(300, ctl); });
+    const took = performance.now() - t0;
+    expect(took).toBeGreaterThanOrEqual(140);
+    expect(took).toBeLessThan(280);
   });
   it('tweens end on exactly 1; reduced motion lands at once', async () => {
     const seen: number[] = [];

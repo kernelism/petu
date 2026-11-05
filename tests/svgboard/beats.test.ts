@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // The svg answer mode end to end, offline: the model's raw beats (the prompt's own examples) → the
 // server filter (wire tags) → the parser, the gate's splitter and checks, the scheduler's anchoring.
+import { calcsOf } from '../helpers/calc';
 import { describe, expect, it } from 'vitest';
 import { HOLD_MAX, SvgBeatFilter, boardOf } from '../../server/svgBeats';
 import { spoken } from '../../server/openai';
@@ -74,8 +75,10 @@ describe('svg beats: the server filter', () => {
       const acts = actions(a);
       const sb = acts.find((x) => x.kind === 'sketch') as Extract<RawAction, { kind: 'sketch' }>;
       const board = newBoardState(sb.svgboard!.w, sb.svgboard!.h);
-      // One data scope for the answer (as the live gate keeps it): later groups read earlier constants, frames and curves.
+      // One data scope for the answer (as the live gate keeps it): later groups read earlier constants, frames and curves,
+      // and the numbers its calc programs computed (src/calc/stream.ts).
       const scope = newScope();
+      scope.calcs = calcsOf(ex.script);
       for (const g of acts.filter((x): x is Extract<RawAction, { kind: 'svg' }> => x.kind === 'svg')) {
         const r = checkGroups([g.svg], board, 16, scope);
         expect(r.flags, g.id).toEqual([]);
@@ -303,7 +306,7 @@ describe('svg beats: a cut-off group', () => {
 describe('svg demos (gallery scenes)', () => {
   it('every svg demo opens a board and draws groups that pass the gate checks at the board minimum', async () => {
     const { SVG_DEMOS } = await import('../../src/demo/svg');
-    expect(Object.keys(SVG_DEMOS).sort()).toEqual(['svg-ceiling', 'svg-dense', 'svg-dough', 'svg-ferry', 'svg-rent', 'svg-session', 'svg-sinx', 'svg-skater', 'svg-slope', 'svg-spin', 'svg-tunnel']);
+    expect(Object.keys(SVG_DEMOS).sort()).toEqual(['svg-ceiling', 'svg-dense', 'svg-dough', 'svg-ferry', 'svg-rain', 'svg-rent', 'svg-session', 'svg-sinx', 'svg-skater', 'svg-slope', 'svg-spin', 'svg-tunnel']);
     for (const [k, d] of Object.entries(SVG_DEMOS)) {
       const acts = actions(d.script);
       expect(acts[0], k).toMatchObject({ kind: 'sketch', svgboard: {} });

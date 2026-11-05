@@ -7,6 +7,7 @@
 // Two users, one implementation: the commit gate replays a recorded answer beat by beat, and the
 // script parser (src/script/parser.ts) applies every tag as it is parsed, so a {{val}} is said with
 // the engine's value (`say`) and a {{contrast}} expands into the copy it draws (`expand`).
+import { pickNumber, type CalcTable } from '../calc/stream';
 import { computeSource, formula, colIndex, splitParts, tokenCount, tokenMoves } from '../desk/kit/kit';
 import { readFormat } from '../values/format';
 import * as C from '../desk/kit/compute';
@@ -67,6 +68,10 @@ export class GateState {
   readonly values: Value[] = [];
   /** Named numbers, lowercase (the expression language reads names lowercased). */
   readonly consts: Record<string, number> = {};
+  /** Each constant's defining source as first written (a re-read of the same definition is not a redefinition). */
+  private readonly constSrc = new Map<string, string>();
+  /** Calc programs' numbers by calc id (src/calc/stream.ts): what {{val rod.I4}} says. */
+  readonly calcs = new Map<string, CalcTable>();
   /** When each constant was declared (the beat, or for the parser the tag index). */
   readonly declared = new Map<string, number>();
   readonly blocks = new Map<string, Block>();
@@ -116,17 +121,27 @@ export class GateState {
       case 'sketch': this.regions.add(a.id); return;
       case 'scroll': case 'clear': return;
       case 'let': this.note(a); return;
+      case 'computed': {
+        if (a.failed != null) return `calc ${a.id} failed: ${a.failed}`;
+        this.calcs.set(a.id.toLowerCase(), a.values);
+        // Every number it exported is computed (the board and the narration may show any of them).
+        for (const [k, v] of Object.entries(a.values)) this.addValues(typeof v === 'number' ? [v] : (v as (number | number[])[]).flat(), 'computed', `${a.id}.${k}`, beat);
+        return;
+      }
       case 'const': {
         for (const [k, src] of a.defs) {
           const f = formula(src, [], this.consts);
           const v = f ? f({}) : NaN;
           // A constant written as a number is the model's own literal; one written as a formula (T=2*v/g) is computed.
           const lit = /^[-−+]?\d*\.?\d+$/.test(src.trim());
+          // The same definition again (a group's data-const re-read after a tween moved it, k=0 then {{tween k=1}}):
+          // the constant it already is, never a redefinition.
+          if (this.constSrc.get(k.toLowerCase()) === src.trim()) continue;
           // A name already defined keeps its value (as on the board: KitStore.defineConsts); the gate flags it.
           if (k.toLowerCase() in this.consts && this.consts[k.toLowerCase()] !== v) { this.redefined.push(`${k}=${src} (it is ${+this.consts[k.toLowerCase()].toPrecision(6)})`); continue; }
           if (Number.isFinite(v)) {
             const key = k.toLowerCase();
-            this.consts[key] = v; this.declared.set(key, beat); this.addValues([v], lit ? 'const' : 'computed', k, beat);
+            this.consts[key] = v; this.declared.set(key, beat); this.constSrc.set(key, src.trim()); this.addValues([v], lit ? 'const' : 'computed', k, beat);
             // A formula constant follows the constants it reads when they change (as on the board: KitStore.setConst).
             this.derived = this.derived.filter(([d]) => d !== key);
             if (!lit) this.derived.push([key, src]);
@@ -320,6 +335,11 @@ export class GateState {
     const m = /^([^.[]+)(\[[^\]]+\])?(?:\.(.+))?$/.exec(ref);
     if (!m) return `bad reference ${ref}`;
     const [, id, idx, field] = m;
+    const calc = this.calcs.get(id.toLowerCase());
+    if (calc) {
+      const v = pickNumber(calc, ref.slice(id.length).replace(/^\./, ''));
+      return v != null && Number.isFinite(v) ? { v } : `${ref}: calc ${id} exports no such number`;
+    }
     if (this.finds.has(id) && !idx) {
       const r = this.reading(id);
       if (typeof r === 'string') return r;
@@ -437,6 +457,7 @@ export class GateState {
     const g = parseGroup(src);
     if (typeof g === 'string') return g;
     this.svg.consts = this.consts;
+    this.svg.calcs = this.calcs;
     this.svg.define = (defs) => { this.apply({ kind: 'const', defs } as RawAction, beat); };
     this.svg.values.length = 0;
     const probs = resolveData(g, this.svg);
@@ -449,6 +470,7 @@ export class GateState {
   private svgAgain(beat: number): void {
     if (!this.svgGroups.length) return;
     this.svg.consts = this.consts;
+    this.svg.calcs = this.calcs;
     this.svg.values.length = 0;
     for (const g of this.svgGroups) resolveData(g, this.svg);
     this.takeReadouts(beat);

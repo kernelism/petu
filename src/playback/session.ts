@@ -1,4 +1,5 @@
 import { ScriptParser } from '../script/parser';
+import { withCalcs } from '../calc/stream';
 import { Scheduler, actionLeadMs } from './scheduler';
 import type { NarrationClock } from './clock';
 import type { RawAction as Action, ScriptEvent } from '../script/types';
@@ -13,6 +14,8 @@ type Deps = {
    * behind on purpose (a forward seek's fast-forward).
    */
   onAction(a: Action, at: number, live?: () => number | null): void;
+  /** A seek back replays a fired step: the board puts it back as it stood before (Scheduler onRewind). */
+  onRewind?(a: Action): void;
   onWord(words: string[]): void;
   onState(s: SessionState, error?: string): void;
   /** Called as soon as an action is parsed, before it fires (lets the director warm caches). */
@@ -66,6 +69,7 @@ export class AnswerSession {
         const t = scheduler.liveStart(word);
         return t === undefined ? at : t;
       }),
+      onRewind: (a) => this.d.onRewind?.(a),
       // Done means the narration has ended and the last ink has landed.
       onDone: () => {
         void Promise.resolve(this.d.idle?.())
@@ -91,7 +95,8 @@ export class AnswerSession {
       scheduler.push(events);
     };
     try {
-      for await (const chunk of source(signal)) {
+      // Calc programs run as they close; the parser reads the numbers they computed (src/calc/stream.ts).
+      for await (const chunk of withCalcs(source(signal))) {
         if (signal.aborted) return;
         feed(parser.push(chunk));
       }

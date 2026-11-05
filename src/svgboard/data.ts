@@ -21,8 +21,11 @@
  *  <text data-val="pi*sqrt(R/g)/60" data-fmt="1" data-unit="min">   computed text; a "{}" in the
  *                                    text's own words is replaced (else the value + unit is the text);
  *                                    with an id it is a readout the narration says as {{val id=…}},
+ *                                    several {} take several formulas in order ("{} × {}", data-val="n, m");
  *                                    with the affixes the text writes around it ("${}" → "$10",
  *                                    "{} units" → "100 units": src/values/quantity.ts, one reading)
+ *  <g data-slide="img.f" data-kernel="img.k" data-step="k"/>   a sliding window the engine lays out,
+ *                                    steps and works (slide.ts); its outputs are said as {{val id.out[i]}}
  *  data-schematic                    a sketch, not a plot: its hand-placed dots and typed numbers are
  *                                    left alone (snapMarkers, svgboard/check.ts grounded)
  *
@@ -35,6 +38,8 @@
  * flags it (repair or drop). Resolution is idempotent: a constant changes (a tween) → resolve again.
  */
 import { compileVars, freeNames } from '../desk/expr';
+import { pickNumber, type CalcTable } from '../calc/stream';
+import { drawSlide, SlideError } from './slide';
 import { drawText, readTemplate, type Affix } from '../values/quantity';
 import { isUnitWord } from '../values/units';
 import { readFormat } from '../values/format';
@@ -46,6 +51,8 @@ export type DPt = { x: number; y: number; ax?: Axes; dx: number; dy: number };
 export type DataScope = {
   /** Constants (lowercase names), read live. */
   consts: Record<string, number>;
+  /** Calc programs' numbers by lowercase calc id (src/calc/stream.ts): a formula reads `rod.I4`, `box.out[3]`. */
+  calcs?: Map<string, CalcTable>;
   /** Defines constants (in order). Default: evaluated into `consts`. The board defines through the kit store. */
   define?: (defs: [string, string][]) => void;
   axes: Map<string, { name: string; src: [string, string, string] }>;
@@ -107,9 +114,18 @@ function evalF(src: string, sc: DataScope, vars: Record<string, number> = {}): n
   return v;
 }
 
-/** xof(P) / yof(P) → the point's data coordinate as a number literal. */
+/**
+ * xof(P) / yof(P) → the point's data coordinate as a number literal; a calc's number (`rod.I4`,
+ * `box.out[3]`) → its value. A calc path that names no exported number fails (never a guess).
+ */
 function valueFns(src: string, sc: DataScope): string {
   let s = src;
+  if (sc.calcs?.size) s = s.replace(/(?<![\w.])([A-Za-z]\w*)\.([A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\[\d+\])*)/g, (m, id: string, path: string) => {
+    const t = sc.calcs!.get(id.toLowerCase());
+    if (!t) return m;
+    const v = pickNumber(t, path);
+    return v != null && Number.isFinite(v) ? `(${v})` : fail(`calc ${id} exports no number ${path}`);
+  });
   for (let guard = 0; guard < 20; guard++) {
     const m = /\b(xof|yof)\s*\(/i.exec(s);
     if (!m) return s;
@@ -325,7 +341,7 @@ export function fmtValue(v: number, fmt?: string | null): string {
 /** A number with its unit, as a bare data-val or a tick writes it ("12%", "$10", "5 m"): quantity.ts. */
 const withUnit = (v: string, u: string | null, fmt?: string | null) => drawText(readFormat(fmt)?.percent ? `${v}%` : v, readTemplate(null, u));
 
-const ATTRS_DATA = ['data-const', 'data-axes', 'data-fn', 'data-param', 'data-between', 'data-at', 'data-from', 'data-to', 'data-points', 'data-set', 'data-rotate', 'data-translate', 'data-val'];
+const ATTRS_DATA = ['data-const', 'data-axes', 'data-fn', 'data-param', 'data-between', 'data-at', 'data-from', 'data-to', 'data-points', 'data-set', 'data-rotate', 'data-translate', 'data-val', 'data-slide'];
 /** Whether an element (or its subtree) uses the data attributes. */
 export const hasData = (el: Element): boolean => ATTRS_DATA.some((a) => el.hasAttribute(a)) || !!el.querySelector(ATTRS_DATA.map((a) => `[${a}]`).join(','));
 /** Whether an element's geometry depends on the constants (re-resolved each frame). */
@@ -403,6 +419,11 @@ export const isMarker = (el: Element): boolean => {
   return t === 'circle' ? r('r') > 0 && r('r') <= 8 : t === 'ellipse' && r('rx') > 0 && r('rx') <= 8 && r('ry') > 0 && r('ry') <= 8;
 };
 /** Placed by the engine: its own data-at / data-set of its centre, or an ancestor's data-at / data-translate. */
+/**
+ * The attributes an element's data-set computes ("opacity", "x" …): the engine owns them, so the style
+ * passes (grammar, sanitize) leave them alone. A reveal's opacity 0 is "not yet", not a faint label.
+ */
+export const setAttrs = (el: Element): Set<string> => new Set(splitTop(el.getAttribute('data-set') ?? '', ';').map((p) => p.slice(0, p.indexOf(':')).trim().toLowerCase()).filter(Boolean));
 export const enginePlaced = (el: Element): boolean => el.hasAttribute('data-at') || /\bc[xy]\s*:/.test(el.getAttribute('data-set') ?? '') || !!el.parentElement?.closest('[data-at],[data-translate]');
 function snapMarkers(g: Element, sc: DataScope): void {
   const marks = [g, ...Array.from(g.querySelectorAll('circle,ellipse'))].filter((el) => isMarker(el) && !el.hasAttribute('data-snap-done') && !enginePlaced(el) && !el.closest('[data-schematic],[data-engine],[data-defs]') && !el.hasAttribute('data-bad'));
@@ -468,6 +489,13 @@ function resolveOne(el: Element, sc: DataScope): void {
     if (!defs.length) fail(`data-const "${dc}" defines nothing (write name=value pairs)`);
     if (sc.define) sc.define(defs); else for (const [k, v] of defs) sc.consts[lc(k)] = evalF(v, sc);
     el.setAttribute('data-const-done', '');
+  }
+  // A sliding window the engine draws (slide.ts), at its step constant.
+  if (el.hasAttribute('data-slide')) {
+    const step = el.getAttribute('data-step') ?? 'k';
+    if (!(lc(step) in sc.consts)) fail(`data-slide steps on ${step}: define it first (data-const="${step}=0")`);
+    sc.calcs ??= new Map();
+    try { drawSlide(el, sc, sc.consts[lc(step)]); } catch (e) { if (e instanceof SlideError) fail(e.message); throw e; }
   }
   // A frame.
   if (el.hasAttribute('data-box') && el.hasAttribute('data-axes')) {
@@ -555,9 +583,25 @@ function resolveOne(el: Element, sc: DataScope): void {
   }
   if (el.hasAttribute('data-val')) {
     const src = el.getAttribute('data-val')!;
-    const v = evalF(src, sc);
     if (!el.hasAttribute('data-tpl')) el.setAttribute('data-tpl', el.textContent ?? '');
     const tpl = el.getAttribute('data-tpl')!;
+    // Several numbers in one text ("valid: {} × {}", data-val="n-m+1, n-m+1"): each {} takes the next formula,
+    // so a line never has to be split into texts that the layout can pull apart (a live answer lost its second 3).
+    const parts = splitTop(src, ','), holes = tpl.split('{}').length - 1;
+    if (parts.length > 1 && holes === parts.length) {
+      const fmt = el.getAttribute('data-fmt');
+      const vs = parts.map((p) => evalF(p, sc));
+      let i = 0;
+      const text = tpl.replace(/\{\}/g, () => fmtValue(vs[i++], fmt));
+      vs.forEach((v, j) => sc.values.push({ v, of: `${nm ?? src}#${j}`, ...(j === 0 && nm ? { id: nm } : {}), text: fmtValue(v, fmt), ...(fmt != null ? { fmt } : {}) }));
+      if (tag !== 'text' && tag !== 'tspan') fail(`data-val goes on a <text> or <tspan>`);
+      const kids = Array.from(el.childNodes);
+      const tn = kids.find((k) => k.nodeType === 3 && (k.textContent ?? '').trim());
+      if (tn && !kids.every((k) => k.nodeType === 3)) tn.textContent = text; else el.textContent = text;
+      return;
+    }
+    if (parts.length > 1 && holes !== parts.length && holes > 1) fail(`data-val has ${parts.length} formulas for ${holes} {} in its text`);
+    const v = evalF(src, sc);
     // One reading of the text drives both what is drawn and what is said ({{val}}): "{}" in the text's own
     // words takes the number (the words carry its affixes), else the value + data-unit.
     const fmt = el.getAttribute('data-fmt');
