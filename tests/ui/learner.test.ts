@@ -79,7 +79,7 @@ describe('session trail', () => {
 
 describe('boardState (re-explain this step)', () => {
   it('lists every calc number and the step constants, rows with ";", for the aside to copy', () => {
-    const st = boardState(new Map([['img', { f: [[1, 2], [3, 4]] }], ['conv', { out: [[6, 6]], n: 2 }]]), { k: 2 });
+    const st = boardState(new Map<string, Record<string, number | number[][]>>([['img', { f: [[1, 2], [3, 4]] }], ['conv', { out: [[6, 6]], n: 2 }]]), { k: 2 });
     expect(st).toBe('computed: img.f=1,2;3,4 conv.out=6,6; constants now: k=2');
     expect(asideContext({ question: 'q', said: 's', board: [], state: st })).toMatch(/Its numbers as they stand .*: computed: img\.f=1,2;3,4/);
     expect(boardState(new Map(), {})).toBe('');
