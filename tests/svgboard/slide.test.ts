@@ -4,6 +4,7 @@ import { newScope, resolveData } from '../../src/svgboard/data';
 import { parseGroup } from '../../src/svgboard/sanitize';
 import { checkGroups, newBoardState } from '../../src/svgboard/check';
 import { slideOut } from '../../src/svgboard/slide';
+import type { CalcTable } from '../../src/calc/stream';
 
 const IMG = Array.from({ length: 5 }, (_, r) => Array.from({ length: 5 }, (_, c) => 5 * r + c + 1));
 const scope = (k = 0) => { const sc = newScope(); sc.consts.k = k; sc.calcs = new Map([['img', { f: IMG, k: [[1, 0, -1], [1, 0, -1], [1, 0, -1]] }]]); return sc; };
@@ -106,5 +107,53 @@ describe('data-slide', () => {
     expect(texts(el).filter((t) => t === '1/9')).toHaveLength(9);
     expect(el.querySelector('[data-slide-line]')!.textContent).toMatch(/^1\/9·1 \+ 1\/9·2/);
     expect(slideOut(sc, 'conv', 'out[0][0]')).toBeCloseTo(7, 9);
+  });
+});
+
+describe('data-slide over a picture (raster)', () => {
+  // A 16x16 picture: a dark square (level 20) on a bright field (200), as the page-image table brings it.
+  const PIC = Array.from({ length: 16 }, (_, r) => Array.from({ length: 16 }, (_, c) => (r >= 6 && r < 10 && c >= 6 && c < 10 ? 20 : 200)));
+  const BOX = [[1, 1, 1], [1, 1, 1], [1, 1, 1]].map((r) => r.map((v) => v / 9));
+  const pic = (k = 0) => { const sc = newScope(); sc.consts.k = k; sc.calcs = new Map<string, CalcTable>([['px_i1_24', { f: PIC }], ['b', { box: BOX }]]); return sc; };
+  const eye = (attrs = '') => parseGroup(`<g id="eye" data-slide="#i1" data-kernel="b.box" ${attrs}/>`) as Element;
+
+  it('reads the page image\'s table, draws pixels as a few paths (not a numeral per cell), outputs whole levels', () => {
+    const sc = pic(), el = eye();
+    expect(resolveData(el, sc)).toEqual([]);
+    expect(el.querySelectorAll('path').length).toBeLessThanOrEqual(4); // two gray levels in, none out yet
+    expect(texts(el).filter((t) => /^\d+$/.test(t ?? ''))).toEqual([]);
+    expect(slideOut(sc, 'eye', 'out[0][0]')).toBe(200);
+    // Window from (5, 5): a 3x3 with 4 dark cells → (5·200 + 4·20) / 9 = 120.
+    expect(slideOut(sc, 'eye', 'out[5][5]')).toBe(120);
+    expect(texts(el)).toContain("the slide's image (16×16)");
+  });
+
+  it('at a step, the zoom row shows the window\'s real values, the kernel and the result, with the working', () => {
+    const sc = pic(14 * 5 + 6), el = eye(); // output 76 (0-based 75): row 5, col 5
+    resolveData(el, sc);
+    const t = texts(el);
+    expect(t.filter((x) => x === '20').length).toBe(4);
+    expect(t.filter((x) => x === '1/9').length).toBe(9);
+    expect(t).toContain('120');
+    expect(el.querySelector('[data-slide-line]')!.textContent).toMatch(/^1\/9·200 \+ .* = 120$/);
+    expect(el.querySelector('[data-slide-frame]')).not.toBeNull();
+  });
+
+  it('data-fmt keeps decimals; a calc matrix over 12 wide is drawn as pixels too', () => {
+    const sc = pic(), el = eye('data-fmt="2"');
+    resolveData(el, sc);
+    expect(slideOut(sc, 'eye', 'out[4][4]')).toBe(Number(((8 * 200 + 20) / 9).toFixed(2)));
+    sc.calcs!.set('img', { f: PIC });
+    const el2 = parseGroup('<g id="m" data-slide="img.f" data-op="median" data-size="3x3"/>') as Element;
+    resolveData(el2, sc);
+    expect(texts(el2)).toContain('input (16×16)');
+  });
+
+  it('an image that was not read is a clear error, naming the mark', () => {
+    const sc = newScope(), el = eye();
+    sc.calcs = new Map([['b', { box: BOX }]]);
+    sc.consts.k = 0;
+    const errs = resolveData(el, sc);
+    expect(JSON.stringify(errs)).toMatch(/page image #i1 could not be read/);
   });
 });
