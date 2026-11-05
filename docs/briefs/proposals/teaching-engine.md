@@ -132,12 +132,18 @@ table by `scripts/eval/teachReport.ts`.
   each, no judge). On p6.24 the model never used the picture: D9 built a made-up 3×6 patch and said it was
   "not measured eye pixels". p6.25 (and "pixels readable" on image marks in the page listing) fixed that, and
   exposed a gate bug: the gate's segmenter took a 24×24 table (~2.3k characters) for narration, so every
-  picture window was dropped (17 drops in 6 answers). With the segmenter fixed: 12 answers, 0 drops,
+  picture window was dropped (17 drops in 6 answers). The bug predates Phase 3: any computed tag over the
+  normal tag length (a calc exporting a few hundred numbers) was read as narration and its beat dropped. With the segmenter fixed: 12 answers, 0 drops,
   0 failed calcs, 0 typed numerals and 0 gate number flags; D9 and D10 used the slide's picture in 4 of 4
-  (D10 unprompted: it read the shift off the real eye, output = image[m, n+1] = 108); D1–D4 unchanged in
-  kind; median first word 1.8 s; $0.014 an answer.
+  (D10 unprompted: it read the shift off the real eye, output = image[m, n+1] = 108); D2–D4 as before;
+  D1 drew calc-bound readouts (20 and 21 data-vals) rather than an engine window in both samples (n=2);
+  median first word 1.8 s; $0.014 an answer. Run `2026-11-05-terra-none-p6.25-teach-59bf55ec-c` (the
+  17-drop run is the same name without `-c`).
 - Seen live and fixed: a model's data-cell pushed the output off the board (the engine now shrinks the
-  pixels to fit). Seen, not fixed: the model wrote its own label over the picture (D10).
+  pixels to fit). Seen, not fixed: the model wrote its own label over the picture (D10). Not checked
+  live: step back over a picture window (tests redraw it at any step). Known edge: without `data-page` a
+  window reads `#i1` from the page the question was asked on, so an image cited from another page needs
+  `data-page`.
 - **Moot:** "slices and eqchain made the default" is covered by §0's free canvas and calc.
 - Not built: the plot view, the grid-fill pattern and the data-literal inspector (no eval question
   needs them yet); (f) conventions and the prediction prompt, as in Phase 2.
