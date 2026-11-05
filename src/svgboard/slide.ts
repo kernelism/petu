@@ -76,7 +76,9 @@ export function drawSlide(el: Element, sc: SlideScope, k: number): C.Mat {
 
   // The outputs are the answer's numbers: a calc named by the element's id.
   const id = (el.getAttribute('data-name') ?? el.getAttribute('id') ?? '').toLowerCase();
-  if (id && sc.calcs) sc.calcs.set(id, { out: g.R === 1 ? outs[0] : outs, n });
+  // Shaped as the input is: a signal (one row) gives a row (out[i]); an image gives rows (out[r][c]), even
+  // when its window fits only one row down (a 3x4 image under a 3x3 window: out[0][0], out[0][1]; live D2.2).
+  if (id && sc.calcs) sc.calcs.set(id, { out: R === 1 ? outs[0] : outs, n });
   // And computed values on the board, for the gate's number checks (as a data-val's are).
   for (const v of outs.flat()) if (Number.isFinite(v)) sc.values?.push({ v, of: id || 'slide', text: C.fmt(v, dp) });
 

@@ -60,6 +60,16 @@ describe('data-slide', () => {
     expect(slideOut(sc, 'conv', 'out[4][4]')).toBe(25);
   });
 
+  it('an image whose window fits one row down still gives rows (live D2.2: median.out[0][0] was unbound); a signal gives a row', () => {
+    const sc = newScope(); sc.consts.k = 0;
+    sc.calcs = new Map([['img', { f: [[10, 11, 12, 18], [13, 200, 14, 19], [15, 16, 17, 20]], r: [10, 40, 10, 70, 70] }]]);
+    resolveData(g('data-slide="img.f" data-op="median" data-size="3x3"'), sc);
+    expect(slideOut(sc, 'conv', 'out[0][0]')).toBe(14);
+    expect(slideOut(sc, 'conv', 'out[0][1]')).toBe(17);
+    resolveData(g('data-slide="img.r" data-op="mean" data-size="1x3"'), sc);
+    expect(slideOut(sc, 'conv', 'out[0]')).toBe(20);
+  });
+
   it('names what is missing, never draws a guess', () => {
     const sc = scope();
     expect(resolveData(g('data-slide="img.nope" data-op="mean" data-size="3x3"'), sc)[0].detail).toMatch(/exports no array nope/);
