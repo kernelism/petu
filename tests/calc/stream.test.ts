@@ -24,6 +24,15 @@ describe('calc in the stream', () => {
 
   it('text with a "<" that is no calc passes through', async () => {
     expect(await collect(withCalcs(chunks('x <', ' 3 and <c', 'ircle'), fake))).toBe('x < 3 and <circle');
+    expect(await collect(withCalcs(chunks('in <calc', 'ulus> class'), fake))).toBe('in <calculus> class');
+  });
+
+  it('a computed tag stays one wire tag: past MAX_TAG_NUMBERS an export is left out', () => {
+    const tag = computedTag({ id: 'big', values: { a: Array.from({ length: 1500 }, (_, i) => i), b: Array.from({ length: 900 }, () => 1), n: 3 } });
+    expect(tag).toContain(' a=');
+    expect(tag).not.toContain(' b=');
+    expect(tag).toContain(' n=3');
+    expect(tag.length).toBeLessThan(24000);
   });
 
   it('reads the tag back and picks numbers by path, case aside', () => {

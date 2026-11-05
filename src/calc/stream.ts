@@ -40,8 +40,18 @@ export function calcNumbers(values: Record<string, CalcValue>): CalcTable {
 }
 
 /** The tag that stands for a run calc. */
+/** A computed tag carries at most this many numbers (it must stay one wire tag, under SVG_TAG_MAX). */
+export const MAX_TAG_NUMBERS = 2000;
+
 export function computedTag(r: CalcResult): string {
-  const parts = Object.entries(calcNumbers(r.values)).map(([k, v]) => {
+  let left = MAX_TAG_NUMBERS;
+  const entries = Object.entries(calcNumbers(r.values)).flatMap(([k, v]): [string, CalcNums][] => {
+    const n = typeof v === 'number' ? 1 : (v as (number | number[])[]).flat().length;
+    if (n > left) { console.warn(`[calc] ${r.id}.${k} left out: over ${MAX_TAG_NUMBERS} numbers in one calc`); return []; }
+    left -= n;
+    return [[k, v]];
+  });
+  const parts = entries.map(([k, v]) => {
     const s = typeof v === 'number' ? fmtNum(v) : Array.isArray(v[0]) ? (v as number[][]).map((row) => row.map(fmtNum).join(',')).join(';') : (v as number[]).map(fmtNum).join(',');
     return `${k}=${s}`;
   });
@@ -108,12 +118,13 @@ export async function* withCalcs(src: AsyncIterable<string>, run: (id: string, c
   const step = async function* (final: boolean): AsyncGenerator<string> {
     for (;;) {
       // A calc as written (<calc id="rod">…</calc>, a dev script) or as the server filter sends it ({{calcsrc id=rod …}}).
-      const raw = buf.indexOf('<calc'), wire = buf.indexOf('{{calcsrc');
+      // "<calc" then a space or ">": not the narration's "<calculus".
+      const raw = buf.search(/<calc[\s>]/), wire = buf.indexOf('{{calcsrc');
       const at = raw < 0 ? wire : wire < 0 ? raw : Math.min(raw, wire);
       if (at < 0) {
         // Keep a tail that may be the start of either, split across chunks.
         let keep = 0;
-        if (!final) for (let n = Math.min(8, buf.length); n > 0; n--) { const t = buf.slice(-n); if ('<calc'.startsWith(t) || '{{calcsrc'.startsWith(t)) { keep = n; break; } }
+        if (!final) for (let n = Math.min(8, buf.length); n > 0; n--) { const t = buf.slice(-n); if ('<calc '.startsWith(t) || '{{calcsrc'.startsWith(t)) { keep = n; break; } }
         const out = buf.slice(0, buf.length - keep);
         buf = buf.slice(buf.length - keep);
         if (out) yield out;
