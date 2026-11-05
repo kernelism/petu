@@ -20,10 +20,12 @@ export type SchedulerCallbacks = {
 };
 
 /**
- * Actions a seek back plays again: the steps of a process (a window's step and sweep), whose state the
- * board can restore exactly. Everything else fired stays as drawn (ink is never withdrawn).
+/**
+ * Actions a seek back plays again: the steps of a process (a window's step and sweep, a tween of the
+ * constants a board is drawn from), whose state the board can restore exactly. Everything else fired
+ * stays as drawn (ink is never withdrawn).
  */
-export const replays = (a: Action): boolean => a.kind === 'step' || a.kind === 'sweep';
+export const replays = (a: Action): boolean => a.kind === 'step' || a.kind === 'sweep' || a.kind === 'tween';
 
 export type SchedulerOptions = {
   /** How far ahead of its word an action may fire, in ms. Default 0. */

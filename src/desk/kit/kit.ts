@@ -140,6 +140,8 @@ export class KitStore {
   readonly calcs = new Map<string, CalcTable>();
   /** A window's state just before each step or sweep fired (keyed by the action): what a seek back restores (rewindStep). */
   readonly winSnaps = new WeakMap<object, { out: string; filled: boolean[][]; vals: C.Mat; accent: string }>();
+  /** The constants a tween moves, as they stood just before it fired (keyed by the action): what a seek back restores. */
+  readonly constSnaps = new WeakMap<object, Record<string, number>>();
   private blocks = new Map<string, Block>();
   private waiters = new Map<string, ((b: Block) => void)[]>();
   private n = 0;
@@ -2158,12 +2160,24 @@ async function stepOrSweep(v: Extract<KitVerb, { kind: 'step' | 'sweep' }>, env:
 }
 
 /**
- * A seek back replays a step or sweep (src/playback/scheduler.ts replays): its window goes back to the
+ * A seek back replays a step, sweep or tween (src/playback/scheduler.ts replays). A tween's constants
+ * go back to where they stood (kit plots drawn from them keep their last frame until it replays). A
+ * step's or sweep's window goes back to the
  * state it found when it fired. The output cells it filled empty again, the window, its frames and
  * an emphasis on the output lift, the calc line clears; the step then plays again on its words. A step that never fired (or a
  * block gone) is left alone.
  */
 export function rewindStep(store: KitStore, action: object): void {
+  // A tween: its constants go back, and everything drawn from them follows (the svg board, live geometry).
+  const cs = store.constSnaps.get(action);
+  if (cs) {
+    void store.anim.run(undefined, Object.keys(cs).map((k) => `const:${k}`), async (ctl) => {
+      ctl.ff = true;
+      for (const [k, v] of Object.entries(cs)) store.setConst(k, v);
+      store.constsChanged();
+    });
+    return;
+  }
   const snap = store.winSnaps.get(action);
   const out = snap && store.get(snap.out);
   if (!snap || !out?.win) return;
@@ -3271,6 +3285,7 @@ async function tweenMove(v: Extract<RefAction, { kind: 'tween' }>, env: BuildEnv
       const started = new Promise<void>((r) => { first = r; });
       void store.anim.run(k, keys.map((k) => `const:${k}`), async (ctl) => {
         if (signal.aborted) ctl.ff = true;
+        store.constSnaps.set(v, Object.fromEntries(keys.map((key) => [key, store.consts[key]])));
         const pls = [...new Set(plots.map((b) => b.plot!))];
         first();
         let last = 0;
