@@ -22,6 +22,7 @@ import { SwitchClock } from './playback/switchClock';
 import { BASE_WPM, getSettings, setSettings, SPEEDS, stepSpeed, useSettings, type VoiceSetting } from './settings/settings';
 import { DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo, suggestionsFor } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
+import { withCalcs } from './calc/stream';
 import type { DevStep } from './demo/learner';
 import { Desk, GLIDE_MS } from './desk/Desk';
 import type { DeskState } from './desk/types';
@@ -1129,7 +1130,9 @@ export default function App() {
       shadow?.destroy();
       shadow = null;
     };
-    void session.start(gate ? gate.wrap(source) : source).finally(finishGate);
+    // Calc programs run before the gate reads the stream: the gate checks the numbers they computed, as the session says them.
+    const computed = (signal: AbortSignal) => withCalcs(source(signal));
+    void session.start(gate ? gate.wrap(computed) : computed).finally(finishGate);
   }), [director, flash]);
 
   /**
