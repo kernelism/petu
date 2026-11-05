@@ -7,6 +7,7 @@
  *   Shift+←       the same as R          Shift+→   on to the next sentence
  *   ← / →         previous / next part (answers with two or more parts)
  *   <  /  >       slower / faster (0.75× · 1× · 1.25× · 1.5×)
+ *   E             explain this step again (an aside), once a process step has played
  *   Esc / Return  close the aside (the paused answer resumes where it stopped)
  *
  * Never while typing (inputs, textareas, selects, contenteditable, or a draft held in the ask bar), with ⌘/Ctrl/Alt held, while a
@@ -19,6 +20,8 @@ export type PlaybackHandlers = {
   replay(): void;
   skip(): void;
   speed(dir: -1 | 1): void;
+  /** Ask for the step on the board explained again (teaching-engine Phase 2): an aside over the paused answer. */
+  explainStep?(): void;
 };
 
 export type PlaybackContext = {
@@ -30,6 +33,8 @@ export type PlaybackContext = {
   parts: number;
   /** A popover (settings) is open: keys belong to it. */
   popover: boolean;
+  /** A process step has played in this answer (E explains it again). */
+  stepped?: boolean;
 };
 
 type KeyLike = Pick<KeyboardEvent, 'key' | 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey' | 'defaultPrevented' | 'target'> & { isComposing?: boolean };
@@ -70,6 +75,10 @@ export function playbackKey(e: KeyLike, c: PlaybackContext, h: PlaybackHandlers)
       if (c.parts < 2 || c.aside) return false;
       h.stepPart(dir); return true;
     }
+    case 'e':
+    case 'E':
+      if (e.shiftKey || c.aside || !c.stepped || !h.explainStep) return false;
+      h.explainStep(); return true;
     case '<':
     case '>':
       h.speed(e.key === '<' ? -1 : 1); return true;
@@ -77,3 +86,6 @@ export function playbackKey(e: KeyLike, c: PlaybackContext, h: PlaybackHandlers)
       return false;
   }
 }
+
+/** The question E asks: the step on the board, again, more slowly (any subject; the aside sees the board's numbers). */
+export const EXPLAIN_STEP_QUESTION = 'Explain the step on the board again, more slowly: what it takes in, what it does, and how its number comes out.';
