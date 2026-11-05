@@ -75,7 +75,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.26');
+    expect(PROMPT_VERSION).toBe('p6.27');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -148,6 +148,7 @@ describe('system prompt (svg, default)', () => {
     expect(s).toMatch(/run it on the picture: never a made-up patch/); // p6.25
     expect(s).toMatch(/data-grid="mul"/); // p6.26
     expect(s).toMatch(/data-series="nw.x, nw.y"/); // p6.26
+    expect(s).toMatch(/it is a grid: never a table of typed numbers/); // p6.27
   });
 
   it('p6.15 (Bayes bar): a shape too narrow for its label gets the whole label on it, never split into two texts', () => {
