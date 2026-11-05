@@ -75,7 +75,7 @@ describe('system prompt (svg, default)', () => {
 
   it('is stable, versioned and within budget', () => {
     expect(systemPrompt()).toBe(s);
-    expect(PROMPT_VERSION).toBe('p6.24');
+    expect(PROMPT_VERSION).toBe('p6.25');
     expect(s.length / 3.6).toBeGreaterThan(1100); // above the 1,024-token cache minimum
     expect(s.length / 3.6).toBeLessThan(7000); // short and ambitious: ~4,900 with its two examples
   });
@@ -145,6 +145,7 @@ describe('system prompt (svg, default)', () => {
 
   it('p6.24 (Phase 3 raster): a window may slide over a picture on the page, named by its image mark', () => {
     expect(s).toMatch(/data-slide="#i1" reads that image's own pixels as gray levels 0 to 255/);
+    expect(s).toMatch(/run it on the picture: never a made-up patch/); // p6.25
   });
 
   it('p6.15 (Bayes bar): a shape too narrow for its label gets the whole label on it, never split into two texts', () => {
