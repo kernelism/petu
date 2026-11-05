@@ -67,7 +67,9 @@ export function prepareText(g: Element, minFont: number, sizes?: Map<Element, nu
 function fit(g: Element, minFont: number, sizes?: Map<Element, number>): void {
   const all = Array.from(g.querySelectorAll('text')).filter((e) => !e.closest('defs,marker,symbol,clipPath,pattern'));
   if (!all.length) return;
-  const cards = Array.from(g.querySelectorAll('rect')).filter((r) => !r.closest('defs,marker,symbol,clipPath,pattern'))
+  // A rect the engine moves or sizes (data-set: a step's frame gliding over columns) holds nothing: whatever
+  // it passes over is not its text, and its size is the formula's.
+  const cards = Array.from(g.querySelectorAll('rect')).filter((r) => !r.closest('defs,marker,symbol,clipPath,pattern') && !r.hasAttribute('data-set'))
     .map((r) => ({ el: r, m: matOf(r, g) })).filter((c) => isShift(c.m))
     .map((c) => ({ el: c.el, box: { x: num(c.el.getAttribute('x')) + c.m[4], y: num(c.el.getAttribute('y')) + c.m[5], w: num(c.el.getAttribute('width')), h: num(c.el.getAttribute('height')) } }))
     .filter((c) => c.box.w > 40 && c.box.h > 18);

@@ -415,6 +415,11 @@ export const isMarker = (el: Element): boolean => {
   return t === 'circle' ? r('r') > 0 && r('r') <= 8 : t === 'ellipse' && r('rx') > 0 && r('rx') <= 8 && r('ry') > 0 && r('ry') <= 8;
 };
 /** Placed by the engine: its own data-at / data-set of its centre, or an ancestor's data-at / data-translate. */
+/**
+ * The attributes an element's data-set computes ("opacity", "x" …): the engine owns them, so the style
+ * passes (grammar, sanitize) leave them alone. A reveal's opacity 0 is "not yet", not a faint label.
+ */
+export const setAttrs = (el: Element): Set<string> => new Set(splitTop(el.getAttribute('data-set') ?? '', ';').map((p) => p.slice(0, p.indexOf(':')).trim().toLowerCase()).filter(Boolean));
 export const enginePlaced = (el: Element): boolean => el.hasAttribute('data-at') || /\bc[xy]\s*:/.test(el.getAttribute('data-set') ?? '') || !!el.parentElement?.closest('[data-at],[data-translate]');
 function snapMarkers(g: Element, sc: DataScope): void {
   const marks = [g, ...Array.from(g.querySelectorAll('circle,ellipse'))].filter((el) => isMarker(el) && !el.hasAttribute('data-snap-done') && !enginePlaced(el) && !el.closest('[data-schematic],[data-engine],[data-defs]') && !el.hasAttribute('data-bad'));

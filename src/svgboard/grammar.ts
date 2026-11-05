@@ -15,6 +15,7 @@
  * 1.25 × body, small = 0.82 × body but never under 11 px on screen) are the ceiling the model's sizes
  * are raised toward; the legibility floor (LEGIBLE_PX) is what its smallest text is raised to.
  */
+import { setAttrs } from './data';
 import { CHROMATIC, chromaOf, INK, parseColor } from './style';
 import { core, groupGeometry, overlapArea, segHitsBox, type Box, type Seg as GSeg, type TextBox } from './check';
 import type { Band } from './settle';
@@ -207,7 +208,8 @@ export function applyGrammar(g: Element, st: TypeState): Map<Element, number> {
     // A hue (its own or its group's) stays for sanitize to map: the accent's is the takeaway (style.ts).
     const f = el.closest('[fill]')?.getAttribute('fill'), c = parseColor(f);
     el.setAttribute('fill', c && chromaOf(c) >= CHROMATIC ? f! : INK.ink);
-    for (const k of ['fill-opacity', 'opacity', 'font-style', 'letter-spacing', 'stroke', 'stroke-width']) el.removeAttribute(k);
+    const owned = setAttrs(el);
+    for (const k of ['fill-opacity', 'opacity', 'font-style', 'letter-spacing', 'stroke', 'stroke-width']) if (!owned.has(k)) el.removeAttribute(k);
     for (const s of Array.from(el.querySelectorAll('tspan'))) for (const k of ['font-size', 'font-weight', 'fill', 'fill-opacity', 'opacity', 'font-style']) s.removeAttribute(k);
   }
   // Groups may carry text styling for their texts: the texts now set their own.
