@@ -48,6 +48,16 @@ doesn't check. Instead:
 
 Dropping is kept only for a calc that fails to run, and that goes to repair first.
 
+**Built so far (Phase 1, round 10).** The calc sandbox and wire, steps on a constant, step back, three
+hand-written demos, prompt p6.18–p6.20 and scout s2.13. Open items:
+
+- A model-written frame computes its own x (`x: 164 + 36*k`); one live answer drew it one cell off its
+  working line. Next: an engine-laid row from a calc array and a frame bound to a cell index.
+- `grounded()` accepts any typed number equal to any calc export: §0 said replace, this only accepts.
+- A repair's prompt sees `{{computed …}}` where the model wrote `<calc>`, and a `<calc>` inside a repaired
+  beat is not run (repairs are injected downstream of the calc runner).
+- STEPS use is measured on single answers so far; sample the same question several times before claims.
+
 **Effect on the plan.** Phase 1 adds the calc sandbox and derivation rendering. The
 `expr.ts` list extensions in section 5 shrink to what the engine needs for drawing; arithmetic moves
 into calc. Phase 1 grows by one to two days.
