@@ -4,7 +4,8 @@
  *
  *   expr  := sum
  *   sum   := prod (('+' | '-') prod)*
- *   prod  := unary (('*' | '/') unary | implicit)*      implicit: "2x", "2(x+1)", "x sin(x)", "(x)(x)"
+ *   prod  := unary (('*' | '/' | '%') unary | implicit)*  implicit: "2x", "2(x+1)", "x sin(x)", "(x)(x)";
+ *                                                         % is the remainder, never negative (k % 3: a step's column)
  *   unary := ('-' | '+') unary | power
  *   power := atom ('^' unary)?                           right-assoc; -x^2 = -(x^2); 2^-1 = 0.5
  *   atom  := number | name | 'pi' | func '(' expr ')' | '(' expr ')'
@@ -54,7 +55,7 @@ export function lex(src: string): Tok[] {
     if (id) { out.push({ t: 'id', v: id[0].toLowerCase() }); i += id[0].length; continue; }
     const cmp = /^(==|!=|<=|>=|<|>|=|≤|≥|≠)/.exec(s.slice(i));
     if (cmp) { out.push({ t: 'op', v: ({ '=': '==', '≤': '<=', '≥': '>=', '≠': '!=' } as Record<string, string>)[cmp[0]] ?? cmp[0] }); i += cmp[0].length; continue; }
-    if ('+-*/^(),'.includes(c)) { out.push({ t: 'op', v: c }); i++; continue; }
+    if ('+-*/%^(),'.includes(c)) { out.push({ t: 'op', v: c }); i++; continue; }
     throw new ExprError(`unexpected "${c}"`);
   }
   return out;
@@ -124,9 +125,9 @@ export function compileVars(src: string, names: readonly string[], opts: { rand?
   const prod = (): VarFn => {
     let f = unary();
     for (;;) {
-      if (isOp('*') || isOp('/')) {
+      if (isOp('*') || isOp('/') || isOp('%')) {
         const op = toks[i++].v, a = f, b = unary();
-        f = op === '*' ? (e) => a(e) * b(e) : (e) => a(e) / b(e);
+        f = op === '*' ? (e) => a(e) * b(e) : op === '/' ? (e) => a(e) / b(e) : (e) => { const m = b(e); return ((a(e) % m) + m) % m; };
       } else if (startsAtom()) {
         const a = f, b = power();
         f = (e) => a(e) * b(e);
