@@ -79,6 +79,12 @@ describe('calc programs', () => {
     expect(run('a', src).t).toBe(0);
   });
 
+  it('an exported helper function is left out; the numbers still come back (live answer, 2026-11-05)', () => {
+    const v = run('case', 'export const f = [10, 90, 10];\nexport const box = i => (f[i-1] + f[i] + f[i+1]) / 3;\nexport const b = box(1);');
+    expect(v.b).toBeCloseTo(110 / 3, 12);
+    expect('box' in v).toBe(false);
+  });
+
   it('exports objects and traces', () => {
     const v = run('t', 'export const steps = [1,2,3].map(i => ({ i, sq: i * i }));');
     expect(pick(v as never, 'steps[2].sq')).toBe(9);

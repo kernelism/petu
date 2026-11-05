@@ -6,7 +6,7 @@
  * that take strings), and its own postMessage (kept privately for the one reply). Math.random is
  * seeded by the calc's id and Date.now is fixed, so a replay, a step back and the gate's shadow run
  * all see the numbers the student saw. A run that takes longer than `ms` is terminated (an endless
- * loop costs one worker, never the tab). prepare.ts's source check is the first fence; this is the second.
+ * loop costs one worker, never the tab). Exported functions are dropped (only values cross back). prepare.ts's source check is the first fence; this is the second.
  *
  * WORKER_SOURCE is plain script text so the tests can run the same lockdown in node:vm.
  */
@@ -46,7 +46,8 @@ export const WORKER_SOURCE = String.raw`(function () {
     var fn;
     try { fn = F(msg.body); } catch (e) { post({ ok: false, error: 'does not parse: ' + (e && e.message) }); return; }
     lock();
-    try { post({ ok: true, values: fn() }); }
+    // A helper the program exported (export const box = i => …) is not a number anyone says: left out, so the rest still crosses.
+    try { var v = fn(), out = {}; for (var k in v) if (typeof v[k] !== 'function') out[k] = v[k]; post({ ok: true, values: out }); }
     catch (e) { post({ ok: false, error: String(e && e.message || e) }); }
   }
   function lock() {
