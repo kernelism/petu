@@ -147,3 +147,14 @@ describe('calc numbers on the board', () => {
     expect(probs.map((p) => p.detail).join()).toMatch(/calc rod exports no number nope/);
   });
 });
+
+describe('several numbers in one readout', () => {
+  it('each {} takes the next formula; a count mismatch is named, never guessed', () => {
+    const sc = newScope({ n: 5, m: 3 });
+    const el = g('<g><text id="v" x="10" y="20" data-val="n-m+1, n-m+1">valid: {} × {}</text><text id="b" x="10" y="40" data-val="n, m, 1">{} by {}</text><text id="c" x="10" y="60" data-val="max(n, m)">{}</text></g>');
+    const probs = resolveData(el, sc);
+    expect(el.querySelector('#v')!.textContent).toBe('valid: 3 × 3');
+    expect(el.querySelector('#c')!.textContent).toBe('5');
+    expect(probs.map((p) => p.detail)).toEqual(['data-val has 3 formulas for 2 {} in its text']);
+  });
+});

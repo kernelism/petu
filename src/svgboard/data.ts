@@ -21,6 +21,7 @@
  *  <text data-val="pi*sqrt(R/g)/60" data-fmt="1" data-unit="min">   computed text; a "{}" in the
  *                                    text's own words is replaced (else the value + unit is the text);
  *                                    with an id it is a readout the narration says as {{val id=…}},
+ *                                    several {} take several formulas in order ("{} × {}", data-val="n, m");
  *                                    with the affixes the text writes around it ("${}" → "$10",
  *                                    "{} units" → "100 units": src/values/quantity.ts, one reading)
  *  <g data-slide="img.f" data-kernel="img.k" data-step="k"/>   a sliding window the engine lays out,
@@ -582,9 +583,25 @@ function resolveOne(el: Element, sc: DataScope): void {
   }
   if (el.hasAttribute('data-val')) {
     const src = el.getAttribute('data-val')!;
-    const v = evalF(src, sc);
     if (!el.hasAttribute('data-tpl')) el.setAttribute('data-tpl', el.textContent ?? '');
     const tpl = el.getAttribute('data-tpl')!;
+    // Several numbers in one text ("valid: {} × {}", data-val="n-m+1, n-m+1"): each {} takes the next formula,
+    // so a line never has to be split into texts that the layout can pull apart (a live answer lost its second 3).
+    const parts = splitTop(src, ','), holes = tpl.split('{}').length - 1;
+    if (parts.length > 1 && holes === parts.length) {
+      const fmt = el.getAttribute('data-fmt');
+      const vs = parts.map((p) => evalF(p, sc));
+      let i = 0;
+      const text = tpl.replace(/\{\}/g, () => fmtValue(vs[i++], fmt));
+      vs.forEach((v, j) => sc.values.push({ v, of: `${nm ?? src}#${j}`, ...(j === 0 && nm ? { id: nm } : {}), text: fmtValue(v, fmt), ...(fmt != null ? { fmt } : {}) }));
+      if (tag !== 'text' && tag !== 'tspan') fail(`data-val goes on a <text> or <tspan>`);
+      const kids = Array.from(el.childNodes);
+      const tn = kids.find((k) => k.nodeType === 3 && (k.textContent ?? '').trim());
+      if (tn && !kids.every((k) => k.nodeType === 3)) tn.textContent = text; else el.textContent = text;
+      return;
+    }
+    if (parts.length > 1 && holes !== parts.length && holes > 1) fail(`data-val has ${parts.length} formulas for ${holes} {} in its text`);
+    const v = evalF(src, sc);
     // One reading of the text drives both what is drawn and what is said ({{val}}): "{}" in the text's own
     // words takes the number (the words carry its affixes), else the value + data-unit.
     const fmt = el.getAttribute('data-fmt');
