@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { Q2 } from './q2.ts';
 import { Q3, type Q3Kind } from './q3.ts';
 import { DRAW } from './draw.ts';
+import { TEACH } from './teach.ts';
 import { knownDeck } from './decks.ts';
 
 export type Split = 'dev' | 'test';
@@ -80,8 +81,8 @@ export const FU: Question[] = [
   q('D4', 'ost-econ', 128, 'hand', 'follow-up', 'Why does the elasticity change along a straight demand line if its slope is the same everywhere?', { followUp: "I still don't get it" }),
 ];
 
-export type QSetName = 'q1' | 'q2' | 'q3' | 'fu' | 'draw';
-export const QSETS: Record<QSetName, Question[]> = { q1: Q1, q2: Q2, q3: Q3, fu: FU, draw: DRAW };
+export type QSetName = 'q1' | 'q2' | 'q3' | 'fu' | 'draw' | 'teach';
+export const QSETS: Record<QSetName, Question[]> = { q1: Q1, q2: Q2, q3: Q3, fu: FU, draw: DRAW, teach: TEACH };
 /** Sets whose questions may share a page (each question still opens its own fresh session). */
 export const SHARED_PAGES_OK = new Set<string>(['draw']);
 export const DEFAULT_QSET: QSetName = 'q2';
