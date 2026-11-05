@@ -12,6 +12,8 @@
 //      released together or withheld together, never a drawing without its words or the reverse. A
 //      withheld beat leaves only what later beats build on (its board's opening, its definitions:
 //      src/svgboard/defs.ts), so one withheld beat never cascades into the beats after it.
+import { conventionNotes, viewsIn } from './conventions';
+import { matrix } from '../svgboard/slide';
 import { BeatSplitter, BEAT_DEFAULTS, NEW_INK, tokenize, units, type Beat, type Tag, type Word } from './segment';
 import { MAX_TAG_CHARS, ScriptParser } from '../script/parser';
 import { BEAT_TAG, hasBeatTags, isDefsGroup, isSvgTagBody, SVG_TAG_MAX, unescapeSvg, escapeSvg } from '../svgboard/wire';
@@ -267,6 +269,16 @@ export class GatePreflight implements Preflight {
           }
         });
         if (slides.length) slidesHere = slides;
+        // (f) Conventions (teaching-engine §3.6): the operation the words name and the numbers the slides print.
+        const sc = r.scope;
+        const views = viewsIn(srcs, (src) => { try { return matrix(src, sc, 'data-kernel'); } catch { return null; } }, (id) => {
+          const o = sc.calcs?.get(id)?.out;
+          return Array.isArray(o) && Array.isArray(o[0]) ? (o as number[][]) : null;
+        });
+        if (views.length) for (const detail of conventionNotes(u.text.replace(/\{\{[\s\S]*?\}\}|<[^>]*>/g, ' '), views, pageText)) {
+          const f = { check: 'conventions' as const, detail };
+          if (SEVERITY[this.env.severity ?? 'default'].conventions === 'fail') v.flags.push(f); else v.notes.push(`${f.check}: ${f.detail}`);
+        }
         svg = { board: sb, geos: r.geos, ...(r.grow ? { grow: r.grow } : {}) };
       } else if (sb !== this.svg && sb) svg = { board: sb, geos: [] };
     }
