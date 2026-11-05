@@ -142,6 +142,14 @@ export class KitStore {
   readonly winSnaps = new WeakMap<object, { out: string; filled: boolean[][]; vals: C.Mat; accent: string }>();
   /** The constants a tween moves, as they stood just before it fired (keyed by the action): what a seek back restores. */
   readonly constSnaps = new WeakMap<object, Record<string, number>>();
+  /**
+   * Svg board groups by their source, as drawn (src/svgboard/element.ts). A seek back hides the groups
+   * after its target (`hidden`); they show again when their words come round (director.run), never redrawn.
+   */
+  readonly svgDrawn = new Map<string, SVGGElement>();
+  readonly svgHidden = new Set<string>();
+  /** Svg actions a seek back rewound that drew nothing to hide (a withheld beat's definitions, a group not built yet): their replay is a no-op. */
+  readonly svgKept = new Set<string>();
   private blocks = new Map<string, Block>();
   private waiters = new Map<string, ((b: Block) => void)[]>();
   private n = 0;

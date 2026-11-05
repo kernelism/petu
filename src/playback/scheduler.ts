@@ -22,10 +22,11 @@ export type SchedulerCallbacks = {
 /**
 /**
  * Actions a seek back plays again: the steps of a process (a window's step and sweep, a tween of the
- * constants a board is drawn from), whose state the board can restore exactly. Everything else fired
- * stays as drawn (ink is never withdrawn).
+ * constants a board is drawn from), whose state the board can restore exactly, and the svg board's
+ * groups (teaching-engine Phase 2, seek-to-state): a group after the target is hidden, not erased, and
+ * shows again on its words. Everything else fired stays as drawn.
  */
-export const replays = (a: Action): boolean => a.kind === 'step' || a.kind === 'sweep' || a.kind === 'tween';
+export const replays = (a: Action): boolean => a.kind === 'step' || a.kind === 'sweep' || a.kind === 'tween' || a.kind === 'svg';
 
 export type SchedulerOptions = {
   /** How far ahead of its word an action may fire, in ms. Default 0. */
@@ -360,9 +361,10 @@ export class Scheduler {
   /**
    * Plays on from word `target`. Forward: the words in between are shown at once and their actions
    * fire fast (they land quickly, so the board is what it would have been). Back: the narration
-   * repeats from there; actions already fired are not fired again (the ink is still on the page),
-   * except the steps of a process (replays): the board rewinds them (onRewind) and they play again
-   * on their words, so going back shows the window where the words say it is. Unpauses. False when the clock can't seek.
+   * repeats from there; actions already fired are not fired again (page ink stays), except replays():
+   * the board rewinds a process's steps and hides the svg groups drawn after the target (onRewind), and
+   * they play again on their words, so going back shows the board as it stood at those words. Unpauses.
+   * False when the clock can't seek.
    */
   seek(target: number): boolean {
     if (this.stopped || !this.clock.retime) return false;

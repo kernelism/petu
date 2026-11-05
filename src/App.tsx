@@ -1213,7 +1213,7 @@ export default function App() {
     if (s.pause()) { setUserPaused(true); clearPause(); }
   }, []);
 
-  /** Plays on from part i: forward fast-forwards the board, back repeats the narration (its ink stays) and returns to its page. */
+  /** Plays on from part i: forward fast-forwards the board; back repeats the narration and returns to its page (page ink stays; svg groups and process steps after it are hidden or rewound, and come back on their words). */
   const jumpTo = useCallback((i: number) => {
     const s = sessionRef.current, p = partsRef.current[i];
     if (!s || !p || asideRef.current) return;

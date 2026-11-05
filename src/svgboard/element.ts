@@ -85,6 +85,7 @@ export async function buildSvgGroup(a: SvgAction, env: BuildEnv): Promise<Elemen
   return {
     target, bbox: box, el: g,
     draw: async (signal, k) => {
+      kitStore(env.registry).svgDrawn.set(a.svg, g);
       env.registry.define({ ...(id ? { id } : {}), kind: 'svg', target, bbox: box!, boxes: [box!], anchor: { x: box!.x + box!.w / 2, y: box!.y + box!.h / 2 }, group: g });
       // A group taller than the view: the board follows the pen, part by part (each with room for the
       // label beside it), while the student follows; a part already in view moves nothing.

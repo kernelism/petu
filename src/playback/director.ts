@@ -151,6 +151,7 @@ export class Director {
     // The svg board: a board section gets its id here (in order, before layout runs), and each group
     // draws into the latest board.
     if (raw.kind === 'sketch' && raw.svgboard) raw = { ...raw, id: raw.svgboard.extend && this.svgBoard ? this.svgBoard : (this.svgBoard = `svgb${++svgBoardN}`) };
+    if (raw.kind === 'svg' && this.reshow(raw, at)) return;
     if (raw.kind === 'svg') {
       // A group with no board open (its {{svgboard}} was lost upstream): a drawing is never lost, so a
       // default board opens for it, loudly.
@@ -191,7 +192,34 @@ export class Director {
   }
 
   /** A seek back replays a fired step: its block goes back to how it stood before it (src/desk/kit/kit.ts rewindStep). */
-  rewind(raw: RawAction): void { rewindStep(kitStore(this.registry), raw as object); }
+  rewind(raw: RawAction): void {
+    const store = kitStore(this.registry);
+    // A drawn svg group after the target: hidden (its words come again and show it), never erased.
+    if (raw.kind === 'svg') {
+      const g = store.svgDrawn.get(raw.svg);
+      if (g?.isConnected) { if (!store.svgHidden.has(raw.svg)) { g.style.transition = ''; g.style.opacity = '0'; g.style.visibility = 'hidden'; store.svgHidden.add(raw.svg); } }
+      else store.svgKept.add(raw.svg);
+      return;
+    }
+    rewindStep(store, raw as object);
+  }
+
+  /** A group a seek back hid, its words come round again: it shows (a short fade), not drawn twice. */
+  private reshow(raw: RawAction & { kind: 'svg' }, at: number): boolean {
+    const store = kitStore(this.registry);
+    const kept = store.svgKept.delete(raw.svg);
+    if (!kept && !store.svgHidden.delete(raw.svg)) return false;
+    const g = store.svgDrawn.get(raw.svg);
+    if (g?.isConnected) {
+      g.style.visibility = '';
+      g.style.transition = 'opacity 0.35s ease-out';
+      // The next frame, so the transition runs from 0.
+      (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (f: () => void) => setTimeout(f, 0))(() => { g.style.opacity = ''; });
+    }
+    const t = now();
+    this.report({ action: raw as Action, firedAt: at, queuedAt: t, startedAt: t, endedAt: t }, {});
+    return true;
+  }
 
   /**
    * The page the answer is on: the asked page (App: askedPage, set by ask()), then each page it scrolls

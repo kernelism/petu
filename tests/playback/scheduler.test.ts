@@ -306,4 +306,22 @@ describe('Scheduler: the look after a page mark (teaching rhythm)', () => {
     expect(s.seek(3)).toBe(true); // back to "d.", which o[2] fires with
     expect(log).toEqual(['rewind o[2]']);
   });
+
+  it('a seek back hides the svg groups after the target and shows them again on their words (Phase 2 seek-to-state)', () => {
+    const log: string[] = [];
+    const g = (id: string): ScriptEvent => ({ type: 'action', action: { kind: 'svg', id, svg: `<g id="${id}"/>` } as Action });
+    const s = new Scheduler(fixedClock(), {
+      onWord: (t) => log.push(t),
+      onAction: (a) => log.push(`<${a.kind} ${(a as { id?: string }).id ?? ''}>`),
+      onRewind: (a) => log.push(`hide ${(a as { id: string }).id}`),
+      onDone: () => log.push('done'),
+    });
+    s.push([g('one'), w('a.'), g('two'), w('b.'), g('three'), w('c.'), w('d.')]);
+    while (!log.includes('d.')) vi.advanceTimersByTime(50);
+    log.length = 0;
+    expect(s.seek(1)).toBe(true); // back to "b.": groups two and three were drawn after it
+    expect(log).toEqual(['hide three', 'hide two']);
+    vi.advanceTimersByTime(3000);
+    expect(log).toEqual(['hide three', 'hide two', '<svg two>', 'b.', '<svg three>', 'c.', 'd.']);
+  });
 });
