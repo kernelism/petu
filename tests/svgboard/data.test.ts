@@ -135,3 +135,15 @@ describe('svg data: the gate knows the computed numbers', () => {
     expect(st.apply(svg('<g><circle data-at="cross(d,zz)" r="3"/></g>'), 2)).toMatch(/no curve zz/);
   });
 });
+
+describe('calc numbers on the board', () => {
+  it('a formula reads a calc export by path; a missing one hides the text, never a guess', () => {
+    const sc = newScope();
+    sc.calcs = new Map([['rod', { I4: 0.078125, out: [10, 40, 40] }]]);
+    const el = g('<g><text id="a" x="10" y="20" data-val="rod.I4" data-fmt="0.000000">I ≈ {}</text><text id="b" x="10" y="40" data-val="2*rod.out[1]">{}</text><text id="c" x="10" y="60" data-val="rod.nope">{}</text></g>');
+    const probs = resolveData(el, sc);
+    expect(el.querySelector('#a')!.textContent).toBe('I ≈ 0.078125');
+    expect(el.querySelector('#b')!.textContent).toBe('80');
+    expect(probs.map((p) => p.detail).join()).toMatch(/calc rod exports no number nope/);
+  });
+});

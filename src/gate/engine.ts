@@ -452,6 +452,7 @@ export class GateState {
     const g = parseGroup(src);
     if (typeof g === 'string') return g;
     this.svg.consts = this.consts;
+    this.svg.calcs = this.calcs;
     this.svg.define = (defs) => { this.apply({ kind: 'const', defs } as RawAction, beat); };
     this.svg.values.length = 0;
     const probs = resolveData(g, this.svg);
@@ -464,6 +465,7 @@ export class GateState {
   private svgAgain(beat: number): void {
     if (!this.svgGroups.length) return;
     this.svg.consts = this.consts;
+    this.svg.calcs = this.calcs;
     this.svg.values.length = 0;
     for (const g of this.svgGroups) resolveData(g, this.svg);
     this.takeReadouts(beat);

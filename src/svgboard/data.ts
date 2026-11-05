@@ -35,6 +35,7 @@
  * flags it (repair or drop). Resolution is idempotent: a constant changes (a tween) → resolve again.
  */
 import { compileVars, freeNames } from '../desk/expr';
+import { pickNumber, type CalcTable } from '../calc/stream';
 import { drawText, readTemplate, type Affix } from '../values/quantity';
 import { isUnitWord } from '../values/units';
 import { readFormat } from '../values/format';
@@ -46,6 +47,8 @@ export type DPt = { x: number; y: number; ax?: Axes; dx: number; dy: number };
 export type DataScope = {
   /** Constants (lowercase names), read live. */
   consts: Record<string, number>;
+  /** Calc programs' numbers by lowercase calc id (src/calc/stream.ts): a formula reads `rod.I4`, `box.out[3]`. */
+  calcs?: Map<string, CalcTable>;
   /** Defines constants (in order). Default: evaluated into `consts`. The board defines through the kit store. */
   define?: (defs: [string, string][]) => void;
   axes: Map<string, { name: string; src: [string, string, string] }>;
@@ -107,9 +110,18 @@ function evalF(src: string, sc: DataScope, vars: Record<string, number> = {}): n
   return v;
 }
 
-/** xof(P) / yof(P) → the point's data coordinate as a number literal. */
+/**
+ * xof(P) / yof(P) → the point's data coordinate as a number literal; a calc's number (`rod.I4`,
+ * `box.out[3]`) → its value. A calc path that names no exported number fails (never a guess).
+ */
 function valueFns(src: string, sc: DataScope): string {
   let s = src;
+  if (sc.calcs?.size) s = s.replace(/(?<![\w.])([A-Za-z]\w*)\.([A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\[\d+\])*)/g, (m, id: string, path: string) => {
+    const t = sc.calcs!.get(id.toLowerCase());
+    if (!t) return m;
+    const v = pickNumber(t, path);
+    return v != null && Number.isFinite(v) ? `(${v})` : fail(`calc ${id} exports no number ${path}`);
+  });
   for (let guard = 0; guard < 20; guard++) {
     const m = /\b(xof|yof)\s*\(/i.exec(s);
     if (!m) return s;

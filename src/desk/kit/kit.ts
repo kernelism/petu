@@ -13,6 +13,7 @@
  * computes every number (compute.ts) and animates (anim.ts). A block's geometry is in section units,
  * fixed when it is built: the section scales as one picture.
  */
+import type { CalcTable } from '../../calc/stream';
 import type { SRect } from '../../geometry/space';
 import type { ColRef, DrawAction, FindAction, InkAction, KitBlock, KitSource, KitVerb, Pt, RefAction, Target } from '../../script/types';
 import { blockPart, isBlockRef, type BlockPart } from '../../script/pointExpr';
@@ -135,6 +136,8 @@ export type Block = {
 
 export class KitStore {
   readonly anim = new Animations();
+  /** Calc programs' numbers by lowercase calc id ({{computed}}): the svg board's formulas read them. */
+  readonly calcs = new Map<string, CalcTable>();
   /** A window's state just before each step or sweep fired (keyed by the action): what a seek back restores (rewindStep). */
   readonly winSnaps = new WeakMap<object, { out: string; filled: boolean[][]; vals: C.Mat; accent: string }>();
   private blocks = new Map<string, Block>();
