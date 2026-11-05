@@ -19,4 +19,6 @@ export const TEACH: Question[] = [
   q('D8', 'ost-calc', 456, 'derive', 'Approximate the area under y = x² from 0 to 1 with rectangles, and show how it closes in on 1/3.', { tags: ['unseen'] }),
   q('D9', 'lec06', 15, 'derive', 'Show me how this box filter blurs the eye, pixel by pixel.', { tags: ['raster'] }),
   q('D10', 'lec06', 13, 'why', 'What will this kernel do to the image?', { tags: ['raster', 'unseen'] }),
+  q('D11', 'lec06', 22, 'derive', 'Where do the numbers in this Gaussian kernel come from?', { tags: ['grid'] }),
+  q('D12', 'lec06', 28, 'why', 'Is the box filter separable? Show me.', { tags: ['grid', 'unseen'] }),
 ];
