@@ -1,7 +1,7 @@
 import type { RawAction, ScriptEvent, ValAction } from './types';
 import { parseTag } from './parseTag';
 import { GateState, UNBOUND_TEXT } from '../gate/engine';
-import { cutTagBody, isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
+import { cutTagBody, isCalcTagBody, isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
 import { clauseAfter, deixisAt, endsSentence, isArticle, lookahead, markOf, replaceWord, sentenceTail, type Mark } from './quoteWords';
 import { inSentence } from '../values/quantity';
 import { saidText, spokenOf, type Said } from '../values/say';
@@ -45,10 +45,9 @@ type Scan = { kind: 'close'; end: number } | { kind: 'fail'; cut: number } | { k
  */
 function scanTag(buf: string, open: number, final: boolean): Scan {
   // An svg group tag (src/svgboard/wire.ts) is long and its quotes are SVG's: only `}}` closes it.
-  const svg = isSvgTagBody(buf.slice(open + 2, open + 8));
-  // A calc's numbers (src/calc/stream.ts) may be long lists.
-  const long = svg || /^computed\s/.test(buf.slice(open + 2, open + 12));
-  const limit = open + (long ? SVG_TAG_MAX : MAX_TAG_CHARS);
+  // A calc's code or numbers (src/svgboard/wire.ts isCalcTagBody) are long too, and their quotes are code's.
+  const svg = isSvgTagBody(buf.slice(open + 2, open + 8)) || isCalcTagBody(buf.slice(open + 2, open + 12));
+  const limit = open + (svg ? SVG_TAG_MAX : MAX_TAG_CHARS);
   const overflow = (): Scan => {
     const ws = Math.max(buf.lastIndexOf(' ', limit), buf.lastIndexOf('\t', limit));
     return { kind: 'fail', cut: ws > open + 2 ? ws : limit };

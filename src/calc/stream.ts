@@ -15,6 +15,7 @@
  */
 import { CalcError, prepareCalc, type CalcResult, type CalcValue } from './prepare';
 import { runCalc } from './sandbox';
+import { unescapeCalc } from '../svgboard/wire';
 
 /** One exported number list: a scalar, a row, or rows. */
 export type CalcNums = number | number[] | number[][];
@@ -96,19 +97,39 @@ const CLOSE = '</calc>';
  */
 export async function* withCalcs(src: AsyncIterable<string>, run: (id: string, code: string) => Promise<CalcResult> = (id, code) => runCalc(prepareCalc(id, code))): AsyncIterable<string> {
   let buf = '';
+  const runOne = async (id: string, code: string): Promise<string> => {
+    try { return ` ${computedTag(await run(id, code))} `; }
+    catch (e) {
+      const why = (e instanceof CalcError ? e.message : String(e)).replace(/["\n]/g, ' ').slice(0, 160);
+      console.warn('[calc]', why);
+      return ` {{computed id=${id} failed="${why}"}} `;
+    }
+  };
   const step = async function* (final: boolean): AsyncGenerator<string> {
     for (;;) {
-      const at = buf.indexOf('<calc');
+      // A calc as written (<calc id="rod">…</calc>, a dev script) or as the server filter sends it ({{calcsrc id=rod …}}).
+      const raw = buf.indexOf('<calc'), wire = buf.indexOf('{{calcsrc');
+      const at = raw < 0 ? wire : wire < 0 ? raw : Math.min(raw, wire);
       if (at < 0) {
-        // Keep a tail that may be the start of "<calc" split across chunks.
+        // Keep a tail that may be the start of either, split across chunks.
         let keep = 0;
-        if (!final) for (let n = Math.min(4, buf.length); n > 0; n--) if ('<calc'.startsWith(buf.slice(-n))) { keep = n; break; }
+        if (!final) for (let n = Math.min(8, buf.length); n > 0; n--) { const t = buf.slice(-n); if ('<calc'.startsWith(t) || '{{calcsrc'.startsWith(t)) { keep = n; break; } }
         const out = buf.slice(0, buf.length - keep);
         buf = buf.slice(buf.length - keep);
         if (out) yield out;
         return;
       }
       if (at > 0) { yield buf.slice(0, at); buf = buf.slice(at); }
+      if (buf.startsWith('{{calcsrc')) {
+        const end = buf.indexOf('}}');
+        if (end < 0) { if (final) { console.warn('[calc] dropped a calc the stream cut off'); buf = ''; } return; }
+        const body = buf.slice('{{calcsrc'.length, end);
+        buf = buf.slice(end + 2);
+        const m = /^\s+id=([A-Za-z][A-Za-z0-9_]{0,23})\s([\s\S]*)$/.exec(body);
+        if (!m) { console.warn('[calc] a calc with no id:', body.slice(0, 40)); continue; }
+        yield await runOne(m[1], unescapeCalc(m[2]));
+        continue;
+      }
       const end = buf.indexOf(CLOSE);
       if (end < 0) {
         if (final) { console.warn('[calc] dropped a calc the stream cut off'); buf = ''; }
@@ -118,13 +139,7 @@ export async function* withCalcs(src: AsyncIterable<string>, run: (id: string, c
       buf = buf.slice(end + CLOSE.length);
       const m = OPEN.exec(whole);
       if (!m || m.index !== 0) { console.warn('[calc] a calc with no id:', whole.slice(0, 40)); continue; }
-      const id = m[1], code = whole.slice(m[0].length);
-      try { yield ` ${computedTag(await run(id, code))} `; }
-      catch (e) {
-        const why = (e instanceof CalcError ? e.message : String(e)).replace(/["\n]/g, ' ').slice(0, 160);
-        console.warn('[calc]', why);
-        yield ` {{computed id=${id} failed="${why}"}} `;
-      }
+      yield await runOne(m[1], whole.slice(m[0].length));
     }
   };
   for await (const chunk of src) { buf += chunk; yield* step(false); }

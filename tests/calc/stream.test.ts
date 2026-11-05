@@ -44,3 +44,18 @@ describe('calc in the stream', () => {
     expect(words.join(' ')).toMatch(/it is 0\.078\d*, then 40 and —\./);
   });
 });
+
+describe('calc on the wire', () => {
+  it('the server filter sends a calc as one tag the client runs; its code is never narration', async () => {
+    const { SvgBeatFilter } = await import('../../server/svgBeats');
+    const f = new SvgBeatFilter(() => 0);
+    const code = '\n  const a = [1, 2];\n  // a comment with {braces} & more\n  export const s = a.reduce((x, y) => x + y, 0);\n';
+    const wire = f.push(`Sum it. <calc id="t">${code}</calc> It is {{val t.s}}.`) + f.end();
+    expect(wire).toMatch(/\{\{calcsrc id=t [^{}\n]*\}\}/);
+    expect(wire.replace(/\{\{[^}]*\}\}/g, '')).not.toContain('reduce');
+    let seen = '';
+    const out = await collect(withCalcs(chunks(wire), async (id, c) => { seen = c; return { id, values: { s: 3 } }; }));
+    expect(seen).toBe(code);
+    expect(out).toContain('{{computed id=t s=3}}');
+  });
+});
