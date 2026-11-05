@@ -180,3 +180,19 @@ describe('lines through data', () => {
     expect(C.ticks(0.2, 9.2, 4)).toEqual([2, 4, 6, 8]);
   });
 });
+
+describe('median windows', () => {
+  const row = [[10, 10, 10, 100, 10, 10, 70, 70, 70, 70]];
+  it('drops a spike and keeps a step (the filtering lecture\'s row)', () => {
+    expect(C.winApply(row, { kind: 'reduce', kr: 1, kc: 3, op: 'median' })).toEqual([[10, 10, 10, 10, 10, 70, 70, 70]]);
+  });
+  it('shows its sort as the working', () => {
+    const e = C.winCell(row, 0, 2, { kind: 'reduce', kr: 1, kc: 3, op: 'median' })!;
+    expect(e.parts.join('') + e.result).toBe('median(10, 100, 10): 10 10 100 → 10');
+  });
+  it('slide 33\'s patch: median 27', () => {
+    const P = [[10, 15, 20], [23, 90, 27], [33, 31, 30]];
+    expect(C.winApply(P, { kind: 'reduce', kr: 3, kc: 3, op: 'median' })).toEqual([[27]]);
+    expect(C.median([1, 2, 3, 4]).value).toBe(2.5);
+  });
+});

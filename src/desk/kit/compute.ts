@@ -298,7 +298,7 @@ export function reduce(op: Reduce, xs: number[], ys?: number[], dp?: number, sho
 // ------------------------------------------------------------------------------------------------
 // Sliding windows: weights (sum of products), a reduction, or a fn of the window's cells.
 
-export type WinOp = 'sum' | 'mean' | 'max' | 'min';
+export type WinOp = 'sum' | 'mean' | 'max' | 'min' | 'median';
 export type Window =
   | { kind: 'weights'; w: Mat; flip?: boolean; /** the weights were written as fractions (1/9): keep that form */ frac?: boolean }
   | { kind: 'reduce'; kr: number; kc: number; op: WinOp }
@@ -358,12 +358,23 @@ export function winCell(input: Mat, r: number, c: number, s: WinSpec, dp?: numbe
     const value = v.reduce((acc, x, k) => acc + weightAt(s, k) * x, 0);
     return { parts: [...joinTerms(terms), ' = '], result: fmt(value, dp), value };
   }
-  if (s.kind === 'reduce') return reduce(s.op, v, undefined, dp);
+  if (s.kind === 'reduce') return s.op === 'median' ? median(v, dp) : reduce(s.op, v, undefined, dp);
   const env: Record<string, number> = {};
   v.forEach((x, k) => { if (k < WIN_LETTERS.length) env[WIN_LETTERS[k]] = x; });
   const value = s.fn(env);
   const div = divisionStep(s.src, env, WIN_LETTERS.slice(0, v.length), dp);
   return { parts: [substitute(s.src, env), ' = ', ...(div ? [div] : [])], result: fmt(value, dp), value };
+}
+
+/**
+ * The median with its working: the window's values sorted, the middle one (the mean of the two middle
+ * ones for an even count). "median(10, 100, 10): 10 10 100 → 10" — the sort is what shows a spike dropped.
+ */
+export function median(xs: number[], dp?: number): Expansion {
+  const X = xs.filter(Number.isFinite), n = X.length;
+  const s = [...X].sort((a, b) => a - b);
+  const value = !n ? NaN : n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+  return { parts: ['median(', ...joinTerms(X.map((x) => term(x, dp)), ', '), '): ', s.map((x) => term(x, dp)).join(' '), ' → '], result: fmt(value, dp), value };
 }
 
 /** The whole output of a window op (NaN where the fn is undefined). */

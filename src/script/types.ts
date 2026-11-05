@@ -155,7 +155,7 @@ export const SCENE_KINDS = new Set(['node', 'flow', 'link', 'note', 'group', 'pa
 
 /** Where a block goes: right of / below another block (the engine picks the spacing), or at a top-left point. `op` is a glyph drawn between it and its neighbour. */
 export type KitPlace<P = Pt> = { right?: string; below?: string; op?: string; at?: P; /** In a scene: placed by relation (left, above, beside, near too). */ rel?: ScenePlace; /** a contrast's copy: these constants differ */ with?: Record<string, number> };
-export type WinReduce = 'sum' | 'mean' | 'max' | 'min';
+export type WinReduce = 'sum' | 'mean' | 'max' | 'min' | 'median';
 /** Where a block's values come from: literals, or an operation the engine computes. */
 export type KitSource =
   /** Literal values; `frac` when the model wrote fractions (1/9), shown as written. */
@@ -305,6 +305,12 @@ export type RawConnect = { kind: 'connect'; from: RawEnd; to: RawEnd; id?: strin
  * Each value is an expression over the constants before it. Taken when parsed (like let); never timed.
  */
 export type ConstAction = { kind: 'const'; defs: [string, string][] };
+/**
+ * A calc program's numbers (src/calc/stream.ts): `{{computed id=rod I4=0.078125 out=10,40}}`, put in
+ * the place of a <calc> once it ran. Its values are said as {{val rod.I4}} / {{val box.out[3]}}; no ink.
+ * `failed`: why the program gave nothing (its vals stay unbound).
+ */
+export type ComputedAction = { kind: 'computed'; id: string; values: import('../calc/stream').CalcTable; failed?: string };
 
 // ------------------------------------------------------------------------------------------------
 // Gated beats, step 2 (src/values/*): numbers the narration states are bound to the engine's.
@@ -370,4 +376,4 @@ export type SvgAction = { kind: 'svg'; id?: string; svg: string; anchor?: string
   /** The board section it draws in (set by the director when it fires). */ region?: string; /** never set: a group is never on a page */ page?: undefined };
 /** {{beat}}: the svg answer's beat boundary (src/svgboard/beat.ts). No words, no ink: the scheduler starts a beat's word window here. */
 export type BeatAction = { kind: 'beat' };
-export type RawAction = SvgAction | BeatAction | LayoutAction | (DrawAction<PtArg>) | RefAction | RawConnect | LetAction | MarkShape | RayShape | ConstAction | ValAction | FindAction;
+export type RawAction = SvgAction | BeatAction | LayoutAction | (DrawAction<PtArg>) | RefAction | RawConnect | LetAction | MarkShape | RayShape | ConstAction | ComputedAction | ValAction | FindAction;
