@@ -31,6 +31,52 @@ export const SCRIPTS: Record<string, Demo & { src: string; page?: number;
   steps?: DevStep[];
   /** The fake repair's replacement per stage-2 unit index (`&repair=fake`; src/agent/repair.ts fakeRepair `text`). */
   repairs?: Record<number, string> }> = {
+  /**
+   * The teaching engine, Phase 1 (docs/briefs/proposals/teaching-engine.md §3.8), hand-written on the
+   * filtering lecture (public/dev/lec06_conv.pdf, git-ignored): one invented row through a box, a
+   * Gaussian and a median window that visibly slide, the slide-13 shift kernel as correlation and as
+   * convolution, and slide 33's own patch (its box and median as windows, sharpening from a calc program). Every spoken number is bound
+   * ({{val}}): the board and the voice cannot disagree. Pause, speed and going back act on the windows.
+   */
+  'filter-proc': {
+    src: '/dev/lec06_conv.pdf',
+    page: 5,
+    question: 'Can you explain the different filtering techniques in this PDF?',
+    script:
+      `{{scroll p=5}} Every filter in this lecture slides a small window along the image and turns what it sees into one output pixel. ` +
+      `The linear ones multiply and add, the median sorts. {{sketch id=f near=p5}} Let's watch them on one row. ` +
+      `{{grid on=f id=r vals=10,10,10,100,10,10,70,70,70,70 shade "a row of pixels (an example, not from your slides)"}} Here is a row with a spike, a hundred, and then a step up to seventy. ` +
+      `{{grid on=f id=box vals=1/3,1/3,1/3 below=r "box"}} The box filter weighs three neighbours equally, ` +
+      `{{grid on=f id=bo over=r slide=box below=box "box output"}} and its output starts empty. ` +
+      `{{step id=bo[1]}} Lay it on the first three pixels: a third of ten, three times, is {{val id=bo[1]}}. ` +
+      `{{step id=bo[2]}} Slide one pixel. Now the spike is inside, ten plus ten plus a hundred, over three: {{val id=bo[2]}}. ` +
+      `{{sweep id=bo dur=4}} While the spike sits in the window it lifts every average it touches, and at the step the box gives {{val id=bo[5]}}, halfway between. ` +
+      `{{scroll p=26}} The Gaussian on slide twenty six {{sketch id=g near=p26}} weighs the middle twice as much. ` +
+      `{{grid on=g id=r2 vals=10,10,10,100,10,10,70,70,70,70 shade "the same row"}} Same row, ` +
+      `{{grid on=g id=gau vals=1/4,1/2,1/4 below=r2 "Gaussian 1 2 1, over 4"}} new weights, ` +
+      `{{grid on=g id=go over=r2 slide=gau below=gau "Gaussian output"}} and a fresh output. ` +
+      `{{step id=go[3]}} With the spike in the middle it gives {{val id=go[3]}}: more of the spike, less of its neighbours. ` +
+      `{{sweep id=go dur=3}} Still a smear, just a narrower one. ` +
+      `{{scroll p=33}} The median filter on slide thirty three {{sketch id=m near=p33}} does not average at all. ` +
+      `{{grid on=m id=r3 vals=10,10,10,100,10,10,70,70,70,70 shade "the same row"}} Same row again, ` +
+      `{{grid on=m id=mo over=r3 win=1x3 reduce=median below=r3 "median output"}} and a window that sorts. ` +
+      `{{step id=mo[3]}} It sorts ten, a hundred, ten, and keeps the middle: {{val id=mo[3]}}. ` +
+      `{{sweep id=mo dur=3}} The spike is gone, and the step stays sharp: {{val id=mo[5]}} on one side, {{val id=mo[6]}} on the other. ` +
+      `{{grid on=m id=pa vals=10,15,20;23,90,27;33,31,30 shade "slide 33's patch" below=mo}} The slide's own patch has an outlier, ninety, in the middle. ` +
+      `{{grid on=m id=pb over=pa win=3x3 reduce=mean right=pa op=→ "box"}} The box {{step id=pb[1,1]}} averages all nine to {{val id=pb[1,1]}}. ` +
+      `{{grid on=m id=pm over=pa win=3x3 reduce=median right=pb "median"}} The median {{step id=pm[1,1]}} sorts them and keeps the fifth, {{val id=pm[1,1]}}: the outlier is gone. ` +
+      `<calc id="p">
+  const P = [[10, 15, 20], [23, 90, 27], [33, 31, 30]];
+  const box = P.flat().reduce((s, x) => s + x, 0) / 9;
+  export const sharpen = 2 * P[1][1] - box;
+</calc>` +
+      `Sharpening, twice the pixel minus the box, pushes the ninety up to {{val p.sharpen}}: it amplifies the outlier the median removed. ` +
+      `{{scroll p=13}} Last, the kernel on slide thirteen, {{sketch id=c near=p13}} a one on the right. ` +
+      `{{grid on=c id=s vals=11,12,13,14,15 shade "a short row"}} Take a short row, ` +
+      `{{grid on=c id=sk vals=0,0,1 right=s op=⊛ "kernel"}} and that kernel. ` +
+      `{{grid on=c id=co over=s slide=sk same below=s "correlation"}} Filtering as the slide writes it {{sweep id=co dur=3}} picks each pixel's right neighbour, so the row moves left: {{val id=co[1]}} lands where eleven was. ` +
+      `{{grid on=c id=cv over=s slide=sk same flip below=co "convolution"}} Convolution turns the kernel around first, {{sweep id=cv dur=3}} so the same weights move the row right. For a symmetric kernel, like the box and the Gaussian, turning it around changes nothing.`,
+  },
   /** The live commit gate's demo (src/demo/gate.ts): beat 3 names a point nothing carries. */
   gate: GATE_SCRIPT,
   /** The v1 learner UX storyboard as one simulated session on econ.pdf p12 (src/demo/learner.ts). */
