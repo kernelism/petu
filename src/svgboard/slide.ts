@@ -27,8 +27,8 @@ const r2 = (v: number) => String(Math.round(v * 100) / 100);
 export type SlideScope = { calcs?: Map<string, CalcTable>; values?: { v: number; of: string; text: string }[] };
 export class SlideError extends Error {}
 
-/** A matrix from a calc path ("img.f") or literal rows. */
-function matrix(src: string, sc: SlideScope, what: string): C.Mat {
+/** A matrix from a calc path ("img.f") or literal rows; `signal`: the data was written as one row ([1, 2, 3]). */
+function matrix(src: string, sc: SlideScope, what: string): C.Mat & { signal?: boolean } {
   const s = src.trim();
   const m = /^([A-Za-z]\w*)\.([A-Za-z_][\w.]*)$/.exec(s);
   if (m) {
@@ -39,7 +39,7 @@ function matrix(src: string, sc: SlideScope, what: string): C.Mat {
     if (v == null || typeof v === 'number') throw new SlideError(`${what}: calc ${m[1]} exports no array ${m[2]}`);
     const rows = Array.isArray(v[0]) ? (v as number[][]) : [v as number[]];
     if (!rows.length || rows.some((r) => r.length !== rows[0].length || r.some((x) => !Number.isFinite(x)))) throw new SlideError(`${what}: ${s} is not a full grid of numbers`);
-    return rows.map((r) => r.slice());
+    return Object.assign(rows.map((r) => r.slice()), Array.isArray(v[0]) ? {} : { signal: true });
   }
   const lit = C.parseVals(s);
   if (!lit) throw new SlideError(`${what}: "${s}" is neither a calc array nor rows of numbers`);
@@ -78,7 +78,8 @@ export function drawSlide(el: Element, sc: SlideScope, k: number): C.Mat {
   const id = (el.getAttribute('data-name') ?? el.getAttribute('id') ?? '').toLowerCase();
   // Shaped as the input is: a signal (one row) gives a row (out[i]); an image gives rows (out[r][c]), even
   // when its window fits only one row down (a 3x4 image under a 3x3 window: out[0][0], out[0][1]; live D2.2).
-  if (id && sc.calcs) sc.calcs.set(id, { out: R === 1 ? outs[0] : outs, n });
+  // As the data was written: [[2, 3, 20]] gives out[0][j] (live D2.3), [2, 3, 20] gives out[j]; literal rows of one row, a row.
+  if (id && sc.calcs) sc.calcs.set(id, { out: R === 1 && (input.signal ?? !/^[A-Za-z]/.test(el.getAttribute('data-slide')!.trim())) ? outs[0] : outs, n });
   // And computed values on the board, for the gate's number checks (as a data-val's are).
   for (const v of outs.flat()) if (Number.isFinite(v)) sc.values?.push({ v, of: id || 'slide', text: C.fmt(v, dp) });
 

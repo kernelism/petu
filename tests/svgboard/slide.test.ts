@@ -68,6 +68,11 @@ describe('data-slide', () => {
     expect(slideOut(sc, 'conv', 'out[0][1]')).toBe(17);
     resolveData(g('data-slide="img.r" data-op="mean" data-size="1x3"'), sc);
     expect(slideOut(sc, 'conv', 'out[0]')).toBe(20);
+    // A signal written as one row of a matrix ([[2, 3, 20, 4, 5]]) is indexed as rows (live D2.3).
+    sc.calcs.set('img', { s: [[2, 3, 20, 4, 5]] });
+    expect(resolveData(g('data-slide="img.s" data-op="median" data-size="1x3"'), sc)).toEqual([]);
+    expect(slideOut(sc, 'conv', 'out[0][0]')).toBe(3);
+    expect(slideOut(sc, 'conv', 'out[0][2]')).toBe(5);
   });
 
   it('names what is missing, never draws a guess', () => {

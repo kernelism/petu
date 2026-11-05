@@ -68,3 +68,12 @@ describe('calc on the wire', () => {
     expect(out).toContain('{{computed id=t s=3}}');
   });
 });
+
+describe('a matrix of one row on the wire', () => {
+  it('keeps its rows: [[2, 3, 20]] goes out as 2,3,20; and reads back as one row of a matrix', async () => {
+    const { computedTag, readComputed } = await import('../../src/calc/stream');
+    const tag = computedTag({ id: 's', values: { f: [[2, 3, 20]], r: [1, 2], m: [[1, 2], [3, 4]] } });
+    expect(tag).toBe('{{computed id=s f=2,3,20; r=1,2 m=1,2;3,4}}');
+    expect(readComputed(tag.slice(2, -2))!.values).toEqual({ f: [[2, 3, 20]], r: [1, 2], m: [[1, 2], [3, 4]] });
+  });
+});
