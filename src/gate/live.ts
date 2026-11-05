@@ -26,7 +26,8 @@ import type { RawAction } from '../script/types';
 import { acceptGroups, checkGroups, newBoardState, type BoardState, type GroupGeo } from '../svgboard/check';
 import type { NarrationClock } from '../playback/clock';
 import { clauseAfter, deixisAt, isArticle, lookahead, markOf, replaceWord, sentenceTail, type Deixis } from '../script/quoteWords';
-import { CHECK_WORDS } from '../agent/pacing';
+import { CHECK_WORDS, stepWords } from '../agent/pacing';
+import { STEP_HOLD_MS } from '../playback/pace';
 import type { FaultMode, Faults, GateFlag, GateLogEvent, GateMode, RepairFn, RepairReport, RepairResult } from './events';
 
 /** Checked narration that must still be playing before the gate checks whole beats (and may repair). */
@@ -504,7 +505,7 @@ export class LiveGate {
   private release(u: PreflightUnit, text: string, out: Out) {
     this.d.preflight.accept({ ...u, text });
     const sent = this.bounded(u, text);
-    if (u.kind !== 'opener') { this.released2 += sent; this.words2 += wordCount(sent); }
+    if (u.kind !== 'opener') { this.released2 += sent; this.words2 += wordCount(sent) + stepWords(sent, STEP_HOLD_MS); }
     this.releasedAll += sent;
     this.stats.released++;
     this.dropsInRow = 0;
