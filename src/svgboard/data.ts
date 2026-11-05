@@ -423,7 +423,15 @@ export const isMarker = (el: Element): boolean => {
  * The attributes an element's data-set computes ("opacity", "x" …): the engine owns them, so the style
  * passes (grammar, sanitize) leave them alone. A reveal's opacity 0 is "not yet", not a faint label.
  */
-export const setAttrs = (el: Element): Set<string> => new Set(splitTop(el.getAttribute('data-set') ?? '', ';').map((p) => p.slice(0, p.indexOf(':')).trim().toLowerCase()).filter(Boolean));
+/**
+ * A data-set's "attr: formula" parts. `;` separates them; a top-level `, attr:` does too (eval teach D8.2,
+ * 2026-11-05: "x: r.left[0].x, y: r.left[0].y" failed whole): no formula holds a comma then a name and a colon.
+ */
+export const setParts = (src: string): string[] => splitTop(src, ';').flatMap((p) => splitTop(p, ',').reduce<string[]>((out, q) => {
+  if (out.length && !/^\s*[A-Za-z][\w-]*\s*:/.test(q)) out[out.length - 1] += `,${q}`; else out.push(q);
+  return out;
+}, []));
+export const setAttrs = (el: Element): Set<string> => new Set(setParts(el.getAttribute('data-set') ?? '').map((p) => p.slice(0, p.indexOf(':')).trim().toLowerCase()).filter(Boolean));
 export const enginePlaced = (el: Element): boolean => el.hasAttribute('data-at') || /\bc[xy]\s*:/.test(el.getAttribute('data-set') ?? '') || !!el.parentElement?.closest('[data-at],[data-translate]');
 function snapMarkers(g: Element, sc: DataScope): void {
   const marks = [g, ...Array.from(g.querySelectorAll('circle,ellipse'))].filter((el) => isMarker(el) && !el.hasAttribute('data-snap-done') && !enginePlaced(el) && !el.closest('[data-schematic],[data-engine],[data-defs]') && !el.hasAttribute('data-bad'));
@@ -561,7 +569,7 @@ function resolveOne(el: Element, sc: DataScope): void {
     else fail(`data-points go on a <polyline>, <polygon> or <path>`);
   }
   if (el.hasAttribute('data-set')) {
-    for (const part of splitTop(el.getAttribute('data-set')!, ';')) {
+    for (const part of setParts(el.getAttribute('data-set')!)) {
       const i = part.indexOf(':');
       if (i < 0) fail(`data-set takes "attr: formula; …" ("${part}")`);
       const k = part.slice(0, i).trim().toLowerCase();
