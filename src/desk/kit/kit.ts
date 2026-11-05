@@ -2146,10 +2146,10 @@ async function stepOrSweep(v: Extract<KitVerb, { kind: 'step' | 'sweep' }>, env:
         const glide = per > 1 ? 0 : Math.min(GLIDE_MS, slot * 0.4);
         for (const [i, run] of runs.entries()) {
           if (i === 0) first();
-          const t0 = performance.now();
+          const t0 = ctl.clock.now(); // ink time: a pause mid-sweep is not time spent
           const [r, q] = run[run.length - 1];
           await winGo(p, r, q, ctl, prefersReducedMotion() ? 0 : glide, c, env, run.slice(0, -1));
-          await pause(slot - (performance.now() - t0), ctl);
+          await pause(slot - (ctl.clock.now() - t0) / ctl.scale, ctl);
         }
         first();
         await winDone(p, ctl, c, env.settings.inkColor);
@@ -2895,7 +2895,7 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
         const slot = C.sweepStepMs(R, dur ?? Math.min(6, Math.max(1.5, R * 0.7)));
         const hl = svg(e.over, 'rect', { x: t.placed.body.x, y: t.placed.body.y, width: t.placed.body.w, height: tb.rh, fill: accent, 'fill-opacity': 0.08, rx: px(t, 3), opacity: 0 });
         for (let r = 0; r < R; r++) {
-          const t0 = performance.now();
+          const t0 = ctl.clock.now(); // ink time: a pause mid-sweep is not time spent
           if (r === 0) first();
           const y0 = Number(hl.getAttribute('y')), y1 = t.placed.body.y + r * tb.rh;
           if (r === 0) { hl.setAttribute('y', String(y1)); await tween(ctl.ff ? 0 : 150, (k) => hl.setAttribute('opacity', String(k)), ctl); }
@@ -2905,7 +2905,7 @@ async function colVerb(v: Extract<KitVerb, { kind: 'col' }>, env: BuildEnv, stor
           paintTable(t, c, accent, [r, j]);
           await drawCalc(cb, store, c, env, { speed: 1, fadeMs: 0 }, false, exps[r]);
           await refreshDeps([t.id], store, Math.min(slot * 0.6, 360), ctl, env, c);
-          await pause(slot - (performance.now() - t0), ctl);
+          await pause(slot - (ctl.clock.now() - t0) / ctl.scale, ctl);
         }
         first();
         paintTable(t, c, accent, null);
