@@ -183,3 +183,13 @@ describe('a snap keeps a deliberate point where it was drawn', () => {
     expect(g.querySelector('circle')!.getAttribute('data-at')).toMatch(/^at\(d, x=/);
   });
 });
+
+describe('a number a calc program carries is grounded (teaching engine §0, not strict)', () => {
+  it('a worked line typing its inputs passes; a number no program carries is still noted', () => {
+    const sc = newScope();
+    sc.calcs = new Map([['avg', { r: [4, 4, 22], out: [10] }]]);
+    const r = checkGroups(['<g id="w" data-const="k=0"><text x="20" y="40" font-size="18" data-val="avg.out[0]">(4 + 4 + 22) / 3 = {}</text><text x="20" y="80" font-size="18">about 37 mm</text></g>'], newBoardState(560, 200), 16, sc);
+    expect(r.notes.filter((n) => /"22" is typed/.test(n))).toEqual([]);
+    expect(r.notes.join()).toMatch(/"37" is typed by hand/);
+  });
+});
