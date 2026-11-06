@@ -58,9 +58,11 @@ export function conventionNotes(words: string, views: ViewData[], pages: Map<num
   const conv = /\bconvol/.test(w), corr = /\bcorrelat/.test(w);
   const wins = views.filter((v) => v.kind === 'window');
   if (wins.length && conv !== corr) {
-    const bad = wins.filter((v) => (conv ? !v.flip : v.flip));
+    // A kernel the same turned round (a box, a Gaussian) is the same either way: nothing to check.
+    const symmetric = (m: number[][]) => m.every((row, r) => row.every((x, c) => x === m[m.length - 1 - r][row.length - 1 - c]));
+    const bad = wins.filter((v) => !symmetric(v.m) && (conv ? !v.flip : v.flip));
     // Every window disagreeing with the one word used: a comparison that draws both is not flagged.
-    if (bad.length === wins.length) notes.push(conv
+    if (bad.length && bad.length === wins.filter((v) => !symmetric(v.m)).length) notes.push(conv
       ? `the words say convolution but window ${bad[0].id} does not turn its kernel (add data-flip="")`
       : `the words say correlation but window ${bad[0].id} turns its kernel (drop data-flip)`);
   }

@@ -34,6 +34,8 @@ describe('conventionNotes', () => {
     expect(conventionNotes('Convolution turns the kernel around', [{ id: 'conv', kind: 'window', m: k }], new Map())[0]).toMatch(/does not turn its kernel/);
     expect(conventionNotes('Convolution turns the kernel around', [{ id: 'conv', kind: 'window', m: k, flip: true }], new Map())).toEqual([]);
     expect(conventionNotes('cross-correlation slides it as it is', [{ id: 'c', kind: 'window', m: k, flip: true }], new Map())[0]).toMatch(/turns its kernel/);
+    // A symmetric kernel (a box) is the same turned round: convolving it without data-flip is right.
+    expect(conventionNotes('convolve with the box', [{ id: 'b', kind: 'window', m: [[1, 1, 1], [1, 1, 1], [1, 1, 1]].map((r) => r.map((v) => v / 9)) }], new Map())).toEqual([]);
     // Both named (a comparison) or neither: nothing to check.
     expect(conventionNotes('correlation versus convolution', [{ id: 'c', kind: 'window', m: k }], new Map())).toEqual([]);
   });
