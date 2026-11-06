@@ -217,6 +217,11 @@ table by `scripts/eval/teachReport.ts`.
   12/16/18/26, the shift kernel as correlation [12,13,14,15,0] and convolution [0,11,12,13,14] through the
   engine window) are tests now.
 
+- **The founders' kit** (private until shared: https://claude.ai/artifact/NnNa1bBVuRSdgggcXa5XYc): how to record
+  both arms (petu, and ChatGPT given the same PDF and words), the ten questions with their eval recordings, the
+  plan's five rubric questions per answer with a blind A/B (the coordinator alone holds the key), and a
+  three-question check per topic taken before and after watching. Raters need Contributor access to save.
+
 ### Status of every item in the plan (2026-11-06)
 
 | Item (§6) | Status |
