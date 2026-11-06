@@ -186,13 +186,17 @@ table by `scripts/eval/teachReport.ts`.
   raw samples and the normalised weights as two grids; D12 the ⅓ × ⅓ outer product, both samples), 0 failed
   calcs, 0 typed numerals, 0 number flags, 0 (f) notes, 1 drop (D11.2, a `{{val}}` of an id it never gave,
   the known slip), median first word 1.8 s, $0.013 an answer. Runs `2026-11-05-terra-none-p6.26-teach-c189aba2-b`
-  and `…-p6.27-teach-c189aba2` (the p6.26 run without `-b` is void: the dev server reloaded under it).
+  and `…-p6.27-teach-c189aba2` (`…-p6.26-teach-c189aba2-void` is void: the dev server reloaded under it).
 - Seen live and fixed: the grid's working under the cells landed on the model's next label (D12); it now
   sits beside the grid. Not measured: the plot view (no eval deck has an iteration; the OpenStax corpus is
-  not in this checkout) and (f) on a real disagreement (none came up).
+  not in this checkout) and (f) on a real disagreement (none came up). Known edge: the what-if chip is
+  fixed on screen and does not follow a scroll of the board. (f)'s operation rule skips a kernel that is the
+  same turned round (a box, a Gaussian), and every resume path (the aside's return, clearing the ask bar, the
+  prediction's step) clears a what-if.
 
 **After Phase 3.** The plan has no Phase 4. What is left is the deferred list in §6, each with its
-condition: the QuickJS tracker (moot: calc is a sandboxed program already), the vision critic (offline
+condition: the QuickJS tracker (its first reason, rules past the expression language, is gone: calc runs
+JavaScript in a Worker; §0's other reason, stronger isolation, stands if needed), the vision critic (offline
 only), the scrub bar (§3.4 keeps it out of v1) and persona agents (only on eval evidence). The founder
 work in Phase 1 (the ChatGPT arm, the human rubric, the learning check) and §7's decisions are open.
 
