@@ -17,7 +17,7 @@ import { MAX_TAG_CHARS, ScriptParser } from '../script/parser';
 import { BEAT_TAG, hasBeatTags, isDefsGroup, isSvgTagBody, SVG_TAG_MAX, unescapeSvg, escapeSvg } from '../svgboard/wire';
 import { definedNames, defsOf } from '../svgboard/defs';
 import { GateState } from './engine';
-import { checkBeat, namedScene, withSeverity, type Severity } from './verdict';
+import { checkBeat, namedScene, SEVERITY, withSeverity, type Severity } from './verdict';
 import { textNumbers } from './numbers';
 import { numberFixes, type NumberFix } from './check';
 import type { El, Rect } from './layout';
@@ -26,7 +26,8 @@ import type { RawAction } from '../script/types';
 import { acceptGroups, checkGroups, newBoardState, type BoardState, type GroupGeo } from '../svgboard/check';
 import type { NarrationClock } from '../playback/clock';
 import { clauseAfter, deixisAt, isArticle, lookahead, markOf, replaceWord, sentenceTail, type Deixis } from '../script/quoteWords';
-import { CHECK_WORDS } from '../agent/pacing';
+import { CHECK_WORDS, stepWords } from '../agent/pacing';
+import { STEP_HOLD_MS } from '../playback/pace';
 import type { FaultMode, Faults, GateFlag, GateLogEvent, GateMode, RepairFn, RepairReport, RepairResult } from './events';
 
 /** Checked narration that must still be playing before the gate checks whole beats (and may repair). */
@@ -146,7 +147,9 @@ export class GatePreflight implements Preflight {
   private beats: RawAction[][] = [];
   private consts: { name: string; v: number; beat: number }[] = [];
   private drawn: El[] = [];
-  private last: { u: PreflightUnit; acts: RawAction[]; added: El[]; consts: { name: string; v: number }[]; svg?: { board: BoardState; geos: GroupGeo[]; grow?: number } } | null = null;
+  /** The inputs the released engine windows slide over (data-slide="img.f"), lowercase: check (c), one dataset. */
+  private slideInputs: string[] = [];
+  private last: { u: PreflightUnit; acts: RawAction[]; added: El[]; consts: { name: string; v: number }[]; slides?: string[]; svg?: { board: BoardState; geos: GroupGeo[]; grow?: number } } | null = null;
   /** The svg board as accepted so far (its groups' text and strokes, ids, canvas). */
   private svg: BoardState | null = null;
   private dirty = false;
@@ -236,6 +239,7 @@ export class GatePreflight implements Preflight {
     if (board?.drift?.length) v.notes.push(...board.drift.splice(0));
     // The svg board: each group parses, its id is new, text clears text and strokes, it stays on the canvas.
     let svg: { board: BoardState; geos: GroupGeo[]; grow?: number } | undefined;
+    let slidesHere: string[] | undefined;
     {
       let sb = this.svg;
       const srcs: string[] = [];
@@ -252,10 +256,21 @@ export class GatePreflight implements Preflight {
         // A group that defines a constant already defined, to another value: the first stands on the board
         // (KitStore.defineConsts), so this group would draw (and its words say) a value it does not have.
         for (const d of new Set(state.redefined.slice(redef0))) v.flags.push({ check: 'svg', detail: `constant ${d} is already defined: give the new value a new name` });
+        // (c) One dataset (teaching-engine §3.6): windows that compare operators slide over one input, so the
+        // student compares the operators, not two inputs. A second input is flagged (a note by default).
+        const slides = srcs.flatMap((src) => [...src.matchAll(/\bdata-slide\s*=\s*["']([^"']+)["']/g)].map((m) => m[1].trim().toLowerCase()));
+        slides.forEach((inp, i) => {
+          const seen = [...this.slideInputs, ...slides.slice(0, i)];
+          if (seen.length && !seen.includes(inp)) {
+            const f = { check: 'dataset' as const, detail: `a window slides over ${inp}, an earlier one over ${seen[0]}: compare operators on one input (the same calc array), unless the plan sets a second example` };
+            if (SEVERITY[this.env.severity ?? 'default'].dataset === 'fail') v.flags.push(f); else v.notes.push(`${f.check}: ${f.detail}`);
+          }
+        });
+        if (slides.length) slidesHere = slides;
         svg = { board: sb, geos: r.geos, ...(r.grow ? { grow: r.grow } : {}) };
       } else if (sb !== this.svg && sb) svg = { board: sb, geos: [] };
     }
-    this.last = { u, acts: kept, added, consts: unitConsts, ...(svg ? { svg } : {}) };
+    this.last = { u, acts: kept, added, consts: unitConsts, ...(slidesHere ? { slides: slidesHere } : {}), ...(svg ? { svg } : {}) };
     const scene = board?.scene?.();
     return {
       flags: v.flags.map((f) => ({ check: f.check, detail: f.detail })),
@@ -279,6 +294,7 @@ export class GatePreflight implements Preflight {
     this.drawn.push(...(l?.added ?? []));
     this.consts.push(...(l?.consts ?? []).map((c) => ({ ...c, beat: k })));
     if (l?.svg) { acceptGroups(l.svg.board, l.svg.geos, l.svg.grow); this.svg = l.svg.board; }
+    for (const x of l?.slides ?? []) if (!this.slideInputs.includes(x)) this.slideInputs.push(x);
     this.last = null;
     this.dirty = false;
   }
@@ -302,6 +318,12 @@ export type LiveGateDeps = {
   minRepairMs?: number;
   maxRepairs?: number;
   onEvent(e: GateLogEvent): void;
+  /**
+   * Runs the calc programs in a repair's text (src/calc/stream.ts `runCalcsIn`). The answer's own calcs run
+   * before the gate reads the stream; a repair arrives here, downstream of that, so a <calc> it writes would
+   * otherwise reach the board as source and its vals stay unbound.
+   */
+  calcs?(text: string): Promise<string>;
   /** Timers (tests: a fake clock's). */
   sleep?(ms: number, signal?: AbortSignal): Promise<void>;
 };
@@ -354,6 +376,9 @@ export function remnantOf(text: string, except: Set<string> = new Set(), constsO
   for (const t of tokenize(text, { end: true })) {
     if (t.kind !== 'tag') continue;
     if (/^\s*(?:svgboard|const)\b/.test(t.body)) { out.push(`{{${t.body}}}`); continue; }
+    // A calc that ran is a definition too: the beats after it name its values (eval teach D4, 2026-11-05: the
+    // beat carrying <calc id="img"> was dropped and every later beat failed on "data-slide: no calc img").
+    if (/^\s*computed\b/.test(t.body) && !/\bfailed="/.test(t.body)) { out.push(`{{${t.body}}}`); continue; }
     if (!isSvgTagBody(t.body.slice(0, 6))) continue;
     const d = defsOf(unescapeSvg(t.body.replace(/^svg\s*/, '')), except, constsOnly);
     if (d) out.push(`{{svg ${escapeSvg(d)}}}`);
@@ -495,7 +520,7 @@ export class LiveGate {
   private release(u: PreflightUnit, text: string, out: Out) {
     this.d.preflight.accept({ ...u, text });
     const sent = this.bounded(u, text);
-    if (u.kind !== 'opener') { this.released2 += sent; this.words2 += wordCount(sent); }
+    if (u.kind !== 'opener') { this.released2 += sent; this.words2 += wordCount(sent) + stepWords(sent, STEP_HOLD_MS); }
     this.releasedAll += sent;
     this.stats.released++;
     this.dropsInRow = 0;
@@ -736,6 +761,7 @@ export class LiveGate {
     // out of the frame its coordinates are in). Only a unit that opened the board keeps its tag.
     const opened = /\{\{svgboard\b[^}]*\}\}/.exec(u.text);
     let text = opened ? res.text : res.text.replace(/\{\{svgboard\b[^}]*\}\}\s*/g, '');
+    if (this.d.calcs && /<calc[\s>]|\{\{calcsrc/.test(text)) { text = await this.d.calcs(text); if (signal.aborted) return; }
     // The unit that opened the board keeps its own BOARD tag even when the repair wrote none (founder lec06
     // 2026-10-31, turn 3: the first beat failed, its repair came back without {{svgboard}}, and every group
     // of the answer was then skipped, "unknown region": the board had never opened).

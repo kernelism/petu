@@ -14,15 +14,16 @@ import { RouteChip, upcomingPage, type Route } from './ui/RouteChip';
 import type { PartsView } from './ui/PartsBar';
 import { barMode } from './ui/barMode';
 import { answerHead, asideHead, clockOf, pagesLabel, trailTitle, type TrailHead } from './ui/trail';
-import { aboutContext, askedPage, asideContext, bboxOf, checkPageOf, isLoop, pointedLabel, type Pointed } from './agent/moment';
-import { isTyping, playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
+import { aboutContext, askedPage, asideContext, bboxOf, boardState, checkPageOf, isLoop, pointedLabel, type Pointed } from './agent/moment';
+import { kitStore } from './desk/kit/kit';
+import { EXPLAIN_STEP_QUESTION, isTyping, playbackKey, type PlaybackHandlers } from './ui/playbackKeys';
 import { PacedClock, type NarrationClock } from './playback/clock';
 import { VoiceClock, fetchVoice, warmVoice, webAudioOut } from './playback/voiceClock';
 import { SwitchClock } from './playback/switchClock';
 import { BASE_WPM, getSettings, setSettings, SPEEDS, stepSpeed, useSettings, type VoiceSetting } from './settings/settings';
 import { DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo, suggestionsFor } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
-import { withCalcs } from './calc/stream';
+import { runCalcsIn, withCalcs } from './calc/stream';
 import type { DevStep } from './demo/learner';
 import { Desk, GLIDE_MS } from './desk/Desk';
 import type { DeskState } from './desk/types';
@@ -440,6 +441,8 @@ export default function App() {
   const [routing, setRouting] = useState<string | null>(null);
   /** The answer was paused because the student started typing in the bar (it resumes if they clear it). */
   const typingPaused = useRef(false);
+  /** A process step (a tween, a window's step or sweep) has played in this answer: E asks for it again, explained (an aside). */
+  const steppedRef = useRef(false);
   /** The bar's moment (src/ui/barMode.ts): an answer has played; the last one closed on this question. */
   const [answered, setAnswered] = useState(false);
   /**
@@ -869,6 +872,7 @@ export default function App() {
     if (DEBUG) { setAskT0(t0); setDebug({ log: [] }); }
     let spoke = false;
     let drew = false;
+    steppedRef.current = false;
     let askErr: AskError | null = null;
     let cutOff: string | null = null;
     const log = new AnswerLog(q, page, toAgent ? 'agent' : 'script', t0);
@@ -909,7 +913,7 @@ export default function App() {
         svgMinFont: () => { const m = deskRef.current?.metrics?.('wide'); return m && m.boardPx > 0 ? Math.max(12, m.bodyPx(null)) / (m.boardPx / 1000) : 16; } });
       gate = new LiveGate({
         clock: { now: () => performance.now(), endsAt: () => clock.endsAt() }, preflight,
-        repair: repairFor(),
+        repair: repairFor(), calcs: (t) => runCalcsIn(t),
         faults: GATE_FAULTS, onEvent: gateEvent,
         headroomMs: HEADROOM_MS,
       });
@@ -1038,6 +1042,7 @@ export default function App() {
       onAction: (a, at, live) => {
         if (sessionRef.current !== session) return;
         if (a.kind !== 'scroll' && a.kind !== 'clear') drew = true;
+        if (a.kind === 'tween' || a.kind === 'step' || a.kind === 'sweep') steppedRef.current = true;
         director.run(a, at, live);
       },
       onRewind: (a) => { if (sessionRef.current === session) director.rewind(a); },
@@ -1213,7 +1218,7 @@ export default function App() {
     if (s.pause()) { setUserPaused(true); clearPause(); }
   }, []);
 
-  /** Plays on from part i: forward fast-forwards the board, back repeats the narration (its ink stays) and returns to its page. */
+  /** Plays on from part i: forward fast-forwards the board; back repeats the narration and returns to its page (page ink stays; svg groups and process steps after it are hidden or rewound, and come back on their words). */
   const jumpTo = useCallback((i: number) => {
     const s = sessionRef.current, p = partsRef.current[i];
     if (!s || !p || asideRef.current) return;
@@ -1375,7 +1380,9 @@ export default function App() {
     const cur = answerRef.current;
     const said = joinWords(s.script().words.slice(0, s.position()));
     const board = director.registry.entries().map((e) => `${e.kind}${e.id ? ` #${e.id}` : ''}${e.target.region ? ` on ${e.target.region}` : e.target.page ? ` on p${e.target.page}` : ''}`);
-    return asideContext({ question: cur.question, plan: cur.plan, said, board });
+    const ks = kitStore(director.registry);
+    const state = boardState(ks.calcs, ks.consts);
+    return asideContext({ question: cur.question, plan: cur.plan, said, board, ...(state ? { state } : {}) });
   }
   /** The moment of a question asked now: what the student pointed at, the marks drawn since, the page it is about. */
   function takeAsked(): Asked {
@@ -1447,7 +1454,7 @@ export default function App() {
   // Capture phase, so the keys never also scroll the slides (follow mode would read that as the
   // student taking over) or stop the answer (Esc).
   const keysRef = useRef<PlaybackHandlers>({ togglePause, stepPart, closeAside, replay: replaySentence, skip: skipSentence, speed: (d) => changeSpeed(stepSpeed(getSettings().speed, d)) });
-  keysRef.current = { togglePause, stepPart, closeAside, replay: replaySentence, skip: skipSentence, speed: (d) => changeSpeed(stepSpeed(getSettings().speed, d)) };
+  keysRef.current = { togglePause, stepPart, closeAside, replay: replaySentence, skip: skipSentence, speed: (d) => changeSpeed(stepSpeed(getSettings().speed, d)), explainStep: () => askAsideRef.current(EXPLAIN_STEP_QUESTION) };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const handled = playbackKey(e, {
@@ -1455,6 +1462,7 @@ export default function App() {
         playing: !!sessionRef.current,
         parts: partsRef.current.length,
         popover: !!document.querySelector('.popover'),
+        stepped: steppedRef.current,
       }, keysRef.current);
       if (handled) { e.preventDefault(); e.stopImmediatePropagation(); }
     };

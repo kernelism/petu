@@ -158,3 +158,18 @@ describe('several numbers in one readout', () => {
     expect(probs.map((p) => p.detail)).toEqual(['data-val has 3 formulas for 2 {} in its text']);
   });
 });
+
+describe('data-set separators', () => {
+  it('a top-level ", attr:" separates like ";", a comma inside a formula does not (eval teach D8.2)', async () => {
+    const { setParts } = await import('../../src/svgboard/data');
+    expect(setParts('x: r.left[0].x, y: max(1, 2), height: 3').map((p) => p.trim())).toEqual(['x: r.left[0].x', 'y: max(1, 2)', 'height: 3']);
+    expect(setParts('x: 1; y: 2').map((p) => p.trim())).toEqual(['x: 1', 'y: 2']);
+    const { calcNumbers } = await import('../../src/calc/stream');
+    const sc = newScope();
+    sc.calcs = new Map([['rects', calcNumbers({ left: [{ x: 10, y: 20, h: 30 }] })]]);
+    const g = parseGroup('<g id="r"><rect data-set="x: rects.left[0].x, y: rects.left[0].y, height: rects.left[0].h" width="20"/></g>') as Element;
+    expect(resolveData(g, sc)).toEqual([]);
+    const r = g.querySelector('rect')!;
+    expect([r.getAttribute('x'), r.getAttribute('y'), r.getAttribute('height')]).toEqual(['10', '20', '30']);
+  });
+});

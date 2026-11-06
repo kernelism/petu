@@ -1,6 +1,6 @@
 import type { RawAction as Action, ScriptEvent } from '../script/types';
 import { endsClause, endsSentence, type NarrationClock } from './clock';
-import { REST_MS, WORD_EST_MS, type BeatWord } from './pace';
+import { REST_MS, STEP_HOLD_MS, WORD_EST_MS, type BeatWord } from './pace';
 
 export type SchedulerCallbacks = {
   onWord(text: string, index: number): void;
@@ -22,10 +22,11 @@ export type SchedulerCallbacks = {
 /**
 /**
  * Actions a seek back plays again: the steps of a process (a window's step and sweep, a tween of the
- * constants a board is drawn from), whose state the board can restore exactly. Everything else fired
- * stays as drawn (ink is never withdrawn).
+ * constants a board is drawn from), whose state the board can restore exactly, and the svg board's
+ * groups (teaching-engine Phase 2, seek-to-state): a group after the target is hidden, not erased, and
+ * shows again on its words. Everything else fired stays as drawn.
  */
-export const replays = (a: Action): boolean => a.kind === 'step' || a.kind === 'sweep' || a.kind === 'tween';
+export const replays = (a: Action): boolean => a.kind === 'step' || a.kind === 'sweep' || a.kind === 'tween' || a.kind === 'svg';
 
 export type SchedulerOptions = {
   /** How far ahead of its word an action may fire, in ms. Default 0. */
@@ -122,9 +123,16 @@ export class Scheduler {
     if (this.stopped) return;
     for (const e of events) {
       if (e.type === 'end') this.ended = true;
-      else if (e.type === 'word') this.words.push(e.text);
+      else if (e.type === 'word') {
+        // A sentence a process step moved in ends on a hold (teaching-engine §3.4: 600–800 ms at each
+        // step and at the end of a process beat): the student sees where the window or number landed.
+        const n = this.words.length;
+        if (this.steppedAt != null && n > this.steppedAt && endsSentence(this.words[n - 1])) { this.rests.set(n, Math.max(this.rests.get(n) ?? 0, STEP_HOLD_MS)); this.steppedAt = null; }
+        this.words.push(e.text);
+      }
       else if (e.action.kind === 'beat') { this.anchorOf(e.action); this.beatStarts.push(this.words.length); } // a boundary: nothing fires
       else {
+        if ((e.action.kind === 'step' || e.action.kind === 'sweep' || e.action.kind === 'tween') && this.steppedAt == null) this.steppedAt = this.words.length;
         const from = this.beatFrom, word = this.anchorOf(e.action);
         this.acts.push({ action: e.action, word, ...(drawsSvg(e.action) ? { beat: this.tagged ? from : word, from } : {}) });
       }
@@ -145,7 +153,9 @@ export class Scheduler {
    * after a beat that drew. A pause after a drawn step, not a rule for the model: the scheduler reads
    * it from where the groups stand, whatever the beat sizes.
    */
-  private rests = new Set<number>();
+  private rests = new Map<number, number>();
+  /** Where a process step came (word count then): the first sentence end after a word of it holds (STEP_HOLD_MS). A step written before its sentence holds after that sentence, not before it. */
+  private steppedAt: number | null = null;
   /**
    * The word an action fires with: the next one, except an svg board group, which fires on the first
    * word of its own beat already here that names it (its id's words), else with the next word. Only its
@@ -165,7 +175,7 @@ export class Scheduler {
     const want = (a.anchor ?? []).filter((w) => w.length >= 2);
     if (want.length) for (let i = from; i < n; i++) if (namesWord(this.words[i], want)) return i;
     // At a sentence boundary after a drawn beat: the next sentence starts after a rest.
-    if (this.drawn && n > 0 && endsSentence(this.words[n - 1])) this.rests.add(n);
+    if (this.drawn && n > 0 && endsSentence(this.words[n - 1])) this.rests.set(n, Math.max(this.rests.get(n) ?? 0, REST_MS));
     this.drawn = true;
     // After its own sentences (trailing order) and none names it: with them, from its beat's first word.
     // On the next word it drew on the next beat's first one (frame, axes, title are rarely said), with
@@ -360,9 +370,10 @@ export class Scheduler {
   /**
    * Plays on from word `target`. Forward: the words in between are shown at once and their actions
    * fire fast (they land quickly, so the board is what it would have been). Back: the narration
-   * repeats from there; actions already fired are not fired again (the ink is still on the page),
-   * except the steps of a process (replays): the board rewinds them (onRewind) and they play again
-   * on their words, so going back shows the window where the words say it is. Unpauses. False when the clock can't seek.
+   * repeats from there; actions already fired are not fired again (page ink stays), except replays():
+   * the board rewinds a process's steps and hides the svg groups drawn after the target (onRewind), and
+   * they play again on their words, so going back shows the board as it stood at those words. Unpauses.
+   * False when the clock can't seek.
    */
   seek(target: number): boolean {
     if (this.stopped || !this.clock.retime) return false;
@@ -456,7 +467,8 @@ export class Scheduler {
   /** Hands the next word to the clock (with its rest, after a drawn beat). */
   private release(): void {
     const i = this.released++;
-    if (this.rests.has(i)) this.clock.enqueue(this.words[i], REST_MS);
+    const rest = this.rests.get(i);
+    if (rest) this.clock.enqueue(this.words[i], rest);
     else this.clock.enqueue(this.words[i]);
   }
 

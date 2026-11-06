@@ -49,14 +49,66 @@ doesn't check. Instead:
 Dropping is kept only for a calc that fails to run, and that goes to repair first.
 
 **Built so far (Phase 1, round 10).** The calc sandbox and wire, steps on a constant, step back, three
-hand-written demos, prompt p6.18–p6.20 and scout s2.13. Open items:
+hand-written demos, prompt p6.18–p6.23 and scout s2.13. The engine-owned sliding window (`data-slide`,
+`src/svgboard/slide.ts`): the model writes the data in a calc and the step tweens; the engine lays out
+input, kernel (and the turned kernel for convolution) and output, moves the frame, fills each output and
+writes its working, and registers the outputs as `<id>.out` for `{{val}}`. Repairs (r3): a calc a repair
+writes is run before its beat is checked, and the note shows a calc that ran by its value names. Open items:
 
-- A model-written frame computes its own x (`x: 164 + 36*k`); one live answer drew it one cell off its
-  working line. Next: an engine-laid row from a calc array and a frame bound to a cell index.
+- ~~A model-written frame computes its own x~~: done, the engine window (`data-slide`) owns the frame.
 - `grounded()` accepts any typed number equal to any calc export: §0 said replace, this only accepts.
-- A repair's prompt sees `{{computed …}}` where the model wrote `<calc>`, and a `<calc>` inside a repaired
-  beat is not run (repairs are injected downstream of the calc runner).
+- ~~A `<calc>` inside a repaired beat is not run~~: done (the gate's `calcs` hook, repair note r3).
 - STEPS use is measured on single answers so far; sample the same question several times before claims.
+
+**Phase 1 evaluation, automated part (2026-11-05, p6.23, gpt-6.1-terra, no judge).** Question set
+`teach` (`scripts/eval/teach.ts`: the plan's filtering, median, correlation-vs-convolution, 5x5 convolution,
+addition and rod questions, plus two unseen: a standard deviation and a Riemann sum), 3 samples each,
+table by `scripts/eval/teachReport.ts`.
+
+| | round 1 (24 answers) | rerun D2, D4 after fixes (6) |
+|---|---|---|
+| answers with a calc | 16 | 6 |
+| calcs that failed to run | 0 of 16 | 0 of 6 |
+| numerals typed in the narration | 0 | 0 |
+| gate number flags | 0 | 0 |
+| answers that stepped / engine windows | 8 / 8 | 6 / 6 |
+| beats dropped | 10 | 3 |
+| median first word | 2.0 s | 1.8 s |
+| mean cost per answer | $0.016 | $0.010 |
+
+- Spoken numbers spot-checked: the standard deviation (mean 5, squared deviations 32, σ 2, s 2.14), the
+  rectangle sums (0.4688, 0.3984) and the output sizes (3×3 / 5×5 / 7×7) are right.
+- Round 1's drops were mostly two engine bugs, fixed since: a window's outputs lost their rows when the
+  window fit one row down (and a one-row matrix lost its rows on the wire), and a dropped beat took its
+  calc with it, so every later beat failed on "no calc img".
+- What is left: the model sometimes says a window's output before drawing the window (the beat is
+  dropped, correctly), and names a readout id it never gave (`{{val id=result}}`).
+- The addition question (D5) on `examples.pdf` is refused as off the document every time: that page has
+  no arithmetic, so the refusal is right and D5 measures nothing. The rod (D6) and one Riemann answer use
+  constant formulas instead of a calc: still engine-computed, not typed.
+- Not done (founder work): the ChatGPT arm, the human rubric and the learning check.
+
+**Phase 2 built so far (2026-11-05, branch `iter/r11`).**
+
+- **Seek-to-state for free SVG.** A seek back hides the svg groups drawn after the target (kept, not
+  erased) and they show again on their words, with a short fade, never drawn twice; windows and tweens
+  rewind as before. Verified in the rod demo. I1 now reads: page ink stays; the board follows the words.
+- **Holds at step boundaries.** A sentence a process step moved in (a tween, a window's step or sweep)
+  ends on a 700 ms hold (`STEP_HOLD_MS`), after the sentence, not before it; measured 1.4 s between
+  words after "…the sum is 6." against 0.32 s elsewhere. The gate's length budget counts each hold.
+- **The data bridge.** Already there: a free readout reads an engine window's outputs
+  (`data-val="conv.out[0][0]"`); now under test.
+- **Re-explain this step.** E (once a step has played) opens an aside: "Explain the step on the board
+  again, more slowly…". Every aside now carries the board's computed numbers and step constants. Live on
+  lec06: the aside drew the window the frame was on ([2,3,4 / 3,4,5 / 4,5,6]) and said where the turned
+  kernel's 1 lands, from those numbers.
+- **Gate check (c), one dataset.** A second engine window over another input is noted (failed under
+  `&gatecheck=all`) until its precision is measured.
+- **Eval after Phase 2** (teach, 2 samples each, 16 answers): 12 calcs, 0 failed; 0 typed numerals and
+  0 gate number flags; 1 beat dropped (10 in round 1's 24); median first word 2.0 s; $0.016 an answer;
+  no one-dataset notes. The drop was "x: …, y: …" in a data-set (commas for semicolons), now accepted.
+- Not built: (f) conventions needs a conventions line from the scout first; the prediction prompt is
+  optional and waits on the pacing decision in §7.
 
 **Effect on the plan.** Phase 1 adds the calc sandbox and derivation rendering. The
 `expr.ts` list extensions in section 5 shrink to what the engine needs for drawing; arithmetic moves

@@ -52,7 +52,9 @@ export function computedTag(r: CalcResult): string {
     return [[k, v]];
   });
   const parts = entries.map(([k, v]) => {
-    const s = typeof v === 'number' ? fmtNum(v) : Array.isArray(v[0]) ? (v as number[][]).map((row) => row.map(fmtNum).join(',')).join(';') : (v as number[]).map(fmtNum).join(',');
+    // A matrix of one row keeps a trailing ";" (f=[[2,3,20]] → f=2,3,20;): it reads back as rows, not a row.
+    const rows = (v as number[][]);
+    const s = typeof v === 'number' ? fmtNum(v) : Array.isArray(v[0]) ? rows.map((row) => row.map(fmtNum).join(',')).join(';') + (rows.length === 1 ? ';' : '') : (v as number[]).map(fmtNum).join(',');
     return `${k}=${s}`;
   });
   return `{{computed id=${r.id} ${parts.join(' ')}}}`;
@@ -71,7 +73,7 @@ export function readComputed(body: string): { id: string; values: CalcTable; fai
     if (eq <= 0) return null;
     const k = pair.slice(0, eq), s = pair.slice(eq + 1);
     if (!/^[A-Za-z_][\w.[\]]{0,60}$/.test(k) || !/^[-+0-9.eNa,;]+$/.test(s)) return null;
-    const rows = s.split(';').map((row) => row.split(',').map(Number));
+    const rows = s.split(';').filter((row, i, all) => row !== '' || i < all.length - 1).map((row) => row.split(',').map(Number));
     values[k] = s.includes(';') ? rows : s.includes(',') ? rows[0] : rows[0][0];
   }
   return { id, values };
@@ -155,4 +157,11 @@ export async function* withCalcs(src: AsyncIterable<string>, run: (id: string, c
   };
   for await (const chunk of src) { buf += chunk; yield* step(false); }
   yield* step(true);
+}
+
+/** One finished text with its calcs run (a repair's replacement beat). */
+export async function runCalcsIn(text: string, run?: (id: string, code: string) => Promise<CalcResult>): Promise<string> {
+  let out = '';
+  for await (const s of withCalcs((async function* () { yield text; })(), run)) out += s;
+  return out;
 }

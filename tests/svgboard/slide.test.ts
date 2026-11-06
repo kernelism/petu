@@ -60,6 +60,29 @@ describe('data-slide', () => {
     expect(slideOut(sc, 'conv', 'out[4][4]')).toBe(25);
   });
 
+  it('an image whose window fits one row down still gives rows (live D2.2: median.out[0][0] was unbound); a signal gives a row', () => {
+    const sc = newScope(); sc.consts.k = 0;
+    sc.calcs = new Map([['img', { f: [[10, 11, 12, 18], [13, 200, 14, 19], [15, 16, 17, 20]], r: [10, 40, 10, 70, 70] }]]);
+    resolveData(g('data-slide="img.f" data-op="median" data-size="3x3"'), sc);
+    expect(slideOut(sc, 'conv', 'out[0][0]')).toBe(14);
+    expect(slideOut(sc, 'conv', 'out[0][1]')).toBe(17);
+    resolveData(g('data-slide="img.r" data-op="mean" data-size="1x3"'), sc);
+    expect(slideOut(sc, 'conv', 'out[0]')).toBe(20);
+    // A signal written as one row of a matrix ([[2, 3, 20, 4, 5]]) is indexed as rows (live D2.3).
+    sc.calcs.set('img', { s: [[2, 3, 20, 4, 5]] });
+    expect(resolveData(g('data-slide="img.s" data-op="median" data-size="1x3"'), sc)).toEqual([]);
+    expect(slideOut(sc, 'conv', 'out[0][0]')).toBe(3);
+    expect(slideOut(sc, 'conv', 'out[0][2]')).toBe(5);
+  });
+
+  it('the data bridge: a free readout after the window reads its outputs (data-val="conv.out[r][c]")', () => {
+    const sc = scope(), el = g(MEAN);
+    resolveData(el, sc);
+    const t = parseGroup('<g id="note"><text x="20" y="300" data-val="conv.out[0][0], conv.out[2][2]" data-fmt="0">first {} last {}</text></g>') as Element;
+    expect(resolveData(t, sc)).toEqual([]);
+    expect(t.querySelector('text')!.textContent).toBe('first 7 last 19');
+  });
+
   it('names what is missing, never draws a guess', () => {
     const sc = scope();
     expect(resolveData(g('data-slide="img.nope" data-op="mean" data-size="3x3"'), sc)[0].detail).toMatch(/exports no array nope/);

@@ -5,7 +5,7 @@
 // in latency (first word, opener→stage-2 seam), modelled the same way with and without the gate.
 //   node --import ./scripts/lib/tsResolve.mjs --experimental-transform-types --no-warnings scripts/gate-beats/liveReplay.ts <runId…> [--gatefail 2,o1] [--json out]
 import { readFileSync } from 'node:fs';
-import { withCalcs } from '../../src/calc/stream.ts';
+import { runCalcsIn, withCalcs } from '../../src/calc/stream.ts';
 import { runCalcNode } from '../../src/calc/node.ts';
 import { join } from 'node:path';
 import { LiveGate, GatePreflight, type Preflight } from '../../src/gate/live.ts';
@@ -74,7 +74,7 @@ export async function replayGate(rec: Recording, o: { gatefail?: string; seed?: 
     accept: (u) => pre.accept(u), reject: (u) => pre.reject(u),
   };
   const events: GateLogEvent[] = [];
-  const gate = new LiveGate({ clock, preflight: timed, faults: parseFaults(o.gatefail), onEvent: (e) => events.push(e), sleep: time.sleep });
+  const gate = new LiveGate({ clock, preflight: timed, faults: parseFaults(o.gatefail), onEvent: (e) => events.push(e), sleep: time.sleep, calcs: (t) => runCalcsIn(t, runCalcNode) });
   const released: Released[] = [];
   const s2 = rec.stage2At > 0 ? rec.stage2Chunk : 0;
   const src = async function* () {

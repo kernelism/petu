@@ -65,3 +65,11 @@ describe('pacing: the plan read as a length budget', () => {
     expect(budgetNote(null)).toBe('');
   });
 });
+
+describe('stepWords', () => {
+  it('each process step costs its hold in words (0.7 s at 2.4 words a second); other tags nothing', async () => {
+    const { stepWords } = await import('../../src/agent/pacing');
+    expect(stepWords('{{tween k=1 dur=0.8}} Put it here. {{step conv}} {{sweep conv}} {{val x}} {{highlight p=2 "a"}}')).toBeCloseTo(3 * 1.68, 6);
+    expect(stepWords('No steps here.')).toBe(0);
+  });
+});

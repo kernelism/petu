@@ -25,6 +25,17 @@ const PLAYING: PlaybackContext = { aside: false, playing: true, parts: 3, popove
 const key = (k: string, o: Partial<KeyboardEvent> & { target?: EventTarget | null } = {}) =>
   ({ key: k, shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, defaultPrevented: false, target: document.body, ...o });
 
+describe('E: explain this step again', () => {
+  it('asks only once a process step has played, never in an aside or with Shift', () => {
+    const h = { ...handlers(), explainStep: () => h.calls.push('explain') };
+    expect(playbackKey(key('e'), PLAYING, h)).toBe(false);
+    expect(playbackKey(key('e'), { ...PLAYING, stepped: true }, h)).toBe(true);
+    expect(playbackKey(key('E', { shiftKey: true }), { ...PLAYING, stepped: true }, h)).toBe(false);
+    expect(playbackKey(key('e'), { ...PLAYING, stepped: true, aside: true }, h)).toBe(false);
+    expect(h.calls).toEqual(['explain']);
+  });
+});
+
 describe('playback keys', () => {
   it('Space pauses/resumes, R replays, ←/→ step parts, Shift+←/→ step sentences, < > change speed', () => {
     const h = handlers();

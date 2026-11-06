@@ -1,7 +1,7 @@
 // src/playback/director.ts
 import { mountBoard, WITHDRAW } from '../svgboard/render';
-import { defineSvgGroup } from '../svgboard/element';
 import { isDefsGroup } from '../svgboard/wire';
+import { defineSvgGroup, svgKey } from '../svgboard/element';
 import { REGION_H, REGION_W, targetOf, type Action, type InkAction, type LayoutAction, type RawAction, type Target } from '../script/types';
 import { Figures, type Grounding } from '../geometry/resolve';
 import type { ViewerApi } from '../pdf/viewerApi';
@@ -151,6 +151,7 @@ export class Director {
     // The svg board: a board section gets its id here (in order, before layout runs), and each group
     // draws into the latest board.
     if (raw.kind === 'sketch' && raw.svgboard) raw = { ...raw, id: raw.svgboard.extend && this.svgBoard ? this.svgBoard : (this.svgBoard = `svgb${++svgBoardN}`) };
+    if (raw.kind === 'svg' && this.reshow(raw, at)) return;
     if (raw.kind === 'svg') {
       // A group with no board open (its {{svgboard}} was lost upstream): a drawing is never lost, so a
       // default board opens for it, loudly.
@@ -191,7 +192,36 @@ export class Director {
   }
 
   /** A seek back replays a fired step: its block goes back to how it stood before it (src/desk/kit/kit.ts rewindStep). */
-  rewind(raw: RawAction): void { rewindStep(kitStore(this.registry), raw as object); }
+  rewind(raw: RawAction): void {
+    const store = kitStore(this.registry);
+    // A drawn svg group after the target: hidden (its words come again and show it), never erased.
+    if (raw.kind === 'svg') {
+      const key = svgKey(raw);
+      const g = store.svgDrawn.get(key);
+      if (g?.isConnected) { if (!store.svgHidden.has(key)) { g.style.transition = ''; g.style.opacity = '0'; g.style.visibility = 'hidden'; store.svgHidden.add(key); } }
+      else store.svgKept.add(key);
+      return;
+    }
+    rewindStep(store, raw as object);
+  }
+
+  /** A group a seek back hid, its words come round again: it shows (a short fade), not drawn twice. */
+  private reshow(raw: RawAction & { kind: 'svg' }, at: number): boolean {
+    const store = kitStore(this.registry);
+    const key = svgKey(raw);
+    const kept = store.svgKept.delete(key);
+    if (!kept && !store.svgHidden.delete(key)) return false;
+    const g = store.svgDrawn.get(key);
+    if (g?.isConnected) {
+      g.style.visibility = '';
+      g.style.transition = 'opacity 0.35s ease-out';
+      // The next frame, so the transition runs from 0.
+      (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (f: () => void) => setTimeout(f, 0))(() => { g.style.opacity = ''; });
+    }
+    void at;
+    // No timing of its own: the first draw recorded it, and recordings match timings to tags in order (liveSkips).
+    return true;
+  }
 
   /**
    * The page the answer is on: the asked page (App: askedPage, set by ask()), then each page it scrolls

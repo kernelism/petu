@@ -5,11 +5,23 @@
 import type { RepairReport } from '../../src/gate/events';
 import { rawSvgScript } from '../../src/svgboard/wire';
 
-export const REPAIR_VERSION = 'r2';
+export const REPAIR_VERSION = 'r3';
 /** The scene report (ON THE BOARD NOW) is cut at this many characters. */
 export const BOARD_CHARS = 1500;
 
 const q = (s: string) => JSON.stringify(s);
+
+/**
+ * A calc the beat carried has already run: the beat holds its result tag ({{computed id=rod I4=… }}), not
+ * the program. The note shows it as a calc that ran, with the names its values go by, so the repair
+ * names them ({{val rod.I4}}) instead of typing the numbers or writing the program again.
+ */
+export const ranCalcs = (beat: string): string => beat.replace(/\{\{computed\s+id=([A-Za-z]\w*)((?:\s+[^}\s]+)*)\s*\}\}/g, (_m, id: string, rest: string) => {
+  const failed = /failed="/.test(rest);
+  const names = failed ? [] : rest.trim().split(/\s+/).filter(Boolean).map((p) => p.slice(0, p.indexOf('=')));
+  // Not a tag: a repair that echoes the line back must not hand the calc runner a program with no exports.
+  return failed ? `(calc ${id} failed to run)` : `(calc ${id} ran: ${names.map((n) => `${id}.${n}`).join(', ')})`;
+});
 
 /** ON THE BOARD NOW: the failed beat's section in full (id kind "label"), the others as counts; consts; finds. */
 export function boardReport(r: Pick<RepairReport, 'board' | 'consts' | 'finds'>, max = BOARD_CHARS): string {
@@ -33,16 +45,18 @@ const problemLine = (p: RepairReport['problems'][number]) => `- ${p.check}: ${p.
  * problems the gate found, and the board's groups so far; the replacement is a beat in the same format.
  * r2: the beat's group first, then its sentences (the order the prompt teaches, p6.8; r1 asked for the
  * words first), and a beat that drew keeps a drawing: the gate never releases its words without one
- * (src/gate/live.ts), so a plain-words replacement would be withheld anyway.
+ * (src/gate/live.ts), so a plain-words replacement would be withheld anyway. r3: a calc in the beat shows as
+ * one that ran, with its value names, and a new number comes from a new <calc> (the gate runs it).
  */
 export function repairNote(r: RepairReport): string {
   return [
     `GATE REPORT (${REPAIR_VERSION}-svg). The beat below was NOT shown: none of it was said or drawn.`,
-    `FAILED BEAT:\n${rawSvgScript(r.beat).trim()}`,
+    `FAILED BEAT:\n${rawSvgScript(ranCalcs(r.beat)).trim()}`,
     `PROBLEMS:\n${r.problems.length ? r.problems.map(problemLine).join('\n') : '- (none listed)'}`,
     `ON THE BOARD NOW:\n${boardReport(r)}`,
     `WRITE only the replacement beat, continuing right after "…${r.tail}": its <g id="…"> group first (the same id unless the problem is the id), then the same point in ≤ ${r.maxWords} spoken words.`,
     'Fix every problem: write every formula with the constants and names on the board, move or shorten text so no text overlaps text or crosses a line, keep everything inside the BOARD viewBox, use an id not on the board.',
     "Never redraw or erase earlier groups; don't repeat what was said. Keep a drawing: if the group can't be fixed, draw less (a simpler group), never words alone.",
+    'A calc that ran keeps its values: name them ({{val id.name}}, data-val="id.name"), never type them; a number no calc has yet comes from a new <calc>.',
   ].join('\n');
 }

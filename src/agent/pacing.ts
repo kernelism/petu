@@ -37,6 +37,14 @@ const MIN_BEAT_WORDS = 22;
  */
 export const SCOPE_BEATS: Record<Scope, number> = { narrow: 4, standard: 5, broad: 7 };
 export const BEAT_WORDS = 35;
+/**
+ * The spoken words a released unit's process steps cost in time: each step ({{tween}}, {{step}},
+ * {{sweep}}) ends its sentence on a hold (src/playback/pace.ts STEP_HOLD_MS), silence the measured
+ * WORDS_PER_SEC does not include. The motion itself plays during the words, so only the holds count.
+ */
+export function stepWords(text: string, holdMs = 700): number {
+  return (text.match(/\{\{\s*(?:tween|step|sweep)\b/g) ?? []).length * (holdMs / 1000) * WORDS_PER_SEC;
+}
 
 export type Budget = {
   scope: Scope;
