@@ -59,3 +59,17 @@ describe('data-grid', () => {
     expect(Math.max(...xs)).toBeLessThanOrEqual(552.01);
   });
 });
+
+describe('the working', () => {
+  it('sits beside the grid at the cell\'s row when it fits, else under it', () => {
+    const el = g('data-grid="mul" data-rows="1/3,1/3,1/3" data-cols="1/3,1/3,1/3" data-origin="40,50"');
+    resolveData(el, scope(5));
+    const t = el.querySelector('[data-grid-line]')!;
+    const frame = el.querySelector('[data-grid-frame]')!;
+    expect(Number(t.getAttribute('x'))).toBeGreaterThan(Number(frame.getAttribute('x')) + 44);
+    expect(Math.abs(Number(t.getAttribute('y')) - (Number(frame.getAttribute('y')) + 2 + 22))).toBeLessThan(1);
+    const wide = g('data-grid="mul" data-rows="1,2" data-cols="1,2,3,4,5,6,7,8,9,10"');
+    resolveData(wide, scope(3));
+    expect(Number(wide.querySelector('[data-grid-line]')!.getAttribute('x'))).toBe(20);
+  });
+});

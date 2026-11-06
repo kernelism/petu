@@ -148,7 +148,11 @@ export function drawGrid(el: Element, sc: SlideScope, k: number): GridDraw {
   if (at >= 0) {
     add('rect', { x: r2(gx + ac * cs - 2), y: r2(gy + ar * cs - 2), width: r2(cs + 4), height: r2(cs + 4), rx: '4', fill: 'none', stroke: ACCENT, 'stroke-width': '2.5', 'data-grid-frame': '' });
     const line = working(rule, rows, cols, rn, cn, ar, ac, texts[ar][ac]);
-    if (line) add('text', { x: r2(ox), y: r2(gy + R * cs + 28), 'font-size': '14', fill: INK, 'data-grid-line': '' }, line);
+    // Beside the grid at the cell's row when it fits (the model plans its next drawing under the grid's
+    // cells: live D12, a caption under the grid landed on the next label), else under it.
+    const bx = gx + Cn * cs + 14;
+    if (line && bx + line.length * 14 * 0.6 <= W - 6) add('text', { x: r2(bx), y: r2(gy + ar * cs + cs / 2), 'dominant-baseline': 'central', 'font-size': '14', fill: INK, 'data-grid-line': '' }, line);
+    else if (line) add('text', { x: r2(ox), y: r2(gy + R * cs + 28), 'font-size': '14', fill: INK, 'data-grid-line': '' }, line);
   }
   return { outs, texts };
 }
