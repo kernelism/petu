@@ -31,11 +31,12 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 const INK = '#1D1D1F', MUTED = '#6E6E73', CELL = '#FFFFFF', ACCENT = '#7c3aed';
 const r2 = (v: number) => String(Math.round(v * 100) / 100);
 
-export type SlideScope = { calcs?: Map<string, CalcTable>; values?: { v: number; of: string; text: string }[] };
+/** `whatIf`: a student's edited kernel by window id (src/svgboard/whatIf.ts), drawn but never registered. */
+export type SlideScope = { calcs?: Map<string, CalcTable>; values?: { v: number; of: string; text: string }[]; whatIf?: Map<string, C.Mat> };
 export class SlideError extends Error {}
 
 /** A matrix from a calc path ("img.f") or literal rows; `signal`: the data was written as one row ([1, 2, 3]). */
-function matrix(src: string, sc: SlideScope, what: string, el?: Element): C.Mat & { signal?: boolean } {
+export function matrix(src: string, sc: SlideScope, what: string, el?: Element): C.Mat & { signal?: boolean } {
   const s = src.trim();
   const ask = el && what === 'data-slide' ? pixelAsk({ get: (n) => el.getAttribute(n) }) : null;
   if (ask) {
@@ -66,8 +67,13 @@ export function drawSlide(el: Element, sc: SlideScope, k: number): C.Mat {
   const same = el.hasAttribute('data-same');
   let spec: C.WinSpec;
   let kernel: C.Mat | null = null;
+  const id = (el.getAttribute('data-name') ?? el.getAttribute('id') ?? '').toLowerCase();
+  // A what-if: the student edited a kernel weight. Drawn and worked as edited; the answer's numbers stay.
+  let trying = false;
   if (el.hasAttribute('data-kernel')) {
     kernel = matrix(el.getAttribute('data-kernel')!, sc, 'data-kernel');
+    const w = id ? sc.whatIf?.get(id) : undefined;
+    if (w && w.length === kernel.length && w[0]?.length === kernel[0].length) { kernel = w.map((r) => r.slice()); trying = true; }
     // Weights that are simple fractions (a box's 1/9) are written as fractions, in the grid and the working.
     const frac = kernel.flat().some((v) => !Number.isInteger(v)) && kernel.flat().every((v) => Number.isInteger(v) || C.fmt(v, undefined, true).includes('/'));
     spec = { kind: 'weights', w: kernel, ...(frac ? { frac: true } : {}), ...(el.hasAttribute('data-flip') ? { flip: true } : {}), ...(same ? { same: true } : {}) };
@@ -91,16 +97,16 @@ export function drawSlide(el: Element, sc: SlideScope, k: number): C.Mat {
   const outs = cells.map((row) => row.map((e) => round(e?.value ?? NaN)));
   const n = g.R * g.C;
 
-  // The outputs are the answer's numbers: a calc named by the element's id.
-  const id = (el.getAttribute('data-name') ?? el.getAttribute('id') ?? '').toLowerCase();
+  // The outputs are the answer's numbers: a calc named by the element's id (not a what-if's: the voice and
+  // the gate keep the answer's own).
   // Shaped as the input is: a signal (one row) gives a row (out[i]); an image gives rows (out[r][c]), even
   // when its window fits only one row down (a 3x4 image under a 3x3 window: out[0][0], out[0][1]; live D2.2).
   // As the data was written: [[2, 3, 20]] gives out[0][j] (live D2.3), [2, 3, 20] gives out[j]; literal rows of one row, a row.
-  if (id && sc.calcs) sc.calcs.set(id, { out: R === 1 && (input.signal ?? !/^[A-Za-z]/.test(el.getAttribute('data-slide')!.trim())) ? outs[0] : outs, n });
+  if (id && sc.calcs && !trying) sc.calcs.set(id, { out: R === 1 && (input.signal ?? !/^[A-Za-z]/.test(el.getAttribute('data-slide')!.trim())) ? outs[0] : outs, n });
   // And computed values on the board, for the gate's number checks (as a data-val's are).
-  for (const v of outs.flat()) if (Number.isFinite(v)) sc.values?.push({ v, of: id || 'slide', text: C.fmt(v, dp) });
+  if (!trying) for (const v of outs.flat()) if (Number.isFinite(v)) sc.values?.push({ v, of: id || 'slide', text: C.fmt(v, dp) });
 
-  if (raster) { drawRaster(el, { input, kernel, spec, g, cells, outs, kr, kc, dp }, k); return outs; }
+  if (raster) { drawRaster(el, { input, kernel, spec, g, cells, outs, kr, kc, dp, trying }, k); return outs; }
 
   // Layout: input, kernel (if any) to its right, output right of that when it fits, else under the input.
   const cs = Number(el.getAttribute('data-cell') ?? '36') || 36;
@@ -128,10 +134,11 @@ export function drawSlide(el: Element, sc: SlideScope, k: number): C.Mat {
     return e;
   };
   const fs = r2(Math.max(14, cs * 0.42)), cap = r2(Math.max(14, cs * 0.38));
-  const grid = (x0: number, y0: number, m: C.Mat, show: (r: number, c: number) => boolean, color = INK, frac = false) => {
+  const grid = (x0: number, y0: number, m: C.Mat, show: (r: number, c: number) => boolean, color = INK, frac = false, kcell = false) => {
     m.forEach((row, r) => row.forEach((v, c) => {
-      add('rect', { x: r2(x0 + c * cs), y: r2(y0 + r * cs), width: r2(cs), height: r2(cs), fill: CELL, stroke: MUTED, 'stroke-width': '1' });
-      if (show(r, c) && Number.isFinite(v)) add('text', { x: r2(x0 + c * cs + cs / 2), y: r2(y0 + r * cs + cs / 2), 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': frac ? r2(Math.min(Number(fs), cs * 0.34)) : fs, fill: color }, C.fmt(v, dp, frac));
+      const tag: Record<string, string> = kcell ? { 'data-kcell': `${r},${c}` } : {};
+      add('rect', { x: r2(x0 + c * cs), y: r2(y0 + r * cs), width: r2(cs), height: r2(cs), fill: CELL, stroke: MUTED, 'stroke-width': '1', ...tag });
+      if (show(r, c) && Number.isFinite(v)) add('text', { ...tag, x: r2(x0 + c * cs + cs / 2), y: r2(y0 + r * cs + cs / 2), 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': frac ? r2(Math.min(Number(fs), cs * 0.34)) : fs, fill: color }, C.fmt(v, dp, frac));
     }));
   };
   // The step: k = j has the frame on output j (1-based), outputs 1…j filled; between steps the frame glides.
@@ -142,8 +149,8 @@ export function drawSlide(el: Element, sc: SlideScope, k: number): C.Mat {
   if (kernel) {
     // Convolution's kernel is shown as it is used: turned around (the working multiplies by these).
     const fr = spec.kind === 'weights' && !!spec.frac;
-    grid(kx, oy, kernel, () => true, INK, fr);
-    add('text', { x: r2(kx), y: r2(oy - cs * 0.3), 'font-size': cap, fill: MUTED }, 'kernel');
+    grid(kx, oy, kernel, () => true, trying ? ACCENT : INK, fr, true);
+    add('text', { x: r2(kx), y: r2(oy - cs * 0.3), 'font-size': cap, fill: trying ? ACCENT : MUTED }, trying ? 'kernel (what if)' : 'kernel');
     if (flip) {
       const turned = kernel.slice().reverse().map((row) => row.slice().reverse());
       const ay = oy + kH / 2;
@@ -182,7 +189,7 @@ export function drawSlide(el: Element, sc: SlideScope, k: number): C.Mat {
 /** Inputs wider or taller than this many cells are drawn as pixels (shaded, no numerals). */
 export const RASTER_AT = 12;
 
-type Raster = { input: C.Mat; kernel: C.Mat | null; spec: C.WinSpec; g: { R: number; C: number; pr: number; pc: number; stride: number }; cells: (C.Expansion | null)[][]; outs: C.Mat; kr: number; kc: number; dp?: number };
+type Raster = { trying?: boolean; input: C.Mat; kernel: C.Mat | null; spec: C.WinSpec; g: { R: number; C: number; pr: number; pc: number; stride: number }; cells: (C.Expansion | null)[][]; outs: C.Mat; kr: number; kc: number; dp?: number };
 
 /** Gray levels for a grid: as they are when they are pixel levels (0–255), else spread over min…max. */
 function shader(vals: number[]): (v: number) => number {
@@ -258,10 +265,11 @@ function drawRaster(el: Element, d: Raster, k: number) {
   const wv = C.winValues(input, ar, ac, spec);
   const fs = r2(Math.max(11, zc * 0.36));
   const inShade = shader(input.flat());
-  const grid = (x0: number, m: number[][], shadeIt: boolean, frac = false) => m.forEach((row, r) => row.forEach((v, c) => {
+  const grid = (x0: number, m: number[][], shadeIt: boolean, frac = false, kcell?: (r: number, c: number) => string) => m.forEach((row, r) => row.forEach((v, c) => {
     const lv = shadeIt ? inShade(v) : 255;
-    add('rect', { x: r2(x0 + c * zc), y: r2(zy + r * zc), width: r2(zc), height: r2(zc), fill: shadeIt ? `rgb(${Math.round(lv)},${Math.round(lv)},${Math.round(lv)})` : CELL, stroke: MUTED, 'stroke-width': '1' });
-    add('text', { x: r2(x0 + c * zc + zc / 2), y: r2(zy + r * zc + zc / 2), 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': fs, fill: shadeIt && lv < 120 ? '#FFFFFF' : INK }, C.fmt(v, undefined, frac));
+    const tag: Record<string, string> = kcell ? { 'data-kcell': kcell(r, c) } : {};
+    add('rect', { ...tag, x: r2(x0 + c * zc), y: r2(zy + r * zc), width: r2(zc), height: r2(zc), fill: shadeIt ? `rgb(${Math.round(lv)},${Math.round(lv)},${Math.round(lv)})` : CELL, stroke: MUTED, 'stroke-width': '1' });
+    add('text', { ...tag, x: r2(x0 + c * zc + zc / 2), y: r2(zy + r * zc + zc / 2), 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': fs, fill: shadeIt && lv < 120 ? '#FFFFFF' : INK }, C.fmt(v, undefined, frac));
   }));
   if (wv) grid(zx, Array.from({ length: kr }, (_, r) => wv.v.slice(r * kc, r * kc + kc)), true);
   // Captions under the zoom row: the lines from the frame come in from above.
@@ -273,8 +281,10 @@ function drawRaster(el: Element, d: Raster, k: number) {
     const used = spec.kind === 'weights' && spec.flip ? kernel.slice().reverse().map((row) => row.slice().reverse()) : kernel;
     add('text', { x: r2(x), y: r2(mid), 'dominant-baseline': 'central', 'font-size': '20', fill: INK }, '·');
     x += 16;
-    grid(x, used, false, spec.kind === 'weights' && !!spec.frac);
-    add('text', { x: r2(x), y: r2(capY), 'font-size': cap, fill: MUTED }, spec.kind === 'weights' && spec.flip ? 'kernel, turned' : 'kernel');
+    // Its cells name the kernel's own weights (turned back for convolution), for the what-if editor.
+    const turned = spec.kind === 'weights' && !!spec.flip;
+    grid(x, used, false, spec.kind === 'weights' && !!spec.frac, (r, c) => (turned ? `${used.length - 1 - r},${used[0].length - 1 - c}` : `${r},${c}`));
+    add('text', { x: r2(x), y: r2(capY), 'font-size': cap, fill: d.trying ? ACCENT : MUTED }, `${turned ? 'kernel, turned' : 'kernel'}${d.trying ? ' (what if)' : ''}`);
     x += used[0].length * zc + 14;
   } else if (spec.kind === 'reduce') {
     add('text', { x: r2(x), y: r2(mid), 'dominant-baseline': 'central', 'font-size': '16', fill: INK }, `→ ${spec.op}`);

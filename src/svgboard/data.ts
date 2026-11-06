@@ -26,6 +26,11 @@
  *                                    "{} units" → "100 units": src/values/quantity.ts, one reading)
  *  <g data-slide="img.f" data-kernel="img.k" data-step="k"/>   a sliding window the engine lays out,
  *                                    steps and works (slide.ts); its outputs are said as {{val id.out[i]}}
+ *  <g data-grid="mul" data-rows="a.u" data-cols="a.v" data-step="k"/>   a grid the engine fills by rule
+ *                                    cell by cell (grid.ts): an outer product, a Punnett square, a table
+ *  <path data-series="nw.x, nw.y" data-axes="ax" data-upto="k">   a program's trace on a frame, its
+ *                                    points 0…k (a g: dots, the latest accented); a formula may index a
+ *                                    calc by a constant (`pt(ax, nw.x[k], 0)`): the step the trace is on
  *  data-schematic                    a sketch, not a plot: its hand-placed dots and typed numbers are
  *                                    left alone (snapMarkers, svgboard/check.ts grounded)
  *
@@ -39,7 +44,8 @@
  */
 import { compileVars, freeNames } from '../desk/expr';
 import { pickNumber, type CalcTable } from '../calc/stream';
-import { drawSlide, SlideError } from './slide';
+import { drawSlide, matrix, SlideError } from './slide';
+import { drawGrid } from './grid';
 import { drawText, readTemplate, type Affix } from '../values/quantity';
 import { isUnitWord } from '../values/units';
 import { readFormat } from '../values/format';
@@ -58,6 +64,8 @@ export type DataScope = {
   axes: Map<string, { name: string; src: [string, string, string] }>;
   curves: Map<string, CurveSpec>;
   points: Map<string, DPt>;
+  /** A student's edited kernels by window id (whatIf.ts): drawn, never registered as the answer's numbers. */
+  whatIf?: Map<string, number[][]>;
   /** Computed values written this pass (data-val), for the gate's number check. */
   values: { v: number; of: string; /** The words the text puts before the number ("SSD = {}" → "SSD"): what the narration calls it. */ label?: string;
     /** The readout's name (its data-name or id): what `{{val id=…}}` says. */ id?: string; /** The number as the board writes it (fmtValue, data-fmt): what is seen. */ text: string;
@@ -120,9 +128,17 @@ function evalF(src: string, sc: DataScope, vars: Record<string, number> = {}): n
  */
 function valueFns(src: string, sc: DataScope): string {
   let s = src;
-  if (sc.calcs?.size) s = s.replace(/(?<![\w.])([A-Za-z]\w*)\.([A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\[\d+\])*)/g, (m, id: string, path: string) => {
+  if (sc.calcs?.size) s = s.replace(/(?<![\w.])([A-Za-z]\w*)\.([A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\[[^[\]]+\])*)/g, (m, id: string, path: string) => {
     const t = sc.calcs!.get(id.toLowerCase());
     if (!t) return m;
+    // An index may be a formula over the constants (`nw.x[k]`): the step a trace is on. Whole steps only
+    // (a tween between steps reads the step it has reached); past the end fails, never a guess.
+    path = path.replace(/\[([^[\]]+)\]/g, (b, e: string) => {
+      if (/^\s*\d+\s*$/.test(e)) return `[${e.trim()}]`;
+      const i = Math.floor(evalF(e, sc) + 1e-9);
+      if (i < 0) fail(`${id}.${path}: index ${e} is ${i}, below 0`);
+      return `[${i}]`;
+    });
     const v = pickNumber(t, path);
     return v != null && Number.isFinite(v) ? `(${v})` : fail(`calc ${id} exports no number ${path}`);
   });
@@ -341,7 +357,7 @@ export function fmtValue(v: number, fmt?: string | null): string {
 /** A number with its unit, as a bare data-val or a tick writes it ("12%", "$10", "5 m"): quantity.ts. */
 const withUnit = (v: string, u: string | null, fmt?: string | null) => drawText(readFormat(fmt)?.percent ? `${v}%` : v, readTemplate(null, u));
 
-const ATTRS_DATA = ['data-const', 'data-axes', 'data-fn', 'data-param', 'data-between', 'data-at', 'data-from', 'data-to', 'data-points', 'data-set', 'data-rotate', 'data-translate', 'data-val', 'data-slide'];
+const ATTRS_DATA = ['data-const', 'data-axes', 'data-fn', 'data-param', 'data-between', 'data-at', 'data-from', 'data-to', 'data-points', 'data-set', 'data-rotate', 'data-translate', 'data-val', 'data-slide', 'data-grid', 'data-series'];
 /** Whether an element (or its subtree) uses the data attributes. */
 export const hasData = (el: Element): boolean => ATTRS_DATA.some((a) => el.hasAttribute(a)) || !!el.querySelector(ATTRS_DATA.map((a) => `[${a}]`).join(','));
 /** Whether an element's geometry depends on the constants (re-resolved each frame). */
@@ -485,6 +501,41 @@ function snapMarkers(g: Element, sc: DataScope): void {
   }
 }
 
+/**
+ * `data-series="nw.x, nw.y"` (or one array, `nw.y`: y over its index 0, 1, 2…) on a frame: a path is the
+ * line through the points, a g gets a dot per point (data-r, default 4.5) with the latest in the accent.
+ * `data-upto="k"` shows points 0…k (whole steps; past the end, all of them); without it, all.
+ */
+function drawSeries(el: Element, tag: string, sc: DataScope, axName: string | null): void {
+  const parts = splitTop(el.getAttribute('data-series')!, ',').map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 1 || parts.length > 2) fail('data-series takes "calc.y" or "calc.x, calc.y"');
+  const list = (src: string) => {
+    let m: number[][];
+    try { m = matrix(src, sc, 'data-series'); } catch (e) { return fail(e instanceof Error ? e.message : String(e)); }
+    if (m.length === 1) return m[0];
+    if (m.every((r) => r.length === 1)) return m.map((r) => r[0]);
+    return fail(`data-series: ${src} is a grid, not a list`);
+  };
+  const ys = list(parts[parts.length - 1]);
+  const xs = parts.length === 2 ? list(parts[0]) : ys.map((_, i) => i);
+  if (xs.length !== ys.length) fail(`data-series: ${parts[0]} has ${xs.length} values and ${parts[1]} ${ys.length}`);
+  const upto = el.getAttribute('data-upto');
+  const n = upto == null ? ys.length : Math.max(0, Math.min(ys.length, Math.floor(evalF(upto, sc) + 1e-9) + 1));
+  const ax = axesOf(axName, sc);
+  const pts = Array.from({ length: n }, (_, i) => toBoard(ax, xs[i], ys[i]));
+  if (tag === 'g') {
+    for (const old of Array.from(el.querySelectorAll(':scope > [data-engine]'))) old.remove();
+    const r = el.getAttribute('data-r') ?? '4.5';
+    pts.forEach((p, i) => {
+      const c = el.ownerDocument.createElementNS(SVGNS, 'circle');
+      for (const [a, v] of Object.entries({ cx: r2(p.x), cy: r2(p.y), r, fill: i === n - 1 ? '#7c3aed' : el.getAttribute('fill') ?? '#1D1D1F' })) c.setAttribute(a, v);
+      c.setAttribute('data-engine', '');
+      el.appendChild(c);
+    });
+  } else if (tag === 'polyline') el.setAttribute('points', pts.map((p) => `${r2(p.x)},${r2(p.y)}`).join(' '));
+  else el.setAttribute('d', pts.length ? `M${pts.map((p) => `${r2(p.x)} ${r2(p.y)}`).join('L')}` : '');
+}
+
 function nameOf(el: Element): string | null { return el.getAttribute('data-name') ?? el.getAttribute('data-svg-id') ?? el.getAttribute('id'); }
 
 function resolveOne(el: Element, sc: DataScope): void {
@@ -504,6 +555,13 @@ function resolveOne(el: Element, sc: DataScope): void {
     if (!(lc(step) in sc.consts)) fail(`data-slide steps on ${step}: define it first (data-const="${step}=0")`);
     sc.calcs ??= new Map();
     try { drawSlide(el, sc, sc.consts[lc(step)]); } catch (e) { if (e instanceof SlideError) fail(e.message); throw e; }
+  }
+  // A grid the engine fills by rule, cell by cell (grid.ts), at its step constant.
+  if (el.hasAttribute('data-grid')) {
+    const step = el.getAttribute('data-step') ?? 'k';
+    if (!(lc(step) in sc.consts)) fail(`data-grid steps on ${step}: define it first (data-const="${step}=0")`);
+    sc.calcs ??= new Map();
+    try { drawGrid(el, sc, sc.consts[lc(step)]); } catch (e) { if (e instanceof SlideError) fail(e.message); throw e; }
   }
   // A frame.
   if (el.hasAttribute('data-box') && el.hasAttribute('data-axes')) {
@@ -530,6 +588,8 @@ function resolveOne(el: Element, sc: DataScope): void {
     try { const c = curve(key, sc); el.setAttribute('d', dOf(clipped(c))); }
     catch (e) { sc.curves.delete(key); throw e; }
   }
+  // A program's trace on a frame (the plot view): its points up to the step, as a line (a path) or dots (a g).
+  if (el.hasAttribute('data-series')) drawSeries(el, tag, sc, axName);
   if (el.hasAttribute('data-between')) {
     const [a, b] = splitTop(el.getAttribute('data-between')!, ',');
     if (!a || !b) fail(`data-between takes "curve, curve" or "curve, level"`);

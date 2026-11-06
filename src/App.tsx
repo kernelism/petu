@@ -20,6 +20,10 @@ import { EXPLAIN_STEP_QUESTION, isTyping, playbackKey, type PlaybackHandlers } f
 import { PacedClock, type NarrationClock } from './playback/clock';
 import { VoiceClock, fetchVoice, warmVoice, webAudioOut } from './playback/voiceClock';
 import { SwitchClock } from './playback/switchClock';
+import { attachWhatIf, clearAllWhatIf } from './svgboard/whatIf';
+import { boardOf as svgBoardOf } from './svgboard/render';
+import { predictionFor, type Prediction } from './playback/predict';
+import { PredictPrompt } from './ui/PredictPrompt';
 import { BASE_WPM, getSettings, setSettings, SPEEDS, stepSpeed, useSettings, type VoiceSetting } from './settings/settings';
 import { DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo, suggestionsFor } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
@@ -364,6 +368,16 @@ type Aside = { question: string; words: string[]; state: 'thinking' | 'playing' 
 /** The moment a question was asked in, taken once on Enter and handed to whichever path plays it (a mid-answer question's route comes later). */
 type Asked = { point: Pointed | null; taken: ReturnType<typeof takeMarks>; page: number; scout?: Prescout };
 /** One answer on the session trail: its header on the board and what replays it. */
+/** The prediction a tween calls for on the boards in the page (the latest board first), or null. */
+function predictionOnBoard(a: RawAction): Prediction | null {
+  for (const svg of Array.from(document.querySelectorAll('svg[data-svgboard]')).reverse()) {
+    const b = svgBoardOf(svg);
+    const p = b && predictionFor(a, Array.from(svg.querySelectorAll('[data-slide]')), b.scope);
+    if (p) return p;
+  }
+  return null;
+}
+
 type TrailEntry = { num: string; question: string; title: string; /** The page it was asked on (a replay is asked there again). */ page: number; /** The pages its answer taught from, home first (parts.ts taughtPages): the header's meta and the session list's titles. */ pages?: number[]; script: string; grounding?: Grounding; head: TrailHead; check?: string; /** The check question it offered (done.check), offered again on a replay. */ offered?: string; /** Asides asked during it (the session drawer lists them under it). */ asides?: string[]; /** How long it played (ms), once done. */ ms?: number };
 /** A dev script's aside when it has none of its own (no API call on the demo path). */
 const asideFallback = (q: string) => `Here the side answer to "${q}" would play, with its own small drawing. Press Return to go back to the answer.`;
@@ -396,6 +410,8 @@ export default function App() {
   /** The desk's split state and slide column (the dock centres under it), and whether the student has taken over. */
   const [desk, setDesk] = useState<DeskState | null>(null);
   const [paused, setPaused] = useState(false);
+  /** The prediction prompt on screen (src/playback/predict.ts), with what plays the step once it is answered. */
+  const [predict, setPredict] = useState<{ p: Prediction; go: () => void } | null>(null);
   const [viewportW, setViewportW] = useState(window.innerWidth);
   /** The asked question, echoed above the caption while answering. */
   const [question, setQuestion] = useState<string | undefined>();
@@ -1033,6 +1049,7 @@ export default function App() {
       }
     };
 
+    let predicted = false;
     const finish = () => { if (recRef.current === run.rec) recRef.current = null; settle(); };
     const session: AnswerSession = new AnswerSession({
       clock,
@@ -1054,6 +1071,16 @@ export default function App() {
         if (sessionRef.current !== session) return;
         if (a.kind !== 'scroll' && a.kind !== 'clear') drew = true;
         if (a.kind === 'tween' || a.kind === 'step' || a.kind === 'sweep') steppedRef.current = true;
+        // The prediction prompt (optional, once an answer): before a window's third position, pause and ask.
+        if (a.kind === 'tween' && !predicted && getSettings().predict && !again) {
+          const p = predictionOnBoard(a);
+          if (p && session.pause()) {
+            predicted = true;
+            setUserPaused(true);
+            setPredict({ p, go: () => { setPredict(null); if (sessionRef.current !== session) return; clearAllWhatIf(document); director.run(a, performance.now(), live); if (session.resume()) setUserPaused(false); } });
+            return;
+          }
+        }
         director.run(a, at, live);
       },
       onRewind: (a) => { if (sessionRef.current === session) director.rewind(a); },
@@ -1140,6 +1167,7 @@ export default function App() {
         finish();
       },
     });
+    clearAllWhatIf(document);
     sessionRef.current = session;
     const finishGate = () => {
       if (gate) { const t = gate.releasedText(); if (t.trim()) boardScripts.current.push(t); }
@@ -1226,7 +1254,7 @@ export default function App() {
     const s = sessionRef.current;
     if (!s) return;
     typingPaused.current = false;
-    if (s.isPaused()) { if (s.resume()) setUserPaused(false); return; }
+    if (s.isPaused()) { clearAllWhatIf(document); if (s.resume()) setUserPaused(false); return; }
     if (s.pause()) { setUserPaused(true); clearPause(); }
   }, []);
 
@@ -1235,6 +1263,7 @@ export default function App() {
     const s = sessionRef.current, p = partsRef.current[i];
     if (!s || !p || asideRef.current) return;
     const back = p.start < s.position();
+    clearAllWhatIf(document);
     if (!s.seek(p.start)) return;
     setUserPaused(false);
     setPartIdx(i);
@@ -1256,6 +1285,7 @@ export default function App() {
   const seekWord = useCallback((w: number | null) => {
     const s = asideRef.current ? asideSession.current : sessionRef.current;
     if (!s || w == null) return;
+    clearAllWhatIf(document);
     if (!s.seek(w)) return;
     if (asideRef.current) { setAside((d) => d && { ...d, paused: false }); return; }
     typingPaused.current = false;
@@ -1449,6 +1479,7 @@ export default function App() {
     if (!asideRef.current) return;
     dropRouting();
     endAside();
+    clearAllWhatIf(document);
     if (sessionRef.current?.resume()) setUserPaused(false);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const closeAsideRef = useRef(closeAside);
@@ -1459,8 +1490,12 @@ export default function App() {
     const s = sessionRef.current;
     if (!s || asideRef.current) return;
     if (typing && !s.isPaused() && s.pause()) { typingPaused.current = true; setUserPaused(true); clearPause(); }
-    else if (!typing && typingPaused.current) { typingPaused.current = false; if (s.resume()) setUserPaused(false); }
+    else if (!typing && typingPaused.current) { typingPaused.current = false; clearAllWhatIf(document); if (s.resume()) setUserPaused(false); }
   }, []);
+
+  // What if (src/svgboard/whatIf.ts): with the answer paused or over and no aside open, a click on an engine
+  // window's kernel weight edits it and the window recomputes; playing on resets it.
+  useEffect(() => attachWhatIf(document.body, () => !asideRef.current && (!sessionRef.current || sessionRef.current.isPaused())), []);
 
   // Playback keys (src/ui/playbackKeys.ts): Space, R, ←/→, Shift+←/→, < >; Esc / Return close an aside.
   // Capture phase, so the keys never also scroll the slides (follow mode would read that as the
@@ -1997,6 +2032,7 @@ export default function App() {
       </main>
       {/* The board and the connectors' overlay (src/desk/Desk.ts fills it). Above the pages, below the chrome. */}
       <div ref={stageRef} className="desk-stage" />
+      {predict && <PredictPrompt p={predict.p} onDone={predict.go} />}
       <TopBar
         fileName={fileName}
         page={page}

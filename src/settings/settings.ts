@@ -11,11 +11,13 @@ import { ANSWER_QUALITIES, type AnswerQuality } from '../agent/protocol';
  * speed: playback speed, one of SPEEDS (the narration's rate is BASE_WPM × speed).
  * voice: the narration read aloud by that voice (server/voice.ts), or 'off' (captions only).
  * quality: 'standard' (the server's default model) or 'best' (server/quality.ts maps it; the browser never names a model).
+ * predict: once an answer's window has worked two positions, it stops and asks the student for the next output
+ *   (teaching-engine §3.4, optional; off by default until the pacing decision in §7).
  */
-export type Settings = { inkStyle: InkStyle; inkColor: string; highlight: HighlightStyle; speed: number; voice: VoiceSetting; quality: AnswerQuality };
+export type Settings = { inkStyle: InkStyle; inkColor: string; highlight: HighlightStyle; speed: number; voice: VoiceSetting; quality: AnswerQuality; predict: boolean };
 /** The student's choices: the stored part of Settings. */
-type Stored = Pick<Settings, 'highlight' | 'speed' | 'voice' | 'quality'>;
-const STORED: (keyof Stored)[] = ['highlight', 'speed', 'voice', 'quality'];
+type Stored = Pick<Settings, 'highlight' | 'speed' | 'voice' | 'quality' | 'predict'>;
+const STORED: (keyof Stored)[] = ['highlight', 'speed', 'voice', 'quality', 'predict'];
 /** The tutor's page highlight: a light violet wash (default) or the yellow marker. */
 export type HighlightStyle = 'violet' | 'yellow';
 /**
@@ -58,7 +60,7 @@ export const nearestSpeed = (x: number): number =>
  * reads as part of the slide. 5.2:1 on a white page, 4.2:1 on the desk.
  */
 export const INK_COLOR = '#8E4EC6';
-export const DEFAULTS: Settings = { inkStyle: 'hand', inkColor: INK_COLOR, highlight: 'violet', speed: 1, voice: 'off', quality: 'standard' };
+export const DEFAULTS: Settings = { inkStyle: 'hand', inkColor: INK_COLOR, highlight: 'violet', speed: 1, voice: 'off', quality: 'standard', predict: false };
 
 const KEY = 'pdf-tutor.settings';
 /**
@@ -72,7 +74,7 @@ const subs = new Set<() => void>();
 /** Reads a stored blob (any version) into the student's choices; anything unknown falls back to its default. */
 export function migrate(raw: unknown): Stored {
   const saved = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  const out: Stored = { highlight: DEFAULTS.highlight, speed: DEFAULTS.speed, voice: DEFAULTS.voice, quality: DEFAULTS.quality };
+  const out: Stored = { highlight: DEFAULTS.highlight, speed: DEFAULTS.speed, voice: DEFAULTS.voice, quality: DEFAULTS.quality, predict: saved.predict === true };
   // highlightColor (≤ v2) was always written with the whole state, so a stored yellow was the old
   // default, not a choice: every legacy value lands on the default (only `highlight` is read).
   if (HIGHLIGHT_STYLES.includes(saved.highlight as HighlightStyle)) out.highlight = saved.highlight as HighlightStyle;

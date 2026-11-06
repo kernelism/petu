@@ -174,6 +174,19 @@ export function SettingsPopover({ open, onClose, onShowShortcuts = requestShortc
         <p className="pop-note">{bestAvailable ? BEST_HINT : BEST_OFF_NOTE}</p>
       </section>
 
+      <section className="pop-row">
+        <div className="pop-label" id="pop-predict">Predict a step</div>
+        <RadioGroup
+          labelledBy="pop-predict"
+          className="segmented segmented-2"
+          options={['off', 'on'] as const}
+          value={s.predict ? 'on' : 'off'}
+          onPick={(v) => setSettings({ predict: v === 'on' })}
+          render={(v, on) => ({ className: `seg${on ? ' is-on' : ''}`, children: v === 'on' ? 'Ask me' : 'Off' })}
+        />
+        <p className="pop-note">After two worked steps, the answer pauses once and asks you for the next one.</p>
+      </section>
+
       <button type="button" className="btn-quiet pop-show-keys" onClick={() => { onClose(); onShowShortcuts(); }}>
         Keyboard shortcuts <kbd className="keycap">?</kbd>
       </button>

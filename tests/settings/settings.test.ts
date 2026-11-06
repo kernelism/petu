@@ -12,7 +12,7 @@ describe('settings', () => {
     s.setSettings({ inkStyle: 'live' }); // the dev ?style= aid: this page load only
     expect(s.getSettings().inkStyle).toBe('live');
     const stored = JSON.parse(localStorage.getItem(KEY)!);
-    expect(stored).toEqual({ highlight: 'violet', speed: 1, voice: 'off', quality: 'standard', v: 3 });
+    expect(stored).toEqual({ highlight: 'violet', speed: 1, voice: 'off', quality: 'standard', predict: false, v: 3 });
     s = await fresh();
     expect(s.getSettings().inkStyle).toBe('hand');
   });

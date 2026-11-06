@@ -124,7 +124,7 @@ describe('settings', () => {
     expect(radioStep('End', 0, 3)).toBe(2);
     expect(radioStep('a', 0, 3)).toBeNull();
   });
-  it('is a titled dialog; each radio group is one tab stop; four controls and the shortcuts link', () => {
+  it('is a titled dialog; each radio group is one tab stop; five controls and the shortcuts link', () => {
     mount(createElement(SettingsPopover, { open: true, onClose: () => {}, bestAvailable: true }));
     const pop = document.querySelector('.popover')!;
     expect(pop.getAttribute('aria-labelledby')).toBe('pop-title');
@@ -132,7 +132,7 @@ describe('settings', () => {
     for (const g of pop.querySelectorAll('[role="radiogroup"]')) {
       expect([...g.querySelectorAll('[role="radio"]')].filter((r) => r.getAttribute('tabindex') === '0')).toHaveLength(1);
     }
-    expect([...pop.querySelectorAll('.pop-label')].map((l) => l.textContent)).toEqual(['Highlight', 'Speed', 'Voice', 'Answer quality']);
+    expect([...pop.querySelectorAll('.pop-label')].map((l) => l.textContent)).toEqual(['Highlight', 'Speed', 'Voice', 'Answer quality', 'Predict a step']);
     // No drawing style, no ink colour, no slider, no shortcuts switch.
     expect(pop.querySelector('.swatch, input[type="range"], [role="switch"]')).toBeNull();
     const radios = (id: string) => [...pop.querySelectorAll(`[aria-labelledby="${id}"] [role="radio"]`)].map((r) => r.textContent);
@@ -141,6 +141,7 @@ describe('settings', () => {
     expect(radios('pop-speed')).toEqual(['0.75×', '1×', '1.25×', '1.5×']);
     expect(radios('pop-voice')).toEqual(['Off', 'Marin', 'Cedar']);
     expect(radios('pop-quality')).toEqual(['Standard', 'Best']);
+    expect(radios('pop-predict')).toEqual(['Off', 'Ask me']); // off by default (teaching-engine §3.4, §7 pacing)
     expect(pop.textContent).toContain(BEST_HINT);
     expect(pop.querySelector('.pop-show-keys')!.textContent).toBe('Keyboard shortcuts ?');
   });

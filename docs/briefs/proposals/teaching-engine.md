@@ -145,8 +145,60 @@ table by `scripts/eval/teachReport.ts`.
   window reads `#i1` from the page the question was asked on, so an image cited from another page needs
   `data-page`.
 - **Moot:** "slices and eqchain made the default" is covered by §0's free canvas and calc.
-- Not built: the plot view, the grid-fill pattern and the data-literal inspector (no eval question
-  needs them yet); (f) conventions and the prediction prompt, as in Phase 2.
+- Built in round 13 (below): the plot view, the grid-fill pattern, the data-literal inspector, check (f)
+  and the prediction prompt.
+
+**Phase 3 rest, and Phase 2's two open items (2026-11-05, branch `iter/r13`).**
+
+- **Grid-fill** (`src/svgboard/grid.ts`). `<g data-grid="mul" data-rows="1/3,1/3,1/3" data-cols="…" data-step="k">`
+  fills a table cell by cell on a step: by rule over its headers (`mul`, an outer product; `add`; `join`,
+  a Punnett square, capital first) or from a calc's matrix (`g.G`, the Gaussian table from its formula),
+  with named headers (`data-rows-name="y"`). The cell it is on is framed with its row and column, its
+  working written beside the grid; cells register as `id.out[r][c]`. Demos `?script=gauss-grid` (p22: every
+  cell matches the slide's printed table) and `?script=sep-grid` (p28, the box as ⅓ × ⅓).
+- **The plot view**, as two primitives rather than a view: a formula may index a calc by a constant
+  (`nw.x[k]`: whole steps, past the end fails), and `data-series="nw.x, nw.y" data-upto="k"` draws a
+  program's trace on a frame (a path: the line; a g: dots, the latest accented). With the existing frame,
+  curves and `data-from/to`, Newton's method is the curve, the tangent from `(x_k, f(x_k))` to `x_{k+1}`
+  and the trail of guesses, all from the calc (`?script=newton-plot`).
+- **What if** (`src/svgboard/whatIf.ts`). Paused or after the answer, a click on an engine window's kernel
+  weight opens an editor; the window redraws at its step with the new weight (outputs, turned kernel,
+  working), marked "kernel (what if)", with a chip back to the answer. The edit lives in `scope.whatIf`,
+  which only the drawing reads: the registered outputs, `{{val}}`, the gate and the recording keep the
+  answer's numbers. Playing on (resume, a seek, a new answer) clears it. Checked in Chrome on conv-proc
+  (top-right weight to −2: every output and the turned kernel recompute; −17 checks by hand).
+- **Prediction prompt** (`src/playback/predict.ts`, `src/ui/PredictPrompt.tsx`). Off by default (Settings,
+  "Predict a step"), since §7's pacing decision is open. When on, once an answer: the first step past a
+  window's second position pauses the answer and asks "where does the window go next, and what will it
+  output?"; the guess is checked against the engine's third output, the verdict shows 1.8 s, then the step
+  plays (a sweep from step 2 counts). Checked in Chrome on conv-proc.
+- **Check (f), conventions** (`src/gate/conventions.ts`), notes until measured as (c) was, and without a
+  scout CONV line: the gate already has the answer's page text. The operation: words that say convolution
+  over windows that do not turn their kernel (or correlation over ones that do). The numbers: a table a page
+  prints ("5 x 5, σ = 1" under p22's 25 numbers) against any engine kernel or grid of the same shape, at
+  the slide's rounding. Kernels a slide shows only as a picture are not read (no CONV line yet).
+- Prompts p6.26 (GRIDS and the trace) and p6.27 (a table of values is always a grid).
+- **Eval** (teach, 2 samples each, no judge). On p6.26 (D1–D4, D9–D12, 16 answers): 0 failed calcs, 0
+  typed numerals, 0 gate number flags, 2 drops (D1.2, both beats repaired), D9 and D10 on the picture 4 of
+  4, median first word 1.7 s, $0.011 an answer; but 0 grids: D11 ("where do the numbers in this Gaussian
+  kernel come from?", p22) drew three readouts, D12 ("is the box filter separable? show me", p28) typed a 3×3
+  in a schematic group. On p6.27 (D2, D9, D11, D12, 8 answers): grids in 3 of the 4 table answers (D11 the
+  raw samples and the normalised weights as two grids; D12 the ⅓ × ⅓ outer product, both samples), 0 failed
+  calcs, 0 typed numerals, 0 number flags, 0 (f) notes, 1 drop (D11.2, a `{{val}}` of an id it never gave,
+  the known slip), median first word 1.8 s, $0.013 an answer. Runs `2026-11-05-terra-none-p6.26-teach-c189aba2-b`
+  and `…-p6.27-teach-c189aba2` (`…-p6.26-teach-c189aba2-void` is void: the dev server reloaded under it).
+- Seen live and fixed: the grid's working under the cells landed on the model's next label (D12); it now
+  sits beside the grid. Not measured: the plot view (no eval deck has an iteration; the OpenStax corpus is
+  not in this checkout) and (f) on a real disagreement (none came up). Known edge: the what-if chip is
+  fixed on screen and does not follow a scroll of the board. (f)'s operation rule skips a kernel that is the
+  same turned round (a box, a Gaussian), and every resume path (the aside's return, clearing the ask bar, the
+  prediction's step) clears a what-if.
+
+**After Phase 3.** The plan has no Phase 4. What is left is the deferred list in §6, each with its
+condition: the QuickJS tracker (its first reason, rules past the expression language, is gone: calc runs
+JavaScript in a Worker; §0's other reason, stronger isolation, stands if needed), the vision critic (offline
+only), the scrub bar (§3.4 keeps it out of v1) and persona agents (only on eval evidence). The founder
+work in Phase 1 (the ChatGPT arm, the human rubric, the learning check) and §7's decisions are open.
 
 **Effect on the plan.** Phase 1 adds the calc sandbox and derivation rendering. The
 `expr.ts` list extensions in section 5 shrink to what the engine needs for drawing; arithmetic moves

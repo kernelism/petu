@@ -44,6 +44,12 @@ export type SvgBoard = { root: SVGSVGElement; w: number; h: number; ns: string; 
   live?: Element | null; liveTimer?: ReturnType<typeof setTimeout> };
 const boards = new WeakMap<SVGSVGElement, SvgBoard>();
 
+/** The board an element is drawn on (null off any board). */
+export function boardOf(el: Element): SvgBoard | null {
+  const root = el.closest('svg[data-svgboard]') as SVGSVGElement | null;
+  return root ? boards.get(root) ?? null : null;
+}
+
 /** The board's root in a section layer (null when the section holds none). */
 export function boardIn(layer: SVGGElement): SvgBoard | null {
   const root = layer.querySelector(':scope > svg[data-svgboard]') as SVGSVGElement | null;

@@ -148,9 +148,77 @@ export const box = [[1, 1, 1], [1, 1, 1], [1, 1, 1]].map(r => r.map(v => v / 9))
 <g id="eye" data-const="s=0" data-slide="#i1" data-kernel="blur.box" data-step="s" data-origin="20,40"/>
 Here is the eye from your slide, read as a grid of gray levels: dark pixels are small numbers, bright ones large. {{tween s=1 dur=0.8}} Put the box on the top-left corner: the nine pixels under it average to {{val eye.out[0][0]}}, and that is the first output pixel. {{tween s=2 dur=0.8}} Slide one pixel right: the window drops a column and takes in a new one, and the average is {{val eye.out[0][1]}}. {{tween s=484 dur=6}} Sweep the rest: each pixel becomes the mean of its neighbours, so the dark pupil and the eyelid bleed into the skin around them. That is the blur on the right of the slide.`;
 
+/**
+ * The Gaussian table on lec06 p22, filled from its formula (Phase 3, grid-fill): each cell is the formula at
+ * that x and y, computed by a calc, written by the engine cell by cell. Nothing in the table is typed.
+ */
+const GAUSS = `Every number in that table is the Gaussian formula evaluated at one x and y: the farther from the centre, the smaller the weight.
+<plan>
+5x5, sigma 1 (p22): G(x,y) = e^(-(x²+y²)/2σ²)/(2πσ²) over x, y in -2..2. Two cells, the centre, then fill the rest.
+BOARD viewBox="0 0 560 450"
+groups: gform; gk
+</plan>
+<calc id="g">
+const s = 1;
+export const xs = [-2, -1, 0, 1, 2];
+export const G = xs.map(y => xs.map(x => Math.exp(-(x * x + y * y) / (2 * s * s)) / (2 * Math.PI * s * s)));
+</calc>
+<g id="gform">
+  <text x="20" y="34" font-size="20" fill="${INK}">G(x, y) = e^(−(x² + y²) / 2σ²) / 2πσ²,  σ = 1</text>
+</g>
+The formula takes a position and gives a weight.
+<g id="gk" data-const="k=0" data-grid="g.G" data-rows="g.xs" data-cols="g.xs" data-rows-name="y" data-cols-name="x" data-fmt="3" data-step="k" data-origin="20,80"/>
+Here are the x and y positions of a five by five kernel. {{tween k=1 dur=0.8}} The corner is two steps out in both directions, so its weight is tiny: {{val id=gk.out[0][0] fmt=3}}. {{tween k=2 dur=0.8}} One step closer in x and it grows to {{val id=gk.out[0][1] fmt=3}}. {{tween k=13 dur=2.5}} At the centre, x and y are both zero, so the exponential is one and the weight is one over two pi, {{val id=gk.out[2][2] fmt=3}}. {{tween k=25 dur=2.5}} The rest mirror these, because the formula only cares about the distance from the centre.`;
+
+/**
+ * Is the box filter separable? (lec06 p28) The outer product of a 1D box with itself, filled cell by cell.
+ */
+const SEP = `Yes: the three by three box is a column of thirds times a row of thirds, so you can blur the rows, then the columns.
+<plan>
+p28's question. Outer product [1/3 1/3 1/3]ᵀ [1/3 1/3 1/3] = the 3x3 box, every cell 1/9. Two cells, then the rest.
+BOARD viewBox="0 0 560 330"
+groups: sep
+</plan>
+<g id="sep" data-const="k=0" data-grid="mul" data-rows="1/3,1/3,1/3" data-cols="1/3,1/3,1/3" data-step="k" data-origin="40,50"/>
+Put a one dimensional box down the side and another along the top. {{tween k=1 dur=0.8}} Each cell is its row's weight times its column's: a third times a third is {{val sep.out[0][0]}}. {{tween k=2 dur=0.8}} The next one is the same, {{val sep.out[0][1]}}. {{tween k=9 dur=2.5}} Every cell is a ninth, which is exactly the box filter. So one pass along the rows and one down the columns does the same blur, with three multiplications a pixel each way instead of nine.`;
+
+/**
+ * Newton's method for the square root of two (Phase 3, the plot view): the iterates come from a calc, the
+ * engine plots them as the step moves, and the tangent is drawn from the trace (nw.x[k]), never by hand.
+ */
+const NEWTON = `Newton's method follows the tangent line down to where it crosses zero, and uses that crossing as the next guess.
+<plan>
+f(x) = x² − 2 from x0 = 1: 1, 1.5, 1.41667, 1.41422. Curve, the tangent at x_k to the axis, the trail of guesses.
+BOARD viewBox="0 0 560 430"
+groups: frame; nwt
+</plan>
+<calc id="nw">
+const f = x => x * x - 2, df = x => 2 * x;
+const xs = [1];
+for (let i = 0; i < 4; i++) xs.push(xs[i] - f(xs[i]) / df(xs[i]));
+export const x = xs;
+export const y = xs.map(f);
+</calc>
+<g id="frame">
+  <g data-axes="ax" data-x="0.9,1.6" data-y="-1.2,0.6" data-box="60,30,460,330" data-frame="" data-ticks-x="1,1.25,1.5" data-ticks-y="-1,-0.5,0,0.5"/>
+  <path data-fn="x^2-2" data-axes="ax" fill="none" stroke="${INK}" stroke-width="2.5"/>
+  <line data-from="pt(ax, 0.9, 0)" data-to="pt(ax, 1.6, 0)" stroke="${MUTED}" stroke-width="1"/>
+</g>
+Here is x squared minus two: its zero is the square root of two.
+<g id="nwt" data-const="k=0">
+  <line data-from="pt(ax, nw.x[k], nw.y[k])" data-to="pt(ax, nw.x[k+1], 0)" stroke="${ACCENT}" stroke-width="2" stroke-dasharray="6 4"/>
+  <line data-from="pt(ax, nw.x[k], 0)" data-to="pt(ax, nw.x[k], nw.y[k])" stroke="${MUTED}" stroke-width="1" stroke-dasharray="3 3"/>
+  <g data-series="nw.x, nw.y" data-axes="ax" data-upto="k"/>
+  <text x="60" y="412" font-size="18" fill="${ACCENT}" data-val="nw.x[k]" data-fmt="5">guess: x = {}</text>
+</g>
+Start at one, where the curve is below zero. {{tween k=1 dur=1}} Follow the tangent down to the axis: the next guess is {{val id=nw.x[1] fmt=2}}. {{tween k=2 dur=1}} From there the tangent lands at {{val id=nw.x[2] fmt=4}}. {{tween k=3 dur=1}} One more and it is {{val id=nw.x[3] fmt=5}}: each step about doubles the correct digits.`;
+
 export const TEACH_SCRIPTS = {
   'conv-proc': { src: '/dev/lec06_conv.pdf', page: 5, question: 'Convolve a 5x5 image with a 3x3 kernel and show the sliding window', script: wire(CONV) },
   'add-proc': { src: '/fixtures/examples.pdf', page: 1, question: 'How does 478 + 356 work, with carrying?', script: wire(ADD) },
   'eye-proc': { src: '/dev/lec06_conv.pdf', page: 16, question: 'Show the box blur running over the eye on this slide', script: wire(EYE) },
+  'gauss-grid': { src: '/dev/lec06_conv.pdf', page: 22, question: 'Where do the numbers in this Gaussian kernel come from?', script: wire(GAUSS) },
+  'sep-grid': { src: '/dev/lec06_conv.pdf', page: 28, question: 'Is the box filter separable?', script: wire(SEP) },
+  'newton-plot': { src: '/fixtures/examples.pdf', page: 1, question: "Show Newton's method finding the square root of 2", script: wire(NEWTON) },
   'rod-proc': { src: '/dev/openstax-university-physics-volume-1.pdf', page: 491, question: 'Derive the moment of inertia of a thin rod about its centre', script: wire(ROD) },
 };
