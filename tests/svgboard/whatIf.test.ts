@@ -24,11 +24,13 @@ describe('what if', () => {
     resolveData(el, sc);
     expect(el.querySelector('[data-slide-line]')!.textContent).toMatch(/= 13$/); // 1·1 + 2·6
     expect(Array.from(el.querySelectorAll('text')).some((t) => t.textContent === 'kernel (what if)')).toBe(true);
+    expect(el.querySelector('[data-whatif-reset]')?.textContent).toBe('↺ back to the answer');
     expect(slideOut(sc, 'conv', 'out[0][0]')).toBe(1);
     expect(sc.values.length).toBe(before);
     sc.whatIf.clear();
     resolveData(el, sc);
     expect(el.querySelector('[data-slide-line]')!.textContent).toMatch(/= 1$/);
+    expect(el.querySelector('[data-whatif-reset]')).toBeNull();
   });
 
   it('a what-if of another shape is ignored; weights read as typed', () => {

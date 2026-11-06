@@ -3,7 +3,7 @@
 // engine window's kernel, types another, and the window redraws at the step it is on: its outputs, its frame
 // and its working recompute at once. The edit lives in the board's scope.whatIf, which only the window's
 // drawing reads (slide.ts): the answer's numbers, what the voice says, the gate and the recording stay as
-// they were. A chip under the window resets it; playing on (resume, a seek) resets every what-if.
+// they were. "↺ back to the answer", drawn in the window (slide.ts), resets it; playing on resets every what-if.
 import { boardOf, refreshData, type SvgBoard } from './render';
 import { matrix } from './slide';
 
@@ -44,7 +44,6 @@ export function clearWhatIf(b: SvgBoard, id?: string): boolean {
 /** Every board in `root` (the desk) back to the answer as given. */
 export function clearAllWhatIf(root: ParentNode): void {
   for (const svg of Array.from(root.querySelectorAll('svg[data-svgboard]'))) { const b = boardOf(svg); if (b) clearWhatIf(b); }
-  for (const chip of Array.from(document.querySelectorAll('.whatif-chip'))) chip.remove();
 }
 
 /**
@@ -54,18 +53,13 @@ export function clearAllWhatIf(root: ParentNode): void {
 export function attachWhatIf(root: HTMLElement, canEdit: () => boolean): () => void {
   let input: HTMLInputElement | null = null;
   const close = () => { input?.remove(); input = null; };
-  const chipFor = (b: SvgBoard, id: string, win: Element) => {
-    document.querySelector(`.whatif-chip[data-for="${CSS.escape(id)}"]`)?.remove();
-    const r = win.getBoundingClientRect();
-    const chip = document.createElement('button');
-    chip.className = 'whatif-chip';
-    chip.dataset.for = id;
-    chip.textContent = 'What if · back to the answer';
-    Object.assign(chip.style, { position: 'fixed', left: `${Math.round(r.left)}px`, top: `${Math.round(r.top - 30)}px`, zIndex: '40', font: '13px system-ui, sans-serif', padding: '3px 10px', borderRadius: '12px', border: '1px solid #7c3aed', background: '#fff', color: '#7c3aed', cursor: 'pointer' });
-    chip.addEventListener('click', () => { clearWhatIf(b, id); chip.remove(); });
-    document.body.appendChild(chip);
-  };
   const onClick = (e: MouseEvent) => {
+    const back = (e.target as Element | null)?.closest?.('[data-whatif-reset]');
+    if (back && root.contains(back)) {
+      const b = boardOf(back), w = b && windowOf(back, b);
+      if (b && w) { e.preventDefault(); e.stopPropagation(); clearWhatIf(b, w.id); }
+      return;
+    }
     const cell = (e.target as Element | null)?.closest?.('[data-kcell]');
     if (!cell || !root.contains(cell) || !canEdit()) return;
     const b = boardOf(cell);
@@ -87,7 +81,6 @@ export function attachWhatIf(root: HTMLElement, canEdit: () => boolean): () => v
       close();
       if (v == null || v === w.kernel[r][c]) return;
       setWeight(b, w.id, w.kernel, r, c, v);
-      chipFor(b, w.id, w.win);
     };
     input.addEventListener('keydown', (k) => { k.stopPropagation(); if (k.key === 'Enter') commit(); else if (k.key === 'Escape') close(); });
     input.addEventListener('blur', commit);
