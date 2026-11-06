@@ -122,6 +122,8 @@
 }
 .trail-q { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .trail-meta { flex: none; font-size: 12px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* An answer whose worked numbers are an example, not the slides' (trail.ts markExample). */
+.trail-example { flex: none; font-size: 12px; font-weight: 500; color: #5b21b6; background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
 .trail-replay {
   flex: none;
   display: none;

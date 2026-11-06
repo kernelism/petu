@@ -28,6 +28,7 @@ import { BASE_WPM, getSettings, setSettings, SPEEDS, stepSpeed, useSettings, typ
 import { DEMO_SIDE_QUESTION, DEMO_PLANE_QUESTION, DEMO_QUESTION, pickDemo, streamDemo, suggestionsFor } from './demo/demoScript';
 import { SCRIPTS } from './demo/scripts';
 import { runCalcsIn, withCalcs } from './calc/stream';
+import { givenNumbers } from './calc/provenance';
 import { runPixelsIn, withPixels, type PixelSource } from './pixels/stream';
 import type { DevStep } from './demo/learner';
 import { Desk, GLIDE_MS } from './desk/Desk';
@@ -913,6 +914,8 @@ export default function App() {
     let gate: LiveGate | null = null;
     let shadow: ShadowStage | null = null;
     const pageTexts = new Map<number, string>();
+    // A calc whose data is not on these pages (or in the question) is an example (src/calc/provenance.ts).
+    const calcOpts = { given: () => (pageTexts.size ? givenNumbers(pageTexts.values(), q) : null) };
     const gateEvent = (e: GateLogEvent) => {
       // Gate events ride the answer's event log (recordings, Report); protocol.ts types them (Task B).
       log.event(e as never);
@@ -940,14 +943,15 @@ export default function App() {
         svgMinFont: () => { const m = deskRef.current?.metrics?.('wide'); return m && m.boardPx > 0 ? Math.max(12, m.bodyPx(null)) / (m.boardPx / 1000) : 16; } });
       gate = new LiveGate({
         clock: { now: () => performance.now(), endsAt: () => clock.endsAt() }, preflight,
-        repair: repairFor(), calcs: (t) => runPixelsIn(t, pixelsFrom(() => docRef.current, page)).then((x) => runCalcsIn(x)),
+        repair: repairFor(), calcs: (t) => runPixelsIn(t, pixelsFrom(() => docRef.current, page)).then((x) => runCalcsIn(x, undefined, calcOpts)),
         faults: GATE_FAULTS, onEvent: gateEvent,
         headroomMs: HEADROOM_MS,
       });
     }
     // Warm the pages the first units point at (the visible page; a dev script's own pages): the gate
-    // vouches for page pointing from their text, so the first word never waits on loading them.
-    if (gate) {
+    // vouches for page pointing from their text, so the first word never waits on loading them. The calc
+    // runner reads them too (an example's numbers are not on them), with or without the gate.
+    {
       const v = viewerRef.current;
       const want = new Set<number>([page, ...(!toAgent && DEV_SCRIPT ? [...DEV_SCRIPT.script.matchAll(/\bp=(\d+)/g)].map((m) => Number(m[1])) : [])]);
       if (v) for (const p of want) if (p >= 1 && p <= v.numPages()) void v.textRuns(p).then((rs) => { if (!pageTexts.has(p)) pageTexts.set(p, rs.map((r) => r.text).join(' ')); }).catch(() => {});
@@ -1071,6 +1075,8 @@ export default function App() {
         if (sessionRef.current !== session) return;
         if (a.kind !== 'scroll' && a.kind !== 'clear') drew = true;
         if (a.kind === 'tween' || a.kind === 'step' || a.kind === 'sweep') steppedRef.current = true;
+        // A calc whose numbers are an example, not the slides' (src/calc/provenance.ts): the answer's head says so.
+        if (a.kind === 'computed' && a.example) entry.head?.markExample?.();
         // The prediction prompt (optional, once an answer): before a window's third position, pause and ask.
         if (a.kind === 'tween' && !predicted && getSettings().predict && !again) {
           const p = predictionOnBoard(a);
@@ -1176,7 +1182,7 @@ export default function App() {
     };
     // Calc programs run before the gate reads the stream: the gate checks the numbers they computed, as the session says them.
     // A window over a page image gets the image's pixels first (src/pixels/stream.ts), as a computed table.
-    const computed = (signal: AbortSignal) => withCalcs(withPixels(source(signal), pixelsFrom(() => docRef.current, page)));
+    const computed = (signal: AbortSignal) => withCalcs(withPixels(source(signal), pixelsFrom(() => docRef.current, page)), undefined, calcOpts);
     void session.start(gate ? gate.wrap(computed) : computed).finally(finishGate);
   }), [director, flash]);
 
