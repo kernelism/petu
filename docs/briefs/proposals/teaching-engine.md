@@ -222,6 +222,26 @@ table by `scripts/eval/teachReport.ts`.
   plan's five rubric questions per answer with a blind A/B (the coordinator alone holds the key), and a
   three-question check per topic taken before and after watching. Raters need Contributor access to save.
 
+### Round 15: the example label (2026-11-06, branch iter/r15)
+
+§7 decision 4 is taken as the label: the tutor may invent a worked example (the slides often have no
+numbers to work), but the student is told. A live calc whose data is not the document's gets
+`src=example` on its computed tag, and the answer's head on the board shows "Example numbers, not from
+your slides" from the moment that calc plays (`src/calc/provenance.ts`, `trail.ts markExample`).
+
+- **The rule** (shared by the app and the eval's "invented" column): a calc's data lists are its array
+  literals of 3+ numbers, less fills (`[0, 0, 0]`) and index or coordinate runs (`[0…n−1]`, `[−k…k]`).
+  The data is the document's when at least half its distinct numbers are in the text of the pages in play
+  or in the question; a list of digits that spells a given number (478 as `[4, 7, 8]`) counts as given.
+  With no page text yet the calc is not marked: no label is better than a wrong one.
+- **Checked on the demos:** the conv demo's made-up 5×5 image is labelled; the addition (478 + 356), the
+  slide's Gaussian kernel (its −2…2 coordinates no longer count as data), the eye, and Newton are not.
+- **Re-measured with the shared rule:** p6.26, 6 of 8 calcs with data are examples (was 8 of 10: the two
+  coordinate grids are no longer counted); p6.27, 4 of 4. Spot-checked by hand: all 6 are made-up
+  numbers (median-filter pixels 10, 200, 12…, a 1…25 image, a 3×3 sum table).
+- **No prompt change.** The label is computed, not asked of the model; whether the tutor should prefer the
+  slide's own numbers when it has some is left to the comparison with ChatGPT.
+
 ### Status of every item in the plan (2026-11-06)
 
 | Item (§6) | Status |
@@ -235,7 +255,7 @@ table by `scripts/eval/teachReport.ts`.
 | The scout's DATA/CONV lines | Dropped (r14, above) |
 | Exemplar packs | Not built: §7 decision 5 |
 | Gate (a) spoken numbers, (e) structure | Built (number checks, `numberFixes`; unresolved data is hidden and sent to repair) |
-| Gate (b) inputs | Measured in the eval (r14); a live note would need the calc source in the gate |
+| Gate (b) inputs | Built (r15): examples are labelled live on the answer's head; the eval counts them with the same rule |
 | Gate (c) one dataset | Built, notes (r11) |
 | Gate (d) strict typed numbers | As §0 revised it: typed numbers are noted, spoken ones replaced (`numberFixes`); the board's are not replaced |
 | Gate (f) conventions | Built, notes (r13): text-printed tables and the operation's name |
@@ -249,7 +269,7 @@ table by `scripts/eval/teachReport.ts`.
 | Vision critic | Deferred: offline evals only |
 | Scrub bar | Deferred: §3.4 keeps it out of v1 |
 | Persona agents | Deferred: only on eval evidence |
-| §7 decisions 1 to 6 | 1 settled by §0; 2 built as proposed (Back replays, E re-explains), to confirm; 3 to 6 open |
+| §7 decisions 1 to 6 | 1 settled by §0; 2 built as proposed (Back replays, E re-explains), to confirm; 4 taken as the label (r15); 3, 5, 6 open |
 
 **Effect on the plan.** Phase 1 adds the calc sandbox and derivation rendering. The
 `expr.ts` list extensions in section 5 shrink to what the engine needs for drawing; arithmetic moves
@@ -715,7 +735,7 @@ Scope: the convolution lecture plus two other subjects, column addition and the 
 1. **Derivations on the board.** The labels-only rule (p6.8, `prose.ts`) was added after real complaints about random prose, and it currently blocks "dm = λ dx, dI = x² dm, ∫". The proposal is a narrow exemption: engine-rendered `eqchain` lines whose numbers are all bound to trace values, at most 4 lines. Free prose stays banned. Without the exemption, slicing-to-integrate shows slices and a readout but no chain.
 2. **Back vs re-explain.** Do you agree that Back replays exactly, and that only a separate "Re-explain this step" calls the model?
 3. **Pacing default.** The research conflicts. We propose: system-paced within a step, holds at boundaries, speed and step controls as options, no scrub bar in v1. Is that right for your users?
-4. **Invented examples.** Is a visible "example, not from your slides" chip acceptable, or should the tutor invent only when the slide has no numbers at all?
+4. **Invented examples.** Is a visible "example, not from your slides" chip acceptable, or should the tutor invent only when the slide has no numbers at all? *Taken (r15): the label, built; revisit if the comparison shows students want the slide's own numbers.*
 5. **Exemplar packs in the user turn.** This keeps the cache and the prompt test intact, but it softens the "no per-question recipes" rule in spirit, even though the packs are per pattern, not per subject.
 6. **Level adaptation.** Should the tutor infer prior knowledge (novices get pre-training and 3 worked steps; experts get the formula first and one confirming step), or ask once?
 
