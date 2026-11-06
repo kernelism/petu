@@ -1077,7 +1077,7 @@ export default function App() {
           if (p && session.pause()) {
             predicted = true;
             setUserPaused(true);
-            setPredict({ p, go: () => { setPredict(null); if (sessionRef.current !== session) return; director.run(a, performance.now(), live); if (session.resume()) setUserPaused(false); } });
+            setPredict({ p, go: () => { setPredict(null); if (sessionRef.current !== session) return; clearAllWhatIf(document); director.run(a, performance.now(), live); if (session.resume()) setUserPaused(false); } });
             return;
           }
         }
@@ -1479,6 +1479,7 @@ export default function App() {
     if (!asideRef.current) return;
     dropRouting();
     endAside();
+    clearAllWhatIf(document);
     if (sessionRef.current?.resume()) setUserPaused(false);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const closeAsideRef = useRef(closeAside);
@@ -1489,7 +1490,7 @@ export default function App() {
     const s = sessionRef.current;
     if (!s || asideRef.current) return;
     if (typing && !s.isPaused() && s.pause()) { typingPaused.current = true; setUserPaused(true); clearPause(); }
-    else if (!typing && typingPaused.current) { typingPaused.current = false; if (s.resume()) setUserPaused(false); }
+    else if (!typing && typingPaused.current) { typingPaused.current = false; clearAllWhatIf(document); if (s.resume()) setUserPaused(false); }
   }, []);
 
   // What if (src/svgboard/whatIf.ts): with the answer paused or over and no aside open, a click on an engine
