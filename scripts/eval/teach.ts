@@ -21,4 +21,6 @@ export const TEACH: Question[] = [
   q('D10', 'lec06', 13, 'why', 'What will this kernel do to the image?', { tags: ['raster', 'unseen'] }),
   q('D11', 'lec06', 22, 'derive', 'Where do the numbers in this Gaussian kernel come from?', { tags: ['grid'] }),
   q('D12', 'lec06', 28, 'why', 'Is the box filter separable? Show me.', { tags: ['grid', 'unseen'] }),
+  q('D13', 'mechanics', 2, 'derive', 'Show me how the secant closes in on the tangent at P as the second point moves in.', { tags: ['plot'] }),
+  q('D14', 'mechanics', 5, 'derive', 'Trace the ball step by step: where is it every quarter second until it lands?', { tags: ['plot', 'unseen'] }),
 ];

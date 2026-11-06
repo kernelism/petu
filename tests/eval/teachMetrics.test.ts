@@ -13,7 +13,7 @@ describe('teachMetrics', () => {
 
 describe('question set teach', () => {
   it('is dev only, on known decks, one page per question', () => {
-    expect(QSETS.teach).toHaveLength(12);
+    expect(QSETS.teach).toHaveLength(14);
     expect(QSETS.teach.every((q) => q.split === 'dev')).toBe(true);
     expect(validateSet(QSETS.teach)).toEqual([]);
   });
