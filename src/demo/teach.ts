@@ -132,8 +132,25 @@ export const k = [[1, 0, -1], [1, 0, -1], [1, 0, -1]];
 <g id="conv" data-const="k=0" data-slide="img.f" data-kernel="img.k" data-flip="" data-step="k" data-origin="20,50" data-cell="36"/>
 Here is the image, the kernel, and an empty output: convolution turns the kernel around before it slides. {{tween k=1 dur=0.8}} Put it on the top-left corner: the right column counts plus, the left column minus, and the sum is {{val conv.out[0][0]}}. {{tween k=2 dur=0.8}} Slide one step right, and every pair grows by the same amount, so the sum stays {{val conv.out[0][1]}}. {{tween k=9 dur=4}} Sweep the rest: the image rises at the same rate everywhere, so every output is {{val conv.out[2][2]}}.`;
 
+/**
+ * A box blur on the student's own slide (lec06 p16): the window reads the eye picture's pixels from the PDF
+ * (data-slide="#i1", src/pixels), so the numbers under the frame are the slide's real gray levels.
+ */
+const EYE = `A box blur replaces every pixel with the average of the nine around it, so sharp edges spread out.
+<plan>
+The eye on this slide (#i1) as 24 columns of gray, the 3x3 box (each weight 1/9); two stops, then a sweep.
+BOARD viewBox="0 0 560 470"
+groups: eye
+</plan>
+<calc id="blur">
+export const box = [[1, 1, 1], [1, 1, 1], [1, 1, 1]].map(r => r.map(v => v / 9));
+</calc>
+<g id="eye" data-const="s=0" data-slide="#i1" data-kernel="blur.box" data-step="s" data-origin="20,40"/>
+Here is the eye from your slide, read as a grid of gray levels: dark pixels are small numbers, bright ones large. {{tween s=1 dur=0.8}} Put the box on the top-left corner: the nine pixels under it average to {{val eye.out[0][0]}}, and that is the first output pixel. {{tween s=2 dur=0.8}} Slide one pixel right: the window drops a column and takes in a new one, and the average is {{val eye.out[0][1]}}. {{tween s=484 dur=6}} Sweep the rest: each pixel becomes the mean of its neighbours, so the dark pupil and the eyelid bleed into the skin around them. That is the blur on the right of the slide.`;
+
 export const TEACH_SCRIPTS = {
   'conv-proc': { src: '/dev/lec06_conv.pdf', page: 5, question: 'Convolve a 5x5 image with a 3x3 kernel and show the sliding window', script: wire(CONV) },
   'add-proc': { src: '/fixtures/examples.pdf', page: 1, question: 'How does 478 + 356 work, with carrying?', script: wire(ADD) },
+  'eye-proc': { src: '/dev/lec06_conv.pdf', page: 16, question: 'Show the box blur running over the eye on this slide', script: wire(EYE) },
   'rod-proc': { src: '/dev/openstax-university-physics-volume-1.pdf', page: 491, question: 'Derive the moment of inertia of a thin rod about its centre', script: wire(ROD) },
 };

@@ -24,7 +24,7 @@ describe('format', () => {
       't2 338 211–275 math: x − xʹ',
       '#d1 dot 407,600 "O"',
       '#a1 arrow #d1→600,600 "Baseline B"',
-      '#i1 image 121,344 318×522',
+      '#i1 image 121,344 318×522 (pixels readable)',
     ].join('\n'));
   });
 
@@ -63,7 +63,7 @@ describe('format bounds', () => {
     expect(s.length).toBeLessThanOrEqual(VISIBLE_TOKENS * 3.3 + 200);
     expect(s.split('\n')[0]).toMatch(/^PAGE 40 \(visible/);
     expect(s).toContain('\n…\n#d1 dot');
-    expect(s.endsWith('#i1 image 121,344 318×522')).toBe(true);
+    expect(s.endsWith('#i1 image 121,344 318×522 (pixels readable)')).toBe(true);
     expect(formatVisible(page)).not.toContain('…');
   });
 });

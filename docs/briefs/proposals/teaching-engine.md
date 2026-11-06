@@ -110,6 +110,44 @@ table by `scripts/eval/teachReport.ts`.
 - Not built: (f) conventions needs a conventions line from the scout first; the prediction prompt is
   optional and waits on the pacing decision in §7.
 
+**Phase 3 built so far (2026-11-05, branch `iter/r12`).**
+
+- **Raster on the student's own slide image.** A window may slide over a picture on the page by its mark:
+  `data-slide="#i1"` (the mark the page listing already gives; `data-px` columns, default 24, at most 40;
+  `data-page` when not the answer's page). The app reads the PDF image object's own bytes (not a render
+  of the page), turns them into whole gray levels by block averages with integer luma (`src/pixels/gray.ts`),
+  and puts them into the answer as a computed table (`{{computed id=px_i1_24 f=…}}`) just before the svg
+  tag (`src/pixels/stream.ts`). From there they are ordinary calc data: the gate's shadow board, step back
+  and a replay of the recorded answer read the same integers without the PDF. The node replay reads the
+  same bytes (`scripts/lib/pixels.ts`); browser and node agree to the integer on the lec06 eye.
+- **The picture view.** An input over 12 cells wide or tall is drawn as pixels, not numerals: the shaded
+  input and output (one path per gray level, so a 24×24 picture is a few dozen elements), the frame on the
+  input, the output pixel under the window's centre, and below them a zoom row with the window's real
+  values, the kernel (turned for convolution) and the result, plus the working. Outputs are whole levels
+  unless `data-fmt` asks for decimals. Demo `?script=eye-proc`: the box blur over the eye on slide 16
+  ends on an output that matches the slide's own blurred picture.
+- Prompts p6.24–p6.25 tell the model about the page-image form, in the WINDOWS paragraph.
+- **Eval** (teach, lec06 questions D1–D4 plus two new ones on the eye slides: D9 "show me how this box
+  filter blurs the eye, pixel by pixel" on p15, D10 "what will this kernel do to the image?" on p13; 2 samples
+  each, no judge). On p6.24 the model never used the picture: D9 built a made-up 3×6 patch and said it was
+  "not measured eye pixels". p6.25 (and "pixels readable" on image marks in the page listing) fixed that, and
+  exposed a gate bug: the gate's segmenter took a 24×24 table (~2.3k characters) for narration, so every
+  picture window was dropped (17 drops in 6 answers). The bug predates Phase 3: any computed tag over the
+  normal tag length (a calc exporting a few hundred numbers) was read as narration and its beat dropped. With the segmenter fixed: 12 answers, 0 drops,
+  0 failed calcs, 0 typed numerals and 0 gate number flags; D9 and D10 used the slide's picture in 4 of 4
+  (D10 unprompted: it read the shift off the real eye, output = image[m, n+1] = 108); D2–D4 as before;
+  D1 drew calc-bound readouts (20 and 21 data-vals) rather than an engine window in both samples (n=2);
+  median first word 1.8 s; $0.014 an answer. Run `2026-11-05-terra-none-p6.25-teach-59bf55ec-c` (the
+  17-drop run is the same name without `-c`).
+- Seen live and fixed: a model's data-cell pushed the output off the board (the engine now shrinks the
+  pixels to fit). Seen, not fixed: the model wrote its own label over the picture (D10). Not checked
+  live: step back over a picture window (tests redraw it at any step). Known edge: without `data-page` a
+  window reads `#i1` from the page the question was asked on, so an image cited from another page needs
+  `data-page`.
+- **Moot:** "slices and eqchain made the default" is covered by §0's free canvas and calc.
+- Not built: the plot view, the grid-fill pattern and the data-literal inspector (no eval question
+  needs them yet); (f) conventions and the prediction prompt, as in Phase 2.
+
 **Effect on the plan.** Phase 1 adds the calc sandbox and derivation rendering. The
 `expr.ts` list extensions in section 5 shrink to what the engine needs for drawing; arithmetic moves
 into calc. Phase 1 grows by one to two days.

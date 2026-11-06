@@ -44,3 +44,14 @@ describe('gate segment', () => {
     expect(pct([1, 2, 3, 4], 0.5)).toBe(2.5);
   });
 });
+
+describe('long calc tags (a page image\'s pixels, src/pixels/stream.ts)', () => {
+  it('a computed table of 576 numbers is one tag, not narration (live D9, p6.25)', () => {
+    const f = Array.from({ length: 24 }, (_, r) => Array.from({ length: 24 }, (_, c) => 100 + ((r * 24 + c) % 150)).join(',')).join(';');
+    const script = `Look at it. {{computed id=px_i1_24 f=${f}}} {{svg <g id="eye" data-slide="#i1"/>}} Here is the eye.`;
+    const toks = tokenize(script, { end: true });
+    const tags = toks.filter((t) => t.kind === 'tag');
+    expect(tags.map((t) => (t as { action: { kind: string } | null }).action?.kind)).toEqual(['computed', 'svg']);
+    expect(toks.filter((t) => t.kind === 'word').map((t) => (t as { text: string }).text).join(' ')).toBe('Look at it. Here is the eye.');
+  });
+});

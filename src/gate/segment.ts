@@ -8,7 +8,7 @@
 // quotes; a newline, a second `{{` or MAX_TAG_CHARS fails it and its text is narration.
 import { ABBREV, endsSentence as endsSpoken } from '../playback/clock';
 import { MAX_TAG_CHARS } from '../script/parser';
-import { BEAT_TAG, cutTagBody, isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
+import { BEAT_TAG, cutTagBody, isCalcTagBody, isSvgTagBody, SVG_TAG_MAX } from '../svgboard/wire';
 import { parseTag } from '../script/parseTag';
 import type { RawAction } from '../script/types';
 
@@ -18,8 +18,12 @@ export type Tok = Word | Tag;
 
 const QUOTE_CLOSE: Record<string, string> = { '"': '"', '“': '”' };
 
+const longTag = (buf: string, open: number): boolean => isSvgTagBody(buf.slice(open + 2, open + 8)) || isCalcTagBody(buf.slice(open + 2, open + 12));
+
 function scan(buf: string, open: number): { close: number } | { fail: number; cut?: true } {
-  const svg = isSvgTagBody(buf.slice(open + 2, open + 8));
+  // As the parser scans (src/script/parser.ts scanTag): svg groups and calc tags are long, and a page image's
+  // pixels arrive as a computed table of hundreds of numbers (src/pixels/stream.ts).
+  const svg = longTag(buf, open);
   const limit = open + (svg ? SVG_TAG_MAX : MAX_TAG_CHARS);
   let quote: string | null = null;
   for (let i = open + 2; i < buf.length; i++) {
@@ -276,7 +280,7 @@ export class BeatSplitter {
         pos = s.close;
         continue;
       }
-      if (s.fail >= buf.length && buf.length < open + (isSvgTagBody(buf.slice(open + 2, open + 8)) ? SVG_TAG_MAX : MAX_TAG_CHARS)) { if (open < cut) cut = open; break; }
+      if (s.fail >= buf.length && buf.length < open + (longTag(buf, open) ? SVG_TAG_MAX : MAX_TAG_CHARS)) { if (open < cut) cut = open; break; }
       pos = s.fail;
     }
     return cut;

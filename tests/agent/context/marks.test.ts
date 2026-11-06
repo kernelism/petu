@@ -151,7 +151,7 @@ describe('figureMarks', () => {
     const images = [0, 1, 2, 3].map((i) => ({ rect: { x: 100, y: 200 + i * 50, w: 300, h: 50 } }));
     images.push({ rect: { x: 900, y: 900, w: 10, h: 10 } });
     const ms = figureMarks([], images, [], 1);
-    expect(formatMarks(ms)).toBe('#i1 image 100,200 300×200');
+    expect(formatMarks(ms)).toBe('#i1 image 100,200 300×200 (pixels readable)');
   });
 
   it('handles a huge path count quickly', () => {
