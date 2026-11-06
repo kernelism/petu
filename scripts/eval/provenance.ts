@@ -3,35 +3,23 @@
 // results, not its source, so the eval reads the wire: each calc's data (its array literals of 3+ numbers) is
 // "from the document" when most of its numbers appear in the text of the pages the answer teaches from (the
 // scout's, and the page asked on) or in the question, else invented.
-// This is the evidence §7 decision 4 (an "example, not from your slides" chip) needs: how often answers invent.
+// This is the evidence §7 decision 4 needed: how often answers invent. The rule itself is src/calc/provenance.ts,
+// which the app runs live to label examples.
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { unescapeCalc } from '../../src/svgboard/wire.ts';
 import { textNumbers } from '../../src/gate/numbers.ts';
+import { dataNumbers, fromDocument, isExample } from '../../src/calc/provenance.ts';
 import { pdfDirs } from './decks.ts';
 
 /** Each calc's data: the numbers of its array literals that hold 3 or more numbers. */
-export function calcData(wire: string): { id: string; nums: number[] }[] {
-  const out: { id: string; nums: number[] }[] = [];
+export function calcData(wire: string): { id: string; nums: number[]; code: string }[] {
   const srcs = [...wire.matchAll(/\{\{calcsrc\s+id=([A-Za-z]\w*)\s([\s\S]*?)\}\}/g)].map((m) => [m[1], unescapeCalc(m[2])])
     .concat([...wire.matchAll(/<calc\s+id=["']?([A-Za-z]\w*)["']?\s*>([\s\S]*?)<\/calc>/g)].map((m) => [m[1], m[2]]));
-  for (const [id, src] of srcs) {
-    const nums: number[] = [];
-    // Innermost brackets that hold only numbers: a row, a list.
-    for (const m of src.matchAll(/\[([-\d.,\s/]+)\]/g)) {
-      const vs = m[1].split(',').map((x) => x.trim()).filter(Boolean).map((x) => (x.includes('/') ? Number(x.split('/')[0]) / Number(x.split('/')[1]) : Number(x)));
-      if (vs.length >= 3 && vs.every(Number.isFinite)) nums.push(...vs);
-    }
-    if (nums.length) out.push({ id, nums });
-  }
-  return out;
+  return srcs.map(([id, src]) => ({ id, nums: dataNumbers(src), code: src })).filter((c) => c.nums.length);
 }
 
-/** Whether a calc's data is the document's (or the question's): most of its distinct numbers are there. */
-export function fromDocument(nums: number[], given: Set<number>): boolean {
-  const distinct = [...new Set(nums)];
-  return distinct.filter((v) => given.has(v)).length >= distinct.length / 2;
-}
+export { fromDocument, isExample };
 
 /** Each page's numbers, by deck file (pdf.js legacy, read once per deck). */
 const cache = new Map<string, number[][]>();

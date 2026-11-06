@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { computeMetrics, gateMetrics, percentile, teachMetrics } from './metrics.ts';
 import type { StoredQuestion } from './run.ts';
 import { runsDir } from '../gate-beats/recordings.ts';
-import { calcData, documentNumbers, fromDocument } from './provenance.ts';
+import { calcData, documentNumbers, isExample } from './provenance.ts';
 import { textNumbers } from '../../src/gate/numbers.ts';
 
 const runId = process.argv[2];
@@ -30,7 +30,8 @@ for (const id of ids) {
   const given = await documentNumbers(s.open.src, [s.open.page, ...(scout?.pages ?? [])]);
   const data = calcData(r.chunks.map((c) => c.d).join(''));
   const q = new Set(textNumbers(r.question ?? ''));
-  const invented = given ? data.filter((c) => !fromDocument(c.nums, new Set([...given, ...q]))).length : null;
+  // The app's own rule (src/calc/provenance.ts): what it labels as an example is what this counts.
+  const invented = given ? data.filter((c) => isExample(c.code, new Set([...given, ...q]))).length : null;
   tot.dataCalcs += data.length; tot.invented += invented ?? 0;
   rows.push([id, String(t.calcs), String(t.calcFailed), String(t.vals), String(t.dataVals), String(t.slides), String(t.pageSlides), String(t.grids), String(t.series), String(t.tweens), String(t.typedNumbers), String(t.numberFlags), String(t.conventions), invented == null ? '-' : `${invented}/${data.length}`, String(g?.drops ?? 0), `${g?.repairOk ?? 0}/${g?.repairs ?? 0}`, m.firstWordMs == null ? '-' : (m.firstWordMs / 1000).toFixed(1), m.answerUsd.toFixed(4)]);
 }
