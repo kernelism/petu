@@ -194,11 +194,62 @@ table by `scripts/eval/teachReport.ts`.
   same turned round (a box, a Gaussian), and every resume path (the aside's return, clearing the ask bar, the
   prediction's step) clears a what-if.
 
-**After Phase 3.** The plan has no Phase 4. What is left is the deferred list in §6, each with its
-condition: the QuickJS tracker (its first reason, rules past the expression language, is gone: calc runs
-JavaScript in a Worker; §0's other reason, stronger isolation, stands if needed), the vision critic (offline
-only), the scrub bar (§3.4 keeps it out of v1) and persona agents (only on eval evidence). The founder
-work in Phase 1 (the ChatGPT arm, the human rubric, the learning check) and §7's decisions are open.
+**Closing the plan (2026-11-06, branch `iter/r14`).**
+
+- **The plot view, measured.** D13 (mechanics p2, "show me how the secant closes in on the tangent at P") and
+  D14 (p5, "trace the ball step by step: where is it every quarter second?"), 2 samples each on p6.27, no
+  prompt change: D14 drew the trajectory with `data-series` in both (3 traces; positions, landing time 2.89 s
+  and range 40.82 m check by hand), D13 tweened the second point in with formulas (slope 4.1 at t = 2.1 against
+  the tangent's 4). 0 failed calcs, 0 number flags, 0 drops, median first word 2.0 s, $0.013 an answer. Run
+  `2026-11-06-terra-none-p6.27-teach-c74c94d9`.
+- **What if:** the way back is drawn in the window ("↺ back to the answer") and scrolls with the board.
+- **Check (b), inputs, measured offline** (`scripts/eval/provenance.ts`, the report's "invented" column): a
+  calc's data (its arrays of 3+ numbers) counts as the document's when most of its numbers are in the text of
+  the answer's pages or the question. The live gate sees calc results, not their source, so this lives in the
+  eval. On the p6.26 run: 8 of the 10 calcs with data used numbers of their own (an illustrative row, the
+  Gaussian's −2…2 grid). A heuristic, but it is the evidence §7 decision 4 asks for: answers invent most of
+  their worked data.
+- **The scout's DATA/CONV lines: dropped.** The scout reads a text digest (a page image only for scans, at
+  low detail), so it cannot lift what a slide shows only as a picture, and what the text prints, (f) and the
+  gate's page values already read directly. The lines would add 30 to 80 output tokens on the first-word path
+  for nothing the gate does not have.
+- **Fixtures:** the rest of Phase 1's (the raw difference, the patch's Gaussian 40.3125, box5's boundary modes
+  12/16/18/26, the shift kernel as correlation [12,13,14,15,0] and convolution [0,11,12,13,14] through the
+  engine window) are tests now.
+
+- **The founders' kit** (private until shared: https://claude.ai/artifact/NnNa1bBVuRSdgggcXa5XYc): how to record
+  both arms (petu, and ChatGPT given the same PDF and words), the ten questions with their eval recordings, the
+  plan's five rubric questions per answer with a blind A/B (the coordinator alone holds the key), and a
+  three-question check per topic taken before and after watching. Raters need Contributor access to save.
+
+### Status of every item in the plan (2026-11-06)
+
+| Item (§6) | Status |
+|---|---|
+| Motion on the narration clock | Built (before round 10; `tests/svgboard/pause.test.ts`, `tests/playback/controls.test.ts`) |
+| Proc v1 | Built in the form §0 chose: calc programs plus engine views (window r10, picture r12, grid and trace r13); slices and eqchain are §0's free canvas |
+| `{{step}}`, `{{run}}`, `{{val proc.x[i]}}`, idempotent steps, step back | Built: `{{tween}}` on step constants, `{{val calc.x[i]}}`, seek-to-state (r10, r11) |
+| Fixture tests | Built (r10 and r14) |
+| Hand-written demos | Built: conv, add, rod, eye (r12), Gaussian table, separable box, Newton (r13) |
+| Prompted run, the PROCESS section | Built: PROGRAMS, STEPS, WINDOWS, GRIDS (p6.18 to p6.27) |
+| The scout's DATA/CONV lines | Dropped (r14, above) |
+| Exemplar packs | Not built: §7 decision 5 |
+| Gate (a) spoken numbers, (e) structure | Built (number checks, `numberFixes`; unresolved data is hidden and sent to repair) |
+| Gate (b) inputs | Measured in the eval (r14); a live note would need the calc source in the gate |
+| Gate (c) one dataset | Built, notes (r11) |
+| Gate (d) strict typed numbers | As §0 revised it: typed numbers are noted, spoken ones replaced (`numberFixes`); the board's are not replaced |
+| Gate (f) conventions | Built, notes (r13): text-printed tables and the operation's name |
+| Automated evaluation | Built (`teach` set, `teachReport.ts`); runs per round above |
+| Seek-to-state, holds, data bridge, re-explain | Built (r11) |
+| Prediction prompt | Built, off by default (r13): §7 decision 3 |
+| Raster on the slide's image | Built (r12) |
+| Plot view, grid-fill, what-if inspector | Built (r13), measured (r13, r14) |
+| ChatGPT arm, human rubric, learning check | Founders: the kit is ready (below) |
+| QuickJS tracker | Deferred: stronger isolation only, if needed |
+| Vision critic | Deferred: offline evals only |
+| Scrub bar | Deferred: §3.4 keeps it out of v1 |
+| Persona agents | Deferred: only on eval evidence |
+| §7 decisions 1 to 6 | 1 settled by §0; 2 built as proposed (Back replays, E re-explains), to confirm; 3 to 6 open |
 
 **Effect on the plan.** Phase 1 adds the calc sandbox and derivation rendering. The
 `expr.ts` list extensions in section 5 shrink to what the engine needs for drawing; arithmetic moves

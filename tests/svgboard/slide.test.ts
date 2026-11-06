@@ -168,3 +168,13 @@ describe('raster layout', () => {
     expect(right).toBeLessThanOrEqual(560);
   });
 });
+
+describe('the shift kernel fixture (§6 Phase 1): correlation against convolution, through the engine window', () => {
+  it('correlation shifts left, convolution right', () => {
+    const sc = newScope(); sc.consts.k = 0; sc.calcs = new Map([['s', { f: [11, 12, 13, 14, 15], k: [0, 0, 1] }]]);
+    resolveData(parseGroup('<g id="corr" data-slide="s.f" data-kernel="s.k" data-same=""/>') as Element, sc);
+    resolveData(parseGroup('<g id="conv" data-slide="s.f" data-kernel="s.k" data-same="" data-flip=""/>') as Element, sc);
+    expect(sc.calcs.get('corr')!.out).toEqual([12, 13, 14, 15, 0]);
+    expect(sc.calcs.get('conv')!.out).toEqual([0, 11, 12, 13, 14]);
+  });
+});

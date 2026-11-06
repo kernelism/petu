@@ -151,6 +151,8 @@ export function drawSlide(el: Element, sc: SlideScope, k: number): C.Mat {
     const fr = spec.kind === 'weights' && !!spec.frac;
     grid(kx, oy, kernel, () => true, trying ? ACCENT : INK, fr, true);
     add('text', { x: r2(kx), y: r2(oy - cs * 0.3), 'font-size': cap, fill: trying ? ACCENT : MUTED }, trying ? 'kernel (what if)' : 'kernel');
+    // The way back, on the board with the window (it scrolls with it): whatIf.ts handles the click.
+    if (trying) add('text', { x: r2(kx), y: r2(oy + kH + cs * 0.55), 'font-size': cap, fill: ACCENT, 'text-decoration': 'underline', 'data-whatif-reset': '' }, '↺ back to the answer');
     if (flip) {
       const turned = kernel.slice().reverse().map((row) => row.slice().reverse());
       const ay = oy + kH / 2;
@@ -285,6 +287,7 @@ function drawRaster(el: Element, d: Raster, k: number) {
     const turned = spec.kind === 'weights' && !!spec.flip;
     grid(x, used, false, spec.kind === 'weights' && !!spec.frac, (r, c) => (turned ? `${used.length - 1 - r},${used[0].length - 1 - c}` : `${r},${c}`));
     add('text', { x: r2(x), y: r2(capY), 'font-size': cap, fill: d.trying ? ACCENT : MUTED }, `${turned ? 'kernel, turned' : 'kernel'}${d.trying ? ' (what if)' : ''}`);
+    if (d.trying) add('text', { x: r2(x), y: r2(capY + 18), 'font-size': cap, fill: ACCENT, 'text-decoration': 'underline', 'data-whatif-reset': '' }, '↺ back to the answer');
     x += used[0].length * zc + 14;
   } else if (spec.kind === 'reduce') {
     add('text', { x: r2(x), y: r2(mid), 'dominant-baseline': 'central', 'font-size': '16', fill: INK }, `→ ${spec.op}`);

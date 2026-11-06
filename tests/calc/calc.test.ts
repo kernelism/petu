@@ -62,6 +62,20 @@ describe('calc programs', () => {
     expect(pick(v as never, 'P[1][1]')).toBe(90);
   });
 
+  it('the rest of the plan\'s fixtures (§6 Phase 1): raw difference, the patch\'s Gaussian, box5 boundary modes', () => {
+    const v = run('fx', `
+      const r = [10,10,10,100,10,10,70,70,70,70];
+      export const diff = r.slice(1).map((x, i) => x - r[i]);
+      const P = [[10,15,20],[23,90,27],[33,31,30]], G = [[1,2,1],[2,4,2],[1,2,1]];
+      export const gauss = P.flat().reduce((s, x, i) => s + x * G.flat()[i], 0) / 16;
+      const a = [10, 20, 30, 40];
+      const at = (mode, i) => i >= 0 && i < a.length ? a[i] : mode === 'constant' ? 0 : mode === 'nearest' ? a[i < 0 ? 0 : a.length - 1] : mode === 'reflect' ? a[i < 0 ? -i - 1 : 2 * a.length - i - 1] : a[(i + a.length) % a.length];
+      export const box5 = ['constant', 'nearest', 'reflect', 'wrap'].map(m => [-2, -1, 0, 1, 2].reduce((s, d) => s + at(m, d), 0) / 5);`);
+    expect(v.diff).toEqual([0, 0, 90, -90, 0, 60, 0, 0, 0]);
+    expect(v.gauss).toBe(40.3125);
+    expect(v.box5).toEqual([12, 16, 18, 26]);
+  });
+
   it('adds with carries', () => {
     const v = run('add', `
       const a = [4,7,8], b = [3,5,6];
