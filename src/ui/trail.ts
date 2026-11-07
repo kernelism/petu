@@ -18,7 +18,12 @@ export type TrailHead = {
   h: number;
   /** "p.86–88 · 0:52": the pages it taught from (pagesLabel) and how long it played. */
   setMeta(meta: string): void;
+  /** The answer worked an example whose numbers are not the slides' (src/calc/provenance.ts): its head says so. */
+  markExample?(): void;
 };
+
+/** What an answer's head says when its worked numbers are an example (teaching-engine §3.6 check (b), §7 decision 4). */
+export const EXAMPLE_NOTE = 'Example numbers, not from your slides';
 
 /** "0:52" from ms. */
 export function clockOf(ms: number): string {
@@ -60,7 +65,9 @@ export function answerHead(o: { num: string; question: string; check?: boolean; 
   btn.append(num, q, meta, replay);
   btn.addEventListener('click', () => o.onReplay());
   el.append(btn);
-  return { el, h: HEAD_H, setMeta: (m) => { meta.textContent = m; } };
+  let example: HTMLElement | null = null;
+  return { el, h: HEAD_H, setMeta: (m) => { meta.textContent = m; },
+    markExample: () => { if (!example) { example = node('span', 'trail-example', EXAMPLE_NOTE); q.after(example); } } };
 }
 
 /**

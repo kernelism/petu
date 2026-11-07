@@ -11,11 +11,13 @@
  * booleans are not numbers anyone says or draws and are left out. The tag is self-contained, so the
  * parser, the gate and the board all read the same values without running anything again. A program
  * that fails becomes `{{computed id=rod failed="…"}}`: its vals stay unbound (a dash, recorded as a
- * skip), never a guessed number.
+ * skip), never a guessed number. A program whose data is not the document's (provenance.ts) carries
+ * `src=example`: the student is shown that its numbers are an example, not the slides'.
  */
 import { CalcError, prepareCalc, type CalcResult, type CalcValue } from './prepare';
 import { runCalc } from './sandbox';
 import { unescapeCalc } from '../svgboard/wire';
+import { isExample } from './provenance';
 
 /** One exported number list: a scalar, a row, or rows. */
 export type CalcNums = number | number[] | number[][];
@@ -61,12 +63,16 @@ export function computedTag(r: CalcResult): string {
 }
 
 /** A computed tag's body (`computed id=rod I4=0.078125 out=1,2`) back to numbers. Null when malformed. */
-export function readComputed(body: string): { id: string; values: CalcTable; failed?: string } | null {
+export function readComputed(body: string): { id: string; values: CalcTable; failed?: string; example?: true } | null {
   const m = /^\s*computed\s+id=([A-Za-z][A-Za-z0-9_]{0,23})(?:\s+(.*))?$/s.exec(body);
   if (!m) return null;
-  const id = m[1], rest = (m[2] ?? '').trim();
+  const id = m[1];
+  let rest = (m[2] ?? '').trim();
+  const example = /(?:^|\s)src=example(?=\s|$)/.test(rest);
+  if (example) rest = rest.replace(/(?:^|\s)src=example(?=\s|$)/, '').trim();
+  const ex = example ? { example: true as const } : {};
   const failed = /^failed="([^"]*)"$/.exec(rest);
-  if (failed) return { id, values: {}, failed: failed[1] };
+  if (failed) return { id, values: {}, failed: failed[1], ...ex };
   const values: CalcTable = {};
   for (const pair of rest ? rest.split(/\s+/) : []) {
     const eq = pair.indexOf('=');
@@ -76,7 +82,7 @@ export function readComputed(body: string): { id: string; values: CalcTable; fai
     const rows = s.split(';').filter((row, i, all) => row !== '' || i < all.length - 1).map((row) => row.split(',').map(Number));
     values[k] = s.includes(';') ? rows : s.includes(',') ? rows[0] : rows[0][0];
   }
-  return { id, values };
+  return { id, values, ...ex };
 }
 
 /** A value by path in a calc table: "I4", "out[2]", "P[1][2]", "best.sum". Undefined when absent. */
@@ -107,10 +113,16 @@ const CLOSE = '</calc>';
  * The stream with each closed <calc>…</calc> replaced by its computed tag (or a failed one). Text
  * before a calc passes through at once; the stream holds only while a calc is open or running.
  */
-export async function* withCalcs(src: AsyncIterable<string>, run: (id: string, code: string) => Promise<CalcResult> = (id, code) => runCalc(prepareCalc(id, code))): AsyncIterable<string> {
+export type CalcOpts = { /** The numbers the pages in play and the question give (provenance.ts): a program whose data is not among them is marked an example. Null: no page text yet, nothing to judge by (never marked). */ given?: () => Set<number> | null };
+
+export async function* withCalcs(src: AsyncIterable<string>, run: (id: string, code: string) => Promise<CalcResult> = (id, code) => runCalc(prepareCalc(id, code)), opts: CalcOpts = {}): AsyncIterable<string> {
   let buf = '';
   const runOne = async (id: string, code: string): Promise<string> => {
-    try { return ` ${computedTag(await run(id, code))} `; }
+    try {
+      const tag = computedTag(await run(id, code));
+      const given = opts.given?.();
+      return ` ${given && isExample(code, given) ? tag.replace(/\}\}$/, ' src=example}}') : tag} `;
+    }
     catch (e) {
       const why = (e instanceof CalcError ? e.message : String(e)).replace(/["\n]/g, ' ').slice(0, 160);
       console.warn('[calc]', why);
@@ -160,8 +172,8 @@ export async function* withCalcs(src: AsyncIterable<string>, run: (id: string, c
 }
 
 /** One finished text with its calcs run (a repair's replacement beat). */
-export async function runCalcsIn(text: string, run?: (id: string, code: string) => Promise<CalcResult>): Promise<string> {
+export async function runCalcsIn(text: string, run?: (id: string, code: string) => Promise<CalcResult>, opts?: CalcOpts): Promise<string> {
   let out = '';
-  for await (const s of withCalcs((async function* () { yield text; })(), run)) out += s;
+  for await (const s of withCalcs((async function* () { yield text; })(), run, opts)) out += s;
   return out;
 }

@@ -310,7 +310,7 @@ export type ConstAction = { kind: 'const'; defs: [string, string][] };
  * the place of a <calc> once it ran. Its values are said as {{val rod.I4}} / {{val box.out[3]}}; no ink.
  * `failed`: why the program gave nothing (its vals stay unbound).
  */
-export type ComputedAction = { kind: 'computed'; id: string; values: import('../calc/stream').CalcTable; failed?: string };
+export type ComputedAction = { kind: 'computed'; id: string; values: import('../calc/stream').CalcTable; failed?: string; /** Its data is not the document's (src/calc/provenance.ts): shown as an example. */ example?: true };
 
 // ------------------------------------------------------------------------------------------------
 // Gated beats, step 2 (src/values/*): numbers the narration states are bound to the engine's.

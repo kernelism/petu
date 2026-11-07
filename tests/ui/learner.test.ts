@@ -3,7 +3,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { barMode, PLACEHOLDER } from '../../src/ui/barMode';
 import { aboutContext, asideContext, bboxOf, boardState, isLoop, pointedLabel } from '../../src/agent/moment';
-import { answerHead, asideHead, clockOf, trailTitle } from '../../src/ui/trail';
+import { answerHead, asideHead, clockOf, EXAMPLE_NOTE, trailTitle } from '../../src/ui/trail';
 import { boardLayout } from '../../src/desk/layout';
 
 describe('bar mode', () => {
@@ -58,6 +58,13 @@ describe('session trail', () => {
     expect(onReplay).toHaveBeenCalled();
     expect(trailTitle('check', 'What would buyers pay?')).toBe('Check yourself: What would buyers pay?');
     expect(trailTitle('answer', 'why lost?', 'DWL')).toBe('About DWL: why lost?');
+  });
+  it("an answer head says once when the answer's numbers are an example", () => {
+    const h = answerHead({ num: '3', question: 'Convolve a 5x5 image', onReplay: () => {} });
+    expect(h.el.querySelector('.trail-example')).toBeNull();
+    h.markExample!(); h.markExample!();
+    expect(h.el.querySelectorAll('.trail-example')).toHaveLength(1);
+    expect(h.el.textContent).toContain(EXAMPLE_NOTE);
   });
   it('an aside head goes back while open and reopens from its marker', () => {
     const onBack = vi.fn(), onToggle = vi.fn();
